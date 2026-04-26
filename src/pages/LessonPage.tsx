@@ -1,0 +1,302 @@
+import { useEffect, useRef, useState } from "react";
+import { Link, useParams, useNavigate } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
+import { PageShell } from "@/components/Layout";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { CheckCircle2, Circle, ChevronRight, ChevronLeft, Send, Sparkles, Bookmark, Clock } from "lucide-react";
+import { toast } from "sonner";
+
+interface Msg { role: "user" | "assistant"; content: string }
+
+export default function LessonPage() {
+  const { courseId, lessonId } = useParams();
+  const { user, session } = useAuth();
+  const navigate = useNavigate();
+
+  const [lesson, setLesson] = useState<any>(null);
+  const [modules, setModules] = useState<any[]>([]);
+  const [completed, setCompleted] = useState<Set<string>>(new Set());
+  const [progress, setProgress] = useState<{ last_position_seconds: number } | null>(null);
+  const [notes, setNotes] = useState("");
+  const [bookmarks, setBookmarks] = useState<any[]>([]);
+  const [bmLabel, setBmLabel] = useState("");
+  const [chatHistory, setChatHistory] = useState<Msg[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Load
+  useEffect(() => {
+    if (!lessonId || !user || !courseId) return;
+    (async () => {
+      const { data: l } = await supabase.from("lessons").select("*, modules(course_id)").eq("id", lessonId).maybeSingle();
+      setLesson(l);
+      const { data: ms } = await supabase
+        .from("modules")
+        .select("*, lessons(id, title, position)")
+        .eq("course_id", courseId)
+        .order("position", { ascending: true });
+      (ms || []).forEach((m: any) => m.lessons.sort((a: any, b: any) => a.position - b.position));
+      setModules(ms || []);
+      const lessonIds = (ms || []).flatMap((m: any) => m.lessons.map((x: any) => x.id));
+      const { data: prog } = await supabase.from("lesson_progress").select("lesson_id, completed_at, last_position_seconds")
+        .eq("user_id", user.id).in("lesson_id", lessonIds.length ? lessonIds : ["00000000-0000-0000-0000-000000000000"]);
+      setCompleted(new Set((prog || []).filter((p: any) => p.completed_at).map((p: any) => p.lesson_id)));
+      const cur = (prog || []).find((p: any) => p.lesson_id === lessonId);
+      setProgress(cur || null);
+
+      const { data: n } = await supabase.from("lesson_notes").select("body").eq("user_id", user.id).eq("lesson_id", lessonId).maybeSingle();
+      setNotes(n?.body || "");
+      const { data: bm } = await supabase.from("lesson_bookmarks").select("*").eq("user_id", user.id).eq("lesson_id", lessonId).order("timestamp_seconds");
+      setBookmarks(bm || []);
+      const { data: hist } = await supabase.from("ai_chat_messages").select("role, content").eq("user_id", user.id).eq("lesson_id", lessonId).order("created_at").limit(50);
+      setChatHistory((hist || []) as Msg[]);
+    })();
+  }, [lessonId, courseId, user]);
+
+  // Resume
+  useEffect(() => {
+    if (videoRef.current && progress?.last_position_seconds) {
+      videoRef.current.currentTime = progress.last_position_seconds;
+    }
+  }, [progress, lesson]);
+
+  // Save position every 5s + auto-complete at 90%
+  useEffect(() => {
+    if (!user || !lessonId) return;
+    const id = setInterval(async () => {
+      const v = videoRef.current; if (!v || v.paused) return;
+      const cur = Math.floor(v.currentTime);
+      const dur = v.duration || 0;
+      const isComplete = dur > 0 && cur / dur >= 0.9;
+      await supabase.from("lesson_progress").upsert({
+        user_id: user.id, lesson_id: lessonId,
+        last_position_seconds: cur,
+        seconds_watched: cur,
+        completed_at: isComplete ? new Date().toISOString() : null,
+      }, { onConflict: "user_id,lesson_id" });
+      if (isComplete) setCompleted((s) => new Set(s).add(lessonId));
+    }, 5000);
+    return () => clearInterval(id);
+  }, [user, lessonId]);
+
+  // Notes autosave (debounced)
+  useEffect(() => {
+    if (!user || !lessonId) return;
+    const t = setTimeout(async () => {
+      await supabase.from("lesson_notes").upsert({ user_id: user.id, lesson_id: lessonId, body: notes }, { onConflict: "user_id,lesson_id" });
+    }, 700);
+    return () => clearTimeout(t);
+  }, [notes, user, lessonId]);
+
+  const markComplete = async () => {
+    if (!user || !lessonId) return;
+    await supabase.from("lesson_progress").upsert({
+      user_id: user.id, lesson_id: lessonId, completed_at: new Date().toISOString(),
+      last_position_seconds: Math.floor(videoRef.current?.currentTime || 0),
+    }, { onConflict: "user_id,lesson_id" });
+    setCompleted((s) => new Set(s).add(lessonId));
+    toast.success("Lesson marked complete");
+  };
+
+  const flat = modules.flatMap((m) => m.lessons.map((l: any) => ({ ...l, moduleTitle: m.title })));
+  const idx = flat.findIndex((l: any) => l.id === lessonId);
+  const prev = idx > 0 ? flat[idx - 1] : null;
+  const next = idx >= 0 && idx < flat.length - 1 ? flat[idx + 1] : null;
+
+  const goNext = async () => {
+    await markComplete();
+    if (next) navigate(`/lesson/${courseId}/${next.id}`);
+  };
+
+  const insertTimestamp = () => {
+    const v = videoRef.current; if (!v) return;
+    const t = Math.floor(v.currentTime);
+    const m = Math.floor(t / 60); const s = (t % 60).toString().padStart(2, "0");
+    setNotes((n) => `${n}${n && !n.endsWith("\n") ? " " : ""}[${m}:${s}] `);
+  };
+
+  const addBookmark = async () => {
+    if (!user || !lessonId || !videoRef.current) return;
+    const t = Math.floor(videoRef.current.currentTime);
+    const { data } = await supabase.from("lesson_bookmarks").insert({ user_id: user.id, lesson_id: lessonId, timestamp_seconds: t, label: bmLabel || `At ${Math.floor(t / 60)}:${(t % 60).toString().padStart(2, "0")}` }).select().single();
+    if (data) setBookmarks([...bookmarks, data].sort((a, b) => a.timestamp_seconds - b.timestamp_seconds));
+    setBmLabel("");
+  };
+
+  const seekTo = (sec: number) => { if (videoRef.current) { videoRef.current.currentTime = sec; videoRef.current.play(); } };
+
+  const sendChat = async (text: string) => {
+    if (!text.trim() || chatLoading) return;
+    const userMsg: Msg = { role: "user", content: text };
+    setChatHistory((h) => [...h, userMsg]);
+    setChatInput("");
+    setChatLoading(true);
+    try {
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/study-assistant`;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ lessonId, message: text, history: chatHistory }),
+      });
+      if (resp.status === 429) { toast.error("Rate limit. Try again in a moment."); setChatLoading(false); return; }
+      if (resp.status === 402) { toast.error("AI credits exhausted."); setChatLoading(false); return; }
+      if (!resp.ok || !resp.body) { toast.error("AI request failed"); setChatLoading(false); return; }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = ""; let acc = "";
+      setChatHistory((h) => [...h, { role: "assistant", content: "" }]);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let i: number;
+        while ((i = buf.indexOf("\n")) !== -1) {
+          let line = buf.slice(0, i); buf = buf.slice(i + 1);
+          if (line.endsWith("\r")) line = line.slice(0, -1);
+          if (!line.startsWith("data: ")) continue;
+          const json = line.slice(6).trim();
+          if (json === "[DONE]") continue;
+          try {
+            const p = JSON.parse(json);
+            const c = p.choices?.[0]?.delta?.content;
+            if (c) { acc += c; setChatHistory((h) => h.map((m, i2) => i2 === h.length - 1 ? { ...m, content: acc } : m)); }
+          } catch { buf = line + "\n" + buf; break; }
+        }
+      }
+    } catch (e) { console.error(e); toast.error("AI request failed"); }
+    setChatLoading(false);
+  };
+
+  if (!lesson) return <PageShell><div className="text-muted-foreground">Loading…</div></PageShell>;
+
+  const videoSrc = lesson.video_url || "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
+
+  return (
+    <PageShell>
+      <div className="grid lg:grid-cols-[1fr_340px] gap-6">
+        <div className="space-y-5 min-w-0">
+          <div className="text-xs text-muted-foreground">
+            <Link to={`/course/${courseId}`} className="hover:text-foreground">AI Creators</Link>
+            <span className="mx-2">/</span>
+            <span>{lesson.title}</span>
+          </div>
+
+          <Card className="overflow-hidden bg-black shadow-elevated">
+            <video ref={videoRef} src={videoSrc} controls className="w-full aspect-video" />
+          </Card>
+
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="min-w-0">
+              <h1 className="text-2xl font-semibold tracking-tight">{lesson.title}</h1>
+              <p className="text-sm text-muted-foreground mt-1">{lesson.description}</p>
+            </div>
+            <div className="flex gap-2">
+              {prev && <Button variant="outline" size="sm" asChild><Link to={`/lesson/${courseId}/${prev.id}`}><ChevronLeft className="h-4 w-4" />Prev</Link></Button>}
+              <Button variant="outline" size="sm" onClick={markComplete}><CheckCircle2 className="h-4 w-4" />Mark complete</Button>
+              {next && <Button size="sm" onClick={goNext}>Next<ChevronRight className="h-4 w-4" /></Button>}
+            </div>
+          </div>
+
+          <Tabs defaultValue="notes">
+            <TabsList>
+              <TabsTrigger value="description">Description</TabsTrigger>
+              <TabsTrigger value="notes">Notes</TabsTrigger>
+              <TabsTrigger value="bookmarks">Bookmarks</TabsTrigger>
+              <TabsTrigger value="transcript">Transcript</TabsTrigger>
+            </TabsList>
+            <TabsContent value="description"><Card className="p-5 text-sm leading-relaxed">{lesson.description}</Card></TabsContent>
+            <TabsContent value="notes">
+              <Card className="p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Auto-saves as you type</span>
+                  <Button size="sm" variant="ghost" onClick={insertTimestamp}><Clock className="h-3.5 w-3.5" />Insert timestamp</Button>
+                </div>
+                <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Write your notes here…" rows={10} className="resize-none" />
+              </Card>
+            </TabsContent>
+            <TabsContent value="bookmarks">
+              <Card className="p-5 space-y-3">
+                <div className="flex gap-2">
+                  <Input placeholder="Label (optional)" value={bmLabel} onChange={(e) => setBmLabel(e.target.value)} />
+                  <Button size="sm" onClick={addBookmark}><Bookmark className="h-3.5 w-3.5" />Add at current time</Button>
+                </div>
+                <ul className="divide-y">
+                  {bookmarks.length === 0 && <li className="text-sm text-muted-foreground py-4">No bookmarks yet.</li>}
+                  {bookmarks.map((b) => (
+                    <li key={b.id} className="py-2 flex items-center justify-between gap-3">
+                      <button onClick={() => seekTo(b.timestamp_seconds)} className="text-sm hover:text-foreground text-left flex-1">
+                        <span className="font-mono text-xs text-muted-foreground mr-2">{Math.floor(b.timestamp_seconds / 60)}:{(b.timestamp_seconds % 60).toString().padStart(2, "0")}</span>
+                        {b.label}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            </TabsContent>
+            <TabsContent value="transcript">
+              <Card className="p-5 text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap">
+                {lesson.transcript || "Transcript not yet available for this lesson."}
+              </Card>
+            </TabsContent>
+          </Tabs>
+        </div>
+
+        <aside className="space-y-5 lg:sticky lg:top-20 h-fit">
+          <Card className="overflow-hidden shadow-soft">
+            <div className="px-4 py-3 border-b bg-muted/30 text-xs font-medium text-muted-foreground">Course content</div>
+            <div className="max-h-[300px] overflow-y-auto scrollbar-thin">
+              {modules.map((m, mi) => (
+                <div key={m.id}>
+                  <div className="px-4 py-2 text-xs font-medium text-muted-foreground border-b bg-muted/10">Module {mi + 1}</div>
+                  {m.lessons.map((l: any) => (
+                    <Link key={l.id} to={`/lesson/${courseId}/${l.id}`}
+                      className={`flex items-center gap-2 px-4 py-2 text-sm border-b last:border-b-0 hover:bg-muted/40 ${l.id === lessonId ? "bg-muted/60 font-medium" : ""}`}>
+                      {completed.has(l.id) ? <CheckCircle2 className="h-3.5 w-3.5 text-foreground" /> : <Circle className="h-3.5 w-3.5 text-muted-foreground" />}
+                      <span className="truncate">{l.title}</span>
+                    </Link>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          <Card className="shadow-soft flex flex-col" style={{ minHeight: 320 }}>
+            <div className="px-4 py-3 border-b flex items-center gap-2">
+              <Sparkles className="h-4 w-4" />
+              <span className="text-sm font-medium">AI Study Assistant</span>
+            </div>
+            <div className="flex-1 max-h-[300px] overflow-y-auto p-3 space-y-3 scrollbar-thin">
+              {chatHistory.length === 0 && (
+                <div className="text-xs text-muted-foreground p-2">
+                  Ask anything about this lesson. Try: "Explain this", "Give me 3 practice questions", "Summarize".
+                </div>
+              )}
+              {chatHistory.map((m, i) => (
+                <div key={i} className={`text-sm rounded-lg px-3 py-2 ${m.role === "user" ? "bg-foreground text-background ml-6" : "bg-muted mr-6"}`}>
+                  <div className="prose-tight whitespace-pre-wrap">{m.content || (chatLoading && i === chatHistory.length - 1 ? "…" : "")}</div>
+                </div>
+              ))}
+            </div>
+            <div className="p-3 border-t space-y-2">
+              <div className="flex flex-wrap gap-1">
+                {["Explain this", "3 practice questions", "Summarize", "I'm stuck"].map((q) => (
+                  <button key={q} onClick={() => sendChat(q)} disabled={chatLoading} className="text-[11px] px-2 py-1 rounded-full border hover:bg-muted disabled:opacity-50">{q}</button>
+                ))}
+              </div>
+              <form onSubmit={(e) => { e.preventDefault(); sendChat(chatInput); }} className="flex gap-2">
+                <Input value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Ask the assistant…" disabled={chatLoading} />
+                <Button type="submit" size="icon" disabled={chatLoading || !chatInput.trim()}><Send className="h-4 w-4" /></Button>
+              </form>
+            </div>
+          </Card>
+        </aside>
+      </div>
+    </PageShell>
+  );
+}
