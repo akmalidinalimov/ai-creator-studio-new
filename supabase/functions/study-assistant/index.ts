@@ -222,7 +222,7 @@ Deno.serve(async (req) => {
     // Success metric (latency = time to first byte / headers)
     await recordMetric(admin, {
       user_id: userId, lesson_id: lessonIdGlobal, model: usedModel,
-      attempts: totalAttempts, fallback_used: usedModel !== MODEL_CHAIN[0], success: true,
+      attempts: totalAttempts, fallback_used: usedModel !== `${MODEL_CHAIN[0].provider}:${MODEL_CHAIN[0].model}`, success: true,
       status: 200, latency_ms: Date.now() - startedAt, language: langCode,
     });
 
