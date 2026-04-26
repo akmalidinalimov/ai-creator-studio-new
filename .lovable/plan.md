@@ -1,125 +1,93 @@
-# v1.4 build plan — pragmatic scope
 
-The original spec contains 12 sections; building all 12 well in one pass isn't realistic — several (passkeys, TOTP-required-for-admins, single-session admin enforcement, Turnstile, trusted-device cookies, suspicious-login geo email alerts) are individually multi-day systems that need real-device testing or external secrets you haven't provided. I'm shipping a **tight, well-tested core** now and flagging the rest as a v1.5 follow-up. You can approve and I'll build, or tell me to expand scope.
+# Multilingual UI: Uzbek / Russian / English
 
-## ✅ Shipping in this pass
+Translate the **UI only** (buttons, menus, forms, toasts, validation messages, page copy). Course/lesson content stays in whatever language the admin entered.
 
-### A. Last name + CSV template + magic-link invites
+## 1. i18n stack
 
-**Schema** (one migration):
-- `profiles.last_name text` nullable.
-- `login_attempts` table for section G: `id uuid pk, key citext, kind text check in ('email','ip'), success bool, created_at timestamptz default now()`. Index on `(key, kind, created_at)`. RLS: deny all (only edge functions touch it via service role).
-- `admin_actions` table for section K: `id uuid pk, actor_user_id uuid, action text, target_user_id uuid null, target_resource_type text null, target_resource_id uuid null, details jsonb default '{}', created_at timestamptz default now()`. Index on `(created_at desc)` and `(actor_user_id, created_at desc)`. RLS: admin select only; insert via service role from edge functions.
+- Add `i18next` + `react-i18next` + `i18next-browser-languagedetector`.
+- Wrap the app in an `I18nProvider` mounted in `src/main.tsx` so translations are ready before any route renders.
+- Languages: `uz` (default, fallback), `ru`, `en`.
+- Detection order: user's saved choice (Supabase profile) → localStorage → browser → fallback to `uz`.
 
-**Frontend `/admin/users`**:
-- New "Last name" column between Name and Email (shows "—" when null).
-- Add-user modal: Last name input between Name and Email with helper text.
-- Manage drawer: editable Last name field.
-- Import CSV modal:
-  - **"Download CSV template"** button at top — generates `users_import_template.csv` client-side via Blob with header `name,last_name,email,password,telegram_username,role` and 5 example rows (mix of student/admin, with/without telegram, with/without password).
-  - Updated parser handles new column order; existing 5-column CSVs still parse (treat 5-col as legacy: name,email,password,telegram,role).
-  - Live preview table with columns Name | Last name | Email | Telegram | Role | Status; invalid rows tinted red.
-  - Import button shows valid count.
-- Bulk **"Resend welcome email"** action on selected users (adds row checkboxes to the table).
+## 2. Translation files
 
-**Frontend `/signup`**: Optional Last name input between Name and Email.
+Create `src/i18n/locales/{uz,ru,en}.json`, each split into namespaces for maintainability:
 
-**Frontend `/settings`**: Editable Last name in Profile card.
+- `common` — buttons (Save, Cancel, Delete, Edit, Sign out…), generic words, time-ago strings
+- `auth` — login, signup, forgot/reset password, magic link, lockout countdown, Telegram button label, "Add a passkey" toast
+- `nav` — top-nav links, avatar menu items, admin nav
+- `dashboard` — student dashboard ("Welcome back, {name}", course cards, progress)
+- `course` — course page, module/lesson list, "Mark complete", "Next lesson"
+- `lesson` — lesson page tabs (Description, Notes, Bookmarks, Transcript), AI assistant prompts, bookmark/timestamp buttons
+- `quiz` — quiz UI, score, retry, pass/fail messaging
+- `settings` — profile fields, password change, recent sign-ins, danger zone, **+ "Language" selector**
+- `admin` — admin dashboard, courses, users (table headers including "Last name"), CSV import modal, audit log, AI analytics, deploy, settings
+- `validation` — form errors ("Email is required", "Password too short", etc.)
+- `toasts` — success/error toast messages
 
-**Frontend `/dashboard`**: Welcome shows `{name} {last_name}` when available, else `{name}`.
+Uzbek is authored first (source of truth), then Russian and English. I'll translate the strings myself — no external translation API needed.
 
-**Edge function `admin-create-students`** updates:
-- Accepts `last_name`, writes to `profiles.last_name`.
-- New flag `send_invite: boolean` — when true OR when password is blank, generates a strong random password and immediately calls `admin.generateLink({ type: 'magiclink', email, options: { redirectTo: `${origin}/reset-password` } })` so the invite email lands and the user is taken to set their own password.
-- New action: `resend_welcome` — for existing users, regenerates the magic link.
-- Logs `csv_import_users` and `resend_welcome_email` rows into `admin_actions`.
+## 3. Language switcher (top nav)
 
-**Email delivery**: I'll use Supabase Auth's built-in `generateLink` + `inviteUserByEmail` — these go through default Lovable Cloud auth emails. **Not scaffolding custom branded auth-email-hook templates** unless you ask (that's a separate flow with its own DNS verification gates). The invite text is the default "Set up your account" — students click it, land on `/reset-password`, set password, signed in.
+Add a `LanguageSwitcher` component in `src/components/Layout.tsx` next to the avatar:
 
-### C. Magic-link sign-in + reset-password polish
+- Globe icon (`lucide-react` `Globe`) → `DropdownMenu` with three items: `O'zbekcha`, `Русский`, `English` (each shown in its own script).
+- Current language gets a check mark.
+- On select: `i18n.changeLanguage(code)` + write to `localStorage` + (if logged in) update `profiles.preferred_language`.
+- Same switcher rendered on `/login`, `/signup`, `/forgot-password`, `/reset-password` (those pages don't use `Layout`, so add a small standalone variant in the top-right corner of the `AuthShell`).
 
-- `/login`: existing "Email me a sign-in link instead" checkbox already works (uses `signInWithOtp`). I'll surface it as an explicit visible button "Sign in with magic link" alongside Google/Telegram, not buried as a checkbox.
-- `/reset-password`: add show/hide password toggle, min 8 chars validation, success toast "Welcome!", auto-redirect to `/dashboard` after update.
+## 4. Persistence
 
-### F. Recent sign-ins in /settings
+- New column: `profiles.preferred_language text default 'uz'` (migration).
+- On `SIGNED_IN`, read `preferred_language` and call `i18n.changeLanguage()`.
+- When changed while signed in, persist to `profiles`.
+- When changed while signed out, persist to `localStorage` only.
 
-- Read last 10 rows from `auth_events` for current user (table already exists with RLS).
-- New "Recent sign-ins" card showing: relative date ("2 hours ago"), absolute datetime on hover, parsed browser from user_agent, "Current session" badge on the most recent matching the live session.
-- "Sign out everywhere except this device" button → calls `supabase.auth.signOut({ scope: 'others' })`.
-- IP city/country: parsing IP from user_agent isn't possible; `auth_events.ip` is currently unused. I'll start writing IP via a small new edge function `log-auth-event` called from `AuthContext` on `SIGNED_IN`, which reads `cf-connecting-ip` / `x-forwarded-for`. City/country lookup deferred (would need ip-api.com call per event; can add in v1.5). For now show IP only if available.
+The existing AI Study Assistant already has its own per-conversation language picker — leave it as-is, but seed its default from the user's UI language.
 
-### G. Soft lockout with clear countdown
+## 5. Component refactor
 
-- New edge function `login-guard` called by `/login` BEFORE `signInWithPassword`.
-  - Counts failed attempts in `login_attempts` for `(email)` and `(ip)` in last 10 min.
-  - If ≥5 failures: returns `{ locked: true, locked_until_ms, message }` with HTTP 429.
-  - Otherwise returns `{ locked: false }`.
-- After `signInWithPassword`, frontend posts result back to `login-guard` (`record-attempt` action) so it logs success/fail. (Two round-trips, but keeps RLS simple.)
-- `/login` shows a live countdown banner (updates every second) when locked, with prominent "Reset password" link.
-- Admin "Clear lockout" button in Manage drawer (visible only when active lockout exists for that email) → calls edge function to delete recent rows.
+Replace hardcoded strings with `t('namespace.key')`:
 
-### K. Admin actions audit log
+- `src/components/Layout.tsx` (nav + avatar menu)
+- `src/pages/Login.tsx`, `Signup.tsx`, `ForgotPassword.tsx`, `ResetPassword.tsx`
+- `src/pages/Dashboard.tsx`, `CoursePage.tsx`, `LessonPage.tsx`, `QuizPage.tsx`, `Settings.tsx`, `NotFound.tsx`
+- `src/pages/admin/*` (Dashboard, Courses, CourseEditor, Users, Settings, AIAnalytics, Audit, Deploy)
+- `src/components/admin/*` (LessonDrawer, ModuleQuizEditor, KnowledgeManager)
+- `src/components/RequireAuth.tsx`, `TelegramLoginButton.tsx`, `lesson/ProtectedVideo.tsx`
+- Toast call sites (most `toast({ title, description })` calls)
 
-- All existing admin write actions (promote/demote, deactivate/activate, delete user, CSV import, clear lockout, resend welcome, create/publish/unpublish/delete course, create/delete lesson) get an `admin_actions` insert from the edge function or via a thin `log-admin-action` helper called from the frontend (only for actions that don't already go through an edge function).
-- `/admin/dashboard`: new "Recent admin actions" card showing last 25 entries (actor name, action, target, time-ago).
-- New `/admin/audit` page: full table, date range filter, actor filter, expandable row to show jsonb `details` payload.
-- Add route + admin nav link.
+For dynamic strings with variables I'll use i18next interpolation (`t('dashboard.welcome', { name })`).
 
-### L. Tab title
+For pluralization (e.g. "1 lesson" / "5 lessons", "2 minutes ago"), use i18next's plural rules — Russian has 3 plural forms, Uzbek has 2, English has 2; i18next handles this natively per locale.
 
-- `index.html` already says "AI Creators" — confirmed nothing to fix. (Spec mentioned "AI CRETATORS" → not present in code; will leave as-is.)
+## 6. Out of scope (can be added later)
 
-### Lightweight suspicious-login flag (subset of E)
+- **Course content translation** (titles, descriptions, transcripts, quizzes) — admins keep authoring in one language. We can add per-language fields or AI auto-translate in a follow-up.
+- **Email templates** (welcome, magic link, password reset) — Supabase auth emails stay in the project's current template language for now. Custom emails sent by edge functions can be localized later if needed.
+- **Date/number formatting** — I'll use `Intl.DateTimeFormat` with the active locale where dates are shown, but won't reformat every existing date display in this pass.
 
-- In `AuthContext` on `SIGNED_IN`, compare current user_agent fingerprint against last 5 auth_events. If new fingerprint, show a one-time toast: "New sign-in detected from [browser]. If this wasn't you, change your password." with a link to /settings → "Recent sign-ins". **No email send** (that needs branded transactional templates → v1.5).
+## 7. Files
 
-## ⏸ Deferred to v1.5 (with reasons)
+**New**
+- `src/i18n/index.ts` — i18next init
+- `src/i18n/locales/uz.json`, `ru.json`, `en.json`
+- `src/components/LanguageSwitcher.tsx`
+- `supabase/migrations/<timestamp>_add_preferred_language.sql`
 
-- **B. Passkeys (WebAuthn)** — needs `@simplewebauthn/server`, a `user_passkeys` table, 4 new edge functions, real-device testing on the actual published domain (RP ID locked to hostname). Doable but a 1-day standalone task.
-- **D. Trusted devices / "Remember this device"** — needs HttpOnly cookie infrastructure (Supabase session cookies are domain-locked; setting our own auth-bypass cookie has security implications — needs careful design).
-- **E. Suspicious-login email alerts** — needs ip-api.com integration + branded transactional email template + `/lock-account` endpoint with one-time token. The lightweight UI toast above is the 80/20.
-- **H. Cloudflare Turnstile** — requires you to provide site key + secret. I'll add the input fields in /admin/settings during this pass so you can paste them, but the widget+verification wiring lands in v1.5.
-- **I. TOTP 2FA required for admins** — Supabase MFA enrollment UI (QR + 6-digit verify + backup codes), gating middleware, /settings/2fa-setup page, banner. Multi-day; needs your phone to test.
-- **J. Single-session admin** — needs a session heartbeat polling pattern (Supabase doesn't expose session-id-by-user); risk of false sign-outs during refresh. Wants careful design.
+**Edited**
+- `src/main.tsx` — import `./i18n`
+- `src/contexts/AuthContext.tsx` — load `preferred_language` on sign-in
+- `src/components/Layout.tsx` — mount switcher in nav
+- All page/component files listed in §5 — swap hardcoded strings for `t(...)`
+- `package.json` — add `i18next`, `react-i18next`, `i18next-browser-languagedetector`
 
-## Files I'll create / edit
+## 8. Self-test after build
 
-**Migrations:**
-- 1 new SQL migration: `profiles.last_name`, `login_attempts` table, `admin_actions` table, RLS policies, indexes.
-
-**Edge functions:**
-- `admin-create-students/index.ts` — extend with last_name, send_invite, resend_welcome, audit logging.
-- New `login-guard/index.ts` — check + record attempts, return lock state.
-- New `log-admin-action/index.ts` — small helper for frontend-initiated admin actions to log to audit table.
-- New `log-auth-event/index.ts` — capture IP from request headers on sign-in.
-
-**Frontend:**
-- `src/pages/admin/AdminUsers.tsx` — last_name column, modal field, drawer field, CSV template download, bulk resend, manage-drawer clear-lockout.
-- `src/pages/Signup.tsx` — last_name field.
-- `src/pages/Settings.tsx` — last_name field, Recent sign-ins card, sign-out-others button.
-- `src/pages/Dashboard.tsx` — full-name welcome.
-- `src/pages/Login.tsx` — magic-link button surfaced; lockout countdown banner; login-guard call.
-- `src/pages/ResetPassword.tsx` — show/hide toggle, min-8 validation, redirect to /dashboard.
-- `src/pages/admin/AdminDashboard.tsx` — Recent admin actions card.
-- New `src/pages/admin/AdminAudit.tsx` — full audit log page.
-- `src/App.tsx` — register /admin/audit route.
-- `src/components/Layout.tsx` (admin nav) — add "Audit log" link.
-- `src/contexts/AuthContext.tsx` — call log-auth-event on SIGNED_IN; emit suspicious-login toast on new fingerprint.
-
-## Self-test plan (what I'll actually verify)
-
-1. ✅ Migration applies; `last_name`, `login_attempts`, `admin_actions` exist with correct RLS.
-2. ✅ `/admin/users` shows Last name column.
-3. ✅ Download CSV template button produces correct file.
-4. ✅ Parsing a CSV with new format renders preview correctly.
-5. ✅ Edge function deploys; calling `admin-create-students` with `send_invite=true` returns a magic link URL.
-6. ✅ Soft lockout: 5 fake failed attempts via `login-guard` returns 429 with countdown.
-7. ✅ Admin audit log records entries; `/admin/dashboard` and `/admin/audit` render them.
-8. ✅ `/dashboard` shows full name.
-9. ✅ `/settings` Recent sign-ins reads from `auth_events`.
-
-**Cannot self-test without your help**: real magic-link email delivery (depends on Lovable Cloud email pipeline + your inbox); Telegram round-trip (needs your domain + Telegram account); browser-specific UX (passkeys, TOTP — these aren't in scope anyway).
-
-## After approval
-
-I'll build it all in one go, deploy edge functions, run a security scan, and report back what landed + what to test manually.
+1. Fresh visit (no localStorage) → UI is in Uzbek.
+2. Click globe → switch to Russian → every visible label changes; refresh → still Russian.
+3. Sign in → switch to English → sign out → sign back in on a different browser → English persists (loaded from `profiles.preferred_language`).
+4. Check `/login`, `/signup`, `/dashboard`, a `/course/:id`, a `/lesson/:id`, `/quiz/:id`, `/settings`, `/admin/users`, `/admin/audit` in all three languages — no leftover English strings, no overflow in narrow buttons.
+5. Trigger a validation error and a success toast in each language — both translated.
+6. Russian plurals render correctly for "5 уроков" vs "1 урок" vs "2 урока".
