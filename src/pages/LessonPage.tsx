@@ -43,7 +43,29 @@ export default function LessonPage() {
   const [chatHistory, setChatHistory] = useState<Msg[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
+  const [language, setLanguage] = useState<string>(detectLang());
+  const [protectionSettings, setProtectionSettings] = useState<any | undefined>(undefined);
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Load protection settings + preferred language
+  useEffect(() => {
+    supabase.rpc("get_public_setting", { _key: "content_protection" }).then(({ data }) => {
+      if (data) setProtectionSettings(data);
+    });
+  }, []);
+  useEffect(() => {
+    if (!user) return;
+    supabase.from("profiles").select("preferred_language").eq("id", user.id).maybeSingle().then(({ data }) => {
+      const pl = (data as any)?.preferred_language;
+      if (pl && LANGUAGES.some((l) => l.code === pl)) setLanguage(pl);
+    });
+  }, [user]);
+
+  const onLanguageChange = (code: string) => {
+    setLanguage(code);
+    if (user) supabase.from("profiles").update({ preferred_language: code }).eq("id", user.id).then(() => {});
+  };
+
 
   // Load
   useEffect(() => {
