@@ -3,7 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { LogOut, Settings, Shield, LayoutDashboard, BookOpen, Search } from "lucide-react";
+import { LogOut, Settings, Shield, LayoutDashboard, BookOpen, Users, Rocket } from "lucide-react";
 
 export const Logo = ({ className = "" }: { className?: string }) => (
   <Link to="/dashboard" className={`flex items-center gap-2 font-semibold tracking-tight ${className}`}>
@@ -25,23 +25,28 @@ export const TopNav = () => {
   const linkCls = (active: boolean) =>
     `text-sm font-medium transition-colors ${active ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`;
 
+  const isAdmin = role === "admin";
+  const adminLinks = [
+    { to: "/admin/dashboard", label: "Dashboard", match: (p: string) => p === "/admin/dashboard" || p === "/admin" },
+    { to: "/admin/courses", label: "Courses", match: (p: string) => p.startsWith("/admin/courses") },
+    { to: "/admin/users", label: "Users", match: (p: string) => p.startsWith("/admin/users") },
+  ];
+
   return (
     <header className="sticky top-0 z-30 w-full border-b border-border bg-background/80 backdrop-blur-md">
       <div className="container flex h-14 items-center justify-between gap-4">
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-6 min-w-0">
           <Logo />
           <nav className="hidden md:flex items-center gap-5">
-            <Link to="/dashboard" className={linkCls(loc.pathname === "/dashboard")}>Dashboard</Link>
-            <Link to="/search" className={linkCls(loc.pathname.startsWith("/search"))}>Search</Link>
-            {role === "admin" && (
-              <Link to="/admin" className={linkCls(loc.pathname.startsWith("/admin"))}>Admin</Link>
+            {!isAdmin && (
+              <Link to="/dashboard" className={linkCls(loc.pathname === "/dashboard")}>Dashboard</Link>
             )}
+            {isAdmin && adminLinks.map((l) => (
+              <Link key={l.to} to={l.to} className={linkCls(l.match(loc.pathname))}>{l.label}</Link>
+            ))}
           </nav>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon" className="md:hidden" onClick={() => navigate("/search")} aria-label="Search">
-            <Search className="h-4 w-4" />
-          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -52,21 +57,38 @@ export const TopNav = () => {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel className="font-normal">
-                <div className="text-sm font-medium">{user?.user_metadata?.name || "Student"}</div>
+                <div className="text-sm font-medium">{user?.user_metadata?.name || (isAdmin ? "Admin" : "Student")}</div>
                 <div className="text-xs text-muted-foreground truncate">{user?.email}</div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => navigate("/dashboard")}>
-                <LayoutDashboard className="mr-2 h-4 w-4" /> Dashboard
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => navigate("/settings")}>
-                <Settings className="mr-2 h-4 w-4" /> Settings
-              </DropdownMenuItem>
-              {role === "admin" && (
-                <DropdownMenuItem onClick={() => navigate("/admin")}>
-                  <Shield className="mr-2 h-4 w-4" /> Admin
+              {!isAdmin && (
+                <DropdownMenuItem onClick={() => navigate("/dashboard")}>
+                  <LayoutDashboard className="mr-2 h-4 w-4" /> Dashboard
                 </DropdownMenuItem>
               )}
+              {isAdmin && (
+                <>
+                  <DropdownMenuItem onClick={() => navigate("/admin/dashboard")}>
+                    <Shield className="mr-2 h-4 w-4" /> Admin dashboard
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate("/admin/courses")}>
+                    <BookOpen className="mr-2 h-4 w-4" /> Courses
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate("/admin/users")}>
+                    <Users className="mr-2 h-4 w-4" /> Users
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate("/admin/settings")}>
+                    <Settings className="mr-2 h-4 w-4" /> Settings
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate("/admin/deploy")}>
+                    <Rocket className="mr-2 h-4 w-4" /> Deploy
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              <DropdownMenuItem onClick={() => navigate("/settings")}>
+                <Settings className="mr-2 h-4 w-4" /> My settings
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={async () => {
