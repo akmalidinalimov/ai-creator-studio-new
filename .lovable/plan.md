@@ -1,160 +1,84 @@
-# v1.2 Plan — AI Creators Production Upgrade
+# v1.3 Plan
 
-Big release. I'll group the work into 7 phases shipped in a single build, then run the self-test you specified. Below is exactly what changes, with the technical decisions called out so you can sanity-check before approval.
+## A. Fix AI Study Assistant 503
 
----
+**Edge function `study-assistant`** — rewrite for resilience:
+- Wrap upstream Lovable AI call in retry helper: 3 attempts, exponential backoff (1s/2s/4s) on `5xx` and `429`.
+- Model fallback chain: `google/gemini-3-flash-preview` → `google/gemini-2.5-flash` → `google/gemini-2.5-flash-lite`. Switch to next model after one full retry cycle still fails.
+- If all fail: return `200 { error, hint, retryable: true, fallback: true }` (not 5xx) so the client can render a clean "Retry" toast instead of `Failed to fetch`.
+- Stream wrapper: catch mid-stream errors, append `\n\n_(response interrupted)_` token to the SSE stream, then close cleanly.
+- Log every failure to new `ai_chat_errors` table.
 
-## Phase 0 — Database migration (foundation for everything)
+**Migration**: create `ai_chat_errors (id, user_id, lesson_id, model, status, error_excerpt, created_at)` with RLS allowing only admins to SELECT, edge function (service role) to INSERT.
 
-One migration adds:
+**Client (`LessonPage.tsx`)**:
+- On non-streaming error or `fallback: true` payload, replace the orphan empty assistant bubble with a "AI tutor is busy" notice and show toast with **Retry** action that re-sends the last user message.
 
-- `lessons.published bool default false`, `lessons.video_provider text` (enum-like: `upload|youtube|vimeo|mux|bunny`), `lessons.provider_video_id text`, `lessons.thumbnail_path text`
-- `courses.published` already exists (default `true`) — change default to `false` for new courses; keep existing seed course Published.
-- `profiles.telegram_username citext unique nullable`, `profiles.telegram_id bigint unique nullable`. Enable `citext` extension.
-- New table `auth_events (id, user_id, event text, created_at, ip text nullable, user_agent text nullable)` with RLS: insert-own + admin-read.
-- New table `platform_settings (key text pk, value jsonb, updated_at)` with admin-only RW (used for Telegram bot username; bot token stays in Supabase secrets).
-- New storage buckets: `course-covers` (public), `lesson-thumbs` (public, immutable cache 1y).
-- **Indexes**: `lesson_progress(user_id, lesson_id)`, `lesson_progress(user_id, completed_at)`, `enrollments(user_id)`, `profiles(telegram_username)`, `user_roles(user_id)`, `lessons(module_id, position)`, `modules(course_id, position)`.
-- **RLS update on `lessons`**: students see only `published = true` lessons in published courses; admins see everything (uses `has_role`).
-- **RLS update on `courses` SELECT**: already `published OR has_role(admin)` — keep.
-- Trigger: on `lesson_progress` upsert, recompute and update `streaks` for that user.
+## B. Multilingual + Admin-Trainable Assistant
 
-Note: the currently seeded 20 lessons will be backfilled to `published = true` so nothing disappears for existing students.
+**Schema**:
+- `profiles.preferred_language text default 'en'`
+- `courses.ai_system_prompt text`, `courses.ai_knowledge_paths text[] default '{}'`
+- `platform_settings` row `key='ai_assistant'` → `{ system_prompt, knowledge_paths[] }`
+- New private storage bucket `ai-knowledge` (admin write, edge function service-role read).
 
----
+**Student UI** — AI panel header in `LessonPage.tsx`:
+- Add language `<Select>` with 10 languages (en, ru, uz, es, pt, ar, fr, de, hi, zh).
+- Default = `profiles.preferred_language` || `navigator.language.split('-')[0]` || `'en'`.
+- On change → `update profiles set preferred_language`.
+- Pass `language` in request body to edge function.
 
-## Phase A — Admin: Course / Module / Lesson editor with video upload
+**Admin UI** — new card on `/admin/settings`:
+- "AI Study Assistant" card: system prompt textarea (with default text & variable hint `{course_title} {transcript} {language}`), knowledge file upload zone (PDF/TXT to `ai-knowledge` bucket), list with delete.
+- Per-course override: in `AdminCourseEditor`, add collapsible "AI Assistant (course override)" section with textarea + knowledge upload writing to `courses.ai_system_prompt` and `courses.ai_knowledge_paths`.
 
-**Nav restructure** (`Layout.tsx`):
-- Student nav: `Dashboard` only (Search link removed).
-- Admin nav: `Dashboard` · `Courses` · `Users` · avatar.
-- Remove `/search` route entirely.
+**Edge function**:
+- Resolve effective prompt: course override → platform default → built-in fallback.
+- Read first 8 KB of each referenced knowledge file (use storage `download` + decode text; for PDFs, use lightweight text extraction — parse with `pdf-parse` via esm.sh, falling back to filename if extract fails).
+- Substitute `{course_title}`, `{transcript}`, `{language}` placeholders.
+- Append `Respond in ${language}.` at the end of the system prompt.
 
-**New pages:**
-- `/admin/courses` — card grid of all courses with cover, lesson count, total duration (sum of `lessons.duration_seconds`), Published toggle (instant), last edited, "Edit" button, "+ New course" modal (title, tagline, description, cover upload to `course-covers`). New courses default to Draft and redirect to editor.
-- `/admin/courses/:courseId` — the editor:
-  - Header: inline-edit title/tagline, rich-text description (using a lightweight Tiptap setup or a markdown textarea + preview — I'll go with **Tiptap StarterKit** since it's already React-friendly and small), cover with crop (using `react-easy-crop`), Published toggle, "View as student" link (opens `/course/:id` in new tab).
-  - Modules list: `@dnd-kit/sortable` drag handles, inline-editable titles, expand to show lessons, "+ Add module" appends blank.
-  - Lessons list per module: drag-sortable, status badge (Has video / No video / Draft), Edit button.
-  - **Lesson editor drawer** (slides from right):
-    - Tabs: **Upload video** | **Embed URL** | **Resources** | **Settings**
-    - **Upload tab** — dropzone (react-dropzone). Uses `supabase.storage.from('lesson-videos').uploadToSignedUrl()` with a signed upload URL minted via `createSignedUploadUrl()` so chunks go **directly** browser→storage (no edge function in path). Shows filename, size, MB/s, ETA, progress, Cancel. On complete: hidden `<video>` reads `duration` and `canvas.toBlob()` captures a frame at 1s → uploaded to `lesson-thumbs`. Updates `video_storage_path`, `duration_seconds`, `thumbnail_path`, `video_provider='upload'`.
-    - **Embed tab** — provider select (YouTube / Vimeo / Mux / Bunny Stream) + URL/ID input. Validates and shows live preview. Saves `video_provider` + `provider_video_id`. Bunny/Mux preview uses **hls.js** with the playback URL pattern documented per provider.
-    - **Resources tab** — drag PDFs/slides into `lesson-resources`, list with delete.
-    - **Settings tab** — Published toggle, position (read-only auto), Delete (confirm).
-  - **Module quiz editor** (collapsible): list of `quiz_questions`, add/edit/delete with options array, correct_index, explanation. 80% pass already enforced.
+## C. Persistent Telegram Button
 
-**Player update** (`LessonPage.tsx`):
-- Resolve video source by `video_provider`:
-  - `upload` → mint a signed URL via existing `lesson-video-url` edge function
-  - `youtube` / `vimeo` → iframe embed
-  - `mux` / `bunny` → hls.js with provider playback URL
-- Falls back to BigBuckBunny only in dev/empty state.
+Refactor `TelegramLoginButton.tsx`:
+- Always render. Two states:
+  - **Configured** (RPC returns `bot_username`): mount the official widget as today.
+  - **Not configured**: render a styled disabled `<Button variant="outline">` with the Telegram icon, label "Continue with Telegram", `<Tooltip>` "Telegram login isn't configured yet — admin can set it up in Settings → Telegram Login." On click → toast same message.
+- Apply on `/login`, `/signup`, `/settings` "Link Telegram" button. Update those three callsites to render the new always-visible variant.
 
-**Dependencies added**: `@dnd-kit/core`, `@dnd-kit/sortable`, `react-dropzone`, `@tiptap/react @tiptap/starter-kit`, `react-easy-crop`, `hls.js`.
+## D. Screen-Recording Protection (lesson page only)
 
----
+New file `src/components/lesson/ProtectedVideo.tsx` wrapping the `<video>` element. Used **only** by `LessonPage.tsx` (admin lesson preview keeps native controls).
 
-## Phase B — Admin: Users page with role assignment
+**Schema**: `platform_settings` row `key='content_protection'` → `{ watermark, no_right_click, pause_on_blur, devtools_detect, hardened_controls }` all default `true`. New "Content Protection" card on `/admin/settings` with 5 toggles + the warning text about Mux/Bunny DRM being the only true block.
 
-Replace the "Students" tab with `/admin/users`:
+**ProtectedVideo features (gated by settings)**:
+1. **Forensic watermark** — absolutely-positioned `<div>` over the video showing `${user.email} • ${Date.now()}`, opacity 0.35, 13px white with text-shadow, `pointer-events:none`, `z-50`. `setInterval` every 2000ms randomizes one of 4 corners and refreshes the timestamp.
+2. **Right-click block** — `onContextMenu` on wrapper + video.
+3. **Hardened video** — `controlsList="nodownload noremoteplayback noplaybackrate"`, `disablePictureInPicture`, `disableRemotePlayback`.
+4. **Pause on blur** — `window.blur` + `document.visibilitychange` listeners → `video.pause()`.
+5. **DevTools detection** — 1s interval comparing outer/inner dims; if delta > 200, pause + render full-cover overlay "Please close developer tools to continue."
+6. **Keyboard shortcuts** — keydown listener on document scoped to the lesson route: block Ctrl/Cmd+S, Ctrl/Cmd+P, Ctrl+Shift+S, Cmd+Shift+3/4/5.
+7. **CSS** — `select-none` and `-webkit-touch-callout:none` on wrapper.
+8. **Signed-URL refresh** — for `video_provider='upload'`, edge function `lesson-video-url` already issues signed URLs; bump expiry to 1800s and add a 25-min `setInterval` that re-invokes the function and swaps `video.src` while preserving `currentTime` + play state.
+9. **rAF fps watchdog** — measure frame deltas; if avg fps < 30 for 5 consecutive seconds, fire a one-time toast "Performance drop detected — screen recording or another heavy process may be running." (Don't pause.)
 
-- Table columns: avatar/name, email, telegram_username, role badge, status, last login (`auth.users.last_sign_in_at` exposed via a SECURITY DEFINER RPC `get_users_admin()` that joins `profiles` + `user_roles` + `auth.users.last_sign_in_at` — safer than exposing `auth.users` directly), course access badges, progress %, joined.
-- Toolbar: search input (filters name/email/telegram_username — replaces broken /search), status filter, role filter, "+ Add user" modal, "Import CSV".
-- **Add user modal**: name, email, password (auto-gen + copy), telegram_username (with @ prefix normalizer), **role select**, course multi-select, send welcome email checkbox.
-- **CSV import** — extends existing `admin-create-students` function to accept `name,email,password,telegram_username,role`. Live preview table with validation (dupe email, malformed email, invalid role). Per-row success/fail with progress bar.
-- **Manage drawer** per row: edit profile, reset password, **role change** (insert/delete `user_roles` row) with confirm modal, course access toggles, activate/deactivate, remove user (cascade via existing FKs — verify cascade is set on enrollments/progress/comments/notes; add ON DELETE CASCADE in migration if missing).
+All toggles fetched from `platform_settings` via the `get_public_setting('content_protection')` whitelist (extend RPC to expose this key — non-secret booleans).
 
----
+## E. Small fixes
 
-## Phase C — Remove broken Search
+- `index.html`: title + og:title + twitter:title → `AI Creators` (also fix description if needed).
 
-- Delete `/search` route registration, delete page file, remove nav link in both student and admin views. Search lives only inside the Users table.
+## Self-test (after build)
 
----
+Run the 7-step checklist from the request. Report results inline.
 
-## Phase D — Telegram login
+## Files (created / edited)
 
-**Config UI** at `/admin/settings` → Integrations card:
-- Field 1: bot username (saved to `platform_settings.telegram_bot_username`, public).
-- Field 2: bot token (NOT saved in DB — saved to Supabase secret `TELEGRAM_BOT_TOKEN` via a small admin-only edge function `set-telegram-token` that calls the secrets API). Masked input.
-- Help block with @BotFather setup steps and the live domain.
+**Created**: `src/components/lesson/ProtectedVideo.tsx`, migration for `ai_chat_errors`, `profiles.preferred_language`, `courses.ai_system_prompt/ai_knowledge_paths`, `ai-knowledge` bucket, extended `get_public_setting` RPC.
 
-**Login flow:**
-- `/login` and `/signup` render 3 buttons: Google · Telegram · email/password.
-- Telegram button only renders when `telegram_bot_username` is set in `platform_settings` (fetched once on page load).
-- Mounts the official Telegram Login Widget script with `data-telegram-login`, `data-onauth="onTelegramAuth(user)"`. Global handler posts payload to edge function `telegram-auth`.
+**Edited**: `supabase/functions/study-assistant/index.ts`, `src/pages/LessonPage.tsx`, `src/components/TelegramLoginButton.tsx`, `src/pages/Login.tsx`, `src/pages/Signup.tsx`, `src/pages/Settings.tsx`, `src/pages/admin/AdminSettings.tsx`, `src/pages/admin/AdminCourseEditor.tsx`, `index.html`.
 
-**Edge function `telegram-auth`** (verify_jwt = false, public):
-1. Verify HMAC-SHA256 hash with `SHA-256(BOT_TOKEN)` as key over the data-check-string per Telegram docs. Reject if invalid or `auth_date` > 24h.
-2. Lookup `profiles` by `telegram_username` (citext, strip `@`).
-3. If found → save `telegram_id`, mint a magic link via `supabase.auth.admin.generateLink({ type: 'magiclink', email })`, return JSON `{ url }`. Frontend does `window.location = url` so the user lands signed in on `/dashboard`.
-4. If not found → return `{ error: "No account linked to @username — ask your admin to add you." }` shown as toast on the login page.
+## Blocked on you
 
-**Settings page**: add "Link Telegram" button that mounts the widget for the current user and just saves `telegram_id` + `telegram_username` to their profile (no magic link, since they're already signed in).
-
----
-
-## Phase E — VPS deploy guide
-
-New page `/admin/deploy`:
-- Top: "Connect to GitHub" CTA (links to Lovable's GitHub integration in project settings; we can't initiate it programmatically — the button opens the right Lovable dialog/URL).
-- Tabs: **Vercel** · **Netlify** · **Hostinger VPS (Coolify)** · **Cloudflare Pages**.
-- Each tab: ordered steps with copy-to-clipboard code blocks. Hostinger tab gets the full Coolify/Dokploy + Cloudflare-in-front recipe with env var list and the Caddy/nginx static-serve fallback.
-- Footer note: backend (auth, DB, storage, edge functions) stays on Lovable Cloud; only the React frontend is portable.
-
-Pure docs page — no backend changes.
-
----
-
-## Phase F — Performance for 500+ students, 30h video
-
-- Indexes (in Phase 0 migration).
-- React Query everywhere with `staleTime: 60_000` for course/module/lesson lists; mutations invalidate just the touched query.
-- Lesson sidebar fetches only the current course's modules (already does — verified; will keep with React Query).
-- Code-split admin routes via `React.lazy` + `Suspense` so students never download the editor bundle.
-- Bunny Stream / Mux HLS playback via `hls.js` (Phase A).
-- `lesson-thumbs` bucket gets `cacheControl: '31536000, immutable'` on upload.
-- Replace the N+1 in `Dashboard.tsx` (loops `await` per enrollment) with a single batched query using `in()` on lesson IDs grouped by course.
-
----
-
-## Phase G — Admin analytics dashboard
-
-`/admin/dashboard` becomes the new admin landing (replaces Overview tab). Built with **recharts**.
-
-Top stat row: Total students · Logins last 30d · Active (7d) · Course completions.
-
-Charts (all responsive grid):
-1. **Daily logins** area chart (last 30d) from `auth_events` where `event='sign_in'`. AuthContext appends a row on every successful `SIGNED_IN` event.
-2. **Daily active learners** line chart — distinct `user_id` from `lesson_progress.updated_at` per day.
-3. **Module engagement pie** — slice per module of selected course; size = distinct students with ≥1 completed lesson in that module. Soft palette, hover tooltip with % of enrolled.
-4. **Module completion funnel** bar chart — students who completed ALL lessons in each module, with red drop-off delta labels between bars.
-5. **Lessons completed per day** bar chart (last 30d).
-6. **Stuck students table** — last `lesson_progress` > 7 days AND course progress < 100%. Columns: name, last completed lesson, days idle, progress %, "Send re-engagement email" button (calls a new `send-reengagement-email` edge function using Lovable Emails / Resend default — will use the Lovable email-domain default sender; if none configured, button shows tooltip "Configure email domain first" and links to Cloud → Emails).
-7. **Per-module stuck-count** bar — count of students stuck on each module.
-
-Course selector at top filters all charts. All queries go through admin-scoped RPCs (SECURITY DEFINER) to avoid client-side aggregation against RLS.
-
----
-
-## Quality bars & self-test
-
-- Mobile-responsive at 375 / 768 / 1280 — verified on the new course editor, lesson drawer, Users table, dashboard charts.
-- Loading skeletons + sonner toasts on every mutation.
-- Inline form validation (zod where it matters).
-- `@dnd-kit` activates with touch sensors + 200ms long-press for mobile drag.
-- Existing seed course untouched — only `published` defaults change for *new* courses.
-- Existing auth and progress tracking unchanged.
-
-After build: I run the 9-step self-test you wrote (create Test Course Beta as draft → upload mp4 → publish → verify as student → promote to admin → CSV import with role+telegram → analytics renders → Telegram settings UI → deploy page renders), then publish.
-
----
-
-## What I'll need from you (after build, not blocking)
-
-- **Telegram bot token** — only if you want to actually test Telegram login end-to-end. UI will work without it.
-- **Bunny Stream or Mux account** — only if you want HLS streaming live now. The Embed tab works without it.
-- **Custom email sender domain** — only if you want re-engagement emails to send from your domain instead of the Lovable default.
-
-If you approve, I'll build it all in one go and then run the self-test.
+Nothing required to start — your Telegram bot already configured. Bunny/Mux DRM only if you want true screen-recording block (paid).
