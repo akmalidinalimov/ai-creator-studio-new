@@ -1,4 +1,4 @@
-// Admin-only: create or delete users. Supports telegram_username, role, multiple course enrollments.
+// Admin-only: create / delete users + send magic-link invites + audit logging.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -10,6 +10,7 @@ const corsHeaders = {
 
 type Student = {
   name?: string;
+  last_name?: string;
   email: string;
   password?: string;
   telegram_username?: string;
@@ -17,10 +18,30 @@ type Student = {
 };
 
 function genPassword(): string {
-  const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%";
   let out = "";
-  for (let i = 0; i < 12; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 18; i++) out += chars[Math.floor(Math.random() * chars.length)];
   return out;
+}
+
+async function logAdminAction(admin: any, actor_user_id: string, action: string, opts: {
+  target_user_id?: string;
+  target_resource_type?: string;
+  target_resource_id?: string;
+  details?: Record<string, unknown>;
+} = {}) {
+  try {
+    await admin.from("admin_actions").insert({
+      actor_user_id,
+      action,
+      target_user_id: opts.target_user_id ?? null,
+      target_resource_type: opts.target_resource_type ?? null,
+      target_resource_id: opts.target_resource_id ?? null,
+      details: opts.details ?? {},
+    });
+  } catch (e) {
+    console.error("admin_actions insert failed", e);
+  }
 }
 
 Deno.serve(async (req) => {
@@ -48,6 +69,7 @@ Deno.serve(async (req) => {
     if (!roleRow) {
       return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
+    const actorId = who.user.id;
 
     // DELETE: remove a user
     if (req.method === "DELETE") {
@@ -55,31 +77,65 @@ Deno.serve(async (req) => {
       if (!userId) return new Response(JSON.stringify({ error: "userId required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       const { error } = await admin.auth.admin.deleteUser(userId);
       if (error) return new Response(JSON.stringify({ error: error.message }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      await logAdminAction(admin, actorId, "remove_user", { target_user_id: userId });
       return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     const body = await req.json();
+    const action: string | undefined = body.action;
+
+    // Resend welcome / magic-link to existing user
+    if (action === "resend_welcome") {
+      const email: string = (body.email || "").trim().toLowerCase();
+      const redirectTo: string = body.redirectTo || `${SUPABASE_URL}`;
+      if (!email) return new Response(JSON.stringify({ error: "email required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const { data: linkData, error } = await admin.auth.admin.generateLink({
+        type: "magiclink",
+        email,
+        options: { redirectTo },
+      });
+      if (error) return new Response(JSON.stringify({ error: error.message }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      await logAdminAction(admin, actorId, "resend_welcome_email", { details: { email } });
+      return new Response(JSON.stringify({ ok: true, action_link: (linkData as any)?.properties?.action_link || null }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Clear soft-lockout for an email
+    if (action === "clear_lockout") {
+      const email: string = (body.email || "").trim().toLowerCase();
+      if (!email) return new Response(JSON.stringify({ error: "email required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const since = new Date(Date.now() - 30 * 60_000).toISOString();
+      await admin.from("login_attempts").delete().eq("kind", "email").eq("key", email).gte("created_at", since);
+      await logAdminAction(admin, actorId, "clear_lockout", { details: { email } });
+      return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     const students: Student[] = body.students;
     const courseId: string | undefined = body.courseId;
     const courseIds: string[] = Array.isArray(body.courseIds) ? body.courseIds : (courseId ? [courseId] : []);
+    const sendInvite: boolean = !!body.send_invite;
+    const redirectTo: string = body.redirectTo || `${SUPABASE_URL}/reset-password`;
+    const isCsvImport: boolean = !!body.csv_import;
 
     if (!Array.isArray(students) || students.length === 0) {
       return new Response(JSON.stringify({ error: "students[] required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const results: Array<{ email: string; status: string; password?: string; userId?: string; error?: string }> = [];
+    const results: Array<{ email: string; status: string; password?: string; userId?: string; error?: string; action_link?: string | null }> = [];
     for (const s of students) {
       const email = (s.email || "").trim().toLowerCase();
       if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
         results.push({ email: s.email, status: "invalid_email" });
         continue;
       }
-      const password = (s.password && s.password.length >= 6) ? s.password : genPassword();
+      const passwordProvided = !!(s.password && s.password.length >= 6);
+      const password = passwordProvided ? s.password! : genPassword();
       const { data: created, error } = await admin.auth.admin.createUser({
         email,
         password,
         email_confirm: true,
-        user_metadata: { name: s.name || email.split("@")[0] },
+        user_metadata: { name: s.name || email.split("@")[0], last_name: s.last_name || null },
       });
       if (error) {
         results.push({ email, status: "error", error: error.message });
@@ -87,15 +143,14 @@ Deno.serve(async (req) => {
       }
       const userId = created.user!.id;
       const profilePatch: Record<string, any> = { name: s.name || email.split("@")[0] };
+      if (s.last_name !== undefined) profilePatch.last_name = s.last_name || null;
       if (s.telegram_username) profilePatch.telegram_username = s.telegram_username.replace(/^@/, "");
       await admin.from("profiles").update(profilePatch).eq("id", userId);
 
-      // Role: trigger creates 'student' by default. If admin requested, add admin row.
       if (s.role === "admin") {
         await admin.from("user_roles").insert({ user_id: userId, role: "admin" });
       }
 
-      // Enrollments
       for (const cid of courseIds) {
         await admin.from("enrollments").upsert(
           { user_id: userId, course_id: cid },
@@ -103,7 +158,43 @@ Deno.serve(async (req) => {
         );
       }
 
-      results.push({ email, status: "created", userId, password });
+      // Magic-link invite if requested OR if no password was provided
+      let action_link: string | null = null;
+      if (sendInvite || !passwordProvided) {
+        try {
+          const { data: linkData } = await admin.auth.admin.generateLink({
+            type: "magiclink",
+            email,
+            options: { redirectTo },
+          });
+          action_link = (linkData as any)?.properties?.action_link || null;
+        } catch (e) {
+          console.error("generateLink failed for", email, e);
+        }
+      }
+
+      results.push({
+        email,
+        status: "created",
+        userId,
+        password: passwordProvided ? password : undefined,
+        action_link,
+      });
+    }
+
+    if (isCsvImport) {
+      await logAdminAction(admin, actorId, "csv_import_users", {
+        details: { total: students.length, created: results.filter((r) => r.status === "created").length },
+      });
+    } else {
+      // Single create
+      const created = results.find((r) => r.status === "created");
+      if (created) {
+        await logAdminAction(admin, actorId, "create_user", {
+          target_user_id: created.userId,
+          details: { email: created.email, role: students[0]?.role || "student" },
+        });
+      }
     }
 
     return new Response(JSON.stringify({ ok: true, results }), {

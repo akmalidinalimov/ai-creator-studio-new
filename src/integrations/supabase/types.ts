@@ -14,6 +14,39 @@ export type Database = {
   }
   public: {
     Tables: {
+      admin_actions: {
+        Row: {
+          action: string
+          actor_user_id: string
+          created_at: string
+          details: Json
+          id: string
+          target_resource_id: string | null
+          target_resource_type: string | null
+          target_user_id: string | null
+        }
+        Insert: {
+          action: string
+          actor_user_id: string
+          created_at?: string
+          details?: Json
+          id?: string
+          target_resource_id?: string | null
+          target_resource_type?: string | null
+          target_user_id?: string | null
+        }
+        Update: {
+          action?: string
+          actor_user_id?: string
+          created_at?: string
+          details?: Json
+          id?: string
+          target_resource_id?: string | null
+          target_resource_type?: string | null
+          target_user_id?: string | null
+        }
+        Relationships: []
+      }
       ai_chat_errors: {
         Row: {
           created_at: string
@@ -599,6 +632,33 @@ export type Database = {
           },
         ]
       }
+      login_attempts: {
+        Row: {
+          created_at: string
+          id: string
+          key: string
+          kind: string
+          success: boolean
+          user_agent: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          key: string
+          kind: string
+          success?: boolean
+          user_agent?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          key?: string
+          kind?: string
+          success?: boolean
+          user_agent?: string | null
+        }
+        Relationships: []
+      }
       modules: {
         Row: {
           course_id: string
@@ -662,6 +722,7 @@ export type Database = {
           email: string
           goals: string | null
           id: string
+          last_name: string | null
           name: string | null
           onboarding_completed: boolean | null
           preferred_language: string | null
@@ -678,6 +739,7 @@ export type Database = {
           email: string
           goals?: string | null
           id: string
+          last_name?: string | null
           name?: string | null
           onboarding_completed?: boolean | null
           preferred_language?: string | null
@@ -694,6 +756,7 @@ export type Database = {
           email?: string
           goals?: string | null
           id?: string
+          last_name?: string | null
           name?: string | null
           onboarding_completed?: boolean | null
           preferred_language?: string | null

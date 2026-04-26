@@ -5,10 +5,9 @@ import { lovable } from "@/integrations/lovable/index";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
+import { Loader2, Mail, Lock } from "lucide-react";
 import { TelegramLoginButton } from "@/components/TelegramLoginButton";
 
 const GoogleIcon = () => (
@@ -57,8 +56,11 @@ export default function Login() {
   const { user, role, loading: authLoading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [magic, setMagic] = useState(false);
+  const [magicMode, setMagicMode] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [lockedUntil, setLockedUntil] = useState<number | null>(null);
+  const [lockMessage, setLockMessage] = useState<string>("");
+  const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
     if (!authLoading && user) {
@@ -66,21 +68,90 @@ export default function Login() {
     }
   }, [user, role, authLoading, navigate]);
 
+  // Tick countdown
+  useEffect(() => {
+    if (!lockedUntil) return;
+    const t = setInterval(() => {
+      setNow(Date.now());
+      if (Date.now() >= lockedUntil) {
+        setLockedUntil(null);
+        setLockMessage("");
+      }
+    }, 1000);
+    return () => clearInterval(t);
+  }, [lockedUntil]);
+
+  const remainingMs = lockedUntil ? Math.max(0, lockedUntil - now) : 0;
+  const remainingMin = Math.floor(remainingMs / 60_000);
+  const remainingSec = Math.floor((remainingMs % 60_000) / 1000);
+
+  const callGuard = async (action: "check" | "record", body: Record<string, unknown> = {}) => {
+    try {
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/login-guard`;
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, email: email.trim().toLowerCase(), ...body }),
+      });
+      const data = await r.json();
+      return { status: r.status, data };
+    } catch {
+      return { status: 0, data: null };
+    }
+  };
+
   const onGoogle = async () => {
     setLoading(true);
     const r = await lovable.auth.signInWithOAuth("google", { redirect_uri: window.location.origin });
     if (r.error) { toast.error("Google sign in failed"); setLoading(false); }
   };
 
+  const onMagicLink = async () => {
+    if (!email) { toast.error("Enter your email first"); return; }
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: `${window.location.origin}/dashboard` },
+    });
+    setLoading(false);
+    if (error) toast.error(error.message);
+    else toast.success("Magic link sent! Check your email.");
+  };
+
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!email) return;
     setLoading(true);
-    if (magic) {
-      const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
-      if (error) toast.error(error.message); else toast.success("Check your email for a sign-in link");
-    } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) toast.error(error.message);
+
+    if (magicMode) {
+      await onMagicLink();
+      setLoading(false);
+      return;
+    }
+
+    // Check lockout BEFORE attempting password sign-in
+    const check = await callGuard("check");
+    if (check.status === 429 && check.data?.locked) {
+      setLockedUntil(check.data.locked_until_ms);
+      setLockMessage(check.data.message || "Account temporarily locked.");
+      toast.error(check.data.message);
+      setLoading(false);
+      return;
+    }
+
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+
+    // Record attempt (don't await — fire and forget for UX)
+    callGuard("record", { success: !error });
+
+    if (error) {
+      toast.error(error.message);
+      // Re-check lockout in case this attempt pushed us over the limit
+      const recheck = await callGuard("check");
+      if (recheck.status === 429 && recheck.data?.locked) {
+        setLockedUntil(recheck.data.locked_until_ms);
+        setLockMessage(recheck.data.message);
+      }
     }
     setLoading(false);
   };
@@ -102,19 +173,38 @@ export default function Login() {
     }
   };
 
+  const isLocked = lockedUntil !== null && remainingMs > 0;
+
   return (
     <AuthShell title="Welcome back" subtitle="Sign in to continue your learning.">
-      <Button variant="outline" className="w-full" onClick={onGoogle} disabled={loading}>
+      {isLocked && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-2">
+          <p className="text-sm font-medium text-destructive">{lockMessage}</p>
+          <p className="text-xs text-muted-foreground tabular-nums">
+            Try again in {String(remainingMin).padStart(2, "0")}:{String(remainingSec).padStart(2, "0")}
+          </p>
+          <Link to="/forgot-password" className="text-xs font-medium text-foreground underline underline-offset-2">
+            Reset your password instead →
+          </Link>
+        </div>
+      )}
+
+      <Button variant="outline" className="w-full" onClick={onGoogle} disabled={loading || isLocked}>
         <GoogleIcon /> Continue with Google
       </Button>
       <TelegramLoginButton onAuth={onTelegram} />
+      <Button variant="outline" className="w-full" onClick={onMagicLink} disabled={loading || isLocked || !email}>
+        <Mail className="h-4 w-4" /> Email me a sign-in link
+      </Button>
+
       <div className="relative my-2"><div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div><div className="relative flex justify-center text-xs uppercase"><span className="bg-background px-2 text-muted-foreground">or</span></div></div>
+
       <form onSubmit={onSubmit} className="space-y-4">
         <div className="space-y-1.5">
           <Label htmlFor="email">Email</Label>
           <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
         </div>
-        {!magic && (
+        {!magicMode && (
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <Label htmlFor="password">Password</Label>
@@ -123,13 +213,10 @@ export default function Login() {
             <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" />
           </div>
         )}
-        <div className="flex items-center gap-2">
-          <Checkbox id="magic" checked={magic} onCheckedChange={(v) => setMagic(!!v)} />
-          <Label htmlFor="magic" className="text-sm font-normal text-muted-foreground cursor-pointer">Email me a sign-in link instead</Label>
-        </div>
-        <Button type="submit" className="w-full" disabled={loading}>
+        <Button type="submit" className="w-full" disabled={loading || isLocked}>
           {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-          {magic ? "Send sign-in link" : "Sign in"}
+          <Lock className="h-4 w-4" />
+          Sign in with password
         </Button>
       </form>
       <p className="text-sm text-center text-muted-foreground">
