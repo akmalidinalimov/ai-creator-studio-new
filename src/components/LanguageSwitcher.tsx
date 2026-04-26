@@ -10,10 +10,29 @@ import {
 import { SUPPORTED_LANGUAGES, type LanguageCode } from "@/i18n";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import UZ from "country-flag-icons/react/3x2/UZ";
+import RU from "country-flag-icons/react/3x2/RU";
+import US from "country-flag-icons/react/3x2/US";
 
 interface Props {
   variant?: "icon" | "compact";
 }
+
+const FLAG_MAP: Record<LanguageCode, React.ComponentType<{ className?: string; title?: string }>> = {
+  uz: UZ,
+  ru: RU,
+  en: US,
+};
+
+const Flag = ({ code, className }: { code: LanguageCode; className?: string }) => {
+  const Component = FLAG_MAP[code];
+  return (
+    <Component
+      className={`inline-block rounded-[2px] shadow-sm ring-1 ring-black/10 ${className ?? ""}`}
+      title={code.toUpperCase()}
+    />
+  );
+};
 
 export const LanguageSwitcher = ({ variant = "icon" }: Props) => {
   const { i18n } = useTranslation();
@@ -42,11 +61,11 @@ export const LanguageSwitcher = ({ variant = "icon" }: Props) => {
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
-          size={variant === "icon" ? "sm" : "sm"}
+          size="sm"
           className="gap-1.5 px-2"
           aria-label="Change language"
         >
-          <span className="text-base leading-none">{currentLang.flag}</span>
+          <Flag code={currentLang.code} className="h-4 w-6" />
           <span className="text-xs font-medium">{currentLang.short}</span>
         </Button>
       </DropdownMenuTrigger>
@@ -58,7 +77,7 @@ export const LanguageSwitcher = ({ variant = "icon" }: Props) => {
             className="flex items-center justify-between gap-2"
           >
             <span className="flex items-center gap-2">
-              <span className="text-base leading-none">{lang.flag}</span>
+              <Flag code={lang.code} className="h-4 w-6" />
               <span>{lang.label}</span>
               <span className="text-xs text-muted-foreground">({lang.short})</span>
             </span>
