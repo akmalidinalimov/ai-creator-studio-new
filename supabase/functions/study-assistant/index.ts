@@ -207,8 +207,9 @@ Deno.serve(async (req) => {
 
     if (!upstream) {
       await logError(admin, { user_id: userId, lesson_id: lessonIdGlobal, model: "all", status: lastStatus, error_excerpt: lastBody });
+      const lastEntry = MODEL_CHAIN[MODEL_CHAIN.length - 1];
       await recordMetric(admin, {
-        user_id: userId, lesson_id: lessonIdGlobal, model: MODEL_CHAIN[MODEL_CHAIN.length - 1],
+        user_id: userId, lesson_id: lessonIdGlobal, model: `${lastEntry.provider}:${lastEntry.model}`,
         attempts: totalAttempts, fallback_used: true, success: false, status: lastStatus,
         latency_ms: Date.now() - startedAt, language: langCode,
       });
