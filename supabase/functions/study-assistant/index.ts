@@ -61,11 +61,21 @@ async function retrieveKnowledge(admin: any, apiKey: string, query: string, cour
     .join("\n\n---\n\n");
 }
 
-async function callUpstream(model: string, apiKey: string, messages: any[]) {
+async function callUpstream(entry: ModelEntry, lovableKey: string, openaiKey: string | undefined, messages: any[]) {
+  if (entry.provider === "openai") {
+    if (!openaiKey) {
+      return new Response("OpenAI key missing", { status: 401 });
+    }
+    return await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: entry.model, messages, stream: true }),
+    });
+  }
   return await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages, stream: true }),
+    headers: { Authorization: `Bearer ${lovableKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: entry.model, messages, stream: true }),
   });
 }
 
