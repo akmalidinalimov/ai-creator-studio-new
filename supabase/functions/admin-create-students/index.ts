@@ -1,14 +1,20 @@
-// Admin-only: create one or many students, optionally enroll in a course.
-// Verifies the caller is an admin via the user_roles table.
+// Admin-only: create or delete users. Supports telegram_username, role, multiple course enrollments.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-type Student = { name?: string; email: string; password?: string };
+type Student = {
+  name?: string;
+  email: string;
+  password?: string;
+  telegram_username?: string;
+  role?: "student" | "admin";
+};
 
 function genPassword(): string {
   const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -43,7 +49,20 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const { students, courseId } = (await req.json()) as { students: Student[]; courseId?: string };
+    // DELETE: remove a user
+    if (req.method === "DELETE") {
+      const { userId } = await req.json();
+      if (!userId) return new Response(JSON.stringify({ error: "userId required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const { error } = await admin.auth.admin.deleteUser(userId);
+      if (error) return new Response(JSON.stringify({ error: error.message }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    const body = await req.json();
+    const students: Student[] = body.students;
+    const courseId: string | undefined = body.courseId;
+    const courseIds: string[] = Array.isArray(body.courseIds) ? body.courseIds : (courseId ? [courseId] : []);
+
     if (!Array.isArray(students) || students.length === 0) {
       return new Response(JSON.stringify({ error: "students[] required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -67,14 +86,23 @@ Deno.serve(async (req) => {
         continue;
       }
       const userId = created.user!.id;
-      // Ensure profile name updated
-      await admin.from("profiles").update({ name: s.name || email.split("@")[0] }).eq("id", userId);
-      if (courseId) {
+      const profilePatch: Record<string, any> = { name: s.name || email.split("@")[0] };
+      if (s.telegram_username) profilePatch.telegram_username = s.telegram_username.replace(/^@/, "");
+      await admin.from("profiles").update(profilePatch).eq("id", userId);
+
+      // Role: trigger creates 'student' by default. If admin requested, add admin row.
+      if (s.role === "admin") {
+        await admin.from("user_roles").insert({ user_id: userId, role: "admin" });
+      }
+
+      // Enrollments
+      for (const cid of courseIds) {
         await admin.from("enrollments").upsert(
-          { user_id: userId, course_id: courseId },
+          { user_id: userId, course_id: cid },
           { onConflict: "user_id,course_id" },
         );
       }
+
       results.push({ email, status: "created", userId, password });
     }
 
