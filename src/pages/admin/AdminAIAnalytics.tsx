@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Layout } from "@/components/Layout";
+import { PageShell } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
