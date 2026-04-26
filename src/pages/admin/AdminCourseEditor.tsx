@@ -355,10 +355,10 @@ function SortableLesson({ lesson: l, index, onEdit }: { lesson: Lesson; index: n
 }
 
 function CourseAIOverride({ courseId, initial, onSaved }: { courseId: string; initial: any; onSaved: (p: any) => void }) {
-  const [enabled, setEnabled] = (require("react") as typeof import("react")).useState(!!(initial?.ai_system_prompt || (initial?.ai_knowledge_paths || []).length));
-  const [prompt, setPrompt] = (require("react") as typeof import("react")).useState<string>(initial?.ai_system_prompt || "");
-  const [paths, setPaths] = (require("react") as typeof import("react")).useState<string[]>(initial?.ai_knowledge_paths || []);
-  const [busy, setBusy] = (require("react") as typeof import("react")).useState(false);
+  const [enabled, setEnabled] = useState(!!(initial?.ai_system_prompt || (initial?.ai_knowledge_paths || []).length));
+  const [prompt, setPrompt] = useState<string>(initial?.ai_system_prompt || "");
+  const [paths, setPaths] = useState<string[]>(initial?.ai_knowledge_paths || []);
+  const [busy, setBusy] = useState(false);
 
   const save = async () => {
     setBusy(true);
