@@ -12,8 +12,10 @@ export function TelegramLoginButton({ onAuth, size = "large" }: Props) {
   const [botUsername, setBotUsername] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.from("platform_settings").select("value").eq("key", "telegram").maybeSingle().then(({ data }) => {
-      const u = (data?.value as any)?.bot_username as string | undefined;
+    // Uses a SECURITY DEFINER RPC that returns ONLY non-secret fields (bot_username).
+    // The bot_token is never exposed to non-admin clients.
+    supabase.rpc("get_public_setting", { _key: "telegram" }).then(({ data }) => {
+      const u = (data as any)?.bot_username as string | undefined;
       if (u) setBotUsername(u.replace(/^@/, ""));
     });
   }, []);
