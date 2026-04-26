@@ -219,6 +219,9 @@ export default function AdminCourseEditor() {
           </div>
         </Card>
 
+        {/* Per-course AI override */}
+        <CourseAIOverride courseId={courseId!} initial={course} onSaved={(patch) => setCourse((c: any) => ({ ...c, ...patch }))} />
+
         {/* Modules */}
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onModuleDragEnd}>
           <SortableContext items={modules.map((m) => m.id)} strategy={verticalListSortingStrategy}>
