@@ -49,6 +49,33 @@ export type Database = {
           },
         ]
       }
+      auth_events: {
+        Row: {
+          created_at: string
+          event: string
+          id: string
+          ip: string | null
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          event: string
+          id?: string
+          ip?: string | null
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          event?: string
+          id?: string
+          ip?: string | null
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       courses: {
         Row: {
           cover_url: string | null
@@ -334,9 +361,13 @@ export type Database = {
           id: string
           module_id: string
           position: number
+          provider_video_id: string | null
+          published: boolean
           resources: Json | null
+          thumbnail_path: string | null
           title: string
           transcript: string | null
+          video_provider: string
           video_storage_path: string | null
           video_url: string | null
         }
@@ -347,9 +378,13 @@ export type Database = {
           id?: string
           module_id: string
           position?: number
+          provider_video_id?: string | null
+          published?: boolean
           resources?: Json | null
+          thumbnail_path?: string | null
           title: string
           transcript?: string | null
+          video_provider?: string
           video_storage_path?: string | null
           video_url?: string | null
         }
@@ -360,9 +395,13 @@ export type Database = {
           id?: string
           module_id?: string
           position?: number
+          provider_video_id?: string | null
+          published?: boolean
           resources?: Json | null
+          thumbnail_path?: string | null
           title?: string
           transcript?: string | null
+          video_provider?: string
           video_storage_path?: string | null
           video_url?: string | null
         }
@@ -411,6 +450,27 @@ export type Database = {
           },
         ]
       }
+      platform_settings: {
+        Row: {
+          key: string
+          updated_at: string
+          updated_by: string | null
+          value: Json
+        }
+        Insert: {
+          key: string
+          updated_at?: string
+          updated_by?: string | null
+          value: Json
+        }
+        Update: {
+          key?: string
+          updated_at?: string
+          updated_by?: string | null
+          value?: Json
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -421,6 +481,8 @@ export type Database = {
           name: string | null
           onboarding_completed: boolean | null
           status: Database["public"]["Enums"]["user_status"]
+          telegram_id: number | null
+          telegram_username: string | null
           timezone: string | null
           updated_at: string
           weekly_goal_lessons: number | null
@@ -434,6 +496,8 @@ export type Database = {
           name?: string | null
           onboarding_completed?: boolean | null
           status?: Database["public"]["Enums"]["user_status"]
+          telegram_id?: number | null
+          telegram_username?: string | null
           timezone?: string | null
           updated_at?: string
           weekly_goal_lessons?: number | null
@@ -447,6 +511,8 @@ export type Database = {
           name?: string | null
           onboarding_completed?: boolean | null
           status?: Database["public"]["Enums"]["user_status"]
+          telegram_id?: number | null
+          telegram_username?: string | null
           timezone?: string | null
           updated_at?: string
           weekly_goal_lessons?: number | null
@@ -576,6 +642,31 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      admin_course_progress: {
+        Args: { _course_id: string }
+        Returns: {
+          completed_count: number
+          last_activity: string
+          pct: number
+          total_count: number
+          user_id: string
+        }[]
+      }
+      admin_list_users: {
+        Args: never
+        Returns: {
+          avatar_url: string
+          created_at: string
+          email: string
+          id: string
+          is_admin: boolean
+          last_sign_in_at: string
+          name: string
+          status: Database["public"]["Enums"]["user_status"]
+          telegram_id: number
+          telegram_username: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
