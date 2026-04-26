@@ -1,1 +1,13 @@
 project_id = "wpdztrijasgmxgliwddr"
+
+[functions.bootstrap-seed-users]
+verify_jwt = false
+
+[functions.study-assistant]
+verify_jwt = true
+
+[functions.admin-create-students]
+verify_jwt = true
+
+[functions.lesson-video-url]
+verify_jwt = true
