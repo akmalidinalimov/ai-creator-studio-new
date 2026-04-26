@@ -268,6 +268,11 @@ Deno.serve(async (req) => {
   } catch (e) {
     console.error("study-assistant error", e);
     await logError(admin, { user_id: userId, lesson_id: lessonIdGlobal, model: "n/a", status: 0, error_excerpt: String(e).slice(0, 500) });
+    await recordMetric(admin, {
+      user_id: userId, lesson_id: lessonIdGlobal, model: "n/a",
+      attempts: 0, fallback_used: false, success: false, status: 0,
+      latency_ms: 0, language: null,
+    });
     return new Response(JSON.stringify({
       error: e instanceof Error ? e.message : String(e),
       retryable: true, fallback: true,
