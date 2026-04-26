@@ -85,11 +85,29 @@ export default function Login() {
     setLoading(false);
   };
 
+  const onTelegram = async (tg: any) => {
+    setLoading(true);
+    try {
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-auth`;
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tg, redirectTo: `${window.location.origin}/dashboard` }),
+      });
+      const res = await r.json();
+      if (res?.url) { window.location.href = res.url; return; }
+      toast.error(res?.error || "Telegram sign-in failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <AuthShell title="Welcome back" subtitle="Sign in to continue your learning.">
       <Button variant="outline" className="w-full" onClick={onGoogle} disabled={loading}>
         <GoogleIcon /> Continue with Google
       </Button>
+      <TelegramLoginButton onAuth={onTelegram} />
       <div className="relative my-2"><div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div><div className="relative flex justify-center text-xs uppercase"><span className="bg-background px-2 text-muted-foreground">or</span></div></div>
       <form onSubmit={onSubmit} className="space-y-4">
         <div className="space-y-1.5">
