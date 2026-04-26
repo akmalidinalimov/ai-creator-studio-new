@@ -140,8 +140,7 @@ export function TelegramLoginButton({
         <TooltipTrigger asChild>
           <Button
             type="button"
-            variant="outline"
-            className="w-full opacity-60 cursor-not-allowed"
+            className="w-full bg-[#229ED9] hover:bg-[#229ED9] text-white border-transparent opacity-60 cursor-not-allowed"
             onClick={(e) => { e.preventDefault(); toast.message(TG_NOT_CONFIGURED_MSG); }}
           >
             <TelegramIcon /> {fallbackLabel}
