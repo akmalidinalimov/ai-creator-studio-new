@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
@@ -16,6 +17,7 @@ interface CourseRow {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const { t } = useTranslation();
   const [courses, setCourses] = useState<CourseRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [streak, setStreak] = useState(0);
@@ -32,7 +34,7 @@ export default function Dashboard() {
       const first = (profile?.name || "").trim();
       const last = ((profile as any)?.last_name || "").trim();
       const full = [first, last].filter(Boolean).join(" ");
-      setDisplayName(full || first || "there");
+      setDisplayName(full || first || t("dashboard.there"));
       setStreak(streakRow?.current_streak || 0);
 
       const rows: CourseRow[] = [];
@@ -69,13 +71,13 @@ export default function Dashboard() {
       <div className="space-y-8">
         <div className="flex items-end justify-between flex-wrap gap-4">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Welcome back, {displayName}</h1>
-            <p className="text-muted-foreground mt-1">Pick up where you left off.</p>
+            <h1 className="text-3xl font-semibold tracking-tight">{t("dashboard.welcome", { name: displayName })}</h1>
+            <p className="text-muted-foreground mt-1">{t("dashboard.pickUp")}</p>
           </div>
           <div className="flex items-center gap-2 px-4 py-2 rounded-lg border bg-card shadow-soft">
             <Flame className="h-4 w-4 text-orange-500" />
             <span className="font-semibold tabular-nums">{streak}</span>
-            <span className="text-sm text-muted-foreground">day streak</span>
+            <span className="text-sm text-muted-foreground">{t("dashboard.dayStreak")}</span>
           </div>
         </div>
 
@@ -84,7 +86,7 @@ export default function Dashboard() {
             {[0, 1].map((i) => <Skeleton key={i} className="h-48 rounded-xl" />)}
           </div>
         ) : courses.length === 0 ? (
-          <Card className="p-10 text-center"><p className="text-muted-foreground">No courses yet.</p></Card>
+          <Card className="p-10 text-center"><p className="text-muted-foreground">{t("dashboard.noCourses")}</p></Card>
         ) : (
           <div className="grid md:grid-cols-2 gap-5">
             {courses.map((c) => {
@@ -95,14 +97,14 @@ export default function Dashboard() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
                         <BookOpen className="h-3.5 w-3.5" />
-                        <span>{c.duration_hours}h • {c.total} lessons</span>
+                        <span>{c.duration_hours}h • {c.total} {t("dashboard.lessons")}</span>
                       </div>
                       <h3 className="text-xl font-semibold tracking-tight">{c.title}</h3>
                       <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{c.tagline}</p>
                     </div>
                     <div className="text-right">
                       <div className="text-2xl font-semibold tabular-nums">{pct}%</div>
-                      <div className="text-xs text-muted-foreground">complete</div>
+                      <div className="text-xs text-muted-foreground">{t("dashboard.complete")}</div>
                     </div>
                   </div>
                   <Progress value={pct} className="mt-4 h-1.5" />
@@ -110,11 +112,11 @@ export default function Dashboard() {
                     <Button asChild variant="default" size="sm">
                       <Link to={c.nextLessonId ? `/lesson/${c.id}/${c.nextLessonId}` : `/course/${c.id}`}>
                         <PlayCircle className="h-4 w-4" />
-                        {c.completed === 0 ? "Start course" : pct === 100 ? "Review" : "Continue learning"}
+                        {c.completed === 0 ? t("dashboard.startCourse") : pct === 100 ? t("dashboard.review") : t("dashboard.continueLearning")}
                       </Link>
                     </Button>
                     <Button asChild variant="ghost" size="sm">
-                      <Link to={`/course/${c.id}`}>Course page <ArrowRight className="h-4 w-4" /></Link>
+                      <Link to={`/course/${c.id}`}>{t("dashboard.coursePage")} <ArrowRight className="h-4 w-4" /></Link>
                     </Button>
                   </div>
                 </Card>
