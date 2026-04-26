@@ -33,33 +33,29 @@ export function TelegramLoginButton({
   fallbackLabel = "Telegram Bilan Kirish",
 }: Props) {
   const [botUsername, setBotUsername] = useState<string | null>(null);
+  const [botId, setBotId] = useState<string | null>(null);
   const [resolved, setResolved] = useState(false);
   const [opening, setOpening] = useState(false);
 
   useEffect(() => {
     supabase.rpc("get_public_setting", { _key: "telegram" }).then(({ data }) => {
       const u = (data as any)?.bot_username as string | undefined;
+      const id = (data as any)?.bot_id as string | undefined;
       if (u && u.trim()) setBotUsername(u.replace(/^@/, ""));
+      if (id && /^\d+$/.test(id.trim())) setBotId(id.trim());
       setResolved(true);
     });
   }, []);
 
   const openTelegramAuth = () => {
-    if (!botUsername) return;
+    if (!botId) return;
     setOpening(true);
 
     const origin = window.location.origin;
-    const params = new URLSearchParams({
-      bot_id: "", // Telegram resolves bot_id from domain when using username flow below
-      origin,
-      embed: "0",
-      request_access: "write",
-      return_to: origin,
-    });
-    // Telegram supports username-based auth via the /auth/?bot=... path
-    const url = `https://oauth.telegram.org/auth?bot=${encodeURIComponent(
-      botUsername,
-    )}&origin=${encodeURIComponent(origin)}&request_access=write&return_to=${encodeURIComponent(origin)}`;
+    // Telegram's OAuth page requires the numeric bot_id (digits before ":" in the bot token).
+    const url = `https://oauth.telegram.org/auth?bot_id=${encodeURIComponent(
+      botId,
+    )}&origin=${encodeURIComponent(origin)}&embed=0&request_access=write&return_to=${encodeURIComponent(origin)}`;
 
     const w = 550;
     const h = 470;
