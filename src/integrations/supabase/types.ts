@@ -79,6 +79,48 @@ export type Database = {
           },
         ]
       }
+      ai_chat_metrics: {
+        Row: {
+          attempts: number
+          created_at: string
+          fallback_used: boolean
+          id: string
+          language: string | null
+          latency_ms: number
+          lesson_id: string | null
+          model: string | null
+          status: number | null
+          success: boolean
+          user_id: string | null
+        }
+        Insert: {
+          attempts?: number
+          created_at?: string
+          fallback_used?: boolean
+          id?: string
+          language?: string | null
+          latency_ms?: number
+          lesson_id?: string | null
+          model?: string | null
+          status?: number | null
+          success?: boolean
+          user_id?: string | null
+        }
+        Update: {
+          attempts?: number
+          created_at?: string
+          fallback_used?: boolean
+          id?: string
+          language?: string | null
+          latency_ms?: number
+          lesson_id?: string | null
+          model?: string | null
+          status?: number | null
+          success?: boolean
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       auth_events: {
         Row: {
           created_at: string
