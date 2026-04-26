@@ -150,16 +150,24 @@ Deno.serve(async (req) => {
     ];
 
     // Try each model; for each model, retry up to 3 times with backoff on 5xx/429
+    const startedAt = Date.now();
     let upstream: Response | null = null;
     let lastStatus = 0; let lastBody = ""; let usedModel = "";
+    let totalAttempts = 0;
     outer: for (const model of MODEL_CHAIN) {
       for (let attempt = 0; attempt < 3; attempt++) {
+        totalAttempts++;
         const r = await callUpstream(model, LOVABLE_API_KEY, messages);
         if (r.ok) { upstream = r; usedModel = model; break outer; }
         lastStatus = r.status;
         lastBody = (await r.text()).slice(0, 500);
         if (r.status === 402) {
           await logError(admin, { user_id: userId, lesson_id: lessonIdGlobal, model, status: 402, error_excerpt: lastBody });
+          await recordMetric(admin, {
+            user_id: userId, lesson_id: lessonIdGlobal, model, attempts: totalAttempts,
+            fallback_used: model !== MODEL_CHAIN[0], success: false, status: 402,
+            latency_ms: Date.now() - startedAt, language: langCode,
+          });
           return new Response(JSON.stringify({ error: "AI credits exhausted. Add credits in workspace settings.", retryable: false }), {
             status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
@@ -176,12 +184,24 @@ Deno.serve(async (req) => {
 
     if (!upstream) {
       await logError(admin, { user_id: userId, lesson_id: lessonIdGlobal, model: "all", status: lastStatus, error_excerpt: lastBody });
+      await recordMetric(admin, {
+        user_id: userId, lesson_id: lessonIdGlobal, model: MODEL_CHAIN[MODEL_CHAIN.length - 1],
+        attempts: totalAttempts, fallback_used: true, success: false, status: lastStatus,
+        latency_ms: Date.now() - startedAt, language: langCode,
+      });
       return new Response(JSON.stringify({
         error: "AI tutor is busy",
         hint: "All models returned errors. Please try again in a moment.",
         retryable: true, fallback: true,
       }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
+
+    // Success metric (latency = time to first byte / headers)
+    await recordMetric(admin, {
+      user_id: userId, lesson_id: lessonIdGlobal, model: usedModel,
+      attempts: totalAttempts, fallback_used: usedModel !== MODEL_CHAIN[0], success: true,
+      status: 200, latency_ms: Date.now() - startedAt, language: langCode,
+    });
 
     // Tee stream: one to client, one for capture + persistence
     const [streamA, streamB] = upstream.body!.tee();
