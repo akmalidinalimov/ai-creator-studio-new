@@ -7,10 +7,13 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const MODEL_CHAIN = [
-  "google/gemini-3-flash-preview",
-  "google/gemini-2.5-flash",
-  "google/gemini-2.5-flash-lite",
+// Primary: OpenAI GPT-5 mini via direct OpenAI API (uses OpenAI_AIStudentSupport secret).
+// Fallbacks: Lovable AI gateway models (use LOVABLE_API_KEY) if OpenAI fails.
+type ModelEntry = { provider: "openai" | "lovable"; model: string };
+const MODEL_CHAIN: ModelEntry[] = [
+  { provider: "openai", model: "gpt-5-mini" },
+  { provider: "lovable", model: "google/gemini-3-flash-preview" },
+  { provider: "lovable", model: "google/gemini-2.5-flash" },
 ];
 
 const LANG_NAMES: Record<string, string> = {
@@ -58,11 +61,21 @@ async function retrieveKnowledge(admin: any, apiKey: string, query: string, cour
     .join("\n\n---\n\n");
 }
 
-async function callUpstream(model: string, apiKey: string, messages: any[]) {
+async function callUpstream(entry: ModelEntry, lovableKey: string, openaiKey: string | undefined, messages: any[]) {
+  if (entry.provider === "openai") {
+    if (!openaiKey) {
+      return new Response("OpenAI key missing", { status: 401 });
+    }
+    return await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: entry.model, messages, stream: true }),
+    });
+  }
   return await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages, stream: true }),
+    headers: { Authorization: `Bearer ${lovableKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: entry.model, messages, stream: true }),
   });
 }
 
@@ -77,8 +90,9 @@ Deno.serve(async (req) => {
   let lessonIdGlobal: string | null = null;
 
   try {
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY missing");
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY") || "";
+    const OPENAI_API_KEY = Deno.env.get("OpenAI_AIStudentSupport") || Deno.env.get("OPENAI_API_KEY") || "";
+    if (!LOVABLE_API_KEY && !OPENAI_API_KEY) throw new Error("No AI provider key configured");
 
     const authHeader = req.headers.get("Authorization") || "";
     const jwt = authHeader.replace("Bearer ", "");
@@ -160,18 +174,21 @@ Deno.serve(async (req) => {
     let upstream: Response | null = null;
     let lastStatus = 0; let lastBody = ""; let usedModel = "";
     let totalAttempts = 0;
-    outer: for (const model of MODEL_CHAIN) {
+    outer: for (const entry of MODEL_CHAIN) {
+      if (entry.provider === "openai" && !OPENAI_API_KEY) continue;
+      if (entry.provider === "lovable" && !LOVABLE_API_KEY) continue;
+      const modelLabel = `${entry.provider}:${entry.model}`;
       for (let attempt = 0; attempt < 3; attempt++) {
         totalAttempts++;
-        const r = await callUpstream(model, LOVABLE_API_KEY, messages);
-        if (r.ok) { upstream = r; usedModel = model; break outer; }
+        const r = await callUpstream(entry, LOVABLE_API_KEY, OPENAI_API_KEY, messages);
+        if (r.ok) { upstream = r; usedModel = modelLabel; break outer; }
         lastStatus = r.status;
         lastBody = (await r.text()).slice(0, 500);
         if (r.status === 402) {
-          await logError(admin, { user_id: userId, lesson_id: lessonIdGlobal, model, status: 402, error_excerpt: lastBody });
+          await logError(admin, { user_id: userId, lesson_id: lessonIdGlobal, model: modelLabel, status: 402, error_excerpt: lastBody });
           await recordMetric(admin, {
-            user_id: userId, lesson_id: lessonIdGlobal, model, attempts: totalAttempts,
-            fallback_used: model !== MODEL_CHAIN[0], success: false, status: 402,
+            user_id: userId, lesson_id: lessonIdGlobal, model: modelLabel, attempts: totalAttempts,
+            fallback_used: entry !== MODEL_CHAIN[0], success: false, status: 402,
             latency_ms: Date.now() - startedAt, language: langCode,
           });
           return new Response(JSON.stringify({ error: "AI credits exhausted. Add credits in workspace settings.", retryable: false }), {
@@ -183,15 +200,16 @@ Deno.serve(async (req) => {
           continue;
         }
         // Non-retryable client error
-        await logError(admin, { user_id: userId, lesson_id: lessonIdGlobal, model, status: r.status, error_excerpt: lastBody });
+        await logError(admin, { user_id: userId, lesson_id: lessonIdGlobal, model: modelLabel, status: r.status, error_excerpt: lastBody });
         break;
       }
     }
 
     if (!upstream) {
       await logError(admin, { user_id: userId, lesson_id: lessonIdGlobal, model: "all", status: lastStatus, error_excerpt: lastBody });
+      const lastEntry = MODEL_CHAIN[MODEL_CHAIN.length - 1];
       await recordMetric(admin, {
-        user_id: userId, lesson_id: lessonIdGlobal, model: MODEL_CHAIN[MODEL_CHAIN.length - 1],
+        user_id: userId, lesson_id: lessonIdGlobal, model: `${lastEntry.provider}:${lastEntry.model}`,
         attempts: totalAttempts, fallback_used: true, success: false, status: lastStatus,
         latency_ms: Date.now() - startedAt, language: langCode,
       });
@@ -205,7 +223,7 @@ Deno.serve(async (req) => {
     // Success metric (latency = time to first byte / headers)
     await recordMetric(admin, {
       user_id: userId, lesson_id: lessonIdGlobal, model: usedModel,
-      attempts: totalAttempts, fallback_used: usedModel !== MODEL_CHAIN[0], success: true,
+      attempts: totalAttempts, fallback_used: usedModel !== `${MODEL_CHAIN[0].provider}:${MODEL_CHAIN[0].model}`, success: true,
       status: 200, latency_ms: Date.now() - startedAt, language: langCode,
     });
 
