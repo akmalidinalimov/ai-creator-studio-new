@@ -112,7 +112,6 @@ export function TelegramLoginButton({
     }, 500);
 
     window.addEventListener("message", onMessage);
-    void params; // retain for future flag tweaks
   };
 
   if (!resolved) {
@@ -120,7 +119,8 @@ export function TelegramLoginButton({
     return <div className="h-10" />;
   }
 
-  if (botUsername) {
+  if (botId) {
+    void botUsername;
     return (
       <Button
         type="button"
