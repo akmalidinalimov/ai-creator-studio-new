@@ -44,12 +44,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     // Set up listener FIRST
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
       setUser(s?.user ?? null);
       if (s?.user) {
         // defer DB call
         setTimeout(() => loadRole(s.user.id), 0);
+        if (event === "SIGNED_IN") {
+          setTimeout(() => {
+            supabase.from("auth_events").insert({
+              user_id: s.user.id,
+              event: "sign_in",
+              user_agent: navigator.userAgent.slice(0, 200),
+            } as any).then(() => {});
+          }, 0);
+        }
       } else {
         setRole(null);
       }
