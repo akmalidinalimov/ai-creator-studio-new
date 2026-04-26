@@ -27,6 +27,10 @@ async function logError(admin: any, row: any) {
   try { await admin.from("ai_chat_errors").insert(row); } catch (_) {}
 }
 
+async function recordMetric(admin: any, row: any) {
+  try { await admin.from("ai_chat_metrics").insert(row); } catch (_) {}
+}
+
 async function readKnowledgeText(admin: any, paths: string[]): Promise<string> {
   if (!paths || paths.length === 0) return "";
   const chunks: string[] = [];
