@@ -214,7 +214,6 @@ export default function AdminSettings() {
             </ul>
           </div>
         </Card>
-        </Card>
 
         <AIAssistantCard userId={user?.id} />
         <ContentProtectionCard userId={user?.id} />
