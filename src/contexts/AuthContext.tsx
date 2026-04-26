@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import i18n from "@/i18n";
 
 type AppRole = "admin" | "student";
 
@@ -50,6 +51,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (s?.user) {
         // defer DB call
         setTimeout(() => loadRole(s.user.id), 0);
+        // Sync preferred language from profile
+        setTimeout(() => {
+          supabase
+            .from("profiles")
+            .select("preferred_language")
+            .eq("id", s.user.id)
+            .maybeSingle()
+            .then(({ data }) => {
+              const lng = (data as any)?.preferred_language;
+              if (lng && ["uz", "ru", "en"].includes(lng) && i18n.language !== lng) {
+                i18n.changeLanguage(lng);
+              }
+            });
+        }, 0);
         if (event === "SIGNED_IN") {
           setTimeout(() => {
             // Server-side capture (gets real IP from request headers)
