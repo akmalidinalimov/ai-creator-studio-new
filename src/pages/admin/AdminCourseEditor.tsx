@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LessonDrawer } from "@/components/admin/LessonDrawer";
 import { ModuleQuizEditor } from "@/components/admin/ModuleQuizEditor";
+import { KnowledgeManager } from "@/components/admin/KnowledgeManager";
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor, TouchSensor, useSensor, useSensors, DragEndEvent,
 } from "@dnd-kit/core";
@@ -355,59 +356,52 @@ function SortableLesson({ lesson: l, index, onEdit }: { lesson: Lesson; index: n
 }
 
 function CourseAIOverride({ courseId, initial, onSaved }: { courseId: string; initial: any; onSaved: (p: any) => void }) {
-  const [enabled, setEnabled] = useState(!!(initial?.ai_system_prompt || (initial?.ai_knowledge_paths || []).length));
+  const [enabled, setEnabled] = useState(!!initial?.ai_system_prompt);
   const [prompt, setPrompt] = useState<string>(initial?.ai_system_prompt || "");
-  const [paths, setPaths] = useState<string[]>(initial?.ai_knowledge_paths || []);
   const [busy, setBusy] = useState(false);
 
   const save = async () => {
     setBusy(true);
-    const patch = { ai_system_prompt: enabled ? prompt : null, ai_knowledge_paths: enabled ? paths : [] };
+    const patch = { ai_system_prompt: enabled ? prompt : null };
     const { error } = await (supabase.from("courses") as any).update(patch).eq("id", courseId);
     setBusy(false);
     if (error) return toast.error(error.message);
     onSaved(patch);
-    toast.success("Course AI override saved");
-  };
-
-  const upload = async (file: File) => {
-    const path = `course-${courseId}/${Date.now()}-${file.name.replace(/[^a-z0-9._-]/gi, "_")}`;
-    const { error } = await supabase.storage.from("ai-knowledge").upload(path, file, { upsert: false });
-    if (error) return toast.error(error.message);
-    setPaths((p) => [...p, path]);
-    toast.success("Uploaded");
+    toast.success("Course AI prompt saved");
   };
 
   return (
     <Card className="p-5 shadow-soft space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="font-semibold">AI Assistant (course override)</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">Use a custom system prompt and knowledge files for this course only.</p>
+          <h3 className="font-semibold">AI Assistant — course override</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Custom system prompt for this course. Course-specific knowledge files below are always active and merged with the platform-wide library.
+          </p>
         </div>
-        <label className="flex items-center gap-2 text-sm"><Switch checked={enabled} onCheckedChange={setEnabled} /> {enabled ? "On" : "Off"}</label>
+        <label className="flex items-center gap-2 text-sm">
+          <Switch checked={enabled} onCheckedChange={setEnabled} /> Custom prompt {enabled ? "on" : "off"}
+        </label>
       </div>
       {enabled && (
         <>
           <Textarea rows={6} value={prompt} onChange={(e) => setPrompt(e.target.value)}
             placeholder="You are a strict tutor for this course. Use {course_title}, {transcript}, {language} as variables." />
-          <div className="space-y-2">
-            <div className="text-xs font-medium">Knowledge files ({paths.length})</div>
-            <ul className="text-xs space-y-1">
-              {paths.map((p, i) => (
-                <li key={p} className="flex items-center justify-between gap-2 px-2 py-1 rounded border bg-muted/30">
-                  <span className="truncate">{p.split("/").pop()}</span>
-                  <button type="button" className="text-destructive" onClick={() => setPaths(paths.filter((_, j) => j !== i))}>Remove</button>
-                </li>
-              ))}
-            </ul>
-            <input type="file" accept=".pdf,.txt,.md" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.currentTarget.value = ""; }} />
-          </div>
           <div className="flex justify-end">
-            <Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save override"}</Button>
+            <Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save prompt"}</Button>
           </div>
         </>
       )}
+
+      <div className="pt-4 border-t space-y-2">
+        <div>
+          <h4 className="font-medium text-sm">Course knowledge base</h4>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Files added here are prioritized for students taking this course only. PDF, DOCX, TXT, MD up to 20 MB each.
+          </p>
+        </div>
+        <KnowledgeManager scope="course" courseId={courseId} />
+      </div>
     </Card>
   );
 }

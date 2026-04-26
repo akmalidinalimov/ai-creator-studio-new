@@ -31,22 +31,31 @@ async function recordMetric(admin: any, row: any) {
   try { await admin.from("ai_chat_metrics").insert(row); } catch (_) {}
 }
 
-async function readKnowledgeText(admin: any, paths: string[]): Promise<string> {
-  if (!paths || paths.length === 0) return "";
-  const chunks: string[] = [];
-  for (const p of paths) {
-    try {
-      const { data } = await admin.storage.from("ai-knowledge").download(p);
-      if (!data) continue;
-      const buf = new Uint8Array(await data.arrayBuffer());
-      // Best-effort decode (PDFs return mostly binary; we still grab any embedded text strings)
-      const text = new TextDecoder("utf-8", { fatal: false }).decode(buf);
-      // Strip control chars; keep first 8 KB
-      const cleaned = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+/g, " ").slice(0, 8192);
-      chunks.push(`--- ${p} ---\n${cleaned}`);
-    } catch (_) { /* ignore */ }
-  }
-  return chunks.join("\n\n");
+async function embedQuery(apiKey: string, query: string): Promise<number[] | null> {
+  try {
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/embeddings", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "google/text-embedding-004", input: query }),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.data?.[0]?.embedding ?? null;
+  } catch { return null; }
+}
+
+async function retrieveKnowledge(admin: any, apiKey: string, query: string, courseId: string | null): Promise<string> {
+  const emb = await embedQuery(apiKey, query);
+  if (!emb) return "";
+  const { data, error } = await admin.rpc("match_ai_knowledge", {
+    _query_embedding: emb as any,
+    _course_id: courseId,
+    _limit: 6,
+  });
+  if (error || !data || data.length === 0) return "";
+  return data
+    .map((r: any) => `[source: ${r.file_name}, chunk ${r.chunk_index}]\n${r.content}`)
+    .join("\n\n---\n\n");
 }
 
 async function callUpstream(model: string, apiKey: string, messages: any[]) {
@@ -111,30 +120,27 @@ Deno.serve(async (req) => {
 
     // Effective prompt: course override > platform default > built-in
     let effectivePrompt = DEFAULT_PROMPT;
-    let knowledgePaths: string[] = [];
     const { data: ps } = await admin.from("platform_settings").select("value").eq("key", "ai_assistant").maybeSingle();
     if (ps?.value) {
       const v = ps.value as any;
       if (typeof v.system_prompt === "string" && v.system_prompt.trim()) effectivePrompt = v.system_prompt;
-      if (Array.isArray(v.knowledge_paths)) knowledgePaths = v.knowledge_paths;
     }
     if (courseRow?.ai_system_prompt && String(courseRow.ai_system_prompt).trim()) {
       effectivePrompt = courseRow.ai_system_prompt;
-    }
-    if (Array.isArray(courseRow?.ai_knowledge_paths) && courseRow.ai_knowledge_paths.length > 0) {
-      knowledgePaths = courseRow.ai_knowledge_paths;
     }
 
     const langCode = (language || "en").toString().toLowerCase().slice(0, 5);
     const langName = LANG_NAMES[langCode] || LANG_NAMES[langCode.split("-")[0]] || "English";
 
-    const knowledgeText = await readKnowledgeText(admin, knowledgePaths);
+    // Semantic retrieval: embed the user question, fetch top chunks across platform + course scope.
+    const courseId: string | null = courseRow?.id ?? null;
+    const knowledgeText = await retrieveKnowledge(admin, LOVABLE_API_KEY, message, courseId);
 
     const systemPrompt = effectivePrompt
       .replaceAll("{course_title}", courseTitle)
       .replaceAll("{transcript}", transcript || "(no transcript available)")
       .replaceAll("{language}", langName)
-      + (knowledgeText ? `\n\nAdditional reference material:\n${knowledgeText}` : "")
+      + (knowledgeText ? `\n\n--- Reference material (cite by [source: filename] when used) ---\n${knowledgeText}` : "")
       + `\n\nIMPORTANT: Respond in ${langName}.`;
 
     // Persist user turn (best-effort)
