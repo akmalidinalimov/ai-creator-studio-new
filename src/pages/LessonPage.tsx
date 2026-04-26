@@ -168,47 +168,89 @@ export default function LessonPage() {
 
   const seekTo = (sec: number) => { if (videoRef.current) { videoRef.current.currentTime = sec; videoRef.current.play(); } };
 
-  const sendChat = async (text: string) => {
+  const sendChat = useCallback(async (text: string) => {
     if (!text.trim() || chatLoading) return;
     const userMsg: Msg = { role: "user", content: text };
+    const baseHistory = chatHistory;
     setChatHistory((h) => [...h, userMsg]);
     setChatInput("");
     setChatLoading(true);
+
+    const showRetry = () => {
+      // Remove orphan empty assistant bubble (if any)
+      setChatHistory((h) => h.filter((m, i) => !(i === h.length - 1 && m.role === "assistant" && !m.content)));
+      toast.error("AI tutor is busy, please try again.", {
+        action: { label: "Retry", onClick: () => { setChatHistory(baseHistory); sendChat(text); } },
+      });
+    };
+
     try {
       const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/study-assistant`;
       const resp = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ lessonId, message: text, history: chatHistory }),
+        body: JSON.stringify({ lessonId, message: text, history: chatHistory, language }),
       });
-      if (resp.status === 429) { toast.error("Rate limit. Try again in a moment."); setChatLoading(false); return; }
-      if (resp.status === 402) { toast.error("AI credits exhausted."); setChatLoading(false); return; }
-      if (!resp.ok || !resp.body) { toast.error("AI request failed"); setChatLoading(false); return; }
+
+      const ct = resp.headers.get("content-type") || "";
+      // Edge function now returns JSON (200) on fallback. Detect & surface retry.
+      if (ct.includes("application/json")) {
+        const json = await resp.json().catch(() => ({}));
+        if (json?.error) {
+          if (json.retryable === false) {
+            toast.error(json.error);
+          } else {
+            showRetry();
+          }
+          setChatLoading(false);
+          return;
+        }
+      }
+
+      if (resp.status === 429) { showRetry(); setChatLoading(false); return; }
+      if (!resp.ok || !resp.body) { showRetry(); setChatLoading(false); return; }
+
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buf = ""; let acc = "";
       setChatHistory((h) => [...h, { role: "assistant", content: "" }]);
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let i: number;
-        while ((i = buf.indexOf("\n")) !== -1) {
-          let line = buf.slice(0, i); buf = buf.slice(i + 1);
-          if (line.endsWith("\r")) line = line.slice(0, -1);
-          if (!line.startsWith("data: ")) continue;
-          const json = line.slice(6).trim();
-          if (json === "[DONE]") continue;
-          try {
-            const p = JSON.parse(json);
-            const c = p.choices?.[0]?.delta?.content;
-            if (c) { acc += c; setChatHistory((h) => h.map((m, i2) => i2 === h.length - 1 ? { ...m, content: acc } : m)); }
-          } catch { buf = line + "\n" + buf; break; }
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let i: number;
+          while ((i = buf.indexOf("\n")) !== -1) {
+            let line = buf.slice(0, i); buf = buf.slice(i + 1);
+            if (line.endsWith("\r")) line = line.slice(0, -1);
+            if (!line.startsWith("data: ")) continue;
+            const json = line.slice(6).trim();
+            if (json === "[DONE]") continue;
+            try {
+              const p = JSON.parse(json);
+              const c = p.choices?.[0]?.delta?.content;
+              if (c) { acc += c; setChatHistory((h) => h.map((m, i2) => i2 === h.length - 1 ? { ...m, content: acc } : m)); }
+            } catch { buf = line + "\n" + buf; break; }
+          }
+        }
+        // If stream ended with no content at all, show retry
+        if (!acc) showRetry();
+      } catch (streamErr) {
+        console.error("stream error", streamErr);
+        if (acc) {
+          const final = acc + "\n\n_(response interrupted)_";
+          setChatHistory((h) => h.map((m, i2) => i2 === h.length - 1 ? { ...m, content: final } : m));
+        } else {
+          showRetry();
         }
       }
-    } catch (e) { console.error(e); toast.error("AI request failed"); }
+    } catch (e) {
+      console.error(e);
+      showRetry();
+    }
     setChatLoading(false);
-  };
+  }, [chatLoading, chatHistory, lessonId, language, session]);
+
 
   if (!lesson) return <PageShell><div className="text-muted-foreground">Loading…</div></PageShell>;
 
