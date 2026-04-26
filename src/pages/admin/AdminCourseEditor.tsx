@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LessonDrawer } from "@/components/admin/LessonDrawer";
 import { ModuleQuizEditor } from "@/components/admin/ModuleQuizEditor";
+import { KnowledgeManager } from "@/components/admin/KnowledgeManager";
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor, TouchSensor, useSensor, useSensors, DragEndEvent,
 } from "@dnd-kit/core";
