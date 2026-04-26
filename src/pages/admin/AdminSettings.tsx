@@ -186,7 +186,7 @@ export default function AdminSettings() {
           </div>
           {savedUsername ? (
             <div className="rounded-lg border bg-muted/30 p-6 flex justify-center">
-              <TelegramLoginButton onAuth={async (tg) => {
+              <TelegramLoginButton fallbackLabel="Continue with Telegram" onAuth={async (tg) => {
                 try {
                   const { data, error } = await supabase.functions.invoke("telegram-auth", {
                     body: { tg, redirectTo: `${window.location.origin}/dashboard` },
