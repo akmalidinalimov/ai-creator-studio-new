@@ -19,17 +19,20 @@ export default function Dashboard() {
   const [courses, setCourses] = useState<CourseRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [streak, setStreak] = useState(0);
-  const [name, setName] = useState("");
+  const [displayName, setDisplayName] = useState("");
 
   useEffect(() => {
     (async () => {
       if (!user) return;
       const [{ data: profile }, { data: streakRow }, { data: enrollments }] = await Promise.all([
-        supabase.from("profiles").select("name").eq("id", user.id).maybeSingle(),
+        supabase.from("profiles").select("name, last_name").eq("id", user.id).maybeSingle(),
         supabase.from("streaks").select("current_streak").eq("user_id", user.id).maybeSingle(),
         supabase.from("enrollments").select("course_id, courses(*)").eq("user_id", user.id),
       ]);
-      setName(profile?.name?.split(" ")[0] || "there");
+      const first = (profile?.name || "").trim();
+      const last = ((profile as any)?.last_name || "").trim();
+      const full = [first, last].filter(Boolean).join(" ");
+      setDisplayName(full || first || "there");
       setStreak(streakRow?.current_streak || 0);
 
       const rows: CourseRow[] = [];
@@ -66,7 +69,7 @@ export default function Dashboard() {
       <div className="space-y-8">
         <div className="flex items-end justify-between flex-wrap gap-4">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Welcome back, {name}</h1>
+            <h1 className="text-3xl font-semibold tracking-tight">Welcome back, {displayName}</h1>
             <p className="text-muted-foreground mt-1">Pick up where you left off.</p>
           </div>
           <div className="flex items-center gap-2 px-4 py-2 rounded-lg border bg-card shadow-soft">

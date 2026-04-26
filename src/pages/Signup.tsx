@@ -13,6 +13,7 @@ import { TelegramLoginButton } from "@/components/TelegramLoginButton";
 export default function Signup() {
   const nav = useNavigate();
   const [name, setName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -24,14 +25,21 @@ export default function Signup() {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password.length < 6) { toast.error("Password must be at least 6 characters"); return; }
+    if (password.length < 8) { toast.error("Password must be at least 8 characters"); return; }
     setLoading(true);
     const { data, error } = await supabase.auth.signUp({
       email, password,
-      options: { emailRedirectTo: window.location.origin, data: { name } },
+      options: {
+        emailRedirectTo: window.location.origin,
+        data: { name, last_name: lastName || null },
+      },
     });
     setLoading(false);
     if (error) { toast.error(error.message); return; }
+    if (lastName && data.user) {
+      // Best-effort: write last_name to profile (handle_new_user trigger may not pick it up from metadata)
+      await supabase.from("profiles").update({ last_name: lastName } as any).eq("id", data.user.id);
+    }
     if (data.session) {
       toast.success("Welcome to AI Creators!");
       nav("/dashboard");
@@ -57,9 +65,12 @@ export default function Signup() {
       <TelegramLoginButton onAuth={onTelegram} />
       <div className="relative my-2"><div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div><div className="relative flex justify-center text-xs uppercase"><span className="bg-background px-2 text-muted-foreground">or</span></div></div>
       <form onSubmit={onSubmit} className="space-y-4">
-        <div className="space-y-1.5"><Label htmlFor="name">Name</Label><Input id="name" value={name} onChange={(e) => setName(e.target.value)} required /></div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5"><Label htmlFor="name">First name</Label><Input id="name" value={name} onChange={(e) => setName(e.target.value)} required /></div>
+          <div className="space-y-1.5"><Label htmlFor="last_name">Last name</Label><Input id="last_name" value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Optional" /></div>
+        </div>
         <div className="space-y-1.5"><Label htmlFor="email">Email</Label><Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" /></div>
-        <div className="space-y-1.5"><Label htmlFor="password">Password</Label><Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} autoComplete="new-password" /></div>
+        <div className="space-y-1.5"><Label htmlFor="password">Password</Label><Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} autoComplete="new-password" /></div>
         <Button type="submit" className="w-full" disabled={loading}>{loading && <Loader2 className="h-4 w-4 animate-spin" />}Create account</Button>
       </form>
       <p className="text-sm text-center text-muted-foreground">Already have an account? <Link to="/login" className="text-foreground font-medium hover:underline">Sign in</Link></p>
