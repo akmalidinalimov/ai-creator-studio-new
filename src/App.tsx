@@ -4,7 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { lazy, Suspense } from "react";
-import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { AuthProvider } from "@/contexts/AuthContext";
 import { RequireAuth } from "@/components/RequireAuth";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
@@ -16,6 +16,7 @@ import LessonPage from "./pages/LessonPage";
 import QuizPage from "./pages/QuizPage";
 import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
+import Landing from "./pages/Landing";
 
 // Lazy-load admin pages (code-split)
 const AdminDashboard = lazy(() => import("./pages/admin/AdminDashboard"));
@@ -35,13 +36,6 @@ const AdminFallback = () => (
   <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">Loading…</div>
 );
 
-const Root = () => {
-  const { user, role, loading } = useAuth();
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">Loading…</div>;
-  if (!user) return <Navigate to="/login" replace />;
-  return <Navigate to={role === "admin" ? "/admin/dashboard" : "/dashboard"} replace />;
-};
-
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -50,7 +44,7 @@ const App = () => (
       <BrowserRouter>
         <AuthProvider>
           <Routes>
-            <Route path="/" element={<Root />} />
+            <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />

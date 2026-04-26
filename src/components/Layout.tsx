@@ -6,9 +6,14 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { LogOut, Settings, Shield, LayoutDashboard, BookOpen, Users, Rocket, BarChart3, FileText } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
-export const Logo = ({ className = "" }: { className?: string }) => (
-  <Link to="/dashboard" className={`flex items-center gap-2 font-semibold tracking-tight ${className}`}>
-    <span className="inline-block w-6 h-6 rounded-md bg-foreground" aria-hidden />
+export const Logo = ({ className = "", to = "/dashboard" }: { className?: string; to?: string }) => (
+  <Link to={to} className={`flex items-center gap-2 font-semibold tracking-tight ${className}`}>
+    <span
+      className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-primary text-primary-foreground text-[13px] font-bold ring-[3px] ring-primary/10"
+      aria-hidden
+    >
+      A
+    </span>
     <span className="text-[15px]">AI Creators</span>
   </Link>
 );

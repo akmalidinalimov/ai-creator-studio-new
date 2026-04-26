@@ -1,93 +1,186 @@
+# v1.5 — Samarkand Teal Brand, Public Landing, Dashboard Upgrades
 
-# Multilingual UI: Uzbek / Russian / English
+A single-pass build covering the brand re-skin, a new public marketing page at `/`, dashboard hero upgrades, an admin landing-page editor, and several small polish fixes. All existing functionality (auth flows, course editor, video upload, Telegram login, AI assistant, analytics, CSV import, i18n) stays intact.
 
-Translate the **UI only** (buttons, menus, forms, toasts, validation messages, page copy). Course/lesson content stays in whatever language the admin entered.
+---
 
-## 1. i18n stack
+## A. Samarkand Teal brand theme (platform-wide)
 
-- Add `i18next` + `react-i18next` + `i18next-browser-languagedetector`.
-- Wrap the app in an `I18nProvider` mounted in `src/main.tsx` so translations are ready before any route renders.
-- Languages: `uz` (default, fallback), `ru`, `en`.
-- Detection order: user's saved choice (Supabase profile) → localStorage → browser → fallback to `uz`.
+**`src/index.css`** — replace the `:root` block with the warm cream + Persian teal palette:
+- Light mode (used everywhere except `/lesson/*`): cream `#FAF8F3` bg, deep teal-black `#0E2A2A` text, primary `#0F766E`, accent `#C7E5E1`, border `#E8DFCC`, destructive `#B5512D`, plus a new `--gold: #B8860B` token.
+- Add a `.lesson-dark` scoped class with the dark teal palette (bg `#08100F`, primary `#2DD4BF`, etc.). **No global dark toggle** — only the lesson page root mounts it (deferred to section F).
+- Update `--radius` to `0.75rem`, `--shadow-soft`/`--shadow-elevated` to teal-tinted shadows.
+- Add `--gold` to Tailwind colors via `tailwind.config.ts`.
 
-## 2. Translation files
+**`tailwind.config.ts`** — extend `fontFamily.serif: ['Fraunces', 'Georgia', 'serif']` and add the `gold` color from the CSS var. Inter stays as the default sans.
 
-Create `src/i18n/locales/{uz,ru,en}.json`, each split into namespaces for maintainability:
+**`src/index.css` `@import`** — add Fraunces (weights 500/600/700) alongside the existing Inter import.
 
-- `common` — buttons (Save, Cancel, Delete, Edit, Sign out…), generic words, time-ago strings
-- `auth` — login, signup, forgot/reset password, magic link, lockout countdown, Telegram button label, "Add a passkey" toast
-- `nav` — top-nav links, avatar menu items, admin nav
-- `dashboard` — student dashboard ("Welcome back, {name}", course cards, progress)
-- `course` — course page, module/lesson list, "Mark complete", "Next lesson"
-- `lesson` — lesson page tabs (Description, Notes, Bookmarks, Transcript), AI assistant prompts, bookmark/timestamp buttons
-- `quiz` — quiz UI, score, retry, pass/fail messaging
-- `settings` — profile fields, password change, recent sign-ins, danger zone, **+ "Language" selector**
-- `admin` — admin dashboard, courses, users (table headers including "Last name"), CSV import modal, audit log, AI analytics, deploy, settings
-- `validation` — form errors ("Email is required", "Password too short", etc.)
-- `toasts` — success/error toast messages
+**Logo refresh** (`src/components/Layout.tsx` `Logo`):
+- 28×28 rounded square (8px radius), `bg-primary`, white "A" inside (Inter Bold 13px), with a 3px outer ring at `rgba(15,118,110,0.08)`. Used everywhere the brand mark appears (TopNav, AuthShell, Landing nav, Footer).
 
-Uzbek is authored first (source of truth), then Russian and English. I'll translate the strings myself — no external translation API needed.
+**Favicon**:
+- Create `public/favicon.svg` — 32×32 rounded teal square `#0F766E` with a centered white "A".
+- Delete `public/favicon.ico` (browsers default-request it; leaving it would override).
+- Update `index.html` `<head>` to reference `/favicon.svg`.
+- Fix browser tab title — already says "AI Creators" in `index.html`, but double-check after merge.
 
-## 3. Language switcher (top nav)
+---
 
-Add a `LanguageSwitcher` component in `src/components/Layout.tsx` next to the avatar:
+## B. Public landing page at `/`
 
-- Globe icon (`lucide-react` `Globe`) → `DropdownMenu` with three items: `O'zbekcha`, `Русский`, `English` (each shown in its own script).
-- Current language gets a check mark.
-- On select: `i18n.changeLanguage(code)` + write to `localStorage` + (if logged in) update `profiles.preferred_language`.
-- Same switcher rendered on `/login`, `/signup`, `/forgot-password`, `/reset-password` (those pages don't use `Layout`, so add a small standalone variant in the top-right corner of the `AuthShell`).
+**Routing change** (`src/App.tsx`):
+- `/` no longer redirects unauthenticated visitors to `/login`. Instead, the new `Landing` component is the public route.
+- If the visitor IS authenticated, `Landing` itself redirects to `/dashboard` (or `/admin/dashboard` for admins) via a small effect using `useAuth`.
+- `Login` and `Signup` stay as their own dedicated pages.
 
-## 4. Persistence
+**RLS adjustment** (new migration):
+- Add a public-anon SELECT policy on `courses` (`published = true`), `modules`, and `lessons` (`published = true`) so the landing page's curriculum accordion can read them without auth. Current policies require `authenticated`; we'll add an `anon`-friendly policy that only exposes published rows.
 
-- New column: `profiles.preferred_language text default 'uz'` (migration).
-- On `SIGNED_IN`, read `preferred_language` and call `i18n.changeLanguage()`.
-- When changed while signed in, persist to `profiles`.
-- When changed while signed out, persist to `localStorage` only.
+**`src/pages/Landing.tsx`** — new file, single long-scroll page with these sections:
 
-The existing AI Study Assistant already has its own per-conversation language picker — leave it as-is, but seed its default from the user's UI language.
+1. **Sticky nav** — transparent at top, white-with-blur after 40px scroll (use a `useEffect` scroll listener + class toggle). Brand mark + wordmark left, anchor links (Curriculum / Instructor / Pricing / FAQ) center, "Sign in" outline + "Start free →" primary right.
+2. **Hero** (60vh desktop, stacks on mobile) — two columns. Left: serif H1 with italic teal "with AI" span, subhead, two CTAs, trust row (4 stacked avatar circles + placeholder "1,247 creators · 4.9/5"). Right: 5/4 aspect art card with teal→deep-teal-black gradient, saffron radial glow, large play button, "Sample lesson · 8 min" badge. Faint 8-pointed suzani star SVG behind the H1 at 7% opacity (inline SVG component).
+3. **Trust bar** — thin row with "1,247 creators · 4.9/5 rating · 30+ countries" stat strip, hairline dividers.
+4. **Outcomes** (`#outcomes`) — serif heading "By the end, you will:", 3-column grid of cards (Ship a mini-film / Build a recognizable style / Turn skill into income), each with teal-tinted icon square.
+5. **Curriculum** (`#curriculum`) — serif heading + sub. 5 accordion cards driven from a `supabase.from('modules').select('*, lessons(...)').eq('course_id', defaultCourseId)` call. First module open by default. Reads live from DB (uses the new anon RLS).
+6. **Instructor** (`#instructor`) — two-column. Bio + photo pulled from `platform_settings` keys (`landing.instructor.bio`, `landing.instructor.photo_url`) with sensible defaults if missing. Photo: circular 240px with teal ring shadow.
+7. **How it works** — 3 numbered steps (big serif teal numerals), each with H4 + 1-sentence body + small UI screenshot placeholder (use `/placeholder.svg` for now).
+8. **Student showcase** (`#showcase`) — horizontal-scroll carousel (CSS `snap-x` with `overflow-x-auto`) of 6 cards. Seed with 6 Unsplash placeholder URLs. Cards loaded later from a new `showcase` storage bucket via admin.
+9. **Pricing** (`#pricing`) — single centered card "AI Creators · Full Course · Free for now" with 6 checkmark items + primary CTA. Note about premium tier coming soon.
+10. **FAQ** (`#faq`) — 8 accordion items, defaults hardcoded (admin-editable in v1.6 but stored in `platform_settings.landing.faq` already so the editor in section D works).
+11. **Final CTA** — full-width darker cream band, serif H2, sub, big primary button.
+12. **Footer** — 3 columns (collapses to 1 on mobile): brand+social / nav links / legal+contact. Bottom strip "© 2026 AI Creators · Made in Tashkent".
 
-## 5. Component refactor
+Smooth-scroll anchors via `scroll-behavior: smooth` on `html` (add to `index.css`) plus `id` attributes on each section.
 
-Replace hardcoded strings with `t('namespace.key')`:
+---
 
-- `src/components/Layout.tsx` (nav + avatar menu)
-- `src/pages/Login.tsx`, `Signup.tsx`, `ForgotPassword.tsx`, `ResetPassword.tsx`
-- `src/pages/Dashboard.tsx`, `CoursePage.tsx`, `LessonPage.tsx`, `QuizPage.tsx`, `Settings.tsx`, `NotFound.tsx`
-- `src/pages/admin/*` (Dashboard, Courses, CourseEditor, Users, Settings, AIAnalytics, Audit, Deploy)
-- `src/components/admin/*` (LessonDrawer, ModuleQuizEditor, KnowledgeManager)
-- `src/components/RequireAuth.tsx`, `TelegramLoginButton.tsx`, `lesson/ProtectedVideo.tsx`
-- Toast call sites (most `toast({ title, description })` calls)
+## C. Student dashboard upgrades (`src/pages/Dashboard.tsx`)
 
-For dynamic strings with variables I'll use i18next interpolation (`t('dashboard.welcome', { name })`).
+**1. Hero "Today's lesson" card** — full-width card at top (above the existing course list):
+- Cover thumbnail strip (130px tall) using `next.lessons.thumbnail_path` if present, else a teal gradient.
+- Body: uppercase "Next up · Module {n}", serif H2 with the next incomplete lesson title, 1-line description, progress bar + "X / Y lessons · Z% complete", primary "Continue learning →" + outline "Course page".
+- Source: query the user's first incomplete lesson across their default-enrollment course (use existing logic in the `useEffect`, just surface the first row). If all 20 are complete → show a "Course complete 🎉" celebration card with "Browse other courses" CTA.
 
-For pluralization (e.g. "1 lesson" / "5 lessons", "2 minutes ago"), use i18next's plural rules — Russian has 3 plural forms, Uzbek has 2, English has 2; i18next handles this natively per locale.
+**2. Streak ring** — replace the simple chip on the top-right of the welcome row:
+- 32px conic-gradient ring filled to weekly progress %, streak number inside (read from `streaks.current_streak`), then text "{N}-day streak · keep the momentum." If 0 → "Start your streak today".
+- Pure-CSS conic gradient via inline `style={{ background: 'conic-gradient(...)' }}`.
 
-## 6. Out of scope (can be added later)
+**3. Weekly side card** — new right-column card (the dashboard becomes a 2-col grid `lg:grid-cols-[1fr_320px]` on the welcome row):
+- Uppercase "This week" + serif H3 ("You're on pace" or "Behind by N").
+- 3-col stat grid: lessons completed this week / hours watched / notes saved (computed from `lesson_progress` filtered by current ISO week + `lesson_notes` count).
+- AI Study Assistant nudge box (soft-teal `bg-accent/40` card): "💡 AI Study Assistant" + tagline + "Ask now →" link to the most recent in-progress lesson page.
 
-- **Course content translation** (titles, descriptions, transcripts, quizzes) — admins keep authoring in one language. We can add per-language fields or AI auto-translate in a follow-up.
-- **Email templates** (welcome, magic link, password reset) — Supabase auth emails stay in the project's current template language for now. Custom emails sent by edge functions can be localized later if needed.
-- **Date/number formatting** — I'll use `Intl.DateTimeFormat` with the active locale where dates are shown, but won't reformat every existing date display in this pass.
+Existing course cards stay below this hero/sidebar block, untouched.
 
-## 7. Files
+---
 
-**New**
-- `src/i18n/index.ts` — i18next init
-- `src/i18n/locales/uz.json`, `ru.json`, `en.json`
-- `src/components/LanguageSwitcher.tsx`
-- `supabase/migrations/<timestamp>_add_preferred_language.sql`
+## D. Admin "Landing page" tab (`src/pages/admin/AdminSettings.tsx`)
+
+Wrap the existing settings in shadcn `Tabs`: "Integrations" (current Telegram + AI + Content Protection cards) and a new **"Landing page"** tab.
+
+New `LandingPageEditor` component:
+- Hero headline (text input)
+- Hero sub (textarea)
+- Instructor bio (markdown textarea)
+- Instructor photo upload → new `instructor` public storage bucket (created via migration). Show current image preview.
+- FAQ items (sortable repeater: question + answer pairs, with add/remove/move-up/move-down buttons; stored as a jsonb array).
+- Save button writes to `platform_settings` with keys: `landing.hero.headline`, `landing.hero.sub`, `landing.instructor.bio`, `landing.instructor.photo_url`, `landing.faq`.
+
+Landing page reads each key with fallback defaults, so the page works fine before the admin ever touches it.
+
+---
+
+## E. Admin dashboard quick wins (`src/pages/admin/AdminDashboard.tsx`)
+
+**1. Quick-action buttons** under the page title:
+- "+ New course" → links to `/admin/courses` (which has the create flow).
+- "+ Add user" → links to `/admin/users` and triggers the existing add-student modal via a query param (`?new=1`).
+- "Import CSV" → same approach (`?import=1`).
+
+**2. Trend deltas on the 4 stat cards** — extend the existing `load()` to also fetch the prior 30d window for each metric. Pass a `delta` prop to `StatCard` (e.g., `+12%` in teal, `−4%` in `text-destructive`). Compute as `(current - prior) / prior * 100`, rounded.
+
+**3. At-risk chip card** — a 5th compact card to the right of the stat grid (or wraps to next row): red-bordered, count of students with no progress in 14+ days. Click expands the existing stuck students table (smooth-scroll + flash highlight). Compute by extending the existing stuck-students logic with a 14d threshold.
+
+---
+
+## F. Lesson player dark scope (`src/pages/LessonPage.tsx`)
+
+Add a `useEffect` to mount/unmount `lesson-dark` class on `document.documentElement` for the lesson route only:
+```ts
+useEffect(() => {
+  document.documentElement.classList.add('lesson-dark');
+  return () => document.documentElement.classList.remove('lesson-dark');
+}, []);
+```
+The `.lesson-dark` rule in `index.css` overrides the CSS vars to the dark teal palette. Existing lesson markup needs no JSX changes — Tailwind classes auto-pick up the new var values.
+
+---
+
+## G. Auth pages recolor (`src/pages/Login.tsx` `AuthShell`)
+
+In the `AuthShell` component (used by Login + Signup + Forgot/Reset):
+- Left dark panel: change `bg-foreground` to `bg-[#0E2A2A]` (deep teal-black) and add a faint suzani star pattern at low opacity for warmth.
+- Right panel keeps the cream background (already inherits from `--background`).
+- Brand mark uses the new logo style (teal square with white A).
+
+---
+
+## H. Migrations + storage
+
+Single migration adds:
+1. **Public-read RLS** on `courses` / `modules` / `lessons` for the `anon` role (only published rows for courses + lessons; modules readable for any published parent course).
+2. **`instructor` storage bucket** (public) with admin-write + public-read policies.
+3. **`showcase` storage bucket** (public) with admin-write + public-read policies (for v1.6 student showcase uploads — bucket created now so admin tab works).
+
+No new tables — landing copy lives in the existing `platform_settings` jsonb table.
+
+---
+
+## File touch list
+
+**New files**
+- `src/pages/Landing.tsx`
+- `src/components/landing/Nav.tsx`, `Hero.tsx`, `Outcomes.tsx`, `Curriculum.tsx`, `Instructor.tsx`, `HowItWorks.tsx`, `Showcase.tsx`, `Pricing.tsx`, `FAQ.tsx`, `FinalCTA.tsx`, `Footer.tsx`, `SuzaniStar.tsx` (small components for readability)
+- `src/components/admin/LandingPageEditor.tsx`
+- `public/favicon.svg`
+- `supabase/migrations/<ts>_landing_public_rls_and_buckets.sql`
 
 **Edited**
-- `src/main.tsx` — import `./i18n`
-- `src/contexts/AuthContext.tsx` — load `preferred_language` on sign-in
-- `src/components/Layout.tsx` — mount switcher in nav
-- All page/component files listed in §5 — swap hardcoded strings for `t(...)`
-- `package.json` — add `i18next`, `react-i18next`, `i18next-browser-languagedetector`
+- `src/index.css` (theme vars + Fraunces import + lesson-dark scope + smooth scroll)
+- `tailwind.config.ts` (serif font + gold color)
+- `src/components/Layout.tsx` (new logo)
+- `src/App.tsx` (route `/` → Landing)
+- `src/pages/Dashboard.tsx` (hero + streak ring + weekly card)
+- `src/pages/Login.tsx` (AuthShell teal recolor)
+- `src/pages/admin/AdminSettings.tsx` (tabs + Landing editor)
+- `src/pages/admin/AdminDashboard.tsx` (quick actions + trends + at-risk chip)
+- `src/pages/LessonPage.tsx` (mount `.lesson-dark`)
+- `index.html` (favicon link, drop the old .ico ref)
 
-## 8. Self-test after build
+**Deleted**
+- `public/favicon.ico`
 
-1. Fresh visit (no localStorage) → UI is in Uzbek.
-2. Click globe → switch to Russian → every visible label changes; refresh → still Russian.
-3. Sign in → switch to English → sign out → sign back in on a different browser → English persists (loaded from `profiles.preferred_language`).
-4. Check `/login`, `/signup`, `/dashboard`, a `/course/:id`, a `/lesson/:id`, `/quiz/:id`, `/settings`, `/admin/users`, `/admin/audit` in all three languages — no leftover English strings, no overflow in narrow buttons.
-5. Trigger a validation error and a success toast in each language — both translated.
-6. Russian plurals render correctly for "5 уроков" vs "1 урок" vs "2 урока".
+---
+
+## Out of scope (intentionally deferred to v1.6)
+
+- Global dark-mode toggle.
+- Wiring real "1,247 creators / 4.9 rating" stats — placeholder copy now, live counts later.
+- Translating landing page into ru/uz (English only for v1.5, matching the rest of the marketing surface).
+- Editable How-it-works copy in admin (hardcoded for v1.5).
+- Live student showcase uploads (bucket exists, but UI to upload + reorder ships in v1.6; for now Unsplash placeholders).
+
+---
+
+## Self-test checklist (run after build)
+
+1. Incognito → `/` shows landing (no `/login` redirect). All 12 sections render, anchor links smooth-scroll.
+2. Click "Start free →" → `/signup` shows new teal AuthShell.
+3. New student signup → `/dashboard` shows Today's-lesson hero + streak ring + weekly card in cream+teal.
+4. Open a lesson → page switches to dark teal scope (deep teal-black bg, bright teal accents).
+5. Admin → `/admin/dashboard` shows 3 quick-action buttons + trend deltas + at-risk chip.
+6. Admin → `/admin/settings` → Landing page tab → change headline → save → refresh `/` → change visible.
+7. Tab title says "AI Creators". Favicon is teal "A".
+8. 375px viewport → hero stacks, FAQ accordion works, footer collapses to 1 column.
