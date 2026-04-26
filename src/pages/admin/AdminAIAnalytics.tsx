@@ -131,7 +131,7 @@ export default function AdminAIAnalytics() {
   }, [metrics]);
 
   return (
-    <Layout>
+    <PageShell>
       <div className="container py-8 space-y-6">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
@@ -298,7 +298,7 @@ export default function AdminAIAnalytics() {
           </CardContent>
         </Card>
       </div>
-    </Layout>
+    </PageShell>
   );
 }
 
