@@ -121,6 +121,112 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_knowledge_chunks: {
+        Row: {
+          chunk_index: number
+          content: string
+          course_id: string | null
+          created_at: string
+          document_id: string
+          embedding: string | null
+          id: string
+          scope: Database["public"]["Enums"]["knowledge_scope"]
+          tokens: number | null
+        }
+        Insert: {
+          chunk_index: number
+          content: string
+          course_id?: string | null
+          created_at?: string
+          document_id: string
+          embedding?: string | null
+          id?: string
+          scope: Database["public"]["Enums"]["knowledge_scope"]
+          tokens?: number | null
+        }
+        Update: {
+          chunk_index?: number
+          content?: string
+          course_id?: string | null
+          created_at?: string
+          document_id?: string
+          embedding?: string | null
+          id?: string
+          scope?: Database["public"]["Enums"]["knowledge_scope"]
+          tokens?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_knowledge_chunks_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "ai_knowledge_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_knowledge_documents: {
+        Row: {
+          chunk_count: number
+          course_id: string | null
+          created_at: string
+          created_by: string | null
+          error: string | null
+          file_name: string
+          file_path: string
+          id: string
+          mime_type: string | null
+          page_count: number | null
+          preview: string | null
+          scope: Database["public"]["Enums"]["knowledge_scope"]
+          size_bytes: number
+          status: Database["public"]["Enums"]["knowledge_status"]
+          updated_at: string
+        }
+        Insert: {
+          chunk_count?: number
+          course_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          error?: string | null
+          file_name: string
+          file_path: string
+          id?: string
+          mime_type?: string | null
+          page_count?: number | null
+          preview?: string | null
+          scope: Database["public"]["Enums"]["knowledge_scope"]
+          size_bytes?: number
+          status?: Database["public"]["Enums"]["knowledge_status"]
+          updated_at?: string
+        }
+        Update: {
+          chunk_count?: number
+          course_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          error?: string | null
+          file_name?: string
+          file_path?: string
+          id?: string
+          mime_type?: string | null
+          page_count?: number | null
+          preview?: string | null
+          scope?: Database["public"]["Enums"]["knowledge_scope"]
+          size_bytes?: number
+          status?: Database["public"]["Enums"]["knowledge_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_knowledge_documents_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       auth_events: {
         Row: {
           created_at: string
@@ -756,10 +862,24 @@ export type Database = {
         }
         Returns: boolean
       }
+      match_ai_knowledge: {
+        Args: { _course_id: string; _limit?: number; _query_embedding: string }
+        Returns: {
+          chunk_id: string
+          chunk_index: number
+          content: string
+          document_id: string
+          file_name: string
+          scope: Database["public"]["Enums"]["knowledge_scope"]
+          similarity: number
+        }[]
+      }
     }
     Enums: {
       app_role: "admin" | "student"
       chat_role: "user" | "assistant"
+      knowledge_scope: "platform" | "course"
+      knowledge_status: "pending" | "processing" | "ready" | "failed"
       user_status: "active" | "inactive"
     }
     CompositeTypes: {
@@ -890,6 +1010,8 @@ export const Constants = {
     Enums: {
       app_role: ["admin", "student"],
       chat_role: ["user", "assistant"],
+      knowledge_scope: ["platform", "course"],
+      knowledge_status: ["pending", "processing", "ready", "failed"],
       user_status: ["active", "inactive"],
     },
   },
