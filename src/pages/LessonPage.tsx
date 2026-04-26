@@ -267,8 +267,14 @@ export default function LessonPage() {
           </div>
 
           <Card className="overflow-hidden bg-black shadow-elevated">
-            <video ref={videoRef} src={videoSrc} controls className="w-full aspect-video" />
+            <ProtectedVideo
+              src={videoSrc}
+              videoRef={videoRef}
+              watermarkText={user?.email || "student"}
+              settings={protectionSettings}
+            />
           </Card>
+
 
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div className="min-w-0">
