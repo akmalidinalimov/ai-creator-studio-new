@@ -24,6 +24,7 @@ const AdminCourseEditor = lazy(() => import("./pages/admin/AdminCourseEditor"));
 const AdminUsers = lazy(() => import("./pages/admin/AdminUsers"));
 const AdminSettings = lazy(() => import("./pages/admin/AdminSettings"));
 const AdminDeploy = lazy(() => import("./pages/admin/AdminDeploy"));
+const AdminAIAnalytics = lazy(() => import("./pages/admin/AdminAIAnalytics"));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 60_000, refetchOnWindowFocus: false } },
@@ -66,6 +67,7 @@ const App = () => (
             <Route path="/admin/users" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminUsers /></Suspense></RequireAuth>} />
             <Route path="/admin/settings" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminSettings /></Suspense></RequireAuth>} />
             <Route path="/admin/deploy" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminDeploy /></Suspense></RequireAuth>} />
+            <Route path="/admin/ai-analytics" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminAIAnalytics /></Suspense></RequireAuth>} />
 
             <Route path="*" element={<NotFound />} />
           </Routes>
