@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -7,7 +7,7 @@ import { toast } from "sonner";
 interface Props {
   onAuth: (tg: any) => void;
   size?: "small" | "medium" | "large";
-  /** Label override for the disabled fallback button. */
+  /** Label shown on the button. Defaults to Uzbek. */
   fallbackLabel?: string;
 }
 
@@ -21,14 +21,20 @@ const TelegramIcon = () => (
 );
 
 /**
- * Always-visible "Continue with Telegram" button.
- * - When the bot is configured (bot_username present), mounts the official Telegram widget.
- * - Otherwise renders a styled, disabled-looking button with a tooltip explaining setup.
+ * Always-visible Telegram login button with a custom label.
+ * - When the bot is configured, opens Telegram's OAuth popup (oauth.telegram.org/auth)
+ *   and listens for the user payload via window.postMessage. This avoids the official
+ *   widget script (which renders its own non-customizable label).
+ * - When not configured, renders a styled, disabled-looking button with a tooltip.
  */
-export function TelegramLoginButton({ onAuth, size = "large", fallbackLabel = "Continue with Telegram" }: Props) {
-  const ref = useRef<HTMLDivElement>(null);
+export function TelegramLoginButton({
+  onAuth,
+  size: _size = "large",
+  fallbackLabel = "Telegram Bilan Kirish",
+}: Props) {
   const [botUsername, setBotUsername] = useState<string | null>(null);
   const [resolved, setResolved] = useState(false);
+  const [opening, setOpening] = useState(false);
 
   useEffect(() => {
     supabase.rpc("get_public_setting", { _key: "telegram" }).then(({ data }) => {
@@ -38,21 +44,80 @@ export function TelegramLoginButton({ onAuth, size = "large", fallbackLabel = "C
     });
   }, []);
 
-  useEffect(() => {
-    if (!botUsername || !ref.current) return;
-    (window as any).onTelegramAuth = (user: any) => onAuth(user);
-    const script = document.createElement("script");
-    script.src = "https://telegram.org/js/telegram-widget.js?22";
-    script.async = true;
-    script.setAttribute("data-telegram-login", botUsername);
-    script.setAttribute("data-size", size);
-    script.setAttribute("data-onauth", "onTelegramAuth(user)");
-    script.setAttribute("data-request-access", "write");
-    script.setAttribute("data-userpic", "false");
-    ref.current.innerHTML = "";
-    ref.current.appendChild(script);
-    return () => { ref.current && (ref.current.innerHTML = ""); };
-  }, [botUsername, size, onAuth]);
+  const openTelegramAuth = () => {
+    if (!botUsername) return;
+    setOpening(true);
+
+    const origin = window.location.origin;
+    const params = new URLSearchParams({
+      bot_id: "", // Telegram resolves bot_id from domain when using username flow below
+      origin,
+      embed: "0",
+      request_access: "write",
+      return_to: origin,
+    });
+    // Telegram supports username-based auth via the /auth/?bot=... path
+    const url = `https://oauth.telegram.org/auth?bot=${encodeURIComponent(
+      botUsername,
+    )}&origin=${encodeURIComponent(origin)}&request_access=write&return_to=${encodeURIComponent(origin)}`;
+
+    const w = 550;
+    const h = 470;
+    const left = window.screenX + (window.outerWidth - w) / 2;
+    const top = window.screenY + (window.outerHeight - h) / 2.5;
+    const popup = window.open(
+      url,
+      "telegram-oauth",
+      `width=${w},height=${h},left=${left},top=${top},scrollbars=yes`,
+    );
+
+    if (!popup) {
+      setOpening(false);
+      toast.error("Popup blocked — please allow popups for this site.");
+      return;
+    }
+
+    let done = false;
+
+    const cleanup = () => {
+      window.removeEventListener("message", onMessage);
+      clearInterval(closedTimer);
+      setOpening(false);
+    };
+
+    const onMessage = (ev: MessageEvent) => {
+      // Telegram posts JSON strings from oauth.telegram.org
+      if (typeof ev.data !== "string") return;
+      if (!/oauth\.telegram\.org/.test(ev.origin)) return;
+      try {
+        const payload = JSON.parse(ev.data);
+        const event = payload?.event || payload?.type;
+        if (event === "auth_result" && payload.result) {
+          done = true;
+          try { popup.close(); } catch (_) { /* ignore */ }
+          cleanup();
+          onAuth(payload.result);
+        } else if (event === "auth_user" && payload.auth_data) {
+          done = true;
+          try { popup.close(); } catch (_) { /* ignore */ }
+          cleanup();
+          onAuth(payload.auth_data);
+        }
+      } catch (_) {
+        // ignore non-JSON messages
+      }
+    };
+
+    const closedTimer = setInterval(() => {
+      if (popup.closed) {
+        cleanup();
+        if (!done) toast.message("Telegram sign-in cancelled.");
+      }
+    }, 500);
+
+    window.addEventListener("message", onMessage);
+    void params; // retain for future flag tweaks
+  };
 
   if (!resolved) {
     // Reserve space — no flash
@@ -60,10 +125,20 @@ export function TelegramLoginButton({ onAuth, size = "large", fallbackLabel = "C
   }
 
   if (botUsername) {
-    return <div ref={ref} className="flex justify-center" />;
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        className="w-full"
+        onClick={openTelegramAuth}
+        disabled={opening}
+      >
+        <TelegramIcon /> {fallbackLabel}
+      </Button>
+    );
   }
 
-  // Not configured — always render styled fallback so the button is visible
+  // Not configured — styled disabled fallback with tooltip
   return (
     <TooltipProvider delayDuration={150}>
       <Tooltip>
