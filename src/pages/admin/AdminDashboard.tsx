@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ResponsiveContainer, AreaChart, Area, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import { toast } from "sonner";
-import { Users as UsersIcon, LogIn, Activity, Trophy } from "lucide-react";
+import { Users as UsersIcon, LogIn, Activity, Trophy, Shield } from "lucide-react";
+import { Link } from "react-router-dom";
+import { formatDistanceToNow } from "date-fns";
 
 const PALETTE = [
   "hsl(var(--primary))",
@@ -35,6 +37,31 @@ export default function AdminDashboard() {
   const [moduleFunnel, setModuleFunnel] = useState<{ name: string; completed: number; drop?: number }[]>([]);
   const [stuckByModule, setStuckByModule] = useState<{ name: string; count: number }[]>([]);
   const [stuck, setStuck] = useState<any[]>([]);
+  const [recentActions, setRecentActions] = useState<any[]>([]);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("admin_actions")
+        .select("id, action, actor_user_id, target_user_id, target_resource_type, details, created_at")
+        .order("created_at", { ascending: false })
+        .limit(25);
+      const rows = data || [];
+      const ids = Array.from(new Set(rows.flatMap((r: any) => [r.actor_user_id, r.target_user_id]).filter(Boolean)));
+      let names: Record<string, string> = {};
+      if (ids.length) {
+        const { data: profs } = await supabase.from("profiles").select("id, name, last_name, email").in("id", ids);
+        (profs || []).forEach((p: any) => {
+          names[p.id] = [p.name, p.last_name].filter(Boolean).join(" ") || p.email || p.id.slice(0, 8);
+        });
+      }
+      setRecentActions(rows.map((r: any) => ({
+        ...r,
+        actor_name: names[r.actor_user_id] || "Unknown",
+        target_name: r.target_user_id ? (names[r.target_user_id] || "Unknown") : null,
+      })));
+    })();
+  }, []);
 
   useEffect(() => {
     supabase.from("courses").select("id, title, published").order("title").then(({ data }) => {
@@ -343,6 +370,41 @@ export default function AdminDashboard() {
                     <td className="p-3 text-right">
                       <Button variant="outline" size="sm" onClick={() => toast.info("Re-engagement email queued (configure email infra to send)")}>Send email</Button>
                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        <Card className="overflow-hidden shadow-soft">
+          <div className="p-4 border-b flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold flex items-center gap-2"><Shield className="h-4 w-4" /> Recent admin actions</h3>
+              <p className="text-xs text-muted-foreground">Last 25 administrative changes.</p>
+            </div>
+            <Link to="/admin/audit"><Button variant="outline" size="sm">View all</Button></Link>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/40 text-xs">
+                <tr>
+                  <th className="text-left p-3">When</th>
+                  <th className="text-left p-3">Actor</th>
+                  <th className="text-left p-3">Action</th>
+                  <th className="text-left p-3">Target</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentActions.length === 0 && (
+                  <tr><td colSpan={4} className="p-6 text-center text-muted-foreground">No admin actions yet.</td></tr>
+                )}
+                {recentActions.map((a) => (
+                  <tr key={a.id} className="border-t hover:bg-muted/20">
+                    <td className="p-3 text-muted-foreground whitespace-nowrap">{formatDistanceToNow(new Date(a.created_at), { addSuffix: true })}</td>
+                    <td className="p-3 font-medium">{a.actor_name}</td>
+                    <td className="p-3"><code className="text-xs bg-muted px-1.5 py-0.5 rounded">{a.action}</code></td>
+                    <td className="p-3 text-muted-foreground">{a.target_name || a.target_resource_type || "—"}</td>
                   </tr>
                 ))}
               </tbody>
