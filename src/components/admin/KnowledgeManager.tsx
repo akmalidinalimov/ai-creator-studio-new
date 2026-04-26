@@ -3,10 +3,12 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
 import {
   UploadCloud, FileText, Trash2, RefreshCcw, Eye, Download,
-  CheckCircle2, XCircle, Loader2, AlertCircle,
+  CheckCircle2, XCircle, Loader2, AlertCircle, X,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -28,13 +30,64 @@ type Doc = {
   created_at: string;
 };
 
+type UploadJob = {
+  id: string;            // local id
+  name: string;
+  size: number;
+  stage: "uploading" | "indexing" | "done" | "error";
+  progress: number;      // 0-100 (upload progress)
+  error?: string;
+  documentId?: string;
+};
+
 const ACCEPT = ".pdf,.docx,.txt,.md";
 const MAX_BYTES = 20 * 1024 * 1024;
+const ALLOWED_EXT = ["pdf", "docx", "txt", "md"];
 
 function fmtSize(n: number) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function friendlyError(raw: string): string {
+  const e = raw.toLowerCase();
+  if (e.includes("no extractable text")) return "No extractable text. The file is likely a scanned image — convert to a text-based PDF or run OCR first.";
+  if (e.includes("embed")) return "Embedding service failed. Check the Lovable AI key and credits, then re-index.";
+  if (e.includes("download")) return "Could not download the file from storage. It may have been removed — re-upload it.";
+  if (e.includes("lovable_api_key")) return "Missing Lovable AI key. Add it in Connectors and re-index.";
+  if (e.includes("unauthorized") || e.includes("forbidden")) return "Permission denied. Sign out and back in as an admin.";
+  if (e.includes("timeout") || e.includes("failed to fetch")) return "Network or timeout error during indexing. Re-index to retry.";
+  return raw;
+}
+
+// Upload via XHR so we can report real progress.
+async function uploadWithProgress(
+  path: string,
+  file: File,
+  onProgress: (pct: number) => void,
+): Promise<{ error?: string }> {
+  // Get signed upload URL via the storage REST API path used by supabase-js
+  const { data: signed, error: signErr } = await supabase.storage
+    .from("ai-knowledge")
+    .createSignedUploadUrl(path);
+  if (signErr || !signed) return { error: signErr?.message || "Could not create upload URL" };
+
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", signed.signedUrl, true);
+    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    xhr.setRequestHeader("x-upsert", "false");
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve({});
+      else resolve({ error: `Upload failed (${xhr.status}): ${xhr.responseText?.slice(0, 200) || "unknown"}` });
+    };
+    xhr.onerror = () => resolve({ error: "Network error during upload" });
+    xhr.send(file);
+  });
 }
 
 export function KnowledgeManager({
@@ -49,7 +102,14 @@ export function KnowledgeManager({
   const [loading, setLoading] = useState(true);
   const [dragOver, setDragOver] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<Doc | null>(null);
+  const [jobs, setJobs] = useState<UploadJob[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const updateJob = (id: string, patch: Partial<UploadJob>) =>
+    setJobs((prev) => prev.map((j) => (j.id === id ? { ...j, ...patch } : j)));
+
+  const dismissJob = (id: string) =>
+    setJobs((prev) => prev.filter((j) => j.id !== id));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -64,27 +124,64 @@ export function KnowledgeManager({
 
   useEffect(() => { load(); }, [load]);
 
-  // Realtime: keep statuses fresh
+  // Realtime: keep statuses fresh AND mark indexing jobs done/failed
   useEffect(() => {
     const channel = supabase
       .channel(`knowledge-${scope}-${courseId ?? "x"}`)
       .on("postgres_changes",
         { event: "*", schema: "public", table: "ai_knowledge_documents" },
-        () => load())
+        (payload) => {
+          load();
+          const row: any = payload.new;
+          if (!row) return;
+          setJobs((prev) => prev.map((j) => {
+            if (j.documentId !== row.id) return j;
+            if (row.status === "ready") return { ...j, stage: "done" };
+            if (row.status === "failed") return { ...j, stage: "error", error: friendlyError(row.error || "Indexing failed") };
+            return j;
+          }));
+        })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [load, scope, courseId]);
 
+  // Auto-clear completed jobs after a delay
+  useEffect(() => {
+    const doneIds = jobs.filter((j) => j.stage === "done").map((j) => j.id);
+    if (!doneIds.length) return;
+    const t = setTimeout(() => setJobs((prev) => prev.filter((j) => !doneIds.includes(j.id))), 3500);
+    return () => clearTimeout(t);
+  }, [jobs]);
+
   const handleFiles = async (files: FileList | File[]) => {
     const arr = Array.from(files);
     for (const file of arr) {
-      if (file.size > MAX_BYTES) { toast.error(`${file.name}: over 20 MB`); continue; }
+      const ext = file.name.split(".").pop()?.toLowerCase() || "";
+      const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+      if (!ALLOWED_EXT.includes(ext)) {
+        setJobs((p) => [...p, { id: jobId, name: file.name, size: file.size, stage: "error", progress: 0, error: `Unsupported file type ".${ext}". Allowed: PDF, DOCX, TXT, MD.` }]);
+        continue;
+      }
+      if (file.size > MAX_BYTES) {
+        setJobs((p) => [...p, { id: jobId, name: file.name, size: file.size, stage: "error", progress: 0, error: `File is ${fmtSize(file.size)} — limit is 20 MB.` }]);
+        continue;
+      }
+
+      setJobs((p) => [...p, { id: jobId, name: file.name, size: file.size, stage: "uploading", progress: 0 }]);
+
       const safeName = file.name.replace(/[^a-z0-9._-]/gi, "_");
       const folder = scope === "platform" ? "platform" : `course-${courseId}`;
       const path = `${folder}/${Date.now()}-${safeName}`;
-      const upToast = toast.loading(`Uploading ${file.name}…`);
-      const { error: upErr } = await supabase.storage.from("ai-knowledge").upload(path, file, { upsert: false });
-      if (upErr) { toast.dismiss(upToast); toast.error(upErr.message); continue; }
+
+      const { error: upErr } = await uploadWithProgress(path, file, (pct) => updateJob(jobId, { progress: pct }));
+      if (upErr) {
+        updateJob(jobId, { stage: "error", error: friendlyError(upErr) });
+        continue;
+      }
+
+      updateJob(jobId, { progress: 100, stage: "indexing" });
+
       const { data: doc, error: insErr } = await supabase.from("ai_knowledge_documents").insert({
         scope,
         course_id: scope === "course" ? courseId : null,
@@ -95,22 +192,29 @@ export function KnowledgeManager({
         status: "pending",
         created_by: user?.id,
       } as any).select().single();
-      toast.dismiss(upToast);
-      if (insErr || !doc) { toast.error(insErr?.message || "insert failed"); continue; }
-      toast.success(`${file.name} uploaded — indexing…`);
-      // Fire-and-forget ingest
-      supabase.functions.invoke("ingest-knowledge", { body: { documentId: (doc as any).id } })
-        .then(({ error }) => { if (error) toast.error(`${file.name}: ${error.message}`); });
+
+      if (insErr || !doc) {
+        updateJob(jobId, { stage: "error", error: friendlyError(insErr?.message || "Could not record document") });
+        continue;
+      }
+
+      updateJob(jobId, { documentId: (doc as any).id });
+
+      const { error: fnErr } = await supabase.functions.invoke("ingest-knowledge", { body: { documentId: (doc as any).id } });
+      if (fnErr) {
+        updateJob(jobId, { stage: "error", error: friendlyError(fnErr.message) });
+      }
+      // Otherwise we wait for the realtime status update to mark "done" / "error".
     }
     load();
   };
 
   const reindex = async (doc: Doc) => {
-    const t = toast.loading(`Re-indexing ${doc.file_name}…`);
+    const jobId = `reindex-${doc.id}-${Date.now()}`;
+    setJobs((p) => [...p, { id: jobId, name: doc.file_name, size: doc.size_bytes, stage: "indexing", progress: 100, documentId: doc.id }]);
     await supabase.from("ai_knowledge_documents").update({ status: "pending", error: null }).eq("id", doc.id);
     const { error } = await supabase.functions.invoke("ingest-knowledge", { body: { documentId: doc.id } });
-    toast.dismiss(t);
-    if (error) toast.error(error.message); else toast.success("Re-indexed");
+    if (error) updateJob(jobId, { stage: "error", error: friendlyError(error.message) });
   };
 
   const remove = async (doc: Doc) => {
@@ -132,6 +236,8 @@ export function KnowledgeManager({
     const totalSize = docs.reduce((s, d) => s + (d.size_bytes || 0), 0);
     return { count: docs.length, totalChunks, totalSize };
   }, [docs]);
+
+  const failedDocs = docs.filter((d) => d.status === "failed");
 
   return (
     <div className="space-y-4">
@@ -160,6 +266,50 @@ export function KnowledgeManager({
         />
       </div>
 
+      {/* Per-file progress / status panel */}
+      {jobs.length > 0 && (
+        <Card className="p-3 space-y-3">
+          {jobs.map((j) => (
+            <div key={j.id} className="space-y-1.5">
+              <div className="flex items-center gap-2 text-sm">
+                <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                <span className="truncate flex-1 font-medium">{j.name}</span>
+                <span className="text-xs text-muted-foreground shrink-0">{fmtSize(j.size)}</span>
+                <JobStageBadge stage={j.stage} progress={j.progress} />
+                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => dismissJob(j.id)} title="Dismiss">
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              {(j.stage === "uploading" || j.stage === "indexing") && (
+                <Progress
+                  value={j.stage === "uploading" ? j.progress : undefined}
+                  className={`h-1.5 ${j.stage === "indexing" ? "[&>div]:animate-pulse" : ""}`}
+                />
+              )}
+              {j.stage === "error" && j.error && (
+                <Alert variant="destructive" className="py-2">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle className="text-xs">
+                    {j.documentId ? "Indexing failed" : "Upload failed"}
+                  </AlertTitle>
+                  <AlertDescription className="text-xs">{j.error}</AlertDescription>
+                </Alert>
+              )}
+            </div>
+          ))}
+        </Card>
+      )}
+
+      {failedDocs.length > 0 && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>{failedDocs.length} document{failedDocs.length === 1 ? "" : "s"} failed to index</AlertTitle>
+          <AlertDescription className="text-xs">
+            Use the re-index button on each row to retry. Common causes: scanned image PDFs (need OCR), missing AI key, or transient network errors.
+          </AlertDescription>
+        </Alert>
+      )}
+
       {loading ? (
         <div className="text-sm text-muted-foreground py-6 text-center">Loading…</div>
       ) : docs.length === 0 ? (
@@ -180,9 +330,12 @@ export function KnowledgeManager({
                     <span>{d.chunk_count} chunks</span>
                     <span>{new Date(d.created_at).toLocaleDateString()}</span>
                   </div>
+                  {(d.status === "processing" || d.status === "pending") && (
+                    <Progress className="h-1 mt-1.5 [&>div]:animate-pulse" value={undefined} />
+                  )}
                   {d.status === "failed" && d.error && (
                     <div className="text-xs text-destructive mt-1 flex items-start gap-1">
-                      <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" /> {d.error}
+                      <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" /> {friendlyError(d.error)}
                     </div>
                   )}
                 </div>
@@ -229,6 +382,27 @@ export function KnowledgeManager({
       </Dialog>
     </div>
   );
+}
+
+function JobStageBadge({ stage, progress }: { stage: UploadJob["stage"]; progress: number }) {
+  if (stage === "uploading") {
+    return <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-blue-500/10 text-blue-600 inline-flex items-center gap-1 shrink-0">
+      <Loader2 className="h-3 w-3 animate-spin" /> Uploading {progress}%
+    </span>;
+  }
+  if (stage === "indexing") {
+    return <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-amber-500/10 text-amber-600 inline-flex items-center gap-1 shrink-0">
+      <Loader2 className="h-3 w-3 animate-spin" /> Indexing
+    </span>;
+  }
+  if (stage === "done") {
+    return <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-emerald-500/10 text-emerald-600 inline-flex items-center gap-1 shrink-0">
+      <CheckCircle2 className="h-3 w-3" /> Ready
+    </span>;
+  }
+  return <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-destructive/10 text-destructive inline-flex items-center gap-1 shrink-0">
+    <XCircle className="h-3 w-3" /> Failed
+  </span>;
 }
 
 function StatusBadge({ status }: { status: Doc["status"] }) {
