@@ -124,8 +124,7 @@ export function TelegramLoginButton({
     return (
       <Button
         type="button"
-        variant="outline"
-        className="w-full"
+        className="w-full bg-[#229ED9] hover:bg-[#1c8cc2] text-white border-transparent"
         onClick={openTelegramAuth}
         disabled={opening}
       >
