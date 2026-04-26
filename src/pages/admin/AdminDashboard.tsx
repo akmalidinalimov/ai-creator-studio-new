@@ -376,6 +376,41 @@ export default function AdminDashboard() {
             </table>
           </div>
         </Card>
+
+        <Card className="overflow-hidden shadow-soft">
+          <div className="p-4 border-b flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold flex items-center gap-2"><Shield className="h-4 w-4" /> Recent admin actions</h3>
+              <p className="text-xs text-muted-foreground">Last 25 administrative changes.</p>
+            </div>
+            <Link to="/admin/audit"><Button variant="outline" size="sm">View all</Button></Link>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/40 text-xs">
+                <tr>
+                  <th className="text-left p-3">When</th>
+                  <th className="text-left p-3">Actor</th>
+                  <th className="text-left p-3">Action</th>
+                  <th className="text-left p-3">Target</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentActions.length === 0 && (
+                  <tr><td colSpan={4} className="p-6 text-center text-muted-foreground">No admin actions yet.</td></tr>
+                )}
+                {recentActions.map((a) => (
+                  <tr key={a.id} className="border-t hover:bg-muted/20">
+                    <td className="p-3 text-muted-foreground whitespace-nowrap">{formatDistanceToNow(new Date(a.created_at), { addSuffix: true })}</td>
+                    <td className="p-3 font-medium">{a.actor_name}</td>
+                    <td className="p-3"><code className="text-xs bg-muted px-1.5 py-0.5 rounded">{a.action}</code></td>
+                    <td className="p-3 text-muted-foreground">{a.target_name || a.target_resource_type || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       </div>
     </PageShell>
   );
