@@ -58,10 +58,17 @@ export default {
           ring: "hsl(var(--sidebar-ring))",
         },
       },
+      fontFamily: {
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+      },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+      },
+      boxShadow: {
+        soft: "0 1px 2px hsl(240 10% 4% / 0.04), 0 4px 12px hsl(240 10% 4% / 0.04)",
+        elevated: "0 1px 2px hsl(240 10% 4% / 0.06), 0 12px 32px hsl(240 10% 4% / 0.08)",
       },
       keyframes: {
         "accordion-down": {
