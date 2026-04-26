@@ -174,18 +174,21 @@ Deno.serve(async (req) => {
     let upstream: Response | null = null;
     let lastStatus = 0; let lastBody = ""; let usedModel = "";
     let totalAttempts = 0;
-    outer: for (const model of MODEL_CHAIN) {
+    outer: for (const entry of MODEL_CHAIN) {
+      if (entry.provider === "openai" && !OPENAI_API_KEY) continue;
+      if (entry.provider === "lovable" && !LOVABLE_API_KEY) continue;
+      const modelLabel = `${entry.provider}:${entry.model}`;
       for (let attempt = 0; attempt < 3; attempt++) {
         totalAttempts++;
-        const r = await callUpstream(model, LOVABLE_API_KEY, messages);
-        if (r.ok) { upstream = r; usedModel = model; break outer; }
+        const r = await callUpstream(entry, LOVABLE_API_KEY, OPENAI_API_KEY, messages);
+        if (r.ok) { upstream = r; usedModel = modelLabel; break outer; }
         lastStatus = r.status;
         lastBody = (await r.text()).slice(0, 500);
         if (r.status === 402) {
-          await logError(admin, { user_id: userId, lesson_id: lessonIdGlobal, model, status: 402, error_excerpt: lastBody });
+          await logError(admin, { user_id: userId, lesson_id: lessonIdGlobal, model: modelLabel, status: 402, error_excerpt: lastBody });
           await recordMetric(admin, {
-            user_id: userId, lesson_id: lessonIdGlobal, model, attempts: totalAttempts,
-            fallback_used: model !== MODEL_CHAIN[0], success: false, status: 402,
+            user_id: userId, lesson_id: lessonIdGlobal, model: modelLabel, attempts: totalAttempts,
+            fallback_used: entry !== MODEL_CHAIN[0], success: false, status: 402,
             latency_ms: Date.now() - startedAt, language: langCode,
           });
           return new Response(JSON.stringify({ error: "AI credits exhausted. Add credits in workspace settings.", retryable: false }), {
@@ -197,7 +200,7 @@ Deno.serve(async (req) => {
           continue;
         }
         // Non-retryable client error
-        await logError(admin, { user_id: userId, lesson_id: lessonIdGlobal, model, status: r.status, error_excerpt: lastBody });
+        await logError(admin, { user_id: userId, lesson_id: lessonIdGlobal, model: modelLabel, status: r.status, error_excerpt: lastBody });
         break;
       }
     }
