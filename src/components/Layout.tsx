@@ -1,9 +1,10 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
-import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { LogOut, Settings, Shield, LayoutDashboard, BookOpen, Users, Rocket, BarChart3, FileText } from "lucide-react";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
 export const Logo = ({ className = "" }: { className?: string }) => (
   <Link to="/dashboard" className={`flex items-center gap-2 font-semibold tracking-tight ${className}`}>
@@ -16,6 +17,7 @@ export const TopNav = () => {
   const { user, role, signOut } = useAuth();
   const navigate = useNavigate();
   const loc = useLocation();
+  const { t } = useTranslation();
 
   const initials = (user?.user_metadata?.name || user?.email || "?")
     .split(/[\s@]/)[0]
@@ -27,9 +29,9 @@ export const TopNav = () => {
 
   const isAdmin = role === "admin";
   const adminLinks = [
-    { to: "/admin/dashboard", label: "Dashboard", match: (p: string) => p === "/admin/dashboard" || p === "/admin" },
-    { to: "/admin/courses", label: "Courses", match: (p: string) => p.startsWith("/admin/courses") },
-    { to: "/admin/users", label: "Users", match: (p: string) => p.startsWith("/admin/users") },
+    { to: "/admin/dashboard", label: t("nav.dashboard"), match: (p: string) => p === "/admin/dashboard" || p === "/admin" },
+    { to: "/admin/courses", label: t("nav.courses"), match: (p: string) => p.startsWith("/admin/courses") },
+    { to: "/admin/users", label: t("nav.users"), match: (p: string) => p.startsWith("/admin/users") },
   ];
 
   return (
@@ -39,14 +41,15 @@ export const TopNav = () => {
           <Logo />
           <nav className="hidden md:flex items-center gap-5">
             {!isAdmin && (
-              <Link to="/dashboard" className={linkCls(loc.pathname === "/dashboard")}>Dashboard</Link>
+              <Link to="/dashboard" className={linkCls(loc.pathname === "/dashboard")}>{t("nav.dashboard")}</Link>
             )}
             {isAdmin && adminLinks.map((l) => (
               <Link key={l.to} to={l.to} className={linkCls(l.match(loc.pathname))}>{l.label}</Link>
             ))}
           </nav>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
+          <LanguageSwitcher />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -57,43 +60,43 @@ export const TopNav = () => {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel className="font-normal">
-                <div className="text-sm font-medium">{user?.user_metadata?.name || (isAdmin ? "Admin" : "Student")}</div>
+                <div className="text-sm font-medium">{user?.user_metadata?.name || (isAdmin ? t("nav.admin") : t("nav.student"))}</div>
                 <div className="text-xs text-muted-foreground truncate">{user?.email}</div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               {!isAdmin && (
                 <DropdownMenuItem onClick={() => navigate("/dashboard")}>
-                  <LayoutDashboard className="mr-2 h-4 w-4" /> Dashboard
+                  <LayoutDashboard className="mr-2 h-4 w-4" /> {t("nav.dashboard")}
                 </DropdownMenuItem>
               )}
               {isAdmin && (
                 <>
                   <DropdownMenuItem onClick={() => navigate("/admin/dashboard")}>
-                    <Shield className="mr-2 h-4 w-4" /> Admin dashboard
+                    <Shield className="mr-2 h-4 w-4" /> {t("nav.adminDashboard")}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => navigate("/admin/courses")}>
-                    <BookOpen className="mr-2 h-4 w-4" /> Courses
+                    <BookOpen className="mr-2 h-4 w-4" /> {t("nav.courses")}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => navigate("/admin/users")}>
-                    <Users className="mr-2 h-4 w-4" /> Users
+                    <Users className="mr-2 h-4 w-4" /> {t("nav.users")}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => navigate("/admin/settings")}>
-                    <Settings className="mr-2 h-4 w-4" /> Settings
+                    <Settings className="mr-2 h-4 w-4" /> {t("nav.settings")}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => navigate("/admin/ai-analytics")}>
-                    <BarChart3 className="mr-2 h-4 w-4" /> AI Analytics
+                    <BarChart3 className="mr-2 h-4 w-4" /> {t("nav.aiAnalytics")}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => navigate("/admin/audit")}>
-                    <FileText className="mr-2 h-4 w-4" /> Audit log
+                    <FileText className="mr-2 h-4 w-4" /> {t("nav.auditLog")}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => navigate("/admin/deploy")}>
-                    <Rocket className="mr-2 h-4 w-4" /> Deploy
+                    <Rocket className="mr-2 h-4 w-4" /> {t("nav.deploy")}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                 </>
               )}
               <DropdownMenuItem onClick={() => navigate("/settings")}>
-                <Settings className="mr-2 h-4 w-4" /> My settings
+                <Settings className="mr-2 h-4 w-4" /> {t("nav.mySettings")}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
@@ -102,7 +105,7 @@ export const TopNav = () => {
                   navigate("/login");
                 }}
               >
-                <LogOut className="mr-2 h-4 w-4" /> Sign out
+                <LogOut className="mr-2 h-4 w-4" /> {t("nav.signOut")}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
