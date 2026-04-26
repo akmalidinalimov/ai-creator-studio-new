@@ -224,14 +224,12 @@ export default function AdminSettings() {
 
 function AIAssistantCard({ userId }: { userId?: string }) {
   const [prompt, setPrompt] = useState("");
-  const [paths, setPaths] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     supabase.from("platform_settings").select("value").eq("key", "ai_assistant").maybeSingle().then(({ data }) => {
       const v = (data?.value as any) || {};
       setPrompt(v.system_prompt || "");
-      setPaths(Array.isArray(v.knowledge_paths) ? v.knowledge_paths : []);
     });
   }, []);
 
@@ -239,7 +237,7 @@ function AIAssistantCard({ userId }: { userId?: string }) {
     setSaving(true);
     const { error } = await supabase.from("platform_settings").upsert({
       key: "ai_assistant",
-      value: { system_prompt: prompt, knowledge_paths: paths },
+      value: { system_prompt: prompt },
       updated_by: userId,
     } as any, { onConflict: "key" });
     setSaving(false);
@@ -247,19 +245,11 @@ function AIAssistantCard({ userId }: { userId?: string }) {
     toast.success("AI assistant settings saved");
   };
 
-  const upload = async (file: File) => {
-    const path = `platform/${Date.now()}-${file.name.replace(/[^a-z0-9._-]/gi, "_")}`;
-    const { error } = await supabase.storage.from("ai-knowledge").upload(path, file, { upsert: false });
-    if (error) return toast.error(error.message);
-    setPaths((p) => [...p, path]);
-    toast.success("File uploaded");
-  };
-
   return (
-    <Card className="p-6 shadow-soft space-y-4">
+    <Card className="p-6 shadow-soft space-y-5">
       <div>
         <h2 className="text-lg font-semibold">AI Study Assistant</h2>
-        <p className="text-sm text-muted-foreground mt-1">Customize the assistant's tone, scope, and knowledge for all courses.</p>
+        <p className="text-sm text-muted-foreground mt-1">Customize the assistant's tone, scope, and the knowledge base it can draw from across all courses.</p>
       </div>
       <div className="space-y-1.5">
         <Label>System prompt</Label>
@@ -273,23 +263,18 @@ function AIAssistantCard({ userId }: { userId?: string }) {
         </p>
       </div>
 
-      <div className="space-y-2">
-        <Label>Knowledge files ({paths.length})</Label>
-        <ul className="text-sm space-y-1">
-          {paths.length === 0 && <li className="text-xs text-muted-foreground italic">No files yet. Upload PDFs or text files to add reference context to every chat.</li>}
-          {paths.map((p, i) => (
-            <li key={p} className="flex items-center justify-between gap-2 px-3 py-2 rounded border bg-muted/30">
-              <span className="truncate text-xs">{p.split("/").pop()}</span>
-              <button className="text-destructive text-xs" onClick={() => setPaths(paths.filter((_, j) => j !== i))}>Remove</button>
-            </li>
-          ))}
-        </ul>
-        <input type="file" accept=".pdf,.txt,.md" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.currentTarget.value = ""; }} className="text-sm" />
-        <p className="text-xs text-muted-foreground">First 8 KB of each file's text is included in every chat. Per-course overrides available in each course's editor.</p>
+      <div className="space-y-2 pt-4 border-t">
+        <div>
+          <Label className="text-base">Knowledge base (platform-wide)</Label>
+          <p className="text-xs text-muted-foreground mt-1">
+            Upload PDFs, Word docs, or text files. They're parsed, chunked, and indexed for semantic search — the assistant fetches the most relevant passages per student question, regardless of total library size.
+          </p>
+        </div>
+        <KnowledgeManager scope="platform" />
       </div>
 
       <div className="flex justify-end">
-        <Button onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
+        <Button onClick={save} disabled={saving}>{saving ? "Saving…" : "Save prompt"}</Button>
       </div>
     </Card>
   );
