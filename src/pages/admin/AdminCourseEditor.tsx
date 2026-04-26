@@ -64,9 +64,9 @@ export default function AdminCourseEditor() {
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [courseId]);
 
-  const updateCourse = async (patch: Partial<any>) => {
+  const updateCourse = async (patch: Record<string, any>) => {
     setCourse((c: any) => ({ ...c, ...patch }));
-    const { error } = await supabase.from("courses").update(patch).eq("id", courseId!);
+    const { error } = await (supabase.from("courses") as any).update(patch).eq("id", courseId!);
     if (error) toast.error(error.message);
   };
 
@@ -83,7 +83,8 @@ export default function AdminCourseEditor() {
 
   const updateModule = async (id: string, patch: Partial<Module>) => {
     setModules((prev) => prev.map((m) => m.id === id ? { ...m, ...patch } as Module : m));
-    const { error } = await supabase.from("modules").update(patch).eq("id", id);
+    const { lessons: _omit, ...dbPatch } = patch as any;
+    const { error } = await (supabase.from("modules") as any).update(dbPatch).eq("id", id);
     if (error) toast.error(error.message);
   };
 
