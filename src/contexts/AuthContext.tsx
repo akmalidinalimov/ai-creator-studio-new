@@ -52,11 +52,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setTimeout(() => loadRole(s.user.id), 0);
         if (event === "SIGNED_IN") {
           setTimeout(() => {
-            supabase.from("auth_events").insert({
-              user_id: s.user.id,
-              event: "sign_in",
-              user_agent: navigator.userAgent.slice(0, 200),
-            } as any).then(() => {});
+            // Server-side capture (gets real IP from request headers)
+            supabase.functions.invoke("log-auth-event", {
+              body: { event: "sign_in" },
+            }).catch(() => {
+              // Fallback: client-side insert (no IP)
+              supabase.from("auth_events").insert({
+                user_id: s.user.id,
+                event: "sign_in",
+                user_agent: navigator.userAgent.slice(0, 200),
+              } as any).then(() => {});
+            });
           }, 0);
         }
       } else {
