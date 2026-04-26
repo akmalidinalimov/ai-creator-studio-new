@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -6,62 +6,99 @@
 
 @layer base {
   :root {
-    /* Brand: minimalist neutral. Near-black on white. Single accent. */
-    --background: 0 0% 100%;
-    --foreground: 240 10% 4%;        /* #0a0a0c */
+    /* Samarkand Teal — warm cream + Persian teal */
+    --background: 42 32% 97%;            /* #FAF8F3 cream */
+    --foreground: 180 50% 11%;           /* #0E2A2A deep teal-black */
 
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 4%;
+    --card-foreground: 180 50% 11%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 4%;
+    --popover-foreground: 180 50% 11%;
 
-    --primary: 240 10% 4%;           /* near-black */
+    --primary: 174 78% 26%;              /* #0F766E Samarkand teal */
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 240 5% 96%;
-    --secondary-foreground: 240 10% 4%;
+    --secondary: 42 24% 92%;             /* #F2EEE5 */
+    --secondary-foreground: 180 50% 11%;
 
-    --muted: 240 5% 96%;
-    --muted-foreground: 240 4% 42%;
+    --muted: 42 24% 92%;
+    --muted-foreground: 180 6% 45%;      /* #6B7B7B */
 
-    --accent: 240 5% 96%;
-    --accent-foreground: 240 10% 4%;
+    --accent: 173 38% 84%;               /* #C7E5E1 soft teal tint */
+    --accent-foreground: 174 78% 26%;
 
-    --destructive: 0 72% 51%;
+    --destructive: 17 60% 44%;           /* #B5512D warm clay */
     --destructive-foreground: 0 0% 100%;
 
     --success: 142 71% 38%;
     --success-foreground: 0 0% 100%;
 
-    --warning: 38 92% 50%;
+    --warning: 43 89% 38%;               /* saffron */
     --warning-foreground: 0 0% 100%;
 
-    --border: 240 6% 90%;
-    --input: 240 6% 90%;
-    --ring: 240 10% 4%;
+    --border: 42 36% 86%;                /* #E8DFCC warm cream-gold border */
+    --input: 42 36% 86%;
+    --ring: 174 78% 26%;
 
-    --radius: 0.625rem;
+    --gold: 43 89% 38%;                  /* #B8860B deep saffron */
 
-    /* Course brand */
-    --brand-ink: 240 10% 4%;
-    --brand-paper: 0 0% 100%;
-    --brand-subtle: 240 5% 96%;
+    --radius: 0.75rem;
 
-    /* Soft shadows */
-    --shadow-soft: 0 1px 2px hsl(240 10% 4% / 0.04), 0 4px 12px hsl(240 10% 4% / 0.04);
-    --shadow-elevated: 0 1px 2px hsl(240 10% 4% / 0.06), 0 12px 32px hsl(240 10% 4% / 0.08);
+    /* Brand surfaces */
+    --brand-ink: 180 50% 11%;
+    --brand-paper: 42 32% 97%;
+    --brand-deep: 178 60% 5%;            /* #08100F deep teal-black */
 
-    --gradient-brand: linear-gradient(135deg, hsl(240 10% 4%) 0%, hsl(240 8% 18%) 100%);
+    /* Soft teal-tinted shadows */
+    --shadow-soft: 0 1px 2px hsl(180 50% 11% / 0.04), 0 4px 12px hsl(174 78% 26% / 0.06);
+    --shadow-elevated: 0 1px 2px hsl(180 50% 11% / 0.06), 0 12px 32px hsl(174 78% 26% / 0.10);
 
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5% 26%;
-    --sidebar-primary: 240 10% 4%;
+    --gradient-brand: linear-gradient(135deg, hsl(174 78% 26%) 0%, hsl(180 50% 11%) 100%);
+    --gradient-cream: linear-gradient(180deg, hsl(42 32% 97%) 0%, hsl(42 24% 92%) 100%);
+
+    --sidebar-background: 42 32% 97%;
+    --sidebar-foreground: 180 50% 11%;
+    --sidebar-primary: 174 78% 26%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 5% 96%;
-    --sidebar-accent-foreground: 240 10% 4%;
-    --sidebar-border: 240 6% 90%;
-    --sidebar-ring: 240 10% 4%;
+    --sidebar-accent: 173 38% 84%;
+    --sidebar-accent-foreground: 174 78% 26%;
+    --sidebar-border: 42 36% 86%;
+    --sidebar-ring: 174 78% 26%;
+  }
+
+  /* Dark teal scope — applied via .lesson-dark on the lesson page root */
+  .lesson-dark {
+    --background: 178 60% 5%;            /* #08100F */
+    --foreground: 174 16% 95%;           /* #F0F5F4 */
+
+    --card: 178 28% 8%;                  /* #0E1816 */
+    --card-foreground: 174 16% 95%;
+
+    --popover: 178 28% 8%;
+    --popover-foreground: 174 16% 95%;
+
+    --primary: 172 66% 50%;              /* #2DD4BF bright teal */
+    --primary-foreground: 178 60% 5%;
+
+    --secondary: 178 22% 10%;            /* #131F1D */
+    --secondary-foreground: 174 16% 95%;
+
+    --muted: 178 22% 10%;
+    --muted-foreground: 174 9% 58%;      /* #8A9F9C */
+
+    --accent: 174 41% 21%;               /* #1F4A45 deep teal hover */
+    --accent-foreground: 172 66% 50%;
+
+    --destructive: 14 100% 64%;          /* #FF6B47 */
+    --destructive-foreground: 178 60% 5%;
+
+    --border: 174 19% 15%;               /* #1F2D2A */
+    --input: 174 19% 15%;
+    --ring: 172 66% 50%;
+
+    --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 12px rgb(0 0 0 / 0.3);
+    --shadow-elevated: 0 1px 2px rgb(0 0 0 / 0.5), 0 12px 32px rgb(0 0 0 / 0.4);
   }
 }
 
@@ -73,6 +110,7 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     font-feature-settings: "cv11", "ss01";
+    scroll-behavior: smooth;
   }
   body {
     @apply bg-background text-foreground;
@@ -90,11 +128,15 @@
   .shadow-soft { box-shadow: var(--shadow-soft); }
   .shadow-elevated { box-shadow: var(--shadow-elevated); }
   .bg-brand { background: var(--gradient-brand); }
+  .bg-cream-gradient { background: var(--gradient-cream); }
+  .font-serif { font-family: 'Fraunces', Georgia, serif; }
   .animate-fade-in { animation: fadeIn 0.35s ease-out; }
   .animate-slide-up { animation: slideUp 0.4s cubic-bezier(0.22, 1, 0.36, 1); }
   .scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
   .scrollbar-thin::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 4px; }
   .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+  .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
   .prose-tight p { @apply my-2; }
   .prose-tight ul, .prose-tight ol { @apply my-2 pl-5; }
   .prose-tight ul { @apply list-disc; }
