@@ -6,9 +6,9 @@ import ru from "./locales/ru.json";
 import en from "./locales/en.json";
 
 export const SUPPORTED_LANGUAGES = [
-  { code: "uz", label: "O'zbekcha" },
-  { code: "ru", label: "Русский" },
-  { code: "en", label: "English" },
+  { code: "uz", label: "O'zbekcha", short: "Uz", flag: "🇺🇿" },
+  { code: "ru", label: "Русский", short: "Ru", flag: "🇷🇺" },
+  { code: "en", label: "English", short: "En", flag: "🇺🇸" },
 ] as const;
 
 export type LanguageCode = (typeof SUPPORTED_LANGUAGES)[number]["code"];
