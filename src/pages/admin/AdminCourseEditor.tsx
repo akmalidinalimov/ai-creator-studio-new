@@ -219,6 +219,9 @@ export default function AdminCourseEditor() {
           </div>
         </Card>
 
+        {/* Per-course AI override */}
+        <CourseAIOverride courseId={courseId!} initial={course} onSaved={(patch) => setCourse((c: any) => ({ ...c, ...patch }))} />
+
         {/* Modules */}
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onModuleDragEnd}>
           <SortableContext items={modules.map((m) => m.id)} strategy={verticalListSortingStrategy}>
@@ -348,5 +351,63 @@ function SortableLesson({ lesson: l, index, onEdit }: { lesson: Lesson; index: n
       <span className={`text-[10px] px-2 py-0.5 rounded-full ${status.cls}`}>{status.label}</span>
       <Button variant="ghost" size="sm" onClick={onEdit}>Edit</Button>
     </li>
+  );
+}
+
+function CourseAIOverride({ courseId, initial, onSaved }: { courseId: string; initial: any; onSaved: (p: any) => void }) {
+  const [enabled, setEnabled] = useState(!!(initial?.ai_system_prompt || (initial?.ai_knowledge_paths || []).length));
+  const [prompt, setPrompt] = useState<string>(initial?.ai_system_prompt || "");
+  const [paths, setPaths] = useState<string[]>(initial?.ai_knowledge_paths || []);
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    setBusy(true);
+    const patch = { ai_system_prompt: enabled ? prompt : null, ai_knowledge_paths: enabled ? paths : [] };
+    const { error } = await (supabase.from("courses") as any).update(patch).eq("id", courseId);
+    setBusy(false);
+    if (error) return toast.error(error.message);
+    onSaved(patch);
+    toast.success("Course AI override saved");
+  };
+
+  const upload = async (file: File) => {
+    const path = `course-${courseId}/${Date.now()}-${file.name.replace(/[^a-z0-9._-]/gi, "_")}`;
+    const { error } = await supabase.storage.from("ai-knowledge").upload(path, file, { upsert: false });
+    if (error) return toast.error(error.message);
+    setPaths((p) => [...p, path]);
+    toast.success("Uploaded");
+  };
+
+  return (
+    <Card className="p-5 shadow-soft space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-semibold">AI Assistant (course override)</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">Use a custom system prompt and knowledge files for this course only.</p>
+        </div>
+        <label className="flex items-center gap-2 text-sm"><Switch checked={enabled} onCheckedChange={setEnabled} /> {enabled ? "On" : "Off"}</label>
+      </div>
+      {enabled && (
+        <>
+          <Textarea rows={6} value={prompt} onChange={(e) => setPrompt(e.target.value)}
+            placeholder="You are a strict tutor for this course. Use {course_title}, {transcript}, {language} as variables." />
+          <div className="space-y-2">
+            <div className="text-xs font-medium">Knowledge files ({paths.length})</div>
+            <ul className="text-xs space-y-1">
+              {paths.map((p, i) => (
+                <li key={p} className="flex items-center justify-between gap-2 px-2 py-1 rounded border bg-muted/30">
+                  <span className="truncate">{p.split("/").pop()}</span>
+                  <button type="button" className="text-destructive" onClick={() => setPaths(paths.filter((_, j) => j !== i))}>Remove</button>
+                </li>
+              ))}
+            </ul>
+            <input type="file" accept=".pdf,.txt,.md" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.currentTarget.value = ""; }} />
+          </div>
+          <div className="flex justify-end">
+            <Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save override"}</Button>
+          </div>
+        </>
+      )}
+    </Card>
   );
 }

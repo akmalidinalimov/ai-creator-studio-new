@@ -214,7 +214,154 @@ export default function AdminSettings() {
             </ul>
           </div>
         </Card>
+
+        <AIAssistantCard userId={user?.id} />
+        <ContentProtectionCard userId={user?.id} />
       </div>
     </PageShell>
   );
 }
+
+function AIAssistantCard({ userId }: { userId?: string }) {
+  const [prompt, setPrompt] = useState("");
+  const [paths, setPaths] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    supabase.from("platform_settings").select("value").eq("key", "ai_assistant").maybeSingle().then(({ data }) => {
+      const v = (data?.value as any) || {};
+      setPrompt(v.system_prompt || "");
+      setPaths(Array.isArray(v.knowledge_paths) ? v.knowledge_paths : []);
+    });
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    const { error } = await supabase.from("platform_settings").upsert({
+      key: "ai_assistant",
+      value: { system_prompt: prompt, knowledge_paths: paths },
+      updated_by: userId,
+    } as any, { onConflict: "key" });
+    setSaving(false);
+    if (error) return toast.error(error.message);
+    toast.success("AI assistant settings saved");
+  };
+
+  const upload = async (file: File) => {
+    const path = `platform/${Date.now()}-${file.name.replace(/[^a-z0-9._-]/gi, "_")}`;
+    const { error } = await supabase.storage.from("ai-knowledge").upload(path, file, { upsert: false });
+    if (error) return toast.error(error.message);
+    setPaths((p) => [...p, path]);
+    toast.success("File uploaded");
+  };
+
+  return (
+    <Card className="p-6 shadow-soft space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold">AI Study Assistant</h2>
+        <p className="text-sm text-muted-foreground mt-1">Customize the assistant's tone, scope, and knowledge for all courses.</p>
+      </div>
+      <div className="space-y-1.5">
+        <Label>System prompt</Label>
+        <textarea
+          className="w-full min-h-[160px] rounded-md border bg-background p-3 text-sm font-mono"
+          value={prompt} onChange={(e) => setPrompt(e.target.value)}
+          placeholder="You are a friendly study assistant for {course_title}. Answer in the student's chosen language. Use the lesson context when helpful: {transcript}. Be concise, encouraging, and ask follow-up questions when appropriate."
+        />
+        <p className="text-xs text-muted-foreground">
+          Tip: include lines like "Refuse to discuss topics unrelated to this course" to keep the tutor on-topic. Use <code>{"{course_title}"}</code>, <code>{"{transcript}"}</code>, <code>{"{language}"}</code> as variables we'll substitute at runtime.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label>Knowledge files ({paths.length})</Label>
+        <ul className="text-sm space-y-1">
+          {paths.length === 0 && <li className="text-xs text-muted-foreground italic">No files yet. Upload PDFs or text files to add reference context to every chat.</li>}
+          {paths.map((p, i) => (
+            <li key={p} className="flex items-center justify-between gap-2 px-3 py-2 rounded border bg-muted/30">
+              <span className="truncate text-xs">{p.split("/").pop()}</span>
+              <button className="text-destructive text-xs" onClick={() => setPaths(paths.filter((_, j) => j !== i))}>Remove</button>
+            </li>
+          ))}
+        </ul>
+        <input type="file" accept=".pdf,.txt,.md" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.currentTarget.value = ""; }} className="text-sm" />
+        <p className="text-xs text-muted-foreground">First 8 KB of each file's text is included in every chat. Per-course overrides available in each course's editor.</p>
+      </div>
+
+      <div className="flex justify-end">
+        <Button onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
+      </div>
+    </Card>
+  );
+}
+
+const PROTECTION_KEYS = [
+  { key: "watermark", label: "Forensic watermark", desc: "Translucent overlay with student email + timestamp on every video." },
+  { key: "no_right_click", label: "Disable right-click", desc: "Block context menu on the video and lesson container." },
+  { key: "pause_on_blur", label: "Pause on blur", desc: "Pause video when the tab loses focus or is hidden." },
+  { key: "devtools_detect", label: "DevTools detection", desc: "Pause and overlay when developer tools are detected." },
+  { key: "hardened_controls", label: "Hardened video controls", desc: "Disable download, picture-in-picture, remote playback." },
+];
+
+function ContentProtectionCard({ userId }: { userId?: string }) {
+  const [val, setVal] = useState<Record<string, boolean>>({
+    watermark: true, no_right_click: true, pause_on_blur: true, devtools_detect: true, hardened_controls: true,
+  });
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    supabase.from("platform_settings").select("value").eq("key", "content_protection").maybeSingle().then(({ data }) => {
+      const v = (data?.value as any) || {};
+      setVal({
+        watermark: v.watermark ?? true,
+        no_right_click: v.no_right_click ?? true,
+        pause_on_blur: v.pause_on_blur ?? true,
+        devtools_detect: v.devtools_detect ?? true,
+        hardened_controls: v.hardened_controls ?? true,
+      });
+    });
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    const { error } = await supabase.from("platform_settings").upsert({
+      key: "content_protection", value: val, updated_by: userId,
+    } as any, { onConflict: "key" });
+    setSaving(false);
+    if (error) return toast.error(error.message);
+    toast.success("Content protection saved");
+  };
+
+  return (
+    <Card className="p-6 shadow-soft space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold">Content Protection</h2>
+        <p className="text-sm text-muted-foreground mt-1">Layered defenses against screen recording on lesson playback. Admin pages are unaffected.</p>
+      </div>
+      <ul className="space-y-3">
+        {PROTECTION_KEYS.map((p) => (
+          <li key={p.key} className="flex items-start justify-between gap-4 py-2 border-b last:border-b-0">
+            <div className="min-w-0">
+              <div className="font-medium text-sm">{p.label}</div>
+              <div className="text-xs text-muted-foreground">{p.desc}</div>
+            </div>
+            <input
+              type="checkbox"
+              checked={val[p.key]}
+              onChange={(e) => setVal((s) => ({ ...s, [p.key]: e.target.checked }))}
+              className="mt-1 h-4 w-4"
+            />
+          </li>
+        ))}
+      </ul>
+      <div className="rounded-lg border border-amber-300/40 bg-amber-50/50 dark:bg-amber-950/20 p-4 text-sm">
+        <strong>Note:</strong> Browsers cannot fully prevent screen recording. These layers make it harder and let you trace any leak via the watermark.
+        For maximum protection, use <strong>Mux</strong> or <strong>Bunny Stream</strong> with their built-in DRM (Widevine / FairPlay) — paid feature, but the only true block.
+      </div>
+      <div className="flex justify-end">
+        <Button onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
+      </div>
+    </Card>
+  );
+}
+

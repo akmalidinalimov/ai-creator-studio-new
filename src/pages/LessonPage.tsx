@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -8,10 +8,25 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CheckCircle2, Circle, ChevronRight, ChevronLeft, Send, Sparkles, Bookmark, Clock } from "lucide-react";
 import { toast } from "sonner";
+import { ProtectedVideo } from "@/components/lesson/ProtectedVideo";
 
 interface Msg { role: "user" | "assistant"; content: string }
+
+const LANGUAGES = [
+  { code: "en", label: "English" }, { code: "ru", label: "Русский" },
+  { code: "uz", label: "O'zbek" }, { code: "es", label: "Español" },
+  { code: "pt", label: "Português" }, { code: "ar", label: "العربية" },
+  { code: "fr", label: "Français" }, { code: "de", label: "Deutsch" },
+  { code: "hi", label: "हिन्दी" }, { code: "zh", label: "中文" },
+];
+function detectLang(): string {
+  if (typeof navigator === "undefined") return "en";
+  const code = (navigator.language || "en").toLowerCase().split("-")[0];
+  return LANGUAGES.some((l) => l.code === code) ? code : "en";
+}
 
 export default function LessonPage() {
   const { courseId, lessonId } = useParams();
@@ -28,7 +43,29 @@ export default function LessonPage() {
   const [chatHistory, setChatHistory] = useState<Msg[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
+  const [language, setLanguage] = useState<string>(detectLang());
+  const [protectionSettings, setProtectionSettings] = useState<any | undefined>(undefined);
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Load protection settings + preferred language
+  useEffect(() => {
+    supabase.rpc("get_public_setting", { _key: "content_protection" }).then(({ data }) => {
+      if (data) setProtectionSettings(data);
+    });
+  }, []);
+  useEffect(() => {
+    if (!user) return;
+    supabase.from("profiles").select("preferred_language").eq("id", user.id).maybeSingle().then(({ data }) => {
+      const pl = (data as any)?.preferred_language;
+      if (pl && LANGUAGES.some((l) => l.code === pl)) setLanguage(pl);
+    });
+  }, [user]);
+
+  const onLanguageChange = (code: string) => {
+    setLanguage(code);
+    if (user) supabase.from("profiles").update({ preferred_language: code }).eq("id", user.id).then(() => {});
+  };
+
 
   // Load
   useEffect(() => {
@@ -131,47 +168,89 @@ export default function LessonPage() {
 
   const seekTo = (sec: number) => { if (videoRef.current) { videoRef.current.currentTime = sec; videoRef.current.play(); } };
 
-  const sendChat = async (text: string) => {
+  const sendChat = useCallback(async (text: string) => {
     if (!text.trim() || chatLoading) return;
     const userMsg: Msg = { role: "user", content: text };
+    const baseHistory = chatHistory;
     setChatHistory((h) => [...h, userMsg]);
     setChatInput("");
     setChatLoading(true);
+
+    const showRetry = () => {
+      // Remove orphan empty assistant bubble (if any)
+      setChatHistory((h) => h.filter((m, i) => !(i === h.length - 1 && m.role === "assistant" && !m.content)));
+      toast.error("AI tutor is busy, please try again.", {
+        action: { label: "Retry", onClick: () => { setChatHistory(baseHistory); sendChat(text); } },
+      });
+    };
+
     try {
       const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/study-assistant`;
       const resp = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ lessonId, message: text, history: chatHistory }),
+        body: JSON.stringify({ lessonId, message: text, history: chatHistory, language }),
       });
-      if (resp.status === 429) { toast.error("Rate limit. Try again in a moment."); setChatLoading(false); return; }
-      if (resp.status === 402) { toast.error("AI credits exhausted."); setChatLoading(false); return; }
-      if (!resp.ok || !resp.body) { toast.error("AI request failed"); setChatLoading(false); return; }
+
+      const ct = resp.headers.get("content-type") || "";
+      // Edge function now returns JSON (200) on fallback. Detect & surface retry.
+      if (ct.includes("application/json")) {
+        const json = await resp.json().catch(() => ({}));
+        if (json?.error) {
+          if (json.retryable === false) {
+            toast.error(json.error);
+          } else {
+            showRetry();
+          }
+          setChatLoading(false);
+          return;
+        }
+      }
+
+      if (resp.status === 429) { showRetry(); setChatLoading(false); return; }
+      if (!resp.ok || !resp.body) { showRetry(); setChatLoading(false); return; }
+
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buf = ""; let acc = "";
       setChatHistory((h) => [...h, { role: "assistant", content: "" }]);
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let i: number;
-        while ((i = buf.indexOf("\n")) !== -1) {
-          let line = buf.slice(0, i); buf = buf.slice(i + 1);
-          if (line.endsWith("\r")) line = line.slice(0, -1);
-          if (!line.startsWith("data: ")) continue;
-          const json = line.slice(6).trim();
-          if (json === "[DONE]") continue;
-          try {
-            const p = JSON.parse(json);
-            const c = p.choices?.[0]?.delta?.content;
-            if (c) { acc += c; setChatHistory((h) => h.map((m, i2) => i2 === h.length - 1 ? { ...m, content: acc } : m)); }
-          } catch { buf = line + "\n" + buf; break; }
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let i: number;
+          while ((i = buf.indexOf("\n")) !== -1) {
+            let line = buf.slice(0, i); buf = buf.slice(i + 1);
+            if (line.endsWith("\r")) line = line.slice(0, -1);
+            if (!line.startsWith("data: ")) continue;
+            const json = line.slice(6).trim();
+            if (json === "[DONE]") continue;
+            try {
+              const p = JSON.parse(json);
+              const c = p.choices?.[0]?.delta?.content;
+              if (c) { acc += c; setChatHistory((h) => h.map((m, i2) => i2 === h.length - 1 ? { ...m, content: acc } : m)); }
+            } catch { buf = line + "\n" + buf; break; }
+          }
+        }
+        // If stream ended with no content at all, show retry
+        if (!acc) showRetry();
+      } catch (streamErr) {
+        console.error("stream error", streamErr);
+        if (acc) {
+          const final = acc + "\n\n_(response interrupted)_";
+          setChatHistory((h) => h.map((m, i2) => i2 === h.length - 1 ? { ...m, content: final } : m));
+        } else {
+          showRetry();
         }
       }
-    } catch (e) { console.error(e); toast.error("AI request failed"); }
+    } catch (e) {
+      console.error(e);
+      showRetry();
+    }
     setChatLoading(false);
-  };
+  }, [chatLoading, chatHistory, lessonId, language, session]);
+
 
   if (!lesson) return <PageShell><div className="text-muted-foreground">Loading…</div></PageShell>;
 
@@ -188,8 +267,14 @@ export default function LessonPage() {
           </div>
 
           <Card className="overflow-hidden bg-black shadow-elevated">
-            <video ref={videoRef} src={videoSrc} controls className="w-full aspect-video" />
+            <ProtectedVideo
+              src={videoSrc}
+              videoRef={videoRef}
+              watermarkText={user?.email || "student"}
+              settings={protectionSettings}
+            />
           </Card>
+
 
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div className="min-w-0">
@@ -270,6 +355,14 @@ export default function LessonPage() {
             <div className="px-4 py-3 border-b flex items-center gap-2">
               <Sparkles className="h-4 w-4" />
               <span className="text-sm font-medium">AI Study Assistant</span>
+              <div className="ml-auto">
+                <Select value={language} onValueChange={onLanguageChange}>
+                  <SelectTrigger className="h-7 text-xs w-[120px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {LANGUAGES.map((l) => <SelectItem key={l.code} value={l.code} className="text-xs">{l.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <div className="flex-1 max-h-[300px] overflow-y-auto p-3 space-y-3 scrollbar-thin">
               {chatHistory.length === 0 && (

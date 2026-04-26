@@ -14,6 +14,36 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_chat_errors: {
+        Row: {
+          created_at: string
+          error_excerpt: string | null
+          id: string
+          lesson_id: string | null
+          model: string | null
+          status: number | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          error_excerpt?: string | null
+          id?: string
+          lesson_id?: string | null
+          model?: string | null
+          status?: number | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          error_excerpt?: string | null
+          id?: string
+          lesson_id?: string | null
+          model?: string | null
+          status?: number | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       ai_chat_messages: {
         Row: {
           content: string
@@ -78,6 +108,8 @@ export type Database = {
       }
       courses: {
         Row: {
+          ai_knowledge_paths: string[] | null
+          ai_system_prompt: string | null
           cover_url: string | null
           created_at: string
           description: string | null
@@ -90,6 +122,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          ai_knowledge_paths?: string[] | null
+          ai_system_prompt?: string | null
           cover_url?: string | null
           created_at?: string
           description?: string | null
@@ -102,6 +136,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          ai_knowledge_paths?: string[] | null
+          ai_system_prompt?: string | null
           cover_url?: string | null
           created_at?: string
           description?: string | null
@@ -480,6 +516,7 @@ export type Database = {
           id: string
           name: string | null
           onboarding_completed: boolean | null
+          preferred_language: string | null
           status: Database["public"]["Enums"]["user_status"]
           telegram_id: number | null
           telegram_username: string | null
@@ -495,6 +532,7 @@ export type Database = {
           id: string
           name?: string | null
           onboarding_completed?: boolean | null
+          preferred_language?: string | null
           status?: Database["public"]["Enums"]["user_status"]
           telegram_id?: number | null
           telegram_username?: string | null
@@ -510,6 +548,7 @@ export type Database = {
           id?: string
           name?: string | null
           onboarding_completed?: boolean | null
+          preferred_language?: string | null
           status?: Database["public"]["Enums"]["user_status"]
           telegram_id?: number | null
           telegram_username?: string | null
