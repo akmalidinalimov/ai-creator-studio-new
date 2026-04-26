@@ -1,4 +1,4 @@
-import { Globe, Check } from "lucide-react";
+import { Check } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,7 +19,7 @@ export const LanguageSwitcher = ({ variant = "icon" }: Props) => {
   const { i18n } = useTranslation();
   const { user } = useAuth();
   const current = (i18n.resolvedLanguage || i18n.language || "uz").slice(0, 2) as LanguageCode;
-  const currentLabel = SUPPORTED_LANGUAGES.find((l) => l.code === current)?.label || "O'zbekcha";
+  const currentLang = SUPPORTED_LANGUAGES.find((l) => l.code === current) || SUPPORTED_LANGUAGES[0];
 
   const handleChange = async (code: LanguageCode) => {
     await i18n.changeLanguage(code);
@@ -40,25 +40,28 @@ export const LanguageSwitcher = ({ variant = "icon" }: Props) => {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        {variant === "icon" ? (
-          <Button variant="ghost" size="icon" aria-label="Change language">
-            <Globe className="h-4 w-4" />
-          </Button>
-        ) : (
-          <Button variant="ghost" size="sm" className="gap-1.5">
-            <Globe className="h-4 w-4" />
-            <span className="text-xs">{currentLabel}</span>
-          </Button>
-        )}
+        <Button
+          variant="ghost"
+          size={variant === "icon" ? "sm" : "sm"}
+          className="gap-1.5 px-2"
+          aria-label="Change language"
+        >
+          <span className="text-base leading-none">{currentLang.flag}</span>
+          <span className="text-xs font-medium">{currentLang.short}</span>
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
         {SUPPORTED_LANGUAGES.map((lang) => (
           <DropdownMenuItem
             key={lang.code}
             onClick={() => handleChange(lang.code)}
-            className="flex items-center justify-between"
+            className="flex items-center justify-between gap-2"
           >
-            <span>{lang.label}</span>
+            <span className="flex items-center gap-2">
+              <span className="text-base leading-none">{lang.flag}</span>
+              <span>{lang.label}</span>
+              <span className="text-xs text-muted-foreground">({lang.short})</span>
+            </span>
             {current === lang.code && <Check className="h-3.5 w-3.5" />}
           </DropdownMenuItem>
         ))}
