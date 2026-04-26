@@ -7,10 +7,13 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const MODEL_CHAIN = [
-  "google/gemini-3-flash-preview",
-  "google/gemini-2.5-flash",
-  "google/gemini-2.5-flash-lite",
+// Primary: OpenAI GPT-5 mini via direct OpenAI API (uses OpenAI_AIStudentSupport secret).
+// Fallbacks: Lovable AI gateway models (use LOVABLE_API_KEY) if OpenAI fails.
+type ModelEntry = { provider: "openai" | "lovable"; model: string };
+const MODEL_CHAIN: ModelEntry[] = [
+  { provider: "openai", model: "gpt-5-mini" },
+  { provider: "lovable", model: "google/gemini-3-flash-preview" },
+  { provider: "lovable", model: "google/gemini-2.5-flash" },
 ];
 
 const LANG_NAMES: Record<string, string> = {
