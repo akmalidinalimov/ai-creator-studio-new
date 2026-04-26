@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -8,10 +8,25 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CheckCircle2, Circle, ChevronRight, ChevronLeft, Send, Sparkles, Bookmark, Clock } from "lucide-react";
 import { toast } from "sonner";
+import { ProtectedVideo } from "@/components/lesson/ProtectedVideo";
 
 interface Msg { role: "user" | "assistant"; content: string }
+
+const LANGUAGES = [
+  { code: "en", label: "English" }, { code: "ru", label: "Русский" },
+  { code: "uz", label: "O'zbek" }, { code: "es", label: "Español" },
+  { code: "pt", label: "Português" }, { code: "ar", label: "العربية" },
+  { code: "fr", label: "Français" }, { code: "de", label: "Deutsch" },
+  { code: "hi", label: "हिन्दी" }, { code: "zh", label: "中文" },
+];
+function detectLang(): string {
+  if (typeof navigator === "undefined") return "en";
+  const code = (navigator.language || "en").toLowerCase().split("-")[0];
+  return LANGUAGES.some((l) => l.code === code) ? code : "en";
+}
 
 export default function LessonPage() {
   const { courseId, lessonId } = useParams();
