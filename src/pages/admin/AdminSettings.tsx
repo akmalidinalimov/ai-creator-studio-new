@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Eye, EyeOff, CheckCircle2, Circle, ExternalLink, Copy } from "lucide-react";
 import { TelegramLoginButton } from "@/components/TelegramLoginButton";
+import { KnowledgeManager } from "@/components/admin/KnowledgeManager";
 
 export default function AdminSettings() {
   const { user } = useAuth();
