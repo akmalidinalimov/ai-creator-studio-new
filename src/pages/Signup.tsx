@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { AuthShell } from "./Login";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
+import { TelegramLoginButton } from "@/components/TelegramLoginButton";
 
 export default function Signup() {
   const nav = useNavigate();
