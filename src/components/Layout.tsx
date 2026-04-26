@@ -3,7 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { LogOut, Settings, Shield, LayoutDashboard, BookOpen, Users, Rocket, BarChart3 } from "lucide-react";
+import { LogOut, Settings, Shield, LayoutDashboard, BookOpen, Users, Rocket, BarChart3, FileText } from "lucide-react";
 
 export const Logo = ({ className = "" }: { className?: string }) => (
   <Link to="/dashboard" className={`flex items-center gap-2 font-semibold tracking-tight ${className}`}>
@@ -82,6 +82,9 @@ export const TopNav = () => {
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => navigate("/admin/ai-analytics")}>
                     <BarChart3 className="mr-2 h-4 w-4" /> AI Analytics
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate("/admin/audit")}>
+                    <FileText className="mr-2 h-4 w-4" /> Audit log
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => navigate("/admin/deploy")}>
                     <Rocket className="mr-2 h-4 w-4" /> Deploy
