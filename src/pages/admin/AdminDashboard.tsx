@@ -37,6 +37,31 @@ export default function AdminDashboard() {
   const [moduleFunnel, setModuleFunnel] = useState<{ name: string; completed: number; drop?: number }[]>([]);
   const [stuckByModule, setStuckByModule] = useState<{ name: string; count: number }[]>([]);
   const [stuck, setStuck] = useState<any[]>([]);
+  const [recentActions, setRecentActions] = useState<any[]>([]);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("admin_actions")
+        .select("id, action, actor_user_id, target_user_id, target_resource_type, details, created_at")
+        .order("created_at", { ascending: false })
+        .limit(25);
+      const rows = data || [];
+      const ids = Array.from(new Set(rows.flatMap((r: any) => [r.actor_user_id, r.target_user_id]).filter(Boolean)));
+      let names: Record<string, string> = {};
+      if (ids.length) {
+        const { data: profs } = await supabase.from("profiles").select("id, name, last_name, email").in("id", ids);
+        (profs || []).forEach((p: any) => {
+          names[p.id] = [p.name, p.last_name].filter(Boolean).join(" ") || p.email || p.id.slice(0, 8);
+        });
+      }
+      setRecentActions(rows.map((r: any) => ({
+        ...r,
+        actor_name: names[r.actor_user_id] || "Unknown",
+        target_name: r.target_user_id ? (names[r.target_user_id] || "Unknown") : null,
+      })));
+    })();
+  }, []);
 
   useEffect(() => {
     supabase.from("courses").select("id, title, published").order("title").then(({ data }) => {
