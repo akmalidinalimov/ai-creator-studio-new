@@ -24,6 +24,7 @@ const AdminCourseEditor = lazy(() => import("./pages/admin/AdminCourseEditor"));
 const AdminUsers = lazy(() => import("./pages/admin/AdminUsers"));
 const AdminSettings = lazy(() => import("./pages/admin/AdminSettings"));
 const AdminDeploy = lazy(() => import("./pages/admin/AdminDeploy"));
+const AdminAIAnalytics = lazy(() => import("./pages/admin/AdminAIAnalytics"));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 60_000, refetchOnWindowFocus: false } },
