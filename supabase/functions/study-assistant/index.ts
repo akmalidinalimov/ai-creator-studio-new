@@ -34,12 +34,13 @@ async function recordMetric(admin: any, row: any) {
   try { await admin.from("ai_chat_metrics").insert(row); } catch (_) {}
 }
 
-async function embedQuery(apiKey: string, query: string): Promise<number[] | null> {
+async function embedQuery(openaiKey: string, query: string): Promise<number[] | null> {
+  if (!openaiKey) return null;
   try {
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/embeddings", {
+    const res = await fetch("https://api.openai.com/v1/embeddings", {
       method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "google/text-embedding-004", input: query }),
+      headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "text-embedding-3-small", input: query }),
     });
     if (!res.ok) return null;
     const json = await res.json();
@@ -148,7 +149,7 @@ Deno.serve(async (req) => {
 
     // Semantic retrieval: embed the user question, fetch top chunks across platform + course scope.
     const courseId: string | null = courseRow?.id ?? null;
-    const knowledgeText = await retrieveKnowledge(admin, LOVABLE_API_KEY, message, courseId);
+    const knowledgeText = await retrieveKnowledge(admin, OPENAI_API_KEY, message, courseId);
 
     const systemPrompt = effectivePrompt
       .replaceAll("{course_title}", courseTitle)
