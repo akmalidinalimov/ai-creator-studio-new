@@ -386,8 +386,8 @@ export default function AdminUsers() {
       <div className="space-y-6">
         <div className="flex items-end justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Users</h1>
-            <p className="text-muted-foreground mt-1">{users.length} total · {users.filter(u => u.is_admin).length} admins</p>
+            <h1 className="text-3xl font-semibold tracking-tight">{t("admin.users.title")}</h1>
+            <p className="text-muted-foreground mt-1">{t("admin.users.subtitle", { total: users.length, admins: users.filter(u => u.is_admin).length })}</p>
           </div>
           <div className="flex gap-2">
             {selected.size > 0 && (
@@ -395,33 +395,33 @@ export default function AdminUsers() {
                 const emails = users.filter((u) => selected.has(u.id)).map((u) => u.email);
                 resendWelcome(emails);
               }}>
-                <Mail className="h-4 w-4" /> Resend welcome ({selected.size})
+                <Mail className="h-4 w-4" /> {t("admin.users.resendWelcomeN", { n: selected.size })}
               </Button>
             )}
-            <Button variant="outline" size="sm" onClick={() => setOpenCsv(true)}><UploadIcon className="h-4 w-4" />Import CSV</Button>
-            <Button size="sm" onClick={() => { setNewPassword(randPassword()); setOpenAdd(true); }}><Plus className="h-4 w-4" />Add user</Button>
+            <Button variant="outline" size="sm" onClick={() => setOpenCsv(true)}><UploadIcon className="h-4 w-4" />{t("admin.users.importCsv")}</Button>
+            <Button size="sm" onClick={() => { setNewPassword(randPassword()); setOpenAdd(true); }}><Plus className="h-4 w-4" />{t("admin.users.addUser")}</Button>
           </div>
         </div>
 
         <div className="flex flex-wrap gap-2 items-center">
           <div className="relative flex-1 min-w-[220px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Search by name, email, or @telegram" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+            <Input placeholder={t("admin.users.searchPh")} value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
           </div>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All status</SelectItem>
-              <SelectItem value="active">Active</SelectItem>
-              <SelectItem value="inactive">Inactive</SelectItem>
+              <SelectItem value="all">{t("admin.users.allStatus")}</SelectItem>
+              <SelectItem value="active">{t("admin.users.active")}</SelectItem>
+              <SelectItem value="inactive">{t("admin.users.inactive")}</SelectItem>
             </SelectContent>
           </Select>
           <Select value={roleFilter} onValueChange={setRoleFilter}>
             <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All roles</SelectItem>
-              <SelectItem value="admin">Admins</SelectItem>
-              <SelectItem value="student">Students</SelectItem>
+              <SelectItem value="all">{t("admin.users.allRoles")}</SelectItem>
+              <SelectItem value="admin">{t("admin.users.admins")}</SelectItem>
+              <SelectItem value="student">{t("admin.users.students")}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -437,20 +437,20 @@ export default function AdminUsers() {
                       onCheckedChange={toggleSelectAll}
                     />
                   </th>
-                  <th className="text-left p-3">Name</th>
-                  <th className="text-left p-3">Last name</th>
-                  <th className="text-left p-3">Email</th>
-                  <th className="text-left p-3">Telegram</th>
-                  <th className="text-left p-3">Role</th>
-                  <th className="text-left p-3">Status</th>
-                  <th className="text-left p-3">Courses</th>
-                  <th className="text-left p-3">Last login</th>
+                  <th className="text-left p-3">{t("admin.users.headers.name")}</th>
+                  <th className="text-left p-3">{t("admin.users.headers.lastName")}</th>
+                  <th className="text-left p-3">{t("admin.users.headers.email")}</th>
+                  <th className="text-left p-3">{t("admin.users.headers.telegram")}</th>
+                  <th className="text-left p-3">{t("admin.users.headers.role")}</th>
+                  <th className="text-left p-3">{t("admin.users.headers.status")}</th>
+                  <th className="text-left p-3">{t("admin.users.headers.courses")}</th>
+                  <th className="text-left p-3">{t("admin.users.headers.lastLogin")}</th>
                   <th className="p-3"></th>
                 </tr>
               </thead>
               <tbody>
-                {loading && <tr><td colSpan={10} className="p-6 text-center text-muted-foreground">Loading…</td></tr>}
-                {!loading && filtered.length === 0 && <tr><td colSpan={10} className="p-6 text-center text-muted-foreground">No users found</td></tr>}
+                {loading && <tr><td colSpan={10} className="p-6 text-center text-muted-foreground">{t("admin.users.loading")}</td></tr>}
+                {!loading && filtered.length === 0 && <tr><td colSpan={10} className="p-6 text-center text-muted-foreground">{t("admin.users.empty")}</td></tr>}
                 {filtered.map((u) => (
                   <tr key={u.id} className="border-t hover:bg-muted/20">
                     <td className="p-3"><Checkbox checked={selected.has(u.id)} onCheckedChange={() => toggleSelect(u.id)} /></td>
@@ -458,14 +458,14 @@ export default function AdminUsers() {
                     <td className="p-3 text-muted-foreground">{u.last_name || "—"}</td>
                     <td className="p-3 text-muted-foreground">
                       {u.email}
-                      {isLocked(u.email) && <Badge variant="destructive" className="ml-2 text-[10px]">Locked</Badge>}
+                      {isLocked(u.email) && <Badge variant="destructive" className="ml-2 text-[10px]">{t("admin.users.locked")}</Badge>}
                     </td>
                     <td className="p-3 text-xs text-muted-foreground">{u.telegram_username ? `@${u.telegram_username}` : "—"}</td>
-                    <td className="p-3">{u.is_admin ? <Badge>admin</Badge> : <Badge variant="secondary">student</Badge>}</td>
-                    <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : "bg-destructive/10 text-destructive"}`}>{u.status}</span></td>
+                    <td className="p-3">{u.is_admin ? <Badge>{t("admin.users.admin").toLowerCase()}</Badge> : <Badge variant="secondary">{t("admin.users.student").toLowerCase()}</Badge>}</td>
+                    <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : "bg-destructive/10 text-destructive"}`}>{u.status === "active" ? t("admin.users.active") : t("admin.users.inactive")}</span></td>
                     <td className="p-3 text-xs text-muted-foreground">{(enrollMap[u.id]?.size) || 0}</td>
                     <td className="p-3 text-xs text-muted-foreground">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}</td>
-                    <td className="p-3"><Button variant="ghost" size="sm" onClick={() => setManageUser(u)}>Manage</Button></td>
+                    <td className="p-3"><Button variant="ghost" size="sm" onClick={() => setManageUser(u)}>{t("admin.users.manage")}</Button></td>
                   </tr>
                 ))}
               </tbody>
