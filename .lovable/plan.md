@@ -1,35 +1,34 @@
-# Add language switcher to the main (Landing) page
+# Fix student lesson UI: All modules button + My Settings menu
 
-## Problem
-The Landing page (`/`) header has Sign in / Start free buttons but no language switcher. Login, Signup, and the authenticated `Layout` already use the shared `LanguageSwitcher` component — only the public landing page is missing it.
+## What changes
 
-## Change
-Reuse the existing `LanguageSwitcher` component (no new logic, no new translations needed). It already persists the choice to `localStorage` and to `profiles.preferred_language` if signed in.
+### 1. Re-add "Barcha modullar" / "All modules" button — lesson page
+On `src/pages/LessonPage.tsx`, restore the button between **Oldingi** and **Tugatildi** in the action row. It links to `/course/${courseId}` (the module list page) and uses the `LayoutList` icon. Same mobile-friendly styling as the other buttons (`w-full sm:w-auto min-h-[44px]`).
 
-### 1. `src/pages/Landing.tsx` — desktop header
-- Import `LanguageSwitcher` from `@/components/LanguageSwitcher`.
-- Insert it inside the right-side action group (line ~137), before the Sign in button:
-
-```tsx
-<div className="flex items-center gap-2">
-  <LanguageSwitcher />
-  <Button asChild variant="outline" size="sm" className="hidden sm:inline-flex">
-    <Link to="/login">{t("landing.nav.signIn")}</Link>
-  </Button>
-  ...
-</div>
+Final button order on a lesson:
+```
+Oldingi  |  Barcha modullar  |  Tugatildi  |  Keyingi
 ```
 
-This keeps the switcher visible on both mobile and desktop (the Sign in button is hidden on `<sm`, but the switcher remains).
+The `t("lesson.allModules")` translation key already exists in uz/en/ru — no i18n changes needed.
 
-### 2. `src/pages/Landing.tsx` — mobile slide-out menu (around line 382–401)
-Add the same `<LanguageSwitcher />` near the top of the mobile menu so users opening the hamburger also see it. Place it next to the `<Brand />` row or just above the auth links.
+### 2. Fix "My Settings" (and other) avatar-menu items
+On `src/components/Layout.tsx`, the avatar dropdown items currently call `navigate(...)` from inside Radix's `onClick`. In some browsers the dropdown's focus/close animation swallows the click before navigation runs, so tapping "My Settings" appears to do nothing.
 
-## Out of scope
-- No changes to `LanguageSwitcher.tsx`, i18n config, or translations.
-- No changes to other pages (Login, Signup, Layout already have it).
+Switch every `DropdownMenuItem` that navigates to use `asChild` + a real `<Link>`. This is the Radix-recommended pattern: the link element receives the click directly, navigation always fires, and middle-click / open-in-new-tab also work.
 
-## Verification
-- Visit `/` — flag + language code visible in the top-right header next to Sign in.
-- Click it → dropdown lists Uz / Ru / En → selecting one updates landing copy (headlines, nav links, FAQ) immediately and persists across reloads.
-- Open mobile menu → switcher visible there too.
+Affected items (student + admin):
+- My Settings → `/settings`
+- Dashboard → `/dashboard`
+- Admin Dashboard, Courses, Users, Settings, AI Analytics, Audit, Deploy
+
+Sign Out stays as-is (it runs an async action, not navigation).
+
+## Technical notes
+- No new dependencies, no DB changes, no i18n changes.
+- No changes to the Settings page itself, the Bunny iframe, or the lesson editor.
+- Files touched: `src/pages/LessonPage.tsx`, `src/components/Layout.tsx`.
+
+## Verify after deploy
+- On any lesson (e.g. `/lesson/c8103dae.../8a0f67d0...`) the action row shows 4 buttons including **Barcha modullar**, which routes to the course module list.
+- Click avatar → **My Settings** → lands on `/settings` reliably on desktop and mobile.
