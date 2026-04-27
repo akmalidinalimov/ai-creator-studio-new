@@ -477,38 +477,38 @@ export default function AdminUsers() {
       {/* Add user dialog */}
       <Dialog open={openAdd} onOpenChange={setOpenAdd}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Add user</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t("admin.users.addTitle")}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1.5"><Label>First name</Label><Input value={newName} onChange={(e) => setNewName(e.target.value)} /></div>
+              <div className="space-y-1.5"><Label>{t("admin.users.firstName")}</Label><Input value={newName} onChange={(e) => setNewName(e.target.value)} /></div>
               <div className="space-y-1.5">
-                <Label>Last name</Label>
-                <Input value={newLastName} onChange={(e) => setNewLastName(e.target.value)} placeholder="Optional" />
+                <Label>{t("admin.users.lastName")}</Label>
+                <Input value={newLastName} onChange={(e) => setNewLastName(e.target.value)} placeholder={t("admin.users.lastNameOptional")} />
               </div>
             </div>
-            <p className="text-xs text-muted-foreground -mt-1">Helps Telegram login match by full name when username is missing.</p>
-            <div className="space-y-1.5"><Label>Email</Label><Input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} /></div>
+            <p className="text-xs text-muted-foreground -mt-1">{t("admin.users.tgHelp")}</p>
+            <div className="space-y-1.5"><Label>{t("admin.users.headers.email")}</Label><Input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} /></div>
             <div className="space-y-1.5">
-              <Label>Password (optional — leave blank to send magic-link invite)</Label>
+              <Label>{t("admin.users.passwordOptional")}</Label>
               <div className="flex gap-2">
                 <Input value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
                 <Button type="button" variant="outline" size="icon" onClick={() => setNewPassword(randPassword())}><RefreshCw className="h-4 w-4" /></Button>
-                <Button type="button" variant="outline" size="icon" onClick={() => { navigator.clipboard.writeText(newPassword); toast.success("Copied"); }}><Copy className="h-4 w-4" /></Button>
+                <Button type="button" variant="outline" size="icon" onClick={() => { navigator.clipboard.writeText(newPassword); toast.success(t("admin.common.copied")); }}><Copy className="h-4 w-4" /></Button>
               </div>
             </div>
-            <div className="space-y-1.5"><Label>Telegram username (optional)</Label><Input value={newTg} onChange={(e) => setNewTg(e.target.value)} placeholder="@username" /></div>
+            <div className="space-y-1.5"><Label>{t("admin.users.tgUsernameOptional")}</Label><Input value={newTg} onChange={(e) => setNewTg(e.target.value)} placeholder="@username" /></div>
             <div className="space-y-1.5">
-              <Label>Role</Label>
+              <Label>{t("admin.users.role")}</Label>
               <Select value={newRole} onValueChange={(v) => setNewRole(v as any)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="student">Student</SelectItem>
-                  <SelectItem value="admin">Admin</SelectItem>
+                  <SelectItem value="student">{t("admin.users.student")}</SelectItem>
+                  <SelectItem value="admin">{t("admin.users.admin")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>Enroll in courses</Label>
+              <Label>{t("admin.users.enrollIn")}</Label>
               <div className="space-y-1 max-h-32 overflow-y-auto border rounded-md p-2">
                 {courses.map((c) => (
                   <label key={c.id} className="flex items-center gap-2 text-sm cursor-pointer">
@@ -524,24 +524,24 @@ export default function AdminUsers() {
             </div>
             <label className="flex items-center gap-2 text-sm cursor-pointer pt-1">
               <Checkbox checked={sendInvite} onCheckedChange={(v) => setSendInvite(!!v)} />
-              Send magic-link welcome email
+              {t("admin.users.sendMagicLink")}
             </label>
           </div>
-          <DialogFooter><Button onClick={handleAdd}>Create user</Button></DialogFooter>
+          <DialogFooter><Button onClick={handleAdd}>{t("admin.users.createUser")}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* CSV dialog */}
       <Dialog open={openCsv} onOpenChange={setOpenCsv}>
         <DialogContent className="max-w-3xl">
-          <DialogHeader><DialogTitle>Import users from CSV</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t("admin.users.csvTitle")}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3">
               <div className="text-xs text-muted-foreground">
-                Format: <code>name,last_name,email,password,telegram_username,role</code><br />
-                <span>last_name, password, telegram_username, role are optional. Defaults: blank, magic-link invite, no telegram, role=student.</span>
+                {t("admin.users.csvFormat")} <code>name,last_name,email,password,telegram_username,role</code><br />
+                <span>{t("admin.users.csvFormatHint")}</span>
               </div>
-              <Button variant="default" size="sm" onClick={downloadTemplate}><Download className="h-4 w-4" />Download template</Button>
+              <Button variant="default" size="sm" onClick={downloadTemplate}><Download className="h-4 w-4" />{t("admin.users.downloadTemplate")}</Button>
             </div>
             <Textarea
               rows={6}
@@ -554,12 +554,12 @@ export default function AdminUsers() {
                 <table className="w-full text-sm">
                   <thead className="bg-muted/40 text-xs sticky top-0">
                     <tr>
-                      <th className="text-left p-2">Name</th>
-                      <th className="text-left p-2">Last name</th>
-                      <th className="text-left p-2">Email</th>
-                      <th className="text-left p-2">Telegram</th>
-                      <th className="text-left p-2">Role</th>
-                      <th className="text-left p-2">Status</th>
+                      <th className="text-left p-2">{t("admin.users.csvHeaders.name")}</th>
+                      <th className="text-left p-2">{t("admin.users.csvHeaders.lastName")}</th>
+                      <th className="text-left p-2">{t("admin.users.csvHeaders.email")}</th>
+                      <th className="text-left p-2">{t("admin.users.csvHeaders.telegram")}</th>
+                      <th className="text-left p-2">{t("admin.users.csvHeaders.role")}</th>
+                      <th className="text-left p-2">{t("admin.users.csvHeaders.status")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -571,7 +571,7 @@ export default function AdminUsers() {
                         <td className="p-2 text-xs">{r.telegram_username ? `@${r.telegram_username}` : "—"}</td>
                         <td className="p-2 text-xs">{r.role}</td>
                         <td className={`p-2 text-xs ${r.valid ? "text-foreground" : "text-destructive font-medium"}`}>
-                          {r.valid ? "Valid" : r.reason}
+                          {r.valid ? t("admin.users.valid") : r.reason}
                         </td>
                       </tr>
                     ))}
@@ -579,11 +579,11 @@ export default function AdminUsers() {
                 </table>
               </div>
             )}
-            <div className="text-xs text-muted-foreground">{csvParsed.filter(r => r.valid).length} valid · {csvParsed.filter(r => !r.valid).length} invalid</div>
+            <div className="text-xs text-muted-foreground">{t("admin.users.validInvalid", { valid: csvParsed.filter(r => r.valid).length, invalid: csvParsed.filter(r => !r.valid).length })}</div>
           </div>
           <DialogFooter>
             <Button onClick={importCsv} disabled={importing || csvParsed.filter(r => r.valid).length === 0}>
-              {importing ? "Importing…" : `Import ${csvParsed.filter(r => r.valid).length} users`}
+              {importing ? t("admin.users.importing") : t("admin.users.importN", { n: csvParsed.filter(r => r.valid).length })}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -598,11 +598,11 @@ export default function AdminUsers() {
               <div className="mt-6 space-y-5">
                 <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-1.5">
-                    <Label>First name</Label>
+                    <Label>{t("admin.users.firstName")}</Label>
                     <Input defaultValue={manageUser.name || ""} onBlur={(e) => e.target.value !== (manageUser.name || "") && updateProfile(manageUser, { name: e.target.value })} />
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Last name</Label>
+                    <Label>{t("admin.users.lastName")}</Label>
                     <Input defaultValue={manageUser.last_name || ""} onBlur={(e) => {
                       const v = e.target.value || null;
                       if (v !== (manageUser.last_name || null)) updateProfile(manageUser, { last_name: v });
@@ -610,37 +610,37 @@ export default function AdminUsers() {
                   </div>
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Email</Label>
+                  <Label>{t("admin.users.manageEmail")}</Label>
                   <Input defaultValue={manageUser.email} onBlur={(e) => e.target.value !== manageUser.email && updateProfile(manageUser, { email: e.target.value })} />
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Telegram username</Label>
+                  <Label>{t("admin.users.manageTg")}</Label>
                   <Input defaultValue={manageUser.telegram_username || ""} placeholder="username" onBlur={(e) => {
                     const v = e.target.value.replace(/^@/, "") || null;
                     if (v !== manageUser.telegram_username) updateProfile(manageUser, { telegram_username: v });
                   }} />
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Role</Label>
+                  <Label>{t("admin.users.role")}</Label>
                   <div className="flex gap-2 items-center">
-                    <Badge>{manageUser.is_admin ? "admin" : "student"}</Badge>
+                    <Badge>{manageUser.is_admin ? t("admin.users.admin").toLowerCase() : t("admin.users.student").toLowerCase()}</Badge>
                     <Button size="sm" variant="outline" onClick={() => setConfirmRole({ user: manageUser, promote: !manageUser.is_admin })}>
-                      {manageUser.is_admin ? "Demote to student" : "Promote to admin"}
+                      {manageUser.is_admin ? t("admin.users.demote") : t("admin.users.promote")}
                     </Button>
                   </div>
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Status</Label>
+                  <Label>{t("admin.users.headers.status")}</Label>
                   <Select value={manageUser.status} onValueChange={(v) => setStatus(manageUser, v as any)}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="active">Active</SelectItem>
-                      <SelectItem value="inactive">Inactive</SelectItem>
+                      <SelectItem value="active">{t("admin.users.active")}</SelectItem>
+                      <SelectItem value="inactive">{t("admin.users.inactive")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Course access</Label>
+                  <Label>{t("admin.users.courseAccess")}</Label>
                   <div className="space-y-1 border rounded-md p-2">
                     {courses.map((c) => (
                       <label key={c.id} className="flex items-center gap-2 text-sm cursor-pointer">
@@ -651,16 +651,16 @@ export default function AdminUsers() {
                         {c.title}
                       </label>
                     ))}
-                    {courses.length === 0 && <p className="text-xs text-muted-foreground">No courses</p>}
+                    {courses.length === 0 && <p className="text-xs text-muted-foreground">{t("admin.users.noCourses")}</p>}
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2 pt-2">
-                  <Button variant="outline" size="sm" onClick={() => resendWelcome([manageUser.email])}><Mail className="h-4 w-4" />Resend welcome</Button>
-                  <Button variant="outline" size="sm" onClick={() => resetPassword(manageUser)}>Reset password</Button>
+                  <Button variant="outline" size="sm" onClick={() => resendWelcome([manageUser.email])}><Mail className="h-4 w-4" />{t("admin.users.resendWelcome")}</Button>
+                  <Button variant="outline" size="sm" onClick={() => resetPassword(manageUser)}>{t("admin.users.resetPassword")}</Button>
                   {isLocked(manageUser.email) && (
-                    <Button variant="outline" size="sm" onClick={() => clearLockout(manageUser.email)}><Unlock className="h-4 w-4" />Clear lockout</Button>
+                    <Button variant="outline" size="sm" onClick={() => clearLockout(manageUser.email)}><Unlock className="h-4 w-4" />{t("admin.users.clearLockout")}</Button>
                   )}
-                  <Button variant="destructive" size="sm" onClick={() => setConfirmDelete(manageUser)}><Trash2 className="h-4 w-4" />Remove</Button>
+                  <Button variant="destructive" size="sm" onClick={() => setConfirmDelete(manageUser)}><Trash2 className="h-4 w-4" />{t("admin.users.removeBtn")}</Button>
                 </div>
               </div>
             </>
@@ -668,34 +668,30 @@ export default function AdminUsers() {
         </SheetContent>
       </Sheet>
 
-      {/* Role confirm */}
       <AlertDialog open={!!confirmRole} onOpenChange={(o) => !o && setConfirmRole(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{confirmRole?.promote ? "Promote to admin?" : "Demote to student?"}</AlertDialogTitle>
+            <AlertDialogTitle>{confirmRole?.promote ? t("admin.users.promoteTitle") : t("admin.users.demoteTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {confirmRole?.promote
-                ? "Admins can create courses, manage all users, and see all data. Continue?"
-                : "This user will lose all admin privileges."}
+              {confirmRole?.promote ? t("admin.users.promoteDesc") : t("admin.users.demoteDesc")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => confirmRole && setRole(confirmRole.user, confirmRole.promote)}>Confirm</AlertDialogAction>
+            <AlertDialogCancel>{t("admin.users.cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => confirmRole && setRole(confirmRole.user, confirmRole.promote)}>{t("admin.users.confirm")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Delete confirm */}
       <AlertDialog open={!!confirmDelete} onOpenChange={(o) => !o && setConfirmDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove this user?</AlertDialogTitle>
-            <AlertDialogDescription>Cascade-deletes enrollments, progress, comments, and notes. This cannot be undone.</AlertDialogDescription>
+            <AlertDialogTitle>{t("admin.users.removeTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("admin.users.removeDesc")}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => confirmDelete && removeUser(confirmDelete)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Remove</AlertDialogAction>
+            <AlertDialogCancel>{t("admin.users.cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => confirmDelete && removeUser(confirmDelete)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">{t("admin.users.remove")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
