@@ -11,7 +11,8 @@
     "or": "yoki",
     "optional": "Ixtiyoriy",
     "search": "Qidirish",
-    "language": "Til"
+    "language": "Til",
+    "retry": "Qayta urinish"
   },
   "nav": {
     "dashboard": "Bosh sahifa",
@@ -107,6 +108,64 @@
     "send": "Yuborish",
     "rateLesson": "Bu darsni baholang"
   },
+  "coursePage": {
+    "backToDashboard": "← Bosh sahifa",
+    "notFound": "Kurs topilmadi.",
+    "moduleN": "Modul {{n}}",
+    "takeQuiz": "Modul testini topshirish →",
+    "yourProgress": "Sizning natijangiz",
+    "continue": "Davom etish",
+    "viewCertificate": "Sertifikatni ko'rish",
+    "stats": {
+      "modules": "modullar",
+      "lessons": "darslar",
+      "total": "jami"
+    }
+  },
+  "lesson": {
+    "loading": "Yuklanmoqda…",
+    "prev": "Oldingi",
+    "next": "Keyingi",
+    "markComplete": "Tugatildi",
+    "markedCompleteToast": "Dars tugatildi deb belgilandi",
+    "tabs": {
+      "description": "Tavsif",
+      "notes": "Eslatmalar",
+      "bookmarks": "Xatcho'plar",
+      "transcript": "Matn"
+    },
+    "notes": {
+      "autosave": "Yozayotganingizda avtomatik saqlanadi",
+      "insertTimestamp": "Vaqt belgisini qo'shish",
+      "placeholder": "Eslatmalaringizni shu yerga yozing…"
+    },
+    "bookmarks": {
+      "labelPlaceholder": "Yorliq (ixtiyoriy)",
+      "addAtCurrent": "Joriy vaqtda qo'shish",
+      "empty": "Hali xatcho'plar yo'q.",
+      "atPrefix": "Vaqt"
+    },
+    "transcript": {
+      "unavailable": "Bu dars uchun matn hali mavjud emas."
+    },
+    "sidebar": {
+      "courseContent": "Kurs mazmuni",
+      "moduleN": "Modul {{n}}"
+    },
+    "ai": {
+      "title": "AI O'quv yordamchisi",
+      "empty": "Ushbu dars haqida nimanidir so'rang. Misol: «Tushuntir», «3 ta mashq savoli ber», «Qisqacha aytib ber».",
+      "placeholder": "Yordamchidan so'rang…",
+      "chips": {
+        "explain": "Tushuntir",
+        "practice": "3 ta mashq savoli",
+        "summarize": "Qisqacha",
+        "stuck": "Qiynalyapman"
+      },
+      "busy": "AI ustoz band, iltimos qayta urinib ko'ring.",
+      "interrupted": "_(javob to'xtatildi)_"
+    }
+  },
   "quiz": {
     "title": "Test",
     "submit": "Yuborish",
@@ -114,7 +173,15 @@
     "score": "Natija",
     "passed": "O'tdingiz!",
     "failed": "Qayta urinib ko'ring",
-    "question": "Savol {{current}} / {{total}}"
+    "question": "Savol {{current}} / {{total}}",
+    "back": "← Orqaga",
+    "headerWith": "Test: {{title}}",
+    "passLine": "80% va undan yuqori bilan o'ting.",
+    "submitAnswers": "Javoblarni yuborish",
+    "tryAgain": "Qayta urinish",
+    "backToCourse": "Kursga qaytish",
+    "passedWith": "{{pct}}% bilan o'tdingiz!",
+    "needToPass": "{{pct}}% — o'tish uchun 80% kerak"
   },
   "settings": {
     "title": "Sozlamalar",
@@ -155,5 +222,152 @@
     "title": "Sahifa topilmadi",
     "subtitle": "Siz qidirayotgan sahifa mavjud emas.",
     "goHome": "Bosh sahifaga"
+  },
+  "telegram": {
+    "defaultLabel": "Telegram bilan kirish",
+    "notConfigured": "Telegram orqali kirish hali sozlanmagan — admin buni Sozlamalar → Telegram Login bo'limida sozlashi mumkin.",
+    "popupBlocked": "Pop-up bloklandi — iltimos, ushbu sayt uchun pop-uplarga ruxsat bering.",
+    "cancelled": "Telegram orqali kirish bekor qilindi."
+  },
+  "landing": {
+    "nav": {
+      "curriculum": "Kurs dasturi",
+      "instructor": "Ustoz",
+      "pricing": "Narxlar",
+      "faq": "Savollar",
+      "signIn": "Kirish",
+      "startFree": "Bepul boshlash"
+    },
+    "hero": {
+      "headlineDefault": "AI bilan yarating, ishga tushiring va {pul ishlang}.",
+      "subDefault": "AI bilan ishlovchi yangi avlod ijodkorlari uchun 14 soatlik kurs. Asoslardan tortib rasm, video, kontent va daromad olishgacha — keraksizlarsiz. Beshta modul, yigirma dars, o'sish uchun yaratilgan.",
+      "startLearning": "Bepul o'qishni boshlash",
+      "viewCurriculum": "Kurs dasturi",
+      "trust": "Bizga {{count}} ijodkor qo'shildi · 4.9/5 reyting",
+      "trustCountStrong": "1,247 ijodkor",
+      "sampleBadge": "Namuna dars · 8 daqiqa",
+      "playLabel": "Namunani ijro etish"
+    },
+    "trust": {
+      "creators": "ijodkorlar",
+      "rating": "reyting",
+      "countries": "davlat",
+      "ofCurriculum": "kurs"
+    },
+    "outcomes": {
+      "heading": "Yakunda siz quyidagilarni o'rganasiz:",
+      "subheading": "Uchta aniq natija — quruq va'dalar emas.",
+      "items": [
+        { "title": "Mini-film yarating.", "body": "Stsenariydan kalit kadrlargacha va ko'p planli animatsiyagacha. 3-modul yakunida sizning tayyor filmingiz bo'ladi." },
+        { "title": "O'z uslubingizni shakllantiring.", "body": "Kompozitsiya, namunalar, palitra. Talabalar sun'iy intellekt prompt-cheat sheet bilan emas, vizual imzo bilan chiqadi." },
+        { "title": "Mahoratni daromadga aylantiring.", "body": "Mahsulotlashtiring, soting, kengaytiring. 5-modul takliflar, narx-navo va ishlaydigan ishga tushirish rejasini o'z ichiga oladi." }
+      ]
+    },
+    "curriculum": {
+      "heading": "14 soat ichida nimalarni o'rganasiz",
+      "sub": "Beshta modul. Yigirma dars. O'sish uchun yaratilgan.",
+      "comingSoon": "Kurs dasturi tez orada.",
+      "lessonsCount": "{{n}} ta dars · {{min}} daqiqa",
+      "minSuffix": "daqiqa"
+    },
+    "instructor": {
+      "heading": "Ustozingiz bilan tanishing",
+      "bioDefault": "AI bilan ishlovchi rejissyor, dizayner va ustoz. Faqat AI vositalaridan foydalanib mukofotlangan qisqa metrajli filmlar yaratgan, Markaziy Osiyoda yuzlab talabalarni o'qitgan va Uzum, Humo va Click kabi brendlar uchun tijorat ishlarini bajargan. Ushbu kurs — buni amalga oshirish uchun ishlatilgan qo'llanma.",
+      "credibility": "X yaratdi · Y o'qitdi · Z chiqardi"
+    },
+    "howItWorks": {
+      "heading": "Bu qanday ishlaydi",
+      "steps": [
+        { "title": "Bepul ro'yxatdan o'ting.", "body": "Telegram, Google yoki email orqali bir bosishda. Karta talab qilinmaydi." },
+        { "title": "Tomosha qiling va eslatma yozing.", "body": "Darslar HD sifatida oqadi. AI O'quv yordamchingiz matnni eslab qoladi." },
+        { "title": "Birinchi loyihangizni ishga tushiring.", "body": "Modul mashqlari haqiqiy ish — rasm to'plamlari, stsenariylar, mini-filmlar, takliflar yaratadi." }
+      ]
+    },
+    "showcase": {
+      "heading": "Talabalarimiz nima yaratadi.",
+      "sub": "Modul mashqlari, yakuniy loyihalar va tijorat ishlari — kurs davomida talabalar tomonidan amalga oshirilgan."
+    },
+    "pricing": {
+      "heading": "Bepul boshlang. Yoqib qolsa, kengaytiring.",
+      "label": "AI Creators · To'liq kurs",
+      "price": "Bepul",
+      "priceSuffix": "hozircha",
+      "features": [
+        "Barcha 5 modul · 20 dars · 14 soat",
+        "Har bir darsga o'rgatilgan AI O'quv yordamchisi",
+        "Har qanday qurilmada HD video oqimi",
+        "Eslatmalar, xatcho'plar va matnlar",
+        "Telegram orqali tabiiy kirish",
+        "Har oyda yangi darslar qo'shiladi"
+      ],
+      "cta": "Bepul o'qishni boshlash",
+      "footnote": "Premium tarif tez orada · ingliz tilida, rus va o'zbek subtitrlari bilan."
+    },
+    "faq": {
+      "heading": "Savollarga javoblar.",
+      "items": [
+        { "q": "Boshlash uchun AI tajribasi kerakmi?", "a": "Yo'q. Birinchi modul nol bilim bilan boshlanadi — 3-darsda siz allaqachon rasmlar yaratishni boshlaysiz." },
+        { "q": "Haftasiga qancha vaqt kerak?", "a": "3–5 soat. To'liq kurs ~14 soat; ko'pchilik talabalar 4–6 hafta ichida tugatadi." },
+        { "q": "Telefonda kuzatib borish mumkinmi?", "a": "Ha. Video pleer va AI ustoz mobil-birinchi yondashuvda. Darslar moslashuvchan HD sifatida oqadi." },
+        { "q": "Darsda qiynalsam-chi?", "a": "Har bir darsda AI O'quv yordamchisi bor — u matnga o'rgatilgan va tushuntirib, qisqacha aytib yoki test qilib bera oladi." },
+        { "q": "Sertifikat berasizmi?", "a": "Modul darajasidagi tugatish sertifikatlari keyingi yangilanishda chiqadi." },
+        { "q": "Kontent ingliz, rus yoki o'zbek tilidami?", "a": "Darslar ingliz tilida olib boriladi, rus va o'zbek subtitrlari bilan. Interfeys to'liq tarjima qilingan." },
+        { "q": "Videolarni yuklab olish mumkinmi?", "a": "Yo'q — videolar ijodkor mulkini himoya qilish uchun xavfsiz xotiradan oqadi. Eslatmalar va matnlarni yuklab olish mumkin." },
+        { "q": "Qanday bekor qilaman?", "a": "Ro'yxatdan o'tish bepul. Premium tarifimiz ishga tushgunga qadar bekor qilinadigan narsa yo'q." }
+      ]
+    },
+    "finalCta": {
+      "heading": "Yaratishni boshlashga tayyormisiz?",
+      "sub": "Bepul ro'yxatdan o'tish · 2 daqiqa · istalgan vaqtda bekor qiling.",
+      "button": "Bepul o'qishni boshlash"
+    },
+    "footer": {
+      "tagline": "AI bilan ishlovchi ijodkorlar uchun 14 soatlik kurs. Toshkentda yaratilgan, hamma joyda o'qitiladi.",
+      "course": "Kurs",
+      "company": "Kompaniya",
+      "contact": "Aloqa",
+      "copyright": "© 2026 AI Creators · Toshkentda yaratilgan"
+    }
+  },
+  "admin": {
+    "common": {
+      "back": "Orqaga",
+      "saveChanges": "O'zgarishlarni saqlash",
+      "newCourse": "+ Yangi kurs",
+      "addUser": "+ Foydalanuvchi qo'shish",
+      "importCsv": "CSV import"
+    },
+    "dashboard": {
+      "title": "Boshqaruv paneli",
+      "subtitle": "Real vaqtdagi o'qish tahlillari.",
+      "selectCourse": "Kursni tanlang",
+      "stats": {
+        "totalStudents": "Jami talabalar",
+        "logins30d": "Kirishlar (30k)",
+        "active7d": "Faol (7k)",
+        "completions": "Kursni tugatganlar"
+      },
+      "charts": {
+        "dailyLogins": "Kunlik kirishlar (30k)",
+        "dau": "Kunlik faol o'quvchilar (30k)",
+        "moduleEngagement": "Modul ishtiroki",
+        "moduleFunnel": "Modul tugallash voronkasi",
+        "lessonsPerDay": "Kuniga tugatilgan darslar (30k)",
+        "stuckByModule": "Modullar bo'yicha qotib qolganlar (7k+)"
+      },
+      "stuck": {
+        "title": "Qotib qolgan talabalar",
+        "subtitle": "Oxirgi faollik 7 kundan ko'p oldin, kurs tugamagan.",
+        "name": "Ism",
+        "lastLesson": "Oxirgi dars",
+        "daysIdle": "Sust kunlar",
+        "progress": "Natija",
+        "loading": "Yuklanmoqda…",
+        "empty": "Qotib qolgan talabalar yo'q 🎉"
+      },
+      "recent": {
+        "title": "So'nggi admin amallari"
+      }
+    }
   }
 }
