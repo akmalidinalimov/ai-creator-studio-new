@@ -90,7 +90,7 @@ export default function CoursePage() {
           </div>
         </div>
 
-        <aside className="lg:sticky lg:top-20 h-fit space-y-5">
+        <aside className="lg:sticky lg:top-20 h-fit space-y-5 min-w-0">
           <Card className="p-5 shadow-soft">
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">{t("coursePage.yourProgress")}</span>
