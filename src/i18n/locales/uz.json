@@ -128,6 +128,15 @@
     "next": "Keyingi",
     "markComplete": "Tugatildi",
     "markedCompleteToast": "Dars tugatildi deb belgilandi",
+    "video": { "unavailable": "Bu dars uchun video mavjud emas." },
+    "bunny": {
+      "loading": "Himoyalangan video yuklanmoqda…",
+      "errorTitle": "Videoni yuklab bo'lmadi",
+      "signError": "Video havolasini imzolab bo'lmadi. Qayta urinib ko'ring.",
+      "playbackError": "Ijro xatosi. Qayta urinib ko'ring.",
+      "notSupported": "Brauzeringiz HLSni qo'llab-quvvatlamaydi.",
+      "invalidId": "Bu Bunny videosida noto'g'ri Library ID / Video GUID."
+    },
     "tabs": {
       "description": "Tavsif",
       "notes": "Eslatmalar",
