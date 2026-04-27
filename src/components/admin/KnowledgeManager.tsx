@@ -51,14 +51,14 @@ function fmtSize(n: number) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function friendlyError(raw: string): string {
+function friendlyError(raw: string, t: (k: string, opts?: any) => string): string {
   const e = raw.toLowerCase();
-  if (e.includes("no extractable text")) return "No extractable text. The file is likely a scanned image — convert to a text-based PDF or run OCR first.";
-  if (e.includes("embed")) return "Embedding service failed. Check the Lovable AI key and credits, then re-index.";
-  if (e.includes("download")) return "Could not download the file from storage. It may have been removed — re-upload it.";
-  if (e.includes("lovable_api_key")) return "Missing Lovable AI key. Add it in Connectors and re-index.";
-  if (e.includes("unauthorized") || e.includes("forbidden")) return "Permission denied. Sign out and back in as an admin.";
-  if (e.includes("timeout") || e.includes("failed to fetch")) return "Network or timeout error during indexing. Re-index to retry.";
+  if (e.includes("no extractable text")) return t("admin.knowledge.errors.noText");
+  if (e.includes("embed")) return t("admin.knowledge.errors.embed");
+  if (e.includes("download")) return t("admin.knowledge.errors.download");
+  if (e.includes("lovable_api_key")) return t("admin.knowledge.errors.noKey");
+  if (e.includes("unauthorized") || e.includes("forbidden")) return t("admin.knowledge.errors.permission");
+  if (e.includes("timeout") || e.includes("failed to fetch")) return t("admin.knowledge.errors.network");
   return raw;
 }
 
@@ -98,6 +98,7 @@ export function KnowledgeManager({
   scope: "platform" | "course";
   courseId?: string;
 }) {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const [docs, setDocs] = useState<Doc[]>([]);
   const [loading, setLoading] = useState(true);
