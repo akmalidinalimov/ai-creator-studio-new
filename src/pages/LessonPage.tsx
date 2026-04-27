@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckCircle2, Circle, ChevronRight, ChevronLeft, Send, Sparkles, Bookmark, Clock } from "lucide-react";
+import { CheckCircle2, Circle, ChevronRight, ChevronLeft, Send, Sparkles, Bookmark, Clock, LayoutList } from "lucide-react";
 import { toast } from "sonner";
 import { ProtectedVideo } from "@/components/lesson/ProtectedVideo";
 import { BunnyVideoPlayer } from "@/components/BunnyVideoPlayer";
@@ -324,137 +324,129 @@ export default function LessonPage() {
 
   return (
     <PageShell>
-      <div className="grid lg:grid-cols-[1fr_340px] gap-6">
-        <div className="space-y-5 min-w-0">
-          <div className="text-xs text-muted-foreground">
-            <Link to={`/course/${courseId}`} className="hover:text-foreground">AI Creators</Link>
-            <span className="mx-2">/</span>
-            <span>{lesson.title}</span>
-          </div>
-
-          <Card className="overflow-hidden bg-black shadow-elevated">
-            {renderPlayer()}
-          </Card>
-
-
-          <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div className="min-w-0">
-              <h1 className="text-2xl font-semibold tracking-tight">{lesson.title}</h1>
-              <p className="text-sm text-muted-foreground mt-1">{lesson.description}</p>
-            </div>
-            <div className="flex gap-2">
-              {prev && <Button variant="outline" size="sm" asChild><Link to={`/lesson/${courseId}/${prev.id}`}><ChevronLeft className="h-4 w-4" />{t("lesson.prev")}</Link></Button>}
-              <Button variant="outline" size="sm" onClick={markComplete}><CheckCircle2 className="h-4 w-4" />{t("lesson.markComplete")}</Button>
-              {next && <Button size="sm" onClick={goNext}>{t("lesson.next")}<ChevronRight className="h-4 w-4" /></Button>}
-            </div>
-          </div>
-
-          <Tabs defaultValue="notes">
-            <TabsList>
-              <TabsTrigger value="description">{t("lesson.tabs.description")}</TabsTrigger>
-              <TabsTrigger value="notes">{t("lesson.tabs.notes")}</TabsTrigger>
-              <TabsTrigger value="bookmarks">{t("lesson.tabs.bookmarks")}</TabsTrigger>
-              <TabsTrigger value="transcript">{t("lesson.tabs.transcript")}</TabsTrigger>
-            </TabsList>
-            <TabsContent value="description"><Card className="p-5 text-sm leading-relaxed">{lesson.description}</Card></TabsContent>
-            <TabsContent value="notes">
-              <Card className="p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">{t("lesson.notes.autosave")}</span>
-                  <Button size="sm" variant="ghost" onClick={insertTimestamp}><Clock className="h-3.5 w-3.5" />{t("lesson.notes.insertTimestamp")}</Button>
-                </div>
-                <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t("lesson.notes.placeholder")} rows={10} className="resize-none" />
-              </Card>
-            </TabsContent>
-            <TabsContent value="bookmarks">
-              <Card className="p-5 space-y-3">
-                <div className="flex gap-2">
-                  <Input placeholder={t("lesson.bookmarks.labelPlaceholder")} value={bmLabel} onChange={(e) => setBmLabel(e.target.value)} />
-                  <Button size="sm" onClick={addBookmark}><Bookmark className="h-3.5 w-3.5" />{t("lesson.bookmarks.addAtCurrent")}</Button>
-                </div>
-                <ul className="divide-y">
-                  {bookmarks.length === 0 && <li className="text-sm text-muted-foreground py-4">{t("lesson.bookmarks.empty")}</li>}
-                  {bookmarks.map((b) => (
-                    <li key={b.id} className="py-2 flex items-center justify-between gap-3">
-                      <button onClick={() => seekTo(b.timestamp_seconds)} className="text-sm hover:text-foreground text-left flex-1">
-                        <span className="font-mono text-xs text-muted-foreground mr-2">{Math.floor(b.timestamp_seconds / 60)}:{(b.timestamp_seconds % 60).toString().padStart(2, "0")}</span>
-                        {b.label}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-            </TabsContent>
-            <TabsContent value="transcript">
-              <Card className="p-5 text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap">
-                {lesson.transcript || t("lesson.transcript.unavailable")}
-              </Card>
-            </TabsContent>
-          </Tabs>
+      <div className="space-y-5 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="text-xs text-muted-foreground">
+          <Link to={`/course/${courseId}`} className="hover:text-foreground">AI Creators</Link>
+          <span className="mx-2">/</span>
+          <span>{lesson.title}</span>
         </div>
 
-        <aside className="space-y-5 lg:sticky lg:top-20 h-fit">
-          <Card className="overflow-hidden shadow-soft">
-            <div className="px-4 py-3 border-b bg-muted/30 text-xs font-medium text-muted-foreground">{t("lesson.sidebar.courseContent")}</div>
-            <div className="max-h-[300px] overflow-y-auto scrollbar-thin">
-              {modules.map((m, mi) => (
-                <div key={m.id}>
-                  <div className="px-4 py-2 text-xs font-medium text-muted-foreground border-b bg-muted/10">{t("lesson.sidebar.moduleN", { n: mi + 1 })}</div>
-                  {m.lessons.map((l: any) => (
-                    <Link key={l.id} to={`/lesson/${courseId}/${l.id}`}
-                      className={`flex items-center gap-2 px-4 py-2 text-sm border-b last:border-b-0 hover:bg-muted/40 ${l.id === lessonId ? "bg-muted/60 font-medium" : ""}`}>
-                      {completed.has(l.id) ? <CheckCircle2 className="h-3.5 w-3.5 text-foreground" /> : <Circle className="h-3.5 w-3.5 text-muted-foreground" />}
-                      <span className="truncate">{l.title}</span>
-                    </Link>
-                  ))}
-                </div>
-              ))}
-            </div>
-          </Card>
+        <Card className="overflow-hidden bg-black shadow-elevated">
+          {renderPlayer()}
+        </Card>
 
-          <Card className="shadow-soft flex flex-col" style={{ minHeight: 320 }}>
-            <div className="px-4 py-3 border-b flex items-center gap-2">
-              <Sparkles className="h-4 w-4" />
-              <span className="text-sm font-medium">{t("lesson.ai.title")}</span>
-              <div className="ml-auto">
-                <Select value={language} onValueChange={onLanguageChange}>
-                  <SelectTrigger className="h-7 text-xs w-[120px]"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {LANGUAGES.map((l) => <SelectItem key={l.code} value={l.code} className="text-xs">{l.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+        <div className="space-y-4">
+          <div className="min-w-0">
+            <h1 className="text-2xl md:text-3xl font-semibold tracking-tight break-words">{lesson.title}</h1>
+            {lesson.description && (
+              <p className="text-sm text-muted-foreground mt-1">{lesson.description}</p>
+            )}
+          </div>
+          <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
+            {prev && (
+              <Button variant="outline" size="sm" asChild className="w-full sm:w-auto min-h-[44px] sm:min-h-0">
+                <Link to={`/lesson/${courseId}/${prev.id}`}><ChevronLeft className="h-4 w-4" />{t("lesson.prev")}</Link>
+              </Button>
+            )}
+            <Button variant="outline" size="sm" asChild className="w-full sm:w-auto min-h-[44px] sm:min-h-0">
+              <Link to={`/course/${courseId}`}><LayoutList className="h-4 w-4" />{t("lesson.allModules")}</Link>
+            </Button>
+            <Button variant="outline" size="sm" onClick={markComplete} className="w-full sm:w-auto min-h-[44px] sm:min-h-0">
+              <CheckCircle2 className="h-4 w-4" />{t("lesson.markComplete")}
+            </Button>
+            {next && (
+              <Button size="sm" onClick={goNext} className="w-full sm:w-auto min-h-[44px] sm:min-h-0">
+                {t("lesson.next")}<ChevronRight className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <Tabs defaultValue="notes">
+          <TabsList className="flex-wrap h-auto">
+            <TabsTrigger value="description">{t("lesson.tabs.description")}</TabsTrigger>
+            <TabsTrigger value="notes">{t("lesson.tabs.notes")}</TabsTrigger>
+            <TabsTrigger value="bookmarks">{t("lesson.tabs.bookmarks")}</TabsTrigger>
+            <TabsTrigger value="transcript">{t("lesson.tabs.transcript")}</TabsTrigger>
+          </TabsList>
+          <TabsContent value="description"><Card className="p-5 text-sm leading-relaxed">{lesson.description}</Card></TabsContent>
+          <TabsContent value="notes">
+            <Card className="p-5 space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <span className="text-xs text-muted-foreground">{t("lesson.notes.autosave")}</span>
+                <Button size="sm" variant="ghost" onClick={insertTimestamp}><Clock className="h-3.5 w-3.5" />{t("lesson.notes.insertTimestamp")}</Button>
               </div>
+              <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t("lesson.notes.placeholder")} rows={10} className="resize-none min-h-[200px]" />
+            </Card>
+          </TabsContent>
+          <TabsContent value="bookmarks">
+            <Card className="p-5 space-y-3">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Input placeholder={t("lesson.bookmarks.labelPlaceholder")} value={bmLabel} onChange={(e) => setBmLabel(e.target.value)} className="min-h-[44px] sm:min-h-0" />
+                <Button size="sm" onClick={addBookmark} className="w-full sm:w-auto min-h-[44px] sm:min-h-0"><Bookmark className="h-3.5 w-3.5" />{t("lesson.bookmarks.addAtCurrent")}</Button>
+              </div>
+              <ul className="divide-y">
+                {bookmarks.length === 0 && <li className="text-sm text-muted-foreground py-4">{t("lesson.bookmarks.empty")}</li>}
+                {bookmarks.map((b) => (
+                  <li key={b.id} className="py-2 flex items-center justify-between gap-3">
+                    <button onClick={() => seekTo(b.timestamp_seconds)} className="text-sm hover:text-foreground text-left flex-1">
+                      <span className="font-mono text-xs text-muted-foreground mr-2">{Math.floor(b.timestamp_seconds / 60)}:{(b.timestamp_seconds % 60).toString().padStart(2, "0")}</span>
+                      {b.label}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          </TabsContent>
+          <TabsContent value="transcript">
+            <Card className="p-5 text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap">
+              {lesson.transcript || t("lesson.transcript.unavailable")}
+            </Card>
+          </TabsContent>
+        </Tabs>
+
+        <Card className="shadow-soft flex flex-col" style={{ minHeight: 320 }}>
+          <div className="px-4 py-3 border-b flex items-center gap-2 flex-wrap">
+            <Sparkles className="h-4 w-4" />
+            <span className="text-sm font-medium">{t("lesson.ai.title")}</span>
+            <div className="ml-auto">
+              <Select value={language} onValueChange={onLanguageChange}>
+                <SelectTrigger className="h-8 text-xs w-[130px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {LANGUAGES.map((l) => <SelectItem key={l.code} value={l.code} className="text-xs">{l.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
-            <div className="flex-1 max-h-[300px] overflow-y-auto p-3 space-y-3 scrollbar-thin">
-              {chatHistory.length === 0 && (
-                <div className="text-xs text-muted-foreground p-2">
-                  {t("lesson.ai.empty")}
-                </div>
-              )}
-              {chatHistory.map((m, i) => (
-                <div key={i} className={`text-sm rounded-lg px-3 py-2 ${m.role === "user" ? "bg-foreground text-background ml-6" : "bg-muted mr-6"}`}>
-                  <div className="prose-tight whitespace-pre-wrap">{m.content || (chatLoading && i === chatHistory.length - 1 ? "…" : "")}</div>
-                </div>
+          </div>
+          <div className="flex-1 max-h-[400px] overflow-y-auto p-3 space-y-3 scrollbar-thin">
+            {chatHistory.length === 0 && (
+              <div className="text-xs text-muted-foreground p-2">
+                {t("lesson.ai.empty")}
+              </div>
+            )}
+            {chatHistory.map((m, i) => (
+              <div key={i} className={`text-sm rounded-lg px-3 py-2 ${m.role === "user" ? "bg-foreground text-background ml-6" : "bg-muted mr-6"}`}>
+                <div className="prose-tight whitespace-pre-wrap">{m.content || (chatLoading && i === chatHistory.length - 1 ? "…" : "")}</div>
+              </div>
+            ))}
+          </div>
+          <div className="p-3 border-t space-y-2">
+            <div className="flex flex-wrap gap-1">
+              {[
+                { key: "explain", label: t("lesson.ai.chips.explain") },
+                { key: "practice", label: t("lesson.ai.chips.practice") },
+                { key: "summarize", label: t("lesson.ai.chips.summarize") },
+                { key: "stuck", label: t("lesson.ai.chips.stuck") },
+              ].map((q) => (
+                <button key={q.key} onClick={() => sendChat(q.label)} disabled={chatLoading} className="text-[11px] px-2 py-1 rounded-full border hover:bg-muted disabled:opacity-50">{q.label}</button>
               ))}
             </div>
-            <div className="p-3 border-t space-y-2">
-              <div className="flex flex-wrap gap-1">
-                {[
-                  { key: "explain", label: t("lesson.ai.chips.explain") },
-                  { key: "practice", label: t("lesson.ai.chips.practice") },
-                  { key: "summarize", label: t("lesson.ai.chips.summarize") },
-                  { key: "stuck", label: t("lesson.ai.chips.stuck") },
-                ].map((q) => (
-                  <button key={q.key} onClick={() => sendChat(q.label)} disabled={chatLoading} className="text-[11px] px-2 py-1 rounded-full border hover:bg-muted disabled:opacity-50">{q.label}</button>
-                ))}
-              </div>
-              <form onSubmit={(e) => { e.preventDefault(); sendChat(chatInput); }} className="flex gap-2">
-                <Input value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder={t("lesson.ai.placeholder")} disabled={chatLoading} />
-                <Button type="submit" size="icon" disabled={chatLoading || !chatInput.trim()}><Send className="h-4 w-4" /></Button>
-              </form>
-            </div>
-          </Card>
-        </aside>
+            <form onSubmit={(e) => { e.preventDefault(); sendChat(chatInput); }} className="flex gap-2">
+              <Input value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder={t("lesson.ai.placeholder")} disabled={chatLoading} className="min-h-[44px]" />
+              <Button type="submit" size="icon" disabled={chatLoading || !chatInput.trim()} className="h-11 w-11 shrink-0"><Send className="h-4 w-4" /></Button>
+            </form>
+          </div>
+        </Card>
       </div>
     </PageShell>
   );
