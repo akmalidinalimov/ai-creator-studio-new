@@ -6,6 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { SuzaniStar } from "@/components/landing/SuzaniStar";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import {
   ArrowRight, Play, CheckCircle2, Film, Wand2, DollarSign,
   UserPlus, BookOpen, Rocket, Star, MessageCircle, Twitter,
@@ -135,6 +136,7 @@ export default function Landing() {
             <a href="#faq" className="text-muted-foreground hover:text-foreground transition-colors">{t("landing.nav.faq")}</a>
           </nav>
           <div className="flex items-center gap-2">
+            <LanguageSwitcher />
             <Button asChild variant="outline" size="sm" className="hidden sm:inline-flex">
               <Link to="/login">{t("landing.nav.signIn")}</Link>
             </Button>
