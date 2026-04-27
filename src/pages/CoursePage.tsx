@@ -52,45 +52,45 @@ export default function CoursePage() {
 
   return (
     <PageShell>
-      <div className="grid lg:grid-cols-[1fr_320px] gap-8">
-        <div className="space-y-8">
-          <div>
+      <div className="grid lg:grid-cols-[1fr_320px] gap-8 min-w-0">
+        <div className="space-y-8 min-w-0">
+          <div className="min-w-0">
             <Link to="/dashboard" className="text-xs text-muted-foreground hover:text-foreground">{t("coursePage.backToDashboard")}</Link>
-            <h1 className="text-4xl font-semibold tracking-tight mt-2">{course.title}</h1>
-            <p className="text-lg text-muted-foreground mt-2 max-w-2xl">{course.tagline}</p>
-            <p className="mt-4 text-sm leading-relaxed max-w-2xl">{course.description}</p>
+            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-semibold tracking-tight mt-2 break-words">{course.title}</h1>
+            <p className="text-base sm:text-lg text-muted-foreground mt-2 max-w-2xl break-words">{course.tagline}</p>
+            <p className="mt-4 text-sm leading-relaxed max-w-2xl break-words">{course.description}</p>
           </div>
 
           <div className="space-y-6">
             {modules.map((m, i) => (
               <Card key={m.id} className="overflow-hidden shadow-soft">
-                <div className="px-5 py-4 border-b bg-muted/30">
+                <div className="px-4 sm:px-5 py-4 border-b bg-muted/30 min-w-0">
                   <div className="text-xs text-muted-foreground">{t("coursePage.moduleN", { n: i + 1 })}</div>
-                  <h3 className="text-lg font-semibold tracking-tight">{m.title}</h3>
-                  {m.summary && <p className="text-sm text-muted-foreground mt-1">{m.summary}</p>}
+                  <h3 className="text-base sm:text-lg font-semibold tracking-tight break-words">{m.title}</h3>
+                  {m.summary && <p className="text-sm text-muted-foreground mt-1 break-words">{m.summary}</p>}
                 </div>
                 <ul className="divide-y">
                   {m.lessons.map((l: any, j: number) => (
                     <li key={l.id}>
-                      <Link to={`/lesson/${courseId}/${l.id}`} className="flex items-center gap-3 px-5 py-3 hover:bg-muted/40 transition-colors">
-                        {completed.has(l.id) ? <CheckCircle2 className="h-4 w-4 text-foreground" /> : <Circle className="h-4 w-4 text-muted-foreground" />}
+                      <Link to={`/lesson/${courseId}/${l.id}`} className="flex items-center gap-3 px-4 sm:px-5 py-3 hover:bg-muted/40 transition-colors min-h-[44px]">
+                        {completed.has(l.id) ? <CheckCircle2 className="h-4 w-4 text-foreground shrink-0" /> : <Circle className="h-4 w-4 text-muted-foreground shrink-0" />}
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium truncate">{j + 1}. {l.title}</div>
+                          <div className="text-sm font-medium break-words">{j + 1}. {l.title}</div>
                         </div>
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground"><Clock className="h-3 w-3" />{Math.round((l.duration_seconds || 0) / 60)}m</div>
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground shrink-0"><Clock className="h-3 w-3" />{Math.round((l.duration_seconds || 0) / 60)}m</div>
                       </Link>
                     </li>
                   ))}
                 </ul>
-                <div className="px-5 py-3 border-t bg-muted/20">
-                  <Button asChild variant="outline" size="sm"><Link to={`/quiz/${m.id}`}>{t("coursePage.takeQuiz")}</Link></Button>
+                <div className="px-4 sm:px-5 py-3 border-t bg-muted/20">
+                  <Button asChild variant="outline" size="sm" className="w-full sm:w-auto min-h-[44px] sm:min-h-0"><Link to={`/quiz/${m.id}`}>{t("coursePage.takeQuiz")}</Link></Button>
                 </div>
               </Card>
             ))}
           </div>
         </div>
 
-        <aside className="lg:sticky lg:top-20 h-fit space-y-5">
+        <aside className="lg:sticky lg:top-20 h-fit space-y-5 min-w-0">
           <Card className="p-5 shadow-soft">
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">{t("coursePage.yourProgress")}</span>

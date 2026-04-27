@@ -1,34 +1,29 @@
-# Fix student lesson UI: All modules button + My Settings menu
+# Fix horizontal scroll on "Barcha modullar" (course) page for mobile
 
-## What changes
+## Root cause
+`src/pages/CoursePage.tsx` has elements that overflow on a 375px viewport:
+- `text-4xl` heading on long titles forces wider-than-viewport content.
+- Grid/flex children lack `min-w-0`, so long words push past the viewport edge.
+- Lesson row uses `truncate` inside a flex parent that itself can overflow.
 
-### 1. Re-add "Barcha modullar" / "All modules" button — lesson page
-On `src/pages/LessonPage.tsx`, restore the button between **Oldingi** and **Tugatildi** in the action row. It links to `/course/${courseId}` (the module list page) and uses the `LayoutList` icon. Same mobile-friendly styling as the other buttons (`w-full sm:w-auto min-h-[44px]`).
+## Changes (single file: `src/pages/CoursePage.tsx`)
 
-Final button order on a lesson:
-```
-Oldingi  |  Barcha modullar  |  Tugatildi  |  Keyingi
-```
+1. Add `min-w-0` to the outer grid, both columns, and the heading wrapper so flex/grid children can shrink.
+2. Make typography responsive:
+   - Course title: `text-2xl sm:text-3xl lg:text-4xl` (was `text-4xl`)
+   - Tagline: `text-base sm:text-lg` (was `text-lg`)
+   - Module title: `text-base sm:text-lg`
+3. Add `break-words` to title, tagline, description, module title/summary, and lesson title — and replace the lesson title's `truncate` with `break-words` so long Cyrillic/Uzbek words wrap rather than overflow.
+4. Tighten card padding on mobile (`px-4 sm:px-5`) so module cards don't push past container padding.
+5. Mark the check icon and duration block as `shrink-0` so the lesson row layout stays stable when wrapping.
+6. Make the "Take quiz" button full-width on mobile with a 44px tap target.
+7. Bump lesson row min-height to 44px for tappability.
 
-The `t("lesson.allModules")` translation key already exists in uz/en/ru — no i18n changes needed.
+No changes to data fetching, routes, sidebar progress card content, or i18n.
 
-### 2. Fix "My Settings" (and other) avatar-menu items
-On `src/components/Layout.tsx`, the avatar dropdown items currently call `navigate(...)` from inside Radix's `onClick`. In some browsers the dropdown's focus/close animation swallows the click before navigation runs, so tapping "My Settings" appears to do nothing.
-
-Switch every `DropdownMenuItem` that navigates to use `asChild` + a real `<Link>`. This is the Radix-recommended pattern: the link element receives the click directly, navigation always fires, and middle-click / open-in-new-tab also work.
-
-Affected items (student + admin):
-- My Settings → `/settings`
-- Dashboard → `/dashboard`
-- Admin Dashboard, Courses, Users, Settings, AI Analytics, Audit, Deploy
-
-Sign Out stays as-is (it runs an async action, not navigation).
-
-## Technical notes
-- No new dependencies, no DB changes, no i18n changes.
-- No changes to the Settings page itself, the Bunny iframe, or the lesson editor.
-- Files touched: `src/pages/LessonPage.tsx`, `src/components/Layout.tsx`.
-
-## Verify after deploy
-- On any lesson (e.g. `/lesson/c8103dae.../8a0f67d0...`) the action row shows 4 buttons including **Barcha modullar**, which routes to the course module list.
-- Click avatar → **My Settings** → lands on `/settings` reliably on desktop and mobile.
+## Verify
+At 375px width on `/course/:courseId`:
+- No horizontal scroll.
+- Long lesson titles wrap onto a second line instead of being clipped or pushing the page.
+- Module cards fill width, "Take quiz" button is full-width.
+- Sidebar (progress card) stacks below the modules, no overflow.
