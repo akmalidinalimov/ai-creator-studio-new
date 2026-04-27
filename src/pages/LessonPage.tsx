@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
@@ -32,6 +33,7 @@ export default function LessonPage() {
   const { courseId, lessonId } = useParams();
   const { user, session } = useAuth();
   const navigate = useNavigate();
+  const { t } = useTranslation();
 
   const [lesson, setLesson] = useState<any>(null);
   const [modules, setModules] = useState<any[]>([]);
@@ -138,7 +140,7 @@ export default function LessonPage() {
       last_position_seconds: Math.floor(videoRef.current?.currentTime || 0),
     }, { onConflict: "user_id,lesson_id" });
     setCompleted((s) => new Set(s).add(lessonId));
-    toast.success("Lesson marked complete");
+    toast.success(t("lesson.markedCompleteToast"));
   };
 
   const flat = modules.flatMap((m) => m.lessons.map((l: any) => ({ ...l, moduleTitle: m.title })));
@@ -161,7 +163,7 @@ export default function LessonPage() {
   const addBookmark = async () => {
     if (!user || !lessonId || !videoRef.current) return;
     const t = Math.floor(videoRef.current.currentTime);
-    const { data } = await supabase.from("lesson_bookmarks").insert({ user_id: user.id, lesson_id: lessonId, timestamp_seconds: t, label: bmLabel || `At ${Math.floor(t / 60)}:${(t % 60).toString().padStart(2, "0")}` }).select().single();
+    const { data } = await supabase.from("lesson_bookmarks").insert({ user_id: user.id, lesson_id: lessonId, timestamp_seconds: t, label: bmLabel || `${this_t("lesson.bookmarks.atPrefix")} ${Math.floor(t / 60)}:${(t % 60).toString().padStart(2, "0")}` }).select().single();
     if (data) setBookmarks([...bookmarks, data].sort((a, b) => a.timestamp_seconds - b.timestamp_seconds));
     setBmLabel("");
   };
