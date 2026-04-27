@@ -9,7 +9,9 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-const EMBED_MODEL = "google/text-embedding-004";
+// OpenAI embeddings (Lovable AI Gateway no longer exposes an embedding model).
+// 1536-dim, matches ai_knowledge_chunks.embedding column.
+const EMBED_MODEL = "text-embedding-3-small";
 const CHUNK_SIZE = 1200;
 const CHUNK_OVERLAP = 150;
 
@@ -53,8 +55,8 @@ async function parseDocument(bytes: Uint8Array, mime: string, name: string): Pro
 }
 
 async function embedBatch(apiKey: string, inputs: string[]): Promise<number[][]> {
-  // The Lovable AI Gateway exposes Google embeddings; do them in small batches.
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/embeddings", {
+  // OpenAI embeddings API. Batch up to 16 inputs per call (matches caller).
+  const res = await fetch("https://api.openai.com/v1/embeddings", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({ model: EMBED_MODEL, input: inputs }),
@@ -73,11 +75,11 @@ Deno.serve(async (req) => {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  const OPENAI_API_KEY = Deno.env.get("OpenAI_AIStudentSupport") || Deno.env.get("OPENAI_API_KEY");
   const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
   try {
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY missing");
+    if (!OPENAI_API_KEY) throw new Error("OpenAI API key missing (OpenAI_AIStudentSupport)");
 
     // Auth: require an admin caller
     const authHeader = req.headers.get("Authorization") || "";
