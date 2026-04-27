@@ -126,13 +126,25 @@ Deno.serve(async (req) => {
       }
 
       const raw = `${KEY}${token_path}${expires}`;
-      const computed_token = await sha256Base64Url(raw);
-      const matches = computed_token === expected_token;
+      const video_guid = String(body?.video_guid || "").trim();
+      const variants = await computeVariants(KEY, token_path, expires, video_guid);
+
+      const candidates = variants.map((v) => ({
+        variant: v.variant,
+        token_preview: `${v.token.slice(0, 8)}...${v.token.slice(-8)}`,
+        matches: v.token === expected_token,
+      }));
+      const matchedVariant = variants.find((v) => v.token === expected_token);
 
       return new Response(
         JSON.stringify({
-          matches,
-          computed_token_preview: `${computed_token.slice(0, 8)}...${computed_token.slice(-8)}`,
+          match: {
+            variant: matchedVariant?.variant ?? null,
+            computed_token_preview: matchedVariant
+              ? `${matchedVariant.token.slice(0, 8)}...${matchedVariant.token.slice(-8)}`
+              : null,
+          },
+          candidates,
           expected_token_preview: `${expected_token.slice(0, 8)}...${expected_token.slice(-8)}`,
           secret_length: KEY?.length ?? 0,
           secret_first_chars: KEY?.slice(0, 2) ?? "",
