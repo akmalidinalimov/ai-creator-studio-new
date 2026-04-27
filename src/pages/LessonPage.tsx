@@ -6,11 +6,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckCircle2, Circle, ChevronRight, ChevronLeft, Send, Sparkles, Bookmark, Clock, LayoutList } from "lucide-react";
+import { CheckCircle2, ChevronRight, ChevronLeft, Send, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { ProtectedVideo } from "@/components/lesson/ProtectedVideo";
 import { BunnyVideoPlayer } from "@/components/BunnyVideoPlayer";
@@ -40,9 +38,6 @@ export default function LessonPage() {
   const [modules, setModules] = useState<any[]>([]);
   const [completed, setCompleted] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState<{ last_position_seconds: number } | null>(null);
-  const [notes, setNotes] = useState("");
-  const [bookmarks, setBookmarks] = useState<any[]>([]);
-  const [bmLabel, setBmLabel] = useState("");
   const [chatHistory, setChatHistory] = useState<Msg[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
@@ -90,10 +85,6 @@ export default function LessonPage() {
       const cur = (prog || []).find((p: any) => p.lesson_id === lessonId);
       setProgress(cur || null);
 
-      const { data: n } = await supabase.from("lesson_notes").select("body").eq("user_id", user.id).eq("lesson_id", lessonId).maybeSingle();
-      setNotes(n?.body || "");
-      const { data: bm } = await supabase.from("lesson_bookmarks").select("*").eq("user_id", user.id).eq("lesson_id", lessonId).order("timestamp_seconds");
-      setBookmarks(bm || []);
       const { data: hist } = await supabase.from("ai_chat_messages").select("role, content").eq("user_id", user.id).eq("lesson_id", lessonId).order("created_at").limit(50);
       setChatHistory((hist || []) as Msg[]);
     })();
@@ -125,15 +116,6 @@ export default function LessonPage() {
     return () => clearInterval(id);
   }, [user, lessonId]);
 
-  // Notes autosave (debounced)
-  useEffect(() => {
-    if (!user || !lessonId) return;
-    const t = setTimeout(async () => {
-      await supabase.from("lesson_notes").upsert({ user_id: user.id, lesson_id: lessonId, body: notes }, { onConflict: "user_id,lesson_id" });
-    }, 700);
-    return () => clearTimeout(t);
-  }, [notes, user, lessonId]);
-
   const markComplete = async () => {
     if (!user || !lessonId) return;
     await supabase.from("lesson_progress").upsert({
@@ -153,24 +135,6 @@ export default function LessonPage() {
     await markComplete();
     if (next) navigate(`/lesson/${courseId}/${next.id}`);
   };
-
-  const insertTimestamp = () => {
-    const v = videoRef.current; if (!v) return;
-    const t = Math.floor(v.currentTime);
-    const m = Math.floor(t / 60); const s = (t % 60).toString().padStart(2, "0");
-    setNotes((n) => `${n}${n && !n.endsWith("\n") ? " " : ""}[${m}:${s}] `);
-  };
-
-  const addBookmark = async () => {
-    if (!user || !lessonId || !videoRef.current) return;
-    const ts = Math.floor(videoRef.current.currentTime);
-    const defaultLabel = `${t("lesson.bookmarks.atPrefix")} ${Math.floor(ts / 60)}:${(ts % 60).toString().padStart(2, "0")}`;
-    const { data } = await supabase.from("lesson_bookmarks").insert({ user_id: user.id, lesson_id: lessonId, timestamp_seconds: ts, label: bmLabel || defaultLabel }).select().single();
-    if (data) setBookmarks([...bookmarks, data].sort((a, b) => a.timestamp_seconds - b.timestamp_seconds));
-    setBmLabel("");
-  };
-
-  const seekTo = (sec: number) => { if (videoRef.current) { videoRef.current.currentTime = sec; videoRef.current.play(); } };
 
   const sendChat = useCallback(async (text: string) => {
     if (!text.trim() || chatLoading) return;
@@ -338,9 +302,6 @@ export default function LessonPage() {
         <div className="space-y-4">
           <div className="min-w-0">
             <h1 className="text-2xl md:text-3xl font-semibold tracking-tight break-words">{lesson.title}</h1>
-            {lesson.description && (
-              <p className="text-sm text-muted-foreground mt-1">{lesson.description}</p>
-            )}
           </div>
           <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
             {prev && (
@@ -348,9 +309,6 @@ export default function LessonPage() {
                 <Link to={`/lesson/${courseId}/${prev.id}`}><ChevronLeft className="h-4 w-4" />{t("lesson.prev")}</Link>
               </Button>
             )}
-            <Button variant="outline" size="sm" asChild className="w-full sm:w-auto min-h-[44px] sm:min-h-0">
-              <Link to={`/course/${courseId}`}><LayoutList className="h-4 w-4" />{t("lesson.allModules")}</Link>
-            </Button>
             <Button variant="outline" size="sm" onClick={markComplete} className="w-full sm:w-auto min-h-[44px] sm:min-h-0">
               <CheckCircle2 className="h-4 w-4" />{t("lesson.markComplete")}
             </Button>
@@ -360,50 +318,10 @@ export default function LessonPage() {
               </Button>
             )}
           </div>
+          {lesson.description && (
+            <Card className="p-5 text-sm leading-relaxed whitespace-pre-wrap">{lesson.description}</Card>
+          )}
         </div>
-
-        <Tabs defaultValue="notes">
-          <TabsList className="flex-wrap h-auto">
-            <TabsTrigger value="description">{t("lesson.tabs.description")}</TabsTrigger>
-            <TabsTrigger value="notes">{t("lesson.tabs.notes")}</TabsTrigger>
-            <TabsTrigger value="bookmarks">{t("lesson.tabs.bookmarks")}</TabsTrigger>
-            <TabsTrigger value="transcript">{t("lesson.tabs.transcript")}</TabsTrigger>
-          </TabsList>
-          <TabsContent value="description"><Card className="p-5 text-sm leading-relaxed">{lesson.description}</Card></TabsContent>
-          <TabsContent value="notes">
-            <Card className="p-5 space-y-3">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <span className="text-xs text-muted-foreground">{t("lesson.notes.autosave")}</span>
-                <Button size="sm" variant="ghost" onClick={insertTimestamp}><Clock className="h-3.5 w-3.5" />{t("lesson.notes.insertTimestamp")}</Button>
-              </div>
-              <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t("lesson.notes.placeholder")} rows={10} className="resize-none min-h-[200px]" />
-            </Card>
-          </TabsContent>
-          <TabsContent value="bookmarks">
-            <Card className="p-5 space-y-3">
-              <div className="flex flex-col sm:flex-row gap-2">
-                <Input placeholder={t("lesson.bookmarks.labelPlaceholder")} value={bmLabel} onChange={(e) => setBmLabel(e.target.value)} className="min-h-[44px] sm:min-h-0" />
-                <Button size="sm" onClick={addBookmark} className="w-full sm:w-auto min-h-[44px] sm:min-h-0"><Bookmark className="h-3.5 w-3.5" />{t("lesson.bookmarks.addAtCurrent")}</Button>
-              </div>
-              <ul className="divide-y">
-                {bookmarks.length === 0 && <li className="text-sm text-muted-foreground py-4">{t("lesson.bookmarks.empty")}</li>}
-                {bookmarks.map((b) => (
-                  <li key={b.id} className="py-2 flex items-center justify-between gap-3">
-                    <button onClick={() => seekTo(b.timestamp_seconds)} className="text-sm hover:text-foreground text-left flex-1">
-                      <span className="font-mono text-xs text-muted-foreground mr-2">{Math.floor(b.timestamp_seconds / 60)}:{(b.timestamp_seconds % 60).toString().padStart(2, "0")}</span>
-                      {b.label}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          </TabsContent>
-          <TabsContent value="transcript">
-            <Card className="p-5 text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap">
-              {lesson.transcript || t("lesson.transcript.unavailable")}
-            </Card>
-          </TabsContent>
-        </Tabs>
 
         <Card className="shadow-soft flex flex-col" style={{ minHeight: 320 }}>
           <div className="px-4 py-3 border-b flex items-center gap-2 flex-wrap">
