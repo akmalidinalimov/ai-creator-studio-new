@@ -309,6 +309,9 @@ export default function LessonPage() {
                 <Link to={`/lesson/${courseId}/${prev.id}`}><ChevronLeft className="h-4 w-4" />{t("lesson.prev")}</Link>
               </Button>
             )}
+            <Button variant="outline" size="sm" asChild className="w-full sm:w-auto min-h-[44px] sm:min-h-0">
+              <Link to={`/course/${courseId}`}><LayoutList className="h-4 w-4" />{t("lesson.allModules")}</Link>
+            </Button>
             <Button variant="outline" size="sm" onClick={markComplete} className="w-full sm:w-auto min-h-[44px] sm:min-h-0">
               <CheckCircle2 className="h-4 w-4" />{t("lesson.markComplete")}
             </Button>
