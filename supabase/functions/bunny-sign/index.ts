@@ -73,13 +73,13 @@ Deno.serve(async (req) => {
     }
 
     const ip = clientIp(req);
-    const path = `/${video_guid}/playlist.m3u8`;
+    const tokenPath = `/${video_guid}/`; // directory, trailing slash — covers playlist + .ts segments
     const expires = Math.floor(Date.now() / 1000) + 1800;
-    const raw = `${KEY}${path}${expires}${ip}`;
+    const raw = `${KEY}${tokenPath}${expires}${ip}`;
     const hash = await sha256(raw);
     const token = base64url(hash);
 
-    const signed_url = `https://${HOSTNAME}${path}?token=${token}&expires=${expires}`;
+    const signed_url = `https://${HOSTNAME}/${video_guid}/playlist.m3u8?token=${token}&token_path=${encodeURIComponent(tokenPath)}&expires=${expires}`;
     return new Response(JSON.stringify({ signed_url, expires }), {
       status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
