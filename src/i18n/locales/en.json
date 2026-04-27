@@ -127,6 +127,7 @@
     "prev": "Prev",
     "next": "Next",
     "markComplete": "Mark complete",
+    "allModules": "All modules",
     "markedCompleteToast": "Lesson marked complete",
     "video": { "unavailable": "Video is not available for this lesson." },
     "bunny": {

@@ -127,6 +127,7 @@
     "prev": "Oldingi",
     "next": "Keyingi",
     "markComplete": "Tugatildi",
+    "allModules": "Barcha modullar",
     "markedCompleteToast": "Dars tugatildi deb belgilandi",
     "video": { "unavailable": "Bu dars uchun video mavjud emas." },
     "bunny": {

@@ -127,6 +127,7 @@
     "prev": "Назад",
     "next": "Далее",
     "markComplete": "Отметить пройденным",
+    "allModules": "Все модули",
     "markedCompleteToast": "Урок отмечен как пройденный",
     "video": { "unavailable": "Видео недоступно для этого урока." },
     "bunny": {
