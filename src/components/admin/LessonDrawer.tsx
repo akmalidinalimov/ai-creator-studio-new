@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ interface Props { lessonId: string; onClose: () => void; onChanged: () => void }
 const MAX_INLINE_UPLOAD = 2 * 1024 * 1024 * 1024; // 2 GB
 
 export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
+  const { t } = useTranslation();
   const [lesson, setLesson] = useState<any>(null);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
