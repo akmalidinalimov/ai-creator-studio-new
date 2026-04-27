@@ -92,6 +92,46 @@ async function computeVariants(KEY: string, token_path: string, expires: number,
   const fullPath = `${token_path}${video_guid ? "" : ""}playlist.m3u8`;
   variants.push({ variant: "sha256_fullpath_playlist", token: await sha256Base64Url(`${KEY}${fullPath}${expires}`) });
 
+  // ----- Additional variants (12-19) -----
+  const enc = new TextEncoder();
+  const keyHexBytes = hexDecode(KEY);
+  const tpBytes = enc.encode(token_path);
+  const expBytes = enc.encode(String(expires));
+  const spaceBytes = enc.encode(" ");
+
+  variants.push({
+    variant: "sha256_concat_hexbytes",
+    token: await sha256Base64UrlBytes(concatBytes(keyHexBytes, tpBytes, expBytes)),
+  });
+  variants.push({
+    variant: "hmac_sha256_hexbytes_path_exp",
+    token: await hmacSha256Base64UrlBytes(keyHexBytes, concatBytes(tpBytes, expBytes)),
+  });
+  variants.push({
+    variant: "hmac_sha256_hexbytes_pe_join",
+    token: await hmacSha256Base64UrlBytes(keyHexBytes, concatBytes(tpBytes, spaceBytes, expBytes)),
+  });
+  variants.push({
+    variant: "hmac_sha256_string_pe_join",
+    token: await hmacSha256Base64Url(KEY, `${token_path} ${expires}`),
+  });
+  variants.push({
+    variant: "sha256_concat_no_slash",
+    token: await sha256Base64Url(`${KEY}${token_path.slice(1, -1)}${expires}`),
+  });
+  variants.push({
+    variant: "sha256_concat_video_guid_only",
+    token: await sha256Base64Url(`${KEY}${video_guid}${expires}`),
+  });
+  variants.push({
+    variant: "sha256_concat_with_paramname",
+    token: await sha256Base64Url(`${KEY}bcdn_token${token_path}${expires}`),
+  });
+  variants.push({
+    variant: "hmac_sha256_path_exp_secret_in_msg",
+    token: await hmacSha256Base64Url(KEY, `${KEY}${token_path}${expires}`),
+  });
+
   return variants;
 }
 
