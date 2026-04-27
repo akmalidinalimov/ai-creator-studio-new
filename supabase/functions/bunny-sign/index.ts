@@ -132,7 +132,105 @@ async function computeVariants(KEY: string, token_path: string, expires: number,
     token: await hmacSha256Base64Url(KEY, `${KEY}${token_path}${expires}`),
   });
 
+  // ----- Additional variants (14-21) -----
+  variants.push({
+    variant: "hmac_sha256_string_path_exp_lowercase",
+    token: await hmacSha256Base64Url(KEY.toLowerCase(), `${token_path}${expires}`),
+  });
+  variants.push({
+    variant: "sha256_concat_with_dashes_removed",
+    token: await sha256Base64Url(`${KEY.replace(/-/g, "")}${token_path}${expires}`),
+  });
+  variants.push({
+    variant: "sha256_concat_uppercase_token",
+    token: await sha256Base64Url(`${KEY.toUpperCase()}${token_path}${expires}`),
+  });
+  variants.push({
+    variant: "hmac_sha256_path_exp_basic",
+    token: await hmacSha256Base64Url(KEY, `${token_path}${expires}`),
+  });
+  variants.push({
+    variant: "sha256_concat_with_uri_path",
+    token: await sha256Base64Url(`${KEY}${encodeURIComponent(token_path).toUpperCase()}${expires}`),
+  });
+
+  // 19. sha256 double
+  const firstHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${KEY}${token_path}${expires}`));
+  variants.push({
+    variant: "sha256_double",
+    token: await sha256Base64UrlBytes(new Uint8Array(firstHash)),
+  });
+
+  // 20. md5 -> base64url (Web Crypto has no MD5; implement minimal MD5)
+  const md5Hex = md5Hex_(`${KEY}${token_path}${expires}`);
+  const md5Bytes = new Uint8Array(md5Hex.length / 2);
+  for (let i = 0; i < md5Bytes.length; i++) md5Bytes[i] = parseInt(md5Hex.substr(i * 2, 2), 16);
+  variants.push({ variant: "md5_concat", token: bytesToBase64Url(md5Bytes) });
+
+  // 21. sha256 -> standard base64 (with + / and = padding)
+  const stdHashBuf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${KEY}${token_path}${expires}`));
+  let s = ""; const stdBytes = new Uint8Array(stdHashBuf);
+  for (let i = 0; i < stdBytes.length; i++) s += String.fromCharCode(stdBytes[i]);
+  variants.push({ variant: "base64_standard", token: btoa(s) });
+
   return variants;
+}
+
+// Minimal MD5 implementation (returns hex)
+function md5Hex_(s: string): string {
+  function toUtf8(str: string) {
+    return new TextEncoder().encode(str);
+  }
+  const msg = toUtf8(s);
+  const len = msg.length;
+  const withOne = new Uint8Array(((len + 9 + 63) >> 6) << 6);
+  withOne.set(msg);
+  withOne[len] = 0x80;
+  const bitLen = len * 8;
+  const dv = new DataView(withOne.buffer);
+  dv.setUint32(withOne.length - 8, bitLen >>> 0, true);
+  dv.setUint32(withOne.length - 4, Math.floor(bitLen / 0x100000000) >>> 0, true);
+
+  let a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
+  const K = [
+    0xd76aa478,0xe8c7b756,0x242070db,0xc1bdceee,0xf57c0faf,0x4787c62a,0xa8304613,0xfd469501,
+    0x698098d8,0x8b44f7af,0xffff5bb1,0x895cd7be,0x6b901122,0xfd987193,0xa679438e,0x49b40821,
+    0xf61e2562,0xc040b340,0x265e5a51,0xe9b6c7aa,0xd62f105d,0x02441453,0xd8a1e681,0xe7d3fbc8,
+    0x21e1cde6,0xc33707d6,0xf4d50d87,0x455a14ed,0xa9e3e905,0xfcefa3f8,0x676f02d9,0x8d2a4c8a,
+    0xfffa3942,0x8771f681,0x6d9d6122,0xfde5380c,0xa4beea44,0x4bdecfa9,0xf6bb4b60,0xbebfbc70,
+    0x289b7ec6,0xeaa127fa,0xd4ef3085,0x04881d05,0xd9d4d039,0xe6db99e5,0x1fa27cf8,0xc4ac5665,
+    0xf4292244,0x432aff97,0xab9423a7,0xfc93a039,0x655b59c3,0x8f0ccc92,0xffeff47d,0x85845dd1,
+    0x6fa87e4f,0xfe2ce6e0,0xa3014314,0x4e0811a1,0xf7537e82,0xbd3af235,0x2ad7d2bb,0xeb86d391,
+  ];
+  const r = [
+    7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,
+    5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,
+    4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,
+    6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21,
+  ];
+  const lr = (x:number,n:number) => ((x<<n)|(x>>>(32-n)))>>>0;
+
+  for (let off = 0; off < withOne.length; off += 64) {
+    const M = new Uint32Array(16);
+    for (let i = 0; i < 16; i++) M[i] = dv.getUint32(off + i*4, true);
+    let A = a0, B = b0, C = c0, D = d0;
+    for (let i = 0; i < 64; i++) {
+      let F, g;
+      if (i < 16) { F = (B & C) | (~B & D); g = i; }
+      else if (i < 32) { F = (D & B) | (~D & C); g = (5*i + 1) % 16; }
+      else if (i < 48) { F = B ^ C ^ D; g = (3*i + 5) % 16; }
+      else { F = C ^ (B | ~D); g = (7*i) % 16; }
+      F = (F + A + K[i] + M[g]) >>> 0;
+      A = D; D = C; C = B; B = (B + lr(F, r[i])) >>> 0;
+    }
+    a0 = (a0 + A) >>> 0; b0 = (b0 + B) >>> 0; c0 = (c0 + C) >>> 0; d0 = (d0 + D) >>> 0;
+  }
+  const toHexLE = (n:number) => {
+    let h = "";
+    for (let i = 0; i < 4; i++) h += ((n >>> (i*8)) & 0xff).toString(16).padStart(2,"0");
+    return h;
+  };
+  return toHexLE(a0) + toHexLE(b0) + toHexLE(c0) + toHexLE(d0);
 }
 
 Deno.serve(async (req) => {
