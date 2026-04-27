@@ -138,8 +138,8 @@ export default function AdminAIAnalytics() {
       <div className="container py-8 space-y-6">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">AI Assistant Analytics</h1>
-            <p className="text-sm text-muted-foreground mt-1">Study-assistant request volume, latency, fallbacks, and errors.</p>
+            <h1 className="text-2xl font-semibold tracking-tight">{t("admin.aiAnalytics.title")}</h1>
+            <p className="text-sm text-muted-foreground mt-1">{t("admin.aiAnalytics.subtitle")}</p>
           </div>
           <Select value={days} onValueChange={setDays}>
             <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
@@ -155,16 +155,16 @@ export default function AdminAIAnalytics() {
           </div>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <StatCard icon={<Activity className="size-4" />} label="Total requests" value={stats.total.toLocaleString()} />
-            <StatCard icon={<Sparkles className="size-4" />} label="Avg latency" value={`${stats.avgLatency} ms`} />
-            <StatCard icon={<Clock className="size-4" />} label="p95 latency" value={`${stats.p95} ms`} />
-            <StatCard icon={<Repeat className="size-4" />} label="Fallback used" value={stats.fallbacks.toLocaleString()} />
-            <StatCard icon={<AlertTriangle className="size-4" />} label="Error rate" value={`${stats.errorRate.toFixed(1)}%`} tone={stats.errorRate > 5 ? "warn" : "ok"} />
+            <StatCard icon={<Activity className="size-4" />} label={t("admin.aiAnalytics.stats.total")} value={stats.total.toLocaleString()} />
+            <StatCard icon={<Sparkles className="size-4" />} label={t("admin.aiAnalytics.stats.avgLatency")} value={`${stats.avgLatency} ms`} />
+            <StatCard icon={<Clock className="size-4" />} label={t("admin.aiAnalytics.stats.p95")} value={`${stats.p95} ms`} />
+            <StatCard icon={<Repeat className="size-4" />} label={t("admin.aiAnalytics.stats.fallback")} value={stats.fallbacks.toLocaleString()} />
+            <StatCard icon={<AlertTriangle className="size-4" />} label={t("admin.aiAnalytics.stats.errorRate")} value={`${stats.errorRate.toFixed(1)}%`} tone={stats.errorRate > 5 ? "warn" : "ok"} highLabel={t("admin.aiAnalytics.high")} />
           </div>
         )}
 
         <div className="grid lg:grid-cols-2 gap-4">
-          <ChartCard title="Requests over time">
+          <ChartCard title={t("admin.aiAnalytics.charts.requests")}>
             <ResponsiveContainer width="100%" height={240}>
               <AreaChart data={timeseries}>
                 <defs>
@@ -182,7 +182,7 @@ export default function AdminAIAnalytics() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Average latency over time (ms)">
+          <ChartCard title={t("admin.aiAnalytics.charts.latency")}>
             <ResponsiveContainer width="100%" height={240}>
               <LineChart data={timeseries}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -194,7 +194,7 @@ export default function AdminAIAnalytics() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Error rate over time (%)">
+          <ChartCard title={t("admin.aiAnalytics.charts.errorRate")}>
             <ResponsiveContainer width="100%" height={240}>
               <LineChart data={timeseries}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -206,9 +206,9 @@ export default function AdminAIAnalytics() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Failure status codes">
+          <ChartCard title={t("admin.aiAnalytics.charts.failures")}>
             {statusBreakdown.length === 0 ? (
-              <div className="h-[240px] flex items-center justify-center text-sm text-muted-foreground">No errors in this range 🎉</div>
+              <div className="h-[240px] flex items-center justify-center text-sm text-muted-foreground">{t("admin.aiAnalytics.charts.noErrors")}</div>
             ) : (
               <ResponsiveContainer width="100%" height={240}>
                 <PieChart>
@@ -223,9 +223,9 @@ export default function AdminAIAnalytics() {
           </ChartCard>
         </div>
 
-        <ChartCard title="Per-model breakdown">
+        <ChartCard title={t("admin.aiAnalytics.charts.byModel")}>
           {byModel.length === 0 ? (
-            <div className="h-32 flex items-center justify-center text-sm text-muted-foreground">No data yet.</div>
+            <div className="h-32 flex items-center justify-center text-sm text-muted-foreground">{t("admin.aiAnalytics.charts.noData")}</div>
           ) : (
             <>
               <ResponsiveContainer width="100%" height={260}>
