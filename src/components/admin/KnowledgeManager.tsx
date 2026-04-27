@@ -277,7 +277,7 @@ export function KnowledgeManager({
                 <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
                 <span className="truncate flex-1 font-medium">{j.name}</span>
                 <span className="text-xs text-muted-foreground shrink-0">{fmtSize(j.size)}</span>
-                <JobStageBadge stage={j.stage} progress={j.progress} />
+                <JobStageBadge stage={j.stage} progress={j.progress} t={t} />
                 <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => dismissJob(j.id)} title={t("admin.knowledge.dismiss")}>
                   <X className="h-3.5 w-3.5" />
                 </Button>
@@ -341,7 +341,7 @@ export function KnowledgeManager({
                     </div>
                   )}
                 </div>
-                <StatusBadge status={d.status} />
+                <StatusBadge status={d.status} t={t} />
                 <div className="flex items-center gap-1 shrink-0">
                   <Button size="icon" variant="ghost" title={t("admin.knowledge.preview")} onClick={() => setPreviewDoc(d)}>
                     <Eye className="h-4 w-4" />
@@ -385,33 +385,33 @@ export function KnowledgeManager({
   );
 }
 
-function JobStageBadge({ stage, progress }: { stage: UploadJob["stage"]; progress: number }) {
+function JobStageBadge({ stage, progress, t }: { stage: UploadJob["stage"]; progress: number; t: (k: string, opts?: any) => string }) {
   if (stage === "uploading") {
     return <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-blue-500/10 text-blue-600 inline-flex items-center gap-1 shrink-0">
-      <Loader2 className="h-3 w-3 animate-spin" /> Uploading {progress}%
+      <Loader2 className="h-3 w-3 animate-spin" /> {t("admin.knowledge.uploading", { n: progress })}
     </span>;
   }
   if (stage === "indexing") {
     return <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-amber-500/10 text-amber-600 inline-flex items-center gap-1 shrink-0">
-      <Loader2 className="h-3 w-3 animate-spin" /> Indexing
+      <Loader2 className="h-3 w-3 animate-spin" /> {t("admin.knowledge.indexing")}
     </span>;
   }
   if (stage === "done") {
     return <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-emerald-500/10 text-emerald-600 inline-flex items-center gap-1 shrink-0">
-      <CheckCircle2 className="h-3 w-3" /> Ready
+      <CheckCircle2 className="h-3 w-3" /> {t("admin.knowledge.ready")}
     </span>;
   }
   return <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-destructive/10 text-destructive inline-flex items-center gap-1 shrink-0">
-    <XCircle className="h-3 w-3" /> Failed
+    <XCircle className="h-3 w-3" /> {t("admin.knowledge.failed")}
   </span>;
 }
 
-function StatusBadge({ status }: { status: Doc["status"] }) {
+function StatusBadge({ status, t }: { status: Doc["status"]; t: (k: string) => string }) {
   const map = {
-    pending:    { icon: Loader2,        cls: "bg-muted text-muted-foreground", spin: true,  label: "Pending" },
-    processing: { icon: Loader2,        cls: "bg-blue-500/10 text-blue-600",  spin: true,  label: "Indexing" },
-    ready:      { icon: CheckCircle2,   cls: "bg-emerald-500/10 text-emerald-600", spin: false, label: "Ready" },
-    failed:     { icon: XCircle,        cls: "bg-destructive/10 text-destructive", spin: false, label: "Failed" },
+    pending:    { icon: Loader2,        cls: "bg-muted text-muted-foreground", spin: true,  label: t("admin.knowledge.pending") },
+    processing: { icon: Loader2,        cls: "bg-blue-500/10 text-blue-600",  spin: true,  label: t("admin.knowledge.indexing") },
+    ready:      { icon: CheckCircle2,   cls: "bg-emerald-500/10 text-emerald-600", spin: false, label: t("admin.knowledge.ready") },
+    failed:     { icon: XCircle,        cls: "bg-destructive/10 text-destructive", spin: false, label: t("admin.knowledge.failed") },
   } as const;
   const v = map[status];
   const Icon = v.icon;
