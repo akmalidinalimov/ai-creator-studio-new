@@ -538,6 +538,7 @@
       "indexing": "Индексация",
       "ready": "Готово",
       "failed": "Ошибка",
+      "pending": "В ожидании",
       "dismiss": "Скрыть",
       "uploadFailed": "Ошибка загрузки",
       "indexingFailed": "Ошибка индексации",

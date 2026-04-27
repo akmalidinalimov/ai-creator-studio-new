@@ -538,6 +538,7 @@
       "indexing": "Indexing",
       "ready": "Ready",
       "failed": "Failed",
+      "pending": "Pending",
       "dismiss": "Dismiss",
       "uploadFailed": "Upload failed",
       "indexingFailed": "Indexing failed",

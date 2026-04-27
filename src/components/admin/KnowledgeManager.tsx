@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -50,14 +51,14 @@ function fmtSize(n: number) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function friendlyError(raw: string): string {
+function friendlyError(raw: string, t: (k: string, opts?: any) => string): string {
   const e = raw.toLowerCase();
-  if (e.includes("no extractable text")) return "No extractable text. The file is likely a scanned image — convert to a text-based PDF or run OCR first.";
-  if (e.includes("embed")) return "Embedding service failed. Check the Lovable AI key and credits, then re-index.";
-  if (e.includes("download")) return "Could not download the file from storage. It may have been removed — re-upload it.";
-  if (e.includes("lovable_api_key")) return "Missing Lovable AI key. Add it in Connectors and re-index.";
-  if (e.includes("unauthorized") || e.includes("forbidden")) return "Permission denied. Sign out and back in as an admin.";
-  if (e.includes("timeout") || e.includes("failed to fetch")) return "Network or timeout error during indexing. Re-index to retry.";
+  if (e.includes("no extractable text")) return t("admin.knowledge.errors.noText");
+  if (e.includes("embed")) return t("admin.knowledge.errors.embed");
+  if (e.includes("download")) return t("admin.knowledge.errors.download");
+  if (e.includes("lovable_api_key")) return t("admin.knowledge.errors.noKey");
+  if (e.includes("unauthorized") || e.includes("forbidden")) return t("admin.knowledge.errors.permission");
+  if (e.includes("timeout") || e.includes("failed to fetch")) return t("admin.knowledge.errors.network");
   return raw;
 }
 
@@ -97,6 +98,7 @@ export function KnowledgeManager({
   scope: "platform" | "course";
   courseId?: string;
 }) {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const [docs, setDocs] = useState<Doc[]>([]);
   const [loading, setLoading] = useState(true);
@@ -137,7 +139,7 @@ export function KnowledgeManager({
           setJobs((prev) => prev.map((j) => {
             if (j.documentId !== row.id) return j;
             if (row.status === "ready") return { ...j, stage: "done" };
-            if (row.status === "failed") return { ...j, stage: "error", error: friendlyError(row.error || "Indexing failed") };
+            if (row.status === "failed") return { ...j, stage: "error", error: friendlyError(row.error || "Indexing failed", t) };
             return j;
           }));
         })
@@ -160,11 +162,11 @@ export function KnowledgeManager({
       const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       if (!ALLOWED_EXT.includes(ext)) {
-        setJobs((p) => [...p, { id: jobId, name: file.name, size: file.size, stage: "error", progress: 0, error: `Unsupported file type ".${ext}". Allowed: PDF, DOCX, TXT, MD.` }]);
+        setJobs((p) => [...p, { id: jobId, name: file.name, size: file.size, stage: "error", progress: 0, error: t("admin.knowledge.errors.unsupported", { ext }) }]);
         continue;
       }
       if (file.size > MAX_BYTES) {
-        setJobs((p) => [...p, { id: jobId, name: file.name, size: file.size, stage: "error", progress: 0, error: `File is ${fmtSize(file.size)} — limit is 20 MB.` }]);
+        setJobs((p) => [...p, { id: jobId, name: file.name, size: file.size, stage: "error", progress: 0, error: t("admin.knowledge.errors.tooBig", { size: fmtSize(file.size) }) }]);
         continue;
       }
 
@@ -176,7 +178,7 @@ export function KnowledgeManager({
 
       const { error: upErr } = await uploadWithProgress(path, file, (pct) => updateJob(jobId, { progress: pct }));
       if (upErr) {
-        updateJob(jobId, { stage: "error", error: friendlyError(upErr) });
+        updateJob(jobId, { stage: "error", error: friendlyError(upErr, t) });
         continue;
       }
 
@@ -194,7 +196,7 @@ export function KnowledgeManager({
       } as any).select().single();
 
       if (insErr || !doc) {
-        updateJob(jobId, { stage: "error", error: friendlyError(insErr?.message || "Could not record document") });
+        updateJob(jobId, { stage: "error", error: friendlyError(insErr?.message || "Could not record document", t) });
         continue;
       }
 
@@ -202,7 +204,7 @@ export function KnowledgeManager({
 
       const { error: fnErr } = await supabase.functions.invoke("ingest-knowledge", { body: { documentId: (doc as any).id } });
       if (fnErr) {
-        updateJob(jobId, { stage: "error", error: friendlyError(fnErr.message) });
+        updateJob(jobId, { stage: "error", error: friendlyError(fnErr.message, t) });
       }
       // Otherwise we wait for the realtime status update to mark "done" / "error".
     }
@@ -214,15 +216,15 @@ export function KnowledgeManager({
     setJobs((p) => [...p, { id: jobId, name: doc.file_name, size: doc.size_bytes, stage: "indexing", progress: 100, documentId: doc.id }]);
     await supabase.from("ai_knowledge_documents").update({ status: "pending", error: null }).eq("id", doc.id);
     const { error } = await supabase.functions.invoke("ingest-knowledge", { body: { documentId: doc.id } });
-    if (error) updateJob(jobId, { stage: "error", error: friendlyError(error.message) });
+    if (error) updateJob(jobId, { stage: "error", error: friendlyError(error.message, t) });
   };
 
   const remove = async (doc: Doc) => {
-    if (!confirm(`Delete "${doc.file_name}"? This removes its chunks from the assistant.`)) return;
+    if (!confirm(t("admin.knowledge.deleteConfirm", { name: doc.file_name }))) return;
     await supabase.storage.from("ai-knowledge").remove([doc.file_path]);
     const { error } = await supabase.from("ai_knowledge_documents").delete().eq("id", doc.id);
     if (error) return toast.error(error.message);
-    toast.success("Deleted");
+    toast.success(t("admin.knowledge.deletedToast"));
   };
 
   const download = async (doc: Doc) => {
@@ -254,8 +256,8 @@ export function KnowledgeManager({
         }`}
       >
         <UploadCloud className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-        <p className="text-sm font-medium">Drag & drop files here, or click to upload</p>
-        <p className="text-xs text-muted-foreground mt-1">PDF, DOCX, TXT, MD — up to 20 MB each</p>
+        <p className="text-sm font-medium">{t("admin.knowledge.dropTitle")}</p>
+        <p className="text-xs text-muted-foreground mt-1">{t("admin.knowledge.dropHint")}</p>
         <input
           ref={inputRef}
           type="file"
@@ -275,8 +277,8 @@ export function KnowledgeManager({
                 <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
                 <span className="truncate flex-1 font-medium">{j.name}</span>
                 <span className="text-xs text-muted-foreground shrink-0">{fmtSize(j.size)}</span>
-                <JobStageBadge stage={j.stage} progress={j.progress} />
-                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => dismissJob(j.id)} title="Dismiss">
+                <JobStageBadge stage={j.stage} progress={j.progress} t={t} />
+                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => dismissJob(j.id)} title={t("admin.knowledge.dismiss")}>
                   <X className="h-3.5 w-3.5" />
                 </Button>
               </div>
@@ -290,7 +292,7 @@ export function KnowledgeManager({
                 <Alert variant="destructive" className="py-2">
                   <AlertCircle className="h-4 w-4" />
                   <AlertTitle className="text-xs">
-                    {j.documentId ? "Indexing failed" : "Upload failed"}
+                    {j.documentId ? t("admin.knowledge.indexingFailed") : t("admin.knowledge.uploadFailed")}
                   </AlertTitle>
                   <AlertDescription className="text-xs">{j.error}</AlertDescription>
                 </Alert>
@@ -303,18 +305,18 @@ export function KnowledgeManager({
       {failedDocs.length > 0 && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>{failedDocs.length} document{failedDocs.length === 1 ? "" : "s"} failed to index</AlertTitle>
+          <AlertTitle>{t("admin.knowledge.failedAlert", { count: failedDocs.length })}</AlertTitle>
           <AlertDescription className="text-xs">
-            Use the re-index button on each row to retry. Common causes: scanned image PDFs (need OCR), missing AI key, or transient network errors.
+            {t("admin.knowledge.failedAlertHint")}
           </AlertDescription>
         </Alert>
       )}
 
       {loading ? (
-        <div className="text-sm text-muted-foreground py-6 text-center">Loading…</div>
+        <div className="text-sm text-muted-foreground py-6 text-center">{t("admin.knowledge.loading")}</div>
       ) : docs.length === 0 ? (
         <div className="text-sm text-muted-foreground italic py-4 text-center">
-          No documents yet. Upload course materials, FAQs, transcripts, or any reference text — the assistant will retrieve the most relevant passages per question.
+          {t("admin.knowledge.empty")}
         </div>
       ) : (
         <Card className="overflow-hidden">
@@ -326,8 +328,8 @@ export function KnowledgeManager({
                   <div className="font-medium truncate">{d.file_name}</div>
                   <div className="text-xs text-muted-foreground flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
                     <span>{fmtSize(d.size_bytes)}</span>
-                    {d.page_count != null && <span>{d.page_count} pages</span>}
-                    <span>{d.chunk_count} chunks</span>
+                    {d.page_count != null && <span>{t("admin.knowledge.pages", { n: d.page_count })}</span>}
+                    <span>{t("admin.knowledge.chunks", { n: d.chunk_count })}</span>
                     <span>{new Date(d.created_at).toLocaleDateString()}</span>
                   </div>
                   {(d.status === "processing" || d.status === "pending") && (
@@ -335,22 +337,22 @@ export function KnowledgeManager({
                   )}
                   {d.status === "failed" && d.error && (
                     <div className="text-xs text-destructive mt-1 flex items-start gap-1">
-                      <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" /> {friendlyError(d.error)}
+                      <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" /> {friendlyError(d.error, t)}
                     </div>
                   )}
                 </div>
-                <StatusBadge status={d.status} />
+                <StatusBadge status={d.status} t={t} />
                 <div className="flex items-center gap-1 shrink-0">
-                  <Button size="icon" variant="ghost" title="Preview text" onClick={() => setPreviewDoc(d)}>
+                  <Button size="icon" variant="ghost" title={t("admin.knowledge.preview")} onClick={() => setPreviewDoc(d)}>
                     <Eye className="h-4 w-4" />
                   </Button>
-                  <Button size="icon" variant="ghost" title="Download original" onClick={() => download(d)}>
+                  <Button size="icon" variant="ghost" title={t("admin.knowledge.downloadOriginal")} onClick={() => download(d)}>
                     <Download className="h-4 w-4" />
                   </Button>
-                  <Button size="icon" variant="ghost" title="Re-index" onClick={() => reindex(d)}>
+                  <Button size="icon" variant="ghost" title={t("admin.knowledge.reindex")} onClick={() => reindex(d)}>
                     <RefreshCcw className="h-4 w-4" />
                   </Button>
-                  <Button size="icon" variant="ghost" title="Delete" onClick={() => remove(d)}>
+                  <Button size="icon" variant="ghost" title={t("admin.knowledge.delete")} onClick={() => remove(d)}>
                     <Trash2 className="h-4 w-4 text-destructive" />
                   </Button>
                 </div>
@@ -362,8 +364,7 @@ export function KnowledgeManager({
 
       {docs.length > 0 && (
         <p className="text-xs text-muted-foreground">
-          {stats.count} document{stats.count === 1 ? "" : "s"} · {stats.totalChunks} chunks · {fmtSize(stats.totalSize)} indexed.
-          The assistant retrieves the 6 most relevant chunks per student question.
+          {t("admin.knowledge.summary", { count: stats.count, chunks: stats.totalChunks, size: fmtSize(stats.totalSize) })}
         </p>
       )}
 
@@ -372,11 +373,11 @@ export function KnowledgeManager({
           <DialogHeader>
             <DialogTitle className="truncate">{previewDoc?.file_name}</DialogTitle>
             <DialogDescription>
-              First ~600 characters of extracted text. If this looks like gibberish, the file is likely a scanned image and needs OCR.
+              {t("admin.knowledge.previewDesc")}
             </DialogDescription>
           </DialogHeader>
           <pre className="text-xs whitespace-pre-wrap bg-muted/40 rounded p-3 max-h-[50vh] overflow-auto">
-            {previewDoc?.preview || "(no preview yet — re-index to generate)"}
+            {previewDoc?.preview || t("admin.knowledge.noPreview")}
           </pre>
         </DialogContent>
       </Dialog>
@@ -384,33 +385,33 @@ export function KnowledgeManager({
   );
 }
 
-function JobStageBadge({ stage, progress }: { stage: UploadJob["stage"]; progress: number }) {
+function JobStageBadge({ stage, progress, t }: { stage: UploadJob["stage"]; progress: number; t: (k: string, opts?: any) => string }) {
   if (stage === "uploading") {
     return <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-blue-500/10 text-blue-600 inline-flex items-center gap-1 shrink-0">
-      <Loader2 className="h-3 w-3 animate-spin" /> Uploading {progress}%
+      <Loader2 className="h-3 w-3 animate-spin" /> {t("admin.knowledge.uploading", { n: progress })}
     </span>;
   }
   if (stage === "indexing") {
     return <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-amber-500/10 text-amber-600 inline-flex items-center gap-1 shrink-0">
-      <Loader2 className="h-3 w-3 animate-spin" /> Indexing
+      <Loader2 className="h-3 w-3 animate-spin" /> {t("admin.knowledge.indexing")}
     </span>;
   }
   if (stage === "done") {
     return <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-emerald-500/10 text-emerald-600 inline-flex items-center gap-1 shrink-0">
-      <CheckCircle2 className="h-3 w-3" /> Ready
+      <CheckCircle2 className="h-3 w-3" /> {t("admin.knowledge.ready")}
     </span>;
   }
   return <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-destructive/10 text-destructive inline-flex items-center gap-1 shrink-0">
-    <XCircle className="h-3 w-3" /> Failed
+    <XCircle className="h-3 w-3" /> {t("admin.knowledge.failed")}
   </span>;
 }
 
-function StatusBadge({ status }: { status: Doc["status"] }) {
+function StatusBadge({ status, t }: { status: Doc["status"]; t: (k: string) => string }) {
   const map = {
-    pending:    { icon: Loader2,        cls: "bg-muted text-muted-foreground", spin: true,  label: "Pending" },
-    processing: { icon: Loader2,        cls: "bg-blue-500/10 text-blue-600",  spin: true,  label: "Indexing" },
-    ready:      { icon: CheckCircle2,   cls: "bg-emerald-500/10 text-emerald-600", spin: false, label: "Ready" },
-    failed:     { icon: XCircle,        cls: "bg-destructive/10 text-destructive", spin: false, label: "Failed" },
+    pending:    { icon: Loader2,        cls: "bg-muted text-muted-foreground", spin: true,  label: t("admin.knowledge.pending") },
+    processing: { icon: Loader2,        cls: "bg-blue-500/10 text-blue-600",  spin: true,  label: t("admin.knowledge.indexing") },
+    ready:      { icon: CheckCircle2,   cls: "bg-emerald-500/10 text-emerald-600", spin: false, label: t("admin.knowledge.ready") },
+    failed:     { icon: XCircle,        cls: "bg-destructive/10 text-destructive", spin: false, label: t("admin.knowledge.failed") },
   } as const;
   const v = map[status];
   const Icon = v.icon;

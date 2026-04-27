@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useParams, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -30,6 +31,7 @@ interface Module { id: string; title: string; summary: string | null; position: 
 
 export default function AdminCourseEditor() {
   const { courseId } = useParams();
+  const { t } = useTranslation();
   const { user } = useAuth();
   const [course, setCourse] = useState<any>(null);
   const [modules, setModules] = useState<Module[]>([]);
@@ -90,11 +92,11 @@ export default function AdminCourseEditor() {
   };
 
   const deleteModule = async (id: string) => {
-    if (!confirm("Delete this module and all its lessons? This cannot be undone.")) return;
+    if (!confirm(t("admin.courseEditor.deleteModuleConfirm"))) return;
     const { error } = await supabase.from("modules").delete().eq("id", id);
     if (error) { toast.error(error.message); return; }
     setModules((prev) => prev.filter((m) => m.id !== id));
-    toast.success("Module deleted");
+    toast.success(t("admin.courseEditor.moduleDeleted"));
   };
 
   const addLesson = async (moduleId: string) => {
@@ -140,7 +142,7 @@ export default function AdminCourseEditor() {
     if (error) { toast.error(error.message); return; }
     const { data: pub } = supabase.storage.from("course-covers").getPublicUrl(path);
     await updateCourse({ cover_url: pub.publicUrl });
-    toast.success("Cover uploaded");
+    toast.success(t("admin.courseEditor.coverUploaded"));
   };
 
   const totalLessons = modules.reduce((s, m) => s + m.lessons.length, 0);
@@ -148,13 +150,13 @@ export default function AdminCourseEditor() {
   const totalHours = (totalSeconds / 3600).toFixed(1);
 
   if (loading) return <PageShell><Skeleton className="h-96" /></PageShell>;
-  if (!course) return <PageShell><p>Course not found.</p></PageShell>;
+  if (!course) return <PageShell><p>{t("admin.courseEditor.notFound")}</p></PageShell>;
 
   return (
     <PageShell>
       <div className="space-y-6">
         <div className="text-xs text-muted-foreground">
-          <Link to="/admin/courses" className="hover:text-foreground">Courses</Link>
+          <Link to="/admin/courses" className="hover:text-foreground">{t("admin.courseEditor.breadcrumbCourses")}</Link>
           <span className="mx-2">/</span>
           <span>{course.title}</span>
         </div>
@@ -172,7 +174,7 @@ export default function AdminCourseEditor() {
               ) : (
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-muted-foreground">
                   <ImageIcon className="h-6 w-6" />
-                  <span className="text-xs mt-1">Add cover</span>
+                  <span className="text-xs mt-1">{t("admin.courseEditor.addCover")}</span>
                 </div>
               )}
               <div className="absolute inset-0 bg-foreground/0 group-hover:bg-foreground/40 transition-colors flex items-center justify-center text-background opacity-0 group-hover:opacity-100">
@@ -194,25 +196,25 @@ export default function AdminCourseEditor() {
                 value={course.tagline || ""}
                 onChange={(e) => setCourse((c: any) => ({ ...c, tagline: e.target.value }))}
                 onBlur={(e) => updateCourse({ tagline: e.target.value })}
-                placeholder="Short tagline"
+                placeholder={t("admin.courseEditor.shortTagline")}
               />
               <Textarea
                 value={course.description || ""}
                 onChange={(e) => setCourse((c: any) => ({ ...c, description: e.target.value }))}
                 onBlur={(e) => updateCourse({ description: e.target.value, duration_hours: parseFloat(totalHours) })}
                 rows={3}
-                placeholder="Full description"
+                placeholder={t("admin.courseEditor.fullDescription")}
               />
               <div className="flex flex-wrap items-center gap-4 pt-1">
                 <label className="flex items-center gap-2 text-sm">
                   <Switch checked={course.published} onCheckedChange={(v) => updateCourse({ published: v })} />
                   {course.published ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-                  <span>{course.published ? "Published" : "Draft"}</span>
+                  <span>{course.published ? t("admin.common.published") : t("admin.common.draft")}</span>
                 </label>
-                <span className="text-xs text-muted-foreground">{modules.length} modules · {totalLessons} lessons · {totalHours}h</span>
+                <span className="text-xs text-muted-foreground">{t("admin.courseEditor.modulesLessons", { modules: modules.length, lessons: totalLessons, hours: totalHours })}</span>
                 <Button size="sm" variant="outline" asChild>
                   <a href={`/course/${courseId}`} target="_blank" rel="noreferrer">
-                    <ExternalLink className="h-3.5 w-3.5" /> View as student
+                    <ExternalLink className="h-3.5 w-3.5" /> {t("admin.courseEditor.viewAsStudent")}
                   </a>
                 </Button>
               </div>
@@ -243,6 +245,7 @@ export default function AdminCourseEditor() {
                   onLessonDragEnd={(e) => onLessonDragEnd(m.id, e)}
                   sensors={sensors}
                   onOpenQuiz={() => setQuizModuleId(m.id)}
+                  t={t}
                 />
               ))}
             </div>
@@ -250,7 +253,7 @@ export default function AdminCourseEditor() {
         </DndContext>
 
         <Button onClick={addModule} variant="outline" className="w-full">
-          <Plus className="h-4 w-4" /> Add module
+          <Plus className="h-4 w-4" /> {t("admin.courseEditor.addModule")}
         </Button>
 
         {drawerLessonId && (
@@ -272,7 +275,7 @@ export default function AdminCourseEditor() {
 }
 
 function SortableModule({
-  module: m, index, expanded, onToggle, onUpdate, onDelete, onAddLesson, onEditLesson, onLessonDragEnd, sensors, onOpenQuiz,
+  module: m, index, expanded, onToggle, onUpdate, onDelete, onAddLesson, onEditLesson, onLessonDragEnd, sensors, onOpenQuiz, t,
 }: any) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: m.id });
   const style: React.CSSProperties = {
@@ -289,14 +292,14 @@ function SortableModule({
         <button onClick={onToggle} className="text-muted-foreground hover:text-foreground p-1" aria-label="Toggle">
           {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
-        <span className="text-xs text-muted-foreground tabular-nums w-16">Module {index + 1}</span>
+        <span className="text-xs text-muted-foreground tabular-nums w-16">{t("admin.courseEditor.moduleN", { n: index + 1 })}</span>
         <Input
           value={m.title}
           onChange={(e) => onUpdate({ title: e.target.value })}
           onBlur={(e) => onUpdate({ title: e.target.value })}
           className="flex-1 h-8"
         />
-        <span className="text-xs text-muted-foreground hidden sm:inline">{m.lessons.length} lessons</span>
+        <span className="text-xs text-muted-foreground hidden sm:inline">{t("admin.courseEditor.lessonsCount", { n: m.lessons.length })}</span>
         <Button variant="ghost" size="icon" onClick={onDelete} aria-label="Delete module">
           <Trash2 className="h-4 w-4 text-destructive" />
         </Button>
@@ -307,22 +310,22 @@ function SortableModule({
             value={m.summary || ""}
             onChange={(e) => onUpdate({ summary: e.target.value })}
             onBlur={(e) => onUpdate({ summary: e.target.value })}
-            placeholder="Module summary"
+            placeholder={t("admin.courseEditor.moduleSummary")}
             rows={2}
           />
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onLessonDragEnd}>
             <SortableContext items={m.lessons.map((l: Lesson) => l.id)} strategy={verticalListSortingStrategy}>
               <ul className="border rounded-md divide-y">
-                {m.lessons.length === 0 && <li className="p-3 text-sm text-muted-foreground text-center">No lessons yet</li>}
+                {m.lessons.length === 0 && <li className="p-3 text-sm text-muted-foreground text-center">{t("admin.courseEditor.noLessons")}</li>}
                 {m.lessons.map((l: Lesson, j: number) => (
-                  <SortableLesson key={l.id} lesson={l} index={j} onEdit={() => onEditLesson(l.id)} />
+                  <SortableLesson key={l.id} lesson={l} index={j} onEdit={() => onEditLesson(l.id)} t={t} />
                 ))}
               </ul>
             </SortableContext>
           </DndContext>
           <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-            <Button variant="outline" size="sm" onClick={onAddLesson}><Plus className="h-3.5 w-3.5" /> Add lesson</Button>
-            <Button variant="ghost" size="sm" onClick={onOpenQuiz}>Edit module quiz →</Button>
+            <Button variant="outline" size="sm" onClick={onAddLesson}><Plus className="h-3.5 w-3.5" /> {t("admin.courseEditor.addLesson")}</Button>
+            <Button variant="ghost" size="sm" onClick={onOpenQuiz}>{t("admin.courseEditor.editModuleQuiz")}</Button>
           </div>
         </div>
       )}
@@ -330,7 +333,7 @@ function SortableModule({
   );
 }
 
-function SortableLesson({ lesson: l, index, onEdit }: { lesson: Lesson; index: number; onEdit: () => void }) {
+function SortableLesson({ lesson: l, index, onEdit, t }: { lesson: Lesson; index: number; onEdit: () => void; t: (k: string) => string }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: l.id });
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -338,9 +341,9 @@ function SortableLesson({ lesson: l, index, onEdit }: { lesson: Lesson; index: n
     opacity: isDragging ? 0.6 : 1,
   };
   const hasVideo = !!l.video_storage_path || !!l.provider_video_id || !!l.video_url;
-  const status = !l.published ? { label: "Draft", cls: "bg-muted text-muted-foreground" }
-                : !hasVideo ? { label: "No video", cls: "bg-amber-100 text-amber-900" }
-                : { label: "Has video", cls: "bg-foreground text-background" };
+  const status = !l.published ? { label: t("admin.courseEditor.lessonStatus.draft"), cls: "bg-muted text-muted-foreground" }
+                : !hasVideo ? { label: t("admin.courseEditor.lessonStatus.noVideo"), cls: "bg-amber-100 text-amber-900" }
+                : { label: t("admin.courseEditor.lessonStatus.hasVideo"), cls: "bg-foreground text-background" };
   return (
     <li ref={setNodeRef} style={style} className="flex items-center gap-2 px-3 py-2 hover:bg-muted/30">
       <button {...attributes} {...listeners} className="touch-none p-1 cursor-grab text-muted-foreground hover:text-foreground" aria-label="Drag lesson">
@@ -350,12 +353,13 @@ function SortableLesson({ lesson: l, index, onEdit }: { lesson: Lesson; index: n
       <span className="flex-1 text-sm truncate">{l.title}</span>
       <span className="text-[10px] text-muted-foreground hidden sm:inline">{Math.round((l.duration_seconds || 0) / 60)}m</span>
       <span className={`text-[10px] px-2 py-0.5 rounded-full ${status.cls}`}>{status.label}</span>
-      <Button variant="ghost" size="sm" onClick={onEdit}>Edit</Button>
+      <Button variant="ghost" size="sm" onClick={onEdit}>{t("admin.common.edit")}</Button>
     </li>
   );
 }
 
 function CourseAIOverride({ courseId, initial, onSaved }: { courseId: string; initial: any; onSaved: (p: any) => void }) {
+  const { t } = useTranslation();
   const [enabled, setEnabled] = useState(!!initial?.ai_system_prompt);
   const [prompt, setPrompt] = useState<string>(initial?.ai_system_prompt || "");
   const [busy, setBusy] = useState(false);
@@ -367,37 +371,37 @@ function CourseAIOverride({ courseId, initial, onSaved }: { courseId: string; in
     setBusy(false);
     if (error) return toast.error(error.message);
     onSaved(patch);
-    toast.success("Course AI prompt saved");
+    toast.success(t("admin.courseEditor.ai.savedToast"));
   };
 
   return (
     <Card className="p-5 shadow-soft space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="font-semibold">AI Assistant — course override</h3>
+          <h3 className="font-semibold">{t("admin.courseEditor.ai.title")}</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Custom system prompt for this course. Course-specific knowledge files below are always active and merged with the platform-wide library.
+            {t("admin.courseEditor.ai.desc")}
           </p>
         </div>
         <label className="flex items-center gap-2 text-sm">
-          <Switch checked={enabled} onCheckedChange={setEnabled} /> Custom prompt {enabled ? "on" : "off"}
+          <Switch checked={enabled} onCheckedChange={setEnabled} /> {enabled ? t("admin.courseEditor.ai.customOn") : t("admin.courseEditor.ai.customOff")}
         </label>
       </div>
       {enabled && (
         <>
           <Textarea rows={6} value={prompt} onChange={(e) => setPrompt(e.target.value)}
-            placeholder="You are a strict tutor for this course. Use {course_title}, {transcript}, {language} as variables." />
+            placeholder={t("admin.courseEditor.ai.promptPh")} />
           <div className="flex justify-end">
-            <Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save prompt"}</Button>
+            <Button onClick={save} disabled={busy}>{busy ? t("admin.common.saving") : t("admin.courseEditor.ai.savePrompt")}</Button>
           </div>
         </>
       )}
 
       <div className="pt-4 border-t space-y-2">
         <div>
-          <h4 className="font-medium text-sm">Course knowledge base</h4>
+          <h4 className="font-medium text-sm">{t("admin.courseEditor.ai.kbTitle")}</h4>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Files added here are prioritized for students taking this course only. PDF, DOCX, TXT, MD up to 20 MB each.
+            {t("admin.courseEditor.ai.kbDesc")}
           </p>
         </div>
         <KnowledgeManager scope="course" courseId={courseId} />
