@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
@@ -12,6 +13,7 @@ export default function QuizPage() {
   const { moduleId } = useParams();
   const { user } = useAuth();
   const nav = useNavigate();
+  const { t } = useTranslation();
   const [questions, setQuestions] = useState<any[]>([]);
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [submitted, setSubmitted] = useState(false);
@@ -36,17 +38,17 @@ export default function QuizPage() {
     if (user && moduleId) {
       await supabase.from("quiz_attempts").insert({ user_id: user.id, module_id: moduleId, score: pct, answers });
     }
-    if (pct >= 80) toast.success(`Passed with ${pct}%!`);
-    else toast.error(`${pct}% — need 80% to pass`);
+    if (pct >= 80) toast.success(t("quiz.passedWith", { pct }));
+    else toast.error(t("quiz.needToPass", { pct }));
   };
 
   return (
     <PageShell>
       <div className="max-w-2xl mx-auto space-y-6">
         <div>
-          <Link to={courseId ? `/course/${courseId}` : "/dashboard"} className="text-xs text-muted-foreground hover:text-foreground">← Back</Link>
-          <h1 className="text-3xl font-semibold tracking-tight mt-2">Quiz: {moduleTitle}</h1>
-          <p className="text-muted-foreground mt-1">Pass with 80% or higher.</p>
+          <Link to={courseId ? `/course/${courseId}` : "/dashboard"} className="text-xs text-muted-foreground hover:text-foreground">{t("quiz.back")}</Link>
+          <h1 className="text-3xl font-semibold tracking-tight mt-2">{t("quiz.headerWith", { title: moduleTitle })}</h1>
+          <p className="text-muted-foreground mt-1">{t("quiz.passLine")}</p>
         </div>
         {questions.map((q, i) => (
           <Card key={q.id} className="p-5 shadow-soft space-y-3">
@@ -76,11 +78,11 @@ export default function QuizPage() {
         ))}
         <div className="flex gap-3">
           {!submitted ? (
-            <Button onClick={submit} disabled={Object.keys(answers).length < questions.length}>Submit answers</Button>
+            <Button onClick={submit} disabled={Object.keys(answers).length < questions.length}>{t("quiz.submitAnswers")}</Button>
           ) : (
             <>
-              <Button onClick={() => { setAnswers({}); setSubmitted(false); }}>Try again</Button>
-              {courseId && <Button variant="outline" onClick={() => nav(`/course/${courseId}`)}>Back to course</Button>}
+              <Button onClick={() => { setAnswers({}); setSubmitted(false); }}>{t("quiz.tryAgain")}</Button>
+              {courseId && <Button variant="outline" onClick={() => nav(`/course/${courseId}`)}>{t("quiz.backToCourse")}</Button>}
             </>
           )}
         </div>

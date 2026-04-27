@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
@@ -12,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function CoursePage() {
   const { courseId } = useParams();
   const { user } = useAuth();
+  const { t } = useTranslation();
   const [course, setCourse] = useState<any>(null);
   const [modules, setModules] = useState<any[]>([]);
   const [completed, setCompleted] = useState<Set<string>>(new Set());
@@ -42,7 +44,7 @@ export default function CoursePage() {
   }, [courseId, user]);
 
   if (loading) return <PageShell><Skeleton className="h-64" /></PageShell>;
-  if (!course) return <PageShell><p>Course not found.</p></PageShell>;
+  if (!course) return <PageShell><p>{t("coursePage.notFound")}</p></PageShell>;
 
   const totalLessons = modules.reduce((s, m) => s + m.lessons.length, 0);
   const pct = totalLessons ? Math.round((completed.size / totalLessons) * 100) : 0;
@@ -53,7 +55,7 @@ export default function CoursePage() {
       <div className="grid lg:grid-cols-[1fr_320px] gap-8">
         <div className="space-y-8">
           <div>
-            <Link to="/dashboard" className="text-xs text-muted-foreground hover:text-foreground">← Dashboard</Link>
+            <Link to="/dashboard" className="text-xs text-muted-foreground hover:text-foreground">{t("coursePage.backToDashboard")}</Link>
             <h1 className="text-4xl font-semibold tracking-tight mt-2">{course.title}</h1>
             <p className="text-lg text-muted-foreground mt-2 max-w-2xl">{course.tagline}</p>
             <p className="mt-4 text-sm leading-relaxed max-w-2xl">{course.description}</p>
@@ -63,7 +65,7 @@ export default function CoursePage() {
             {modules.map((m, i) => (
               <Card key={m.id} className="overflow-hidden shadow-soft">
                 <div className="px-5 py-4 border-b bg-muted/30">
-                  <div className="text-xs text-muted-foreground">Module {i + 1}</div>
+                  <div className="text-xs text-muted-foreground">{t("coursePage.moduleN", { n: i + 1 })}</div>
                   <h3 className="text-lg font-semibold tracking-tight">{m.title}</h3>
                   {m.summary && <p className="text-sm text-muted-foreground mt-1">{m.summary}</p>}
                 </div>
@@ -81,7 +83,7 @@ export default function CoursePage() {
                   ))}
                 </ul>
                 <div className="px-5 py-3 border-t bg-muted/20">
-                  <Button asChild variant="outline" size="sm"><Link to={`/quiz/${m.id}`}>Take module quiz →</Link></Button>
+                  <Button asChild variant="outline" size="sm"><Link to={`/quiz/${m.id}`}>{t("coursePage.takeQuiz")}</Link></Button>
                 </div>
               </Card>
             ))}
@@ -91,19 +93,19 @@ export default function CoursePage() {
         <aside className="lg:sticky lg:top-20 h-fit space-y-5">
           <Card className="p-5 shadow-soft">
             <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Your progress</span>
+              <span className="text-sm text-muted-foreground">{t("coursePage.yourProgress")}</span>
               <span className="text-2xl font-semibold tabular-nums">{pct}%</span>
             </div>
             <Progress value={pct} className="mt-3 h-1.5" />
             <div className="grid grid-cols-3 gap-2 mt-5 text-center">
-              <Stat n={modules.length} l="modules" />
-              <Stat n={totalLessons} l="lessons" />
-              <Stat n={`${course.duration_hours}h`} l="total" />
+              <Stat n={modules.length} l={t("coursePage.stats.modules")} />
+              <Stat n={totalLessons} l={t("coursePage.stats.lessons")} />
+              <Stat n={`${course.duration_hours}h`} l={t("coursePage.stats.total")} />
             </div>
             {nextLesson && (
-              <Button asChild className="w-full mt-5"><Link to={`/lesson/${courseId}/${nextLesson.id}`}><PlayCircle className="h-4 w-4" />Continue</Link></Button>
+              <Button asChild className="w-full mt-5"><Link to={`/lesson/${courseId}/${nextLesson.id}`}><PlayCircle className="h-4 w-4" />{t("coursePage.continue")}</Link></Button>
             )}
-            {pct === 100 && <Button asChild variant="outline" className="w-full mt-3"><Link to={`/certificate/${courseId}`}>View certificate</Link></Button>}
+            {pct === 100 && <Button asChild variant="outline" className="w-full mt-3"><Link to={`/certificate/${courseId}`}>{t("coursePage.viewCertificate")}</Link></Button>}
           </Card>
         </aside>
       </div>
