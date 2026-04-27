@@ -10,18 +10,6 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-function base64url(bytes: Uint8Array): string {
-  let bin = "";
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-
-async function sha256(input: string): Promise<Uint8Array> {
-  const buf = new TextEncoder().encode(input);
-  const digest = await crypto.subtle.digest("SHA-256", buf);
-  return new Uint8Array(digest);
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -65,13 +53,39 @@ Deno.serve(async (req) => {
       });
     }
 
-    const tokenPath = `/${video_guid}/`; // directory, trailing slash — covers playlist + .ts segments
+    const path = `/${video_guid}/playlist.m3u8`;
     const expires = Math.floor(Date.now() / 1000) + 1800;
-    const raw = `${KEY}${tokenPath}${expires}`;
-    const hash = await sha256(raw);
-    const token = base64url(hash);
+    const raw = `${KEY}${path}${expires}`;
+    const hashBuf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(hashBuf)));
+    const token = b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 
-    const signed_url = `https://${HOSTNAME}/${video_guid}/playlist.m3u8?token=${token}&token_path=${encodeURIComponent(tokenPath)}&expires=${expires}`;
+    const signed_url = `https://${HOSTNAME}${path}?token=${token}&expires=${expires}`;
+    console.log(JSON.stringify({ path, expires, hostname: HOSTNAME, signed_url }));
+
+    const wantsDebug = body?.debug === true;
+    if (wantsDebug) {
+      const { data: isAdmin } = await userClient.rpc("has_role", {
+        _user_id: userData.user.id,
+        _role: "admin",
+      });
+
+      if (isAdmin === true) {
+        return new Response(
+          JSON.stringify({
+            signed_url,
+            expires,
+            debug: {
+              path,
+              raw_hash_input_preview: `${raw.slice(0, 8)}...${raw.slice(-8)}`,
+              hash_b64_preview: b64.slice(0, 16),
+            },
+          }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+    }
+
     return new Response(JSON.stringify({ signed_url, expires }), {
       status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
