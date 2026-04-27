@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -7,12 +8,9 @@ import { toast } from "sonner";
 interface Props {
   onAuth: (tg: any) => void;
   size?: "small" | "medium" | "large";
-  /** Label shown on the button. Defaults to Uzbek. */
+  /** Label shown on the button. Falls back to translated default. */
   fallbackLabel?: string;
 }
-
-const TG_NOT_CONFIGURED_MSG =
-  "Telegram login isn't configured yet — admin can set it up in Settings → Telegram Login.";
 
 const TelegramIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -30,8 +28,11 @@ const TelegramIcon = () => (
 export function TelegramLoginButton({
   onAuth,
   size: _size = "large",
-  fallbackLabel = "Telegram Bilan Kirish",
+  fallbackLabel,
 }: Props) {
+  const { t } = useTranslation();
+  const label = fallbackLabel ?? t("telegram.defaultLabel");
+  const notConfiguredMsg = t("telegram.notConfigured");
   const [botUsername, setBotUsername] = useState<string | null>(null);
   const [botId, setBotId] = useState<string | null>(null);
   const [resolved, setResolved] = useState(false);
@@ -69,7 +70,7 @@ export function TelegramLoginButton({
 
     if (!popup) {
       setOpening(false);
-      toast.error("Popup blocked — please allow popups for this site.");
+      toast.error(t("telegram.popupBlocked"));
       return;
     }
 
@@ -107,7 +108,7 @@ export function TelegramLoginButton({
     const closedTimer = setInterval(() => {
       if (popup.closed) {
         cleanup();
-        if (!done) toast.message("Telegram sign-in cancelled.");
+        if (!done) toast.message(t("telegram.cancelled"));
       }
     }, 500);
 
@@ -128,7 +129,7 @@ export function TelegramLoginButton({
         onClick={openTelegramAuth}
         disabled={opening}
       >
-        <TelegramIcon /> {fallbackLabel}
+        <TelegramIcon /> {label}
       </Button>
     );
   }
@@ -141,13 +142,13 @@ export function TelegramLoginButton({
           <Button
             type="button"
             className="w-full bg-[#229ED9] hover:bg-[#229ED9] text-white border-transparent opacity-60 cursor-not-allowed"
-            onClick={(e) => { e.preventDefault(); toast.message(TG_NOT_CONFIGURED_MSG); }}
+            onClick={(e) => { e.preventDefault(); toast.message(notConfiguredMsg); }}
           >
-            <TelegramIcon /> {fallbackLabel}
+            <TelegramIcon /> {label}
           </Button>
         </TooltipTrigger>
         <TooltipContent side="bottom" className="max-w-xs text-center">
-          {TG_NOT_CONFIGURED_MSG}
+          {notConfiguredMsg}
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
