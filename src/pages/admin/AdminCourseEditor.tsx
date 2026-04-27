@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useParams, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -30,6 +31,7 @@ interface Module { id: string; title: string; summary: string | null; position: 
 
 export default function AdminCourseEditor() {
   const { courseId } = useParams();
+  const { t } = useTranslation();
   const { user } = useAuth();
   const [course, setCourse] = useState<any>(null);
   const [modules, setModules] = useState<Module[]>([]);
