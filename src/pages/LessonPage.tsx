@@ -116,15 +116,6 @@ export default function LessonPage() {
     return () => clearInterval(id);
   }, [user, lessonId]);
 
-  // Notes autosave (debounced)
-  useEffect(() => {
-    if (!user || !lessonId) return;
-    const t = setTimeout(async () => {
-      await supabase.from("lesson_notes").upsert({ user_id: user.id, lesson_id: lessonId, body: notes }, { onConflict: "user_id,lesson_id" });
-    }, 700);
-    return () => clearTimeout(t);
-  }, [notes, user, lessonId]);
-
   const markComplete = async () => {
     if (!user || !lessonId) return;
     await supabase.from("lesson_progress").upsert({
@@ -144,24 +135,6 @@ export default function LessonPage() {
     await markComplete();
     if (next) navigate(`/lesson/${courseId}/${next.id}`);
   };
-
-  const insertTimestamp = () => {
-    const v = videoRef.current; if (!v) return;
-    const t = Math.floor(v.currentTime);
-    const m = Math.floor(t / 60); const s = (t % 60).toString().padStart(2, "0");
-    setNotes((n) => `${n}${n && !n.endsWith("\n") ? " " : ""}[${m}:${s}] `);
-  };
-
-  const addBookmark = async () => {
-    if (!user || !lessonId || !videoRef.current) return;
-    const ts = Math.floor(videoRef.current.currentTime);
-    const defaultLabel = `${t("lesson.bookmarks.atPrefix")} ${Math.floor(ts / 60)}:${(ts % 60).toString().padStart(2, "0")}`;
-    const { data } = await supabase.from("lesson_bookmarks").insert({ user_id: user.id, lesson_id: lessonId, timestamp_seconds: ts, label: bmLabel || defaultLabel }).select().single();
-    if (data) setBookmarks([...bookmarks, data].sort((a, b) => a.timestamp_seconds - b.timestamp_seconds));
-    setBmLabel("");
-  };
-
-  const seekTo = (sec: number) => { if (videoRef.current) { videoRef.current.currentTime = sec; videoRef.current.play(); } };
 
   const sendChat = useCallback(async (text: string) => {
     if (!text.trim() || chatLoading) return;
