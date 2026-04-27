@@ -336,9 +336,6 @@ export default function LessonPage() {
         <div className="space-y-4">
           <div className="min-w-0">
             <h1 className="text-2xl md:text-3xl font-semibold tracking-tight break-words">{lesson.title}</h1>
-            {lesson.description && (
-              <p className="text-sm text-muted-foreground mt-1">{lesson.description}</p>
-            )}
           </div>
           <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
             {prev && (
@@ -346,9 +343,6 @@ export default function LessonPage() {
                 <Link to={`/lesson/${courseId}/${prev.id}`}><ChevronLeft className="h-4 w-4" />{t("lesson.prev")}</Link>
               </Button>
             )}
-            <Button variant="outline" size="sm" asChild className="w-full sm:w-auto min-h-[44px] sm:min-h-0">
-              <Link to={`/course/${courseId}`}><LayoutList className="h-4 w-4" />{t("lesson.allModules")}</Link>
-            </Button>
             <Button variant="outline" size="sm" onClick={markComplete} className="w-full sm:w-auto min-h-[44px] sm:min-h-0">
               <CheckCircle2 className="h-4 w-4" />{t("lesson.markComplete")}
             </Button>
@@ -358,50 +352,10 @@ export default function LessonPage() {
               </Button>
             )}
           </div>
+          {lesson.description && (
+            <Card className="p-5 text-sm leading-relaxed whitespace-pre-wrap">{lesson.description}</Card>
+          )}
         </div>
-
-        <Tabs defaultValue="notes">
-          <TabsList className="flex-wrap h-auto">
-            <TabsTrigger value="description">{t("lesson.tabs.description")}</TabsTrigger>
-            <TabsTrigger value="notes">{t("lesson.tabs.notes")}</TabsTrigger>
-            <TabsTrigger value="bookmarks">{t("lesson.tabs.bookmarks")}</TabsTrigger>
-            <TabsTrigger value="transcript">{t("lesson.tabs.transcript")}</TabsTrigger>
-          </TabsList>
-          <TabsContent value="description"><Card className="p-5 text-sm leading-relaxed">{lesson.description}</Card></TabsContent>
-          <TabsContent value="notes">
-            <Card className="p-5 space-y-3">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <span className="text-xs text-muted-foreground">{t("lesson.notes.autosave")}</span>
-                <Button size="sm" variant="ghost" onClick={insertTimestamp}><Clock className="h-3.5 w-3.5" />{t("lesson.notes.insertTimestamp")}</Button>
-              </div>
-              <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t("lesson.notes.placeholder")} rows={10} className="resize-none min-h-[200px]" />
-            </Card>
-          </TabsContent>
-          <TabsContent value="bookmarks">
-            <Card className="p-5 space-y-3">
-              <div className="flex flex-col sm:flex-row gap-2">
-                <Input placeholder={t("lesson.bookmarks.labelPlaceholder")} value={bmLabel} onChange={(e) => setBmLabel(e.target.value)} className="min-h-[44px] sm:min-h-0" />
-                <Button size="sm" onClick={addBookmark} className="w-full sm:w-auto min-h-[44px] sm:min-h-0"><Bookmark className="h-3.5 w-3.5" />{t("lesson.bookmarks.addAtCurrent")}</Button>
-              </div>
-              <ul className="divide-y">
-                {bookmarks.length === 0 && <li className="text-sm text-muted-foreground py-4">{t("lesson.bookmarks.empty")}</li>}
-                {bookmarks.map((b) => (
-                  <li key={b.id} className="py-2 flex items-center justify-between gap-3">
-                    <button onClick={() => seekTo(b.timestamp_seconds)} className="text-sm hover:text-foreground text-left flex-1">
-                      <span className="font-mono text-xs text-muted-foreground mr-2">{Math.floor(b.timestamp_seconds / 60)}:{(b.timestamp_seconds % 60).toString().padStart(2, "0")}</span>
-                      {b.label}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          </TabsContent>
-          <TabsContent value="transcript">
-            <Card className="p-5 text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap">
-              {lesson.transcript || t("lesson.transcript.unavailable")}
-            </Card>
-          </TabsContent>
-        </Tabs>
 
         <Card className="shadow-soft flex flex-col" style={{ minHeight: 320 }}>
           <div className="px-4 py-3 border-b flex items-center gap-2 flex-wrap">
