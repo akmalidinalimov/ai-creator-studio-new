@@ -182,8 +182,8 @@ export default function LessonPage() {
     const showRetry = () => {
       // Remove orphan empty assistant bubble (if any)
       setChatHistory((h) => h.filter((m, i) => !(i === h.length - 1 && m.role === "assistant" && !m.content)));
-      toast.error("AI tutor is busy, please try again.", {
-        action: { label: "Retry", onClick: () => { setChatHistory(baseHistory); sendChat(text); } },
+      toast.error(t("lesson.ai.busy"), {
+        action: { label: t("common.retry"), onClick: () => { setChatHistory(baseHistory); sendChat(text); } },
       });
     };
 
@@ -255,7 +255,7 @@ export default function LessonPage() {
   }, [chatLoading, chatHistory, lessonId, language, session]);
 
 
-  if (!lesson) return <PageShell><div className="text-muted-foreground">Loading…</div></PageShell>;
+  if (!lesson) return <PageShell><div className="text-muted-foreground">{t("lesson.loading")}</div></PageShell>;
 
   const videoSrc = lesson.video_url || "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
 
@@ -285,37 +285,37 @@ export default function LessonPage() {
               <p className="text-sm text-muted-foreground mt-1">{lesson.description}</p>
             </div>
             <div className="flex gap-2">
-              {prev && <Button variant="outline" size="sm" asChild><Link to={`/lesson/${courseId}/${prev.id}`}><ChevronLeft className="h-4 w-4" />Prev</Link></Button>}
-              <Button variant="outline" size="sm" onClick={markComplete}><CheckCircle2 className="h-4 w-4" />Mark complete</Button>
-              {next && <Button size="sm" onClick={goNext}>Next<ChevronRight className="h-4 w-4" /></Button>}
+              {prev && <Button variant="outline" size="sm" asChild><Link to={`/lesson/${courseId}/${prev.id}`}><ChevronLeft className="h-4 w-4" />{t("lesson.prev")}</Link></Button>}
+              <Button variant="outline" size="sm" onClick={markComplete}><CheckCircle2 className="h-4 w-4" />{t("lesson.markComplete")}</Button>
+              {next && <Button size="sm" onClick={goNext}>{t("lesson.next")}<ChevronRight className="h-4 w-4" /></Button>}
             </div>
           </div>
 
           <Tabs defaultValue="notes">
             <TabsList>
-              <TabsTrigger value="description">Description</TabsTrigger>
-              <TabsTrigger value="notes">Notes</TabsTrigger>
-              <TabsTrigger value="bookmarks">Bookmarks</TabsTrigger>
-              <TabsTrigger value="transcript">Transcript</TabsTrigger>
+              <TabsTrigger value="description">{t("lesson.tabs.description")}</TabsTrigger>
+              <TabsTrigger value="notes">{t("lesson.tabs.notes")}</TabsTrigger>
+              <TabsTrigger value="bookmarks">{t("lesson.tabs.bookmarks")}</TabsTrigger>
+              <TabsTrigger value="transcript">{t("lesson.tabs.transcript")}</TabsTrigger>
             </TabsList>
             <TabsContent value="description"><Card className="p-5 text-sm leading-relaxed">{lesson.description}</Card></TabsContent>
             <TabsContent value="notes">
               <Card className="p-5 space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">Auto-saves as you type</span>
-                  <Button size="sm" variant="ghost" onClick={insertTimestamp}><Clock className="h-3.5 w-3.5" />Insert timestamp</Button>
+                  <span className="text-xs text-muted-foreground">{t("lesson.notes.autosave")}</span>
+                  <Button size="sm" variant="ghost" onClick={insertTimestamp}><Clock className="h-3.5 w-3.5" />{t("lesson.notes.insertTimestamp")}</Button>
                 </div>
-                <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Write your notes here…" rows={10} className="resize-none" />
+                <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t("lesson.notes.placeholder")} rows={10} className="resize-none" />
               </Card>
             </TabsContent>
             <TabsContent value="bookmarks">
               <Card className="p-5 space-y-3">
                 <div className="flex gap-2">
-                  <Input placeholder="Label (optional)" value={bmLabel} onChange={(e) => setBmLabel(e.target.value)} />
-                  <Button size="sm" onClick={addBookmark}><Bookmark className="h-3.5 w-3.5" />Add at current time</Button>
+                  <Input placeholder={t("lesson.bookmarks.labelPlaceholder")} value={bmLabel} onChange={(e) => setBmLabel(e.target.value)} />
+                  <Button size="sm" onClick={addBookmark}><Bookmark className="h-3.5 w-3.5" />{t("lesson.bookmarks.addAtCurrent")}</Button>
                 </div>
                 <ul className="divide-y">
-                  {bookmarks.length === 0 && <li className="text-sm text-muted-foreground py-4">No bookmarks yet.</li>}
+                  {bookmarks.length === 0 && <li className="text-sm text-muted-foreground py-4">{t("lesson.bookmarks.empty")}</li>}
                   {bookmarks.map((b) => (
                     <li key={b.id} className="py-2 flex items-center justify-between gap-3">
                       <button onClick={() => seekTo(b.timestamp_seconds)} className="text-sm hover:text-foreground text-left flex-1">
@@ -329,7 +329,7 @@ export default function LessonPage() {
             </TabsContent>
             <TabsContent value="transcript">
               <Card className="p-5 text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap">
-                {lesson.transcript || "Transcript not yet available for this lesson."}
+                {lesson.transcript || t("lesson.transcript.unavailable")}
               </Card>
             </TabsContent>
           </Tabs>
@@ -337,11 +337,11 @@ export default function LessonPage() {
 
         <aside className="space-y-5 lg:sticky lg:top-20 h-fit">
           <Card className="overflow-hidden shadow-soft">
-            <div className="px-4 py-3 border-b bg-muted/30 text-xs font-medium text-muted-foreground">Course content</div>
+            <div className="px-4 py-3 border-b bg-muted/30 text-xs font-medium text-muted-foreground">{t("lesson.sidebar.courseContent")}</div>
             <div className="max-h-[300px] overflow-y-auto scrollbar-thin">
               {modules.map((m, mi) => (
                 <div key={m.id}>
-                  <div className="px-4 py-2 text-xs font-medium text-muted-foreground border-b bg-muted/10">Module {mi + 1}</div>
+                  <div className="px-4 py-2 text-xs font-medium text-muted-foreground border-b bg-muted/10">{t("lesson.sidebar.moduleN", { n: mi + 1 })}</div>
                   {m.lessons.map((l: any) => (
                     <Link key={l.id} to={`/lesson/${courseId}/${l.id}`}
                       className={`flex items-center gap-2 px-4 py-2 text-sm border-b last:border-b-0 hover:bg-muted/40 ${l.id === lessonId ? "bg-muted/60 font-medium" : ""}`}>
@@ -357,7 +357,7 @@ export default function LessonPage() {
           <Card className="shadow-soft flex flex-col" style={{ minHeight: 320 }}>
             <div className="px-4 py-3 border-b flex items-center gap-2">
               <Sparkles className="h-4 w-4" />
-              <span className="text-sm font-medium">AI Study Assistant</span>
+              <span className="text-sm font-medium">{t("lesson.ai.title")}</span>
               <div className="ml-auto">
                 <Select value={language} onValueChange={onLanguageChange}>
                   <SelectTrigger className="h-7 text-xs w-[120px]"><SelectValue /></SelectTrigger>
@@ -370,7 +370,7 @@ export default function LessonPage() {
             <div className="flex-1 max-h-[300px] overflow-y-auto p-3 space-y-3 scrollbar-thin">
               {chatHistory.length === 0 && (
                 <div className="text-xs text-muted-foreground p-2">
-                  Ask anything about this lesson. Try: "Explain this", "Give me 3 practice questions", "Summarize".
+                  {t("lesson.ai.empty")}
                 </div>
               )}
               {chatHistory.map((m, i) => (
