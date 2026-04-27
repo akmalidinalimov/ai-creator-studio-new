@@ -10,6 +10,12 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+async function sha256Base64Url(raw: string) {
+  const hashBuf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(hashBuf)));
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -44,6 +50,46 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json().catch(() => null);
+    if (body?.mode === "verify") {
+      const { data: isAdmin, error: roleErr } = await userClient.rpc("has_role", {
+        _user_id: userData.user.id,
+        _role: "admin",
+      });
+
+      if (roleErr || isAdmin !== true) {
+        return new Response(JSON.stringify({ error: "unauthorized" }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const token_path = String(body?.token_path || "");
+      const expires = Number(body?.expires);
+      const expected_token = String(body?.expected_token || "");
+      if (!token_path.startsWith("/") || !token_path.endsWith("/") || !Number.isInteger(expires) || !expected_token) {
+        return new Response(JSON.stringify({ error: "invalid token_path, expires, or expected_token" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const raw = `${KEY}${token_path}${expires}`;
+      const computed_token = await sha256Base64Url(raw);
+      const matches = computed_token === expected_token;
+
+      return new Response(
+        JSON.stringify({
+          matches,
+          computed_token_preview: `${computed_token.slice(0, 8)}...${computed_token.slice(-8)}`,
+          expected_token_preview: `${expected_token.slice(0, 8)}...${expected_token.slice(-8)}`,
+          secret_length: KEY?.length ?? 0,
+          secret_first_chars: KEY?.slice(0, 2) ?? "",
+          secret_last_chars: KEY?.slice(-2) ?? "",
+          raw_length: raw.length,
+          hostname: HOSTNAME,
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     const library_id = String(body?.library_id || "").trim();
     const video_guid = String(body?.video_guid || "").trim();
     const guidRe = /^[a-f0-9-]{8,}$/i;
@@ -56,9 +102,7 @@ Deno.serve(async (req) => {
     const tokenPath = `/${video_guid}/`;
     const expires = Math.floor(Date.now() / 1000) + 1800;
     const raw = `${KEY}${tokenPath}${expires}`;
-    const hashBuf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
-    const b64 = btoa(String.fromCharCode(...new Uint8Array(hashBuf)));
-    const token = b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+    const token = await sha256Base64Url(raw);
     const encodedTokenPath = encodeURIComponent(tokenPath);
 
     const signed_url = `https://${HOSTNAME}/bcdn_token=${token}&expires=${expires}&token_path=${encodedTokenPath}/${video_guid}/playlist.m3u8`;
@@ -80,7 +124,7 @@ Deno.serve(async (req) => {
               tokenPath,
               encodedTokenPath,
               raw_hash_input_preview: `${raw.slice(0, 8)}...${raw.slice(-8)}`,
-              hash_b64_preview: b64.slice(0, 16),
+              hash_b64_preview: token.slice(0, 16),
             },
           }),
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
