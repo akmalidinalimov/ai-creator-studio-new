@@ -162,11 +162,11 @@ export function KnowledgeManager({
       const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       if (!ALLOWED_EXT.includes(ext)) {
-        setJobs((p) => [...p, { id: jobId, name: file.name, size: file.size, stage: "error", progress: 0, error: `Unsupported file type ".${ext}". Allowed: PDF, DOCX, TXT, MD.` }]);
+        setJobs((p) => [...p, { id: jobId, name: file.name, size: file.size, stage: "error", progress: 0, error: t("admin.knowledge.errors.unsupported", { ext }) }]);
         continue;
       }
       if (file.size > MAX_BYTES) {
-        setJobs((p) => [...p, { id: jobId, name: file.name, size: file.size, stage: "error", progress: 0, error: `File is ${fmtSize(file.size)} — limit is 20 MB.` }]);
+        setJobs((p) => [...p, { id: jobId, name: file.name, size: file.size, stage: "error", progress: 0, error: t("admin.knowledge.errors.tooBig", { size: fmtSize(file.size) }) }]);
         continue;
       }
 
@@ -220,11 +220,11 @@ export function KnowledgeManager({
   };
 
   const remove = async (doc: Doc) => {
-    if (!confirm(`Delete "${doc.file_name}"? This removes its chunks from the assistant.`)) return;
+    if (!confirm(t("admin.knowledge.deleteConfirm", { name: doc.file_name }))) return;
     await supabase.storage.from("ai-knowledge").remove([doc.file_path]);
     const { error } = await supabase.from("ai_knowledge_documents").delete().eq("id", doc.id);
     if (error) return toast.error(error.message);
-    toast.success("Deleted");
+    toast.success(t("admin.knowledge.deletedToast"));
   };
 
   const download = async (doc: Doc) => {
@@ -256,8 +256,8 @@ export function KnowledgeManager({
         }`}
       >
         <UploadCloud className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-        <p className="text-sm font-medium">Drag & drop files here, or click to upload</p>
-        <p className="text-xs text-muted-foreground mt-1">PDF, DOCX, TXT, MD — up to 20 MB each</p>
+        <p className="text-sm font-medium">{t("admin.knowledge.dropTitle")}</p>
+        <p className="text-xs text-muted-foreground mt-1">{t("admin.knowledge.dropHint")}</p>
         <input
           ref={inputRef}
           type="file"
@@ -278,7 +278,7 @@ export function KnowledgeManager({
                 <span className="truncate flex-1 font-medium">{j.name}</span>
                 <span className="text-xs text-muted-foreground shrink-0">{fmtSize(j.size)}</span>
                 <JobStageBadge stage={j.stage} progress={j.progress} />
-                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => dismissJob(j.id)} title="Dismiss">
+                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => dismissJob(j.id)} title={t("admin.knowledge.dismiss")}>
                   <X className="h-3.5 w-3.5" />
                 </Button>
               </div>
@@ -292,7 +292,7 @@ export function KnowledgeManager({
                 <Alert variant="destructive" className="py-2">
                   <AlertCircle className="h-4 w-4" />
                   <AlertTitle className="text-xs">
-                    {j.documentId ? "Indexing failed" : "Upload failed"}
+                    {j.documentId ? t("admin.knowledge.indexingFailed") : t("admin.knowledge.uploadFailed")}
                   </AlertTitle>
                   <AlertDescription className="text-xs">{j.error}</AlertDescription>
                 </Alert>
@@ -305,18 +305,18 @@ export function KnowledgeManager({
       {failedDocs.length > 0 && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>{failedDocs.length} document{failedDocs.length === 1 ? "" : "s"} failed to index</AlertTitle>
+          <AlertTitle>{t("admin.knowledge.failedAlert", { count: failedDocs.length })}</AlertTitle>
           <AlertDescription className="text-xs">
-            Use the re-index button on each row to retry. Common causes: scanned image PDFs (need OCR), missing AI key, or transient network errors.
+            {t("admin.knowledge.failedAlertHint")}
           </AlertDescription>
         </Alert>
       )}
 
       {loading ? (
-        <div className="text-sm text-muted-foreground py-6 text-center">Loading…</div>
+        <div className="text-sm text-muted-foreground py-6 text-center">{t("admin.knowledge.loading")}</div>
       ) : docs.length === 0 ? (
         <div className="text-sm text-muted-foreground italic py-4 text-center">
-          No documents yet. Upload course materials, FAQs, transcripts, or any reference text — the assistant will retrieve the most relevant passages per question.
+          {t("admin.knowledge.empty")}
         </div>
       ) : (
         <Card className="overflow-hidden">
@@ -328,8 +328,8 @@ export function KnowledgeManager({
                   <div className="font-medium truncate">{d.file_name}</div>
                   <div className="text-xs text-muted-foreground flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
                     <span>{fmtSize(d.size_bytes)}</span>
-                    {d.page_count != null && <span>{d.page_count} pages</span>}
-                    <span>{d.chunk_count} chunks</span>
+                    {d.page_count != null && <span>{t("admin.knowledge.pages", { n: d.page_count })}</span>}
+                    <span>{t("admin.knowledge.chunks", { n: d.chunk_count })}</span>
                     <span>{new Date(d.created_at).toLocaleDateString()}</span>
                   </div>
                   {(d.status === "processing" || d.status === "pending") && (
@@ -343,16 +343,16 @@ export function KnowledgeManager({
                 </div>
                 <StatusBadge status={d.status} />
                 <div className="flex items-center gap-1 shrink-0">
-                  <Button size="icon" variant="ghost" title="Preview text" onClick={() => setPreviewDoc(d)}>
+                  <Button size="icon" variant="ghost" title={t("admin.knowledge.preview")} onClick={() => setPreviewDoc(d)}>
                     <Eye className="h-4 w-4" />
                   </Button>
-                  <Button size="icon" variant="ghost" title="Download original" onClick={() => download(d)}>
+                  <Button size="icon" variant="ghost" title={t("admin.knowledge.downloadOriginal")} onClick={() => download(d)}>
                     <Download className="h-4 w-4" />
                   </Button>
-                  <Button size="icon" variant="ghost" title="Re-index" onClick={() => reindex(d)}>
+                  <Button size="icon" variant="ghost" title={t("admin.knowledge.reindex")} onClick={() => reindex(d)}>
                     <RefreshCcw className="h-4 w-4" />
                   </Button>
-                  <Button size="icon" variant="ghost" title="Delete" onClick={() => remove(d)}>
+                  <Button size="icon" variant="ghost" title={t("admin.knowledge.delete")} onClick={() => remove(d)}>
                     <Trash2 className="h-4 w-4 text-destructive" />
                   </Button>
                 </div>
@@ -364,8 +364,7 @@ export function KnowledgeManager({
 
       {docs.length > 0 && (
         <p className="text-xs text-muted-foreground">
-          {stats.count} document{stats.count === 1 ? "" : "s"} · {stats.totalChunks} chunks · {fmtSize(stats.totalSize)} indexed.
-          The assistant retrieves the 6 most relevant chunks per student question.
+          {t("admin.knowledge.summary", { count: stats.count, chunks: stats.totalChunks, size: fmtSize(stats.totalSize) })}
         </p>
       )}
 
@@ -374,11 +373,11 @@ export function KnowledgeManager({
           <DialogHeader>
             <DialogTitle className="truncate">{previewDoc?.file_name}</DialogTitle>
             <DialogDescription>
-              First ~600 characters of extracted text. If this looks like gibberish, the file is likely a scanned image and needs OCR.
+              {t("admin.knowledge.previewDesc")}
             </DialogDescription>
           </DialogHeader>
           <pre className="text-xs whitespace-pre-wrap bg-muted/40 rounded p-3 max-h-[50vh] overflow-auto">
-            {previewDoc?.preview || "(no preview yet — re-index to generate)"}
+            {previewDoc?.preview || t("admin.knowledge.noPreview")}
           </pre>
         </DialogContent>
       </Dialog>
