@@ -70,38 +70,38 @@ export const TopNav = () => {
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               {!isAdmin && (
-                <DropdownMenuItem onClick={() => navigate("/dashboard")}>
-                  <LayoutDashboard className="mr-2 h-4 w-4" /> {t("nav.dashboard")}
+                <DropdownMenuItem asChild>
+                  <Link to="/dashboard"><LayoutDashboard className="mr-2 h-4 w-4" /> {t("nav.dashboard")}</Link>
                 </DropdownMenuItem>
               )}
               {isAdmin && (
                 <>
-                  <DropdownMenuItem onClick={() => navigate("/admin/dashboard")}>
-                    <Shield className="mr-2 h-4 w-4" /> {t("nav.adminDashboard")}
+                  <DropdownMenuItem asChild>
+                    <Link to="/admin/dashboard"><Shield className="mr-2 h-4 w-4" /> {t("nav.adminDashboard")}</Link>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => navigate("/admin/courses")}>
-                    <BookOpen className="mr-2 h-4 w-4" /> {t("nav.courses")}
+                  <DropdownMenuItem asChild>
+                    <Link to="/admin/courses"><BookOpen className="mr-2 h-4 w-4" /> {t("nav.courses")}</Link>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => navigate("/admin/users")}>
-                    <Users className="mr-2 h-4 w-4" /> {t("nav.users")}
+                  <DropdownMenuItem asChild>
+                    <Link to="/admin/users"><Users className="mr-2 h-4 w-4" /> {t("nav.users")}</Link>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => navigate("/admin/settings")}>
-                    <Settings className="mr-2 h-4 w-4" /> {t("nav.settings")}
+                  <DropdownMenuItem asChild>
+                    <Link to="/admin/settings"><Settings className="mr-2 h-4 w-4" /> {t("nav.settings")}</Link>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => navigate("/admin/ai-analytics")}>
-                    <BarChart3 className="mr-2 h-4 w-4" /> {t("nav.aiAnalytics")}
+                  <DropdownMenuItem asChild>
+                    <Link to="/admin/ai-analytics"><BarChart3 className="mr-2 h-4 w-4" /> {t("nav.aiAnalytics")}</Link>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => navigate("/admin/audit")}>
-                    <FileText className="mr-2 h-4 w-4" /> {t("nav.auditLog")}
+                  <DropdownMenuItem asChild>
+                    <Link to="/admin/audit"><FileText className="mr-2 h-4 w-4" /> {t("nav.auditLog")}</Link>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => navigate("/admin/deploy")}>
-                    <Rocket className="mr-2 h-4 w-4" /> {t("nav.deploy")}
+                  <DropdownMenuItem asChild>
+                    <Link to="/admin/deploy"><Rocket className="mr-2 h-4 w-4" /> {t("nav.deploy")}</Link>
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                 </>
               )}
-              <DropdownMenuItem onClick={() => navigate("/settings")}>
-                <Settings className="mr-2 h-4 w-4" /> {t("nav.mySettings")}
+              <DropdownMenuItem asChild>
+                <Link to="/settings"><Settings className="mr-2 h-4 w-4" /> {t("nav.mySettings")}</Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
