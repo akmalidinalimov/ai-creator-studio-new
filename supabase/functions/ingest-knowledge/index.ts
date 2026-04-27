@@ -123,7 +123,7 @@ Deno.serve(async (req) => {
     const rows: any[] = [];
     for (let i = 0; i < chunks.length; i += BATCH) {
       const slice = chunks.slice(i, i + BATCH);
-      const embeddings = await embedBatch(LOVABLE_API_KEY, slice);
+      const embeddings = await embedBatch(OPENAI_API_KEY, slice);
       for (let j = 0; j < slice.length; j++) {
         rows.push({
           document_id: documentId,
