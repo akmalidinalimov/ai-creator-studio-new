@@ -162,8 +162,9 @@ export default function LessonPage() {
 
   const addBookmark = async () => {
     if (!user || !lessonId || !videoRef.current) return;
-    const t = Math.floor(videoRef.current.currentTime);
-    const { data } = await supabase.from("lesson_bookmarks").insert({ user_id: user.id, lesson_id: lessonId, timestamp_seconds: t, label: bmLabel || `${this_t("lesson.bookmarks.atPrefix")} ${Math.floor(t / 60)}:${(t % 60).toString().padStart(2, "0")}` }).select().single();
+    const ts = Math.floor(videoRef.current.currentTime);
+    const defaultLabel = `${t("lesson.bookmarks.atPrefix")} ${Math.floor(ts / 60)}:${(ts % 60).toString().padStart(2, "0")}`;
+    const { data } = await supabase.from("lesson_bookmarks").insert({ user_id: user.id, lesson_id: lessonId, timestamp_seconds: ts, label: bmLabel || defaultLabel }).select().single();
     if (data) setBookmarks([...bookmarks, data].sort((a, b) => a.timestamp_seconds - b.timestamp_seconds));
     setBmLabel("");
   };
