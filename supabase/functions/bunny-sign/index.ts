@@ -1,4 +1,4 @@
-// Signs a Bunny Stream HLS playlist URL with token-auth (IP-bound, 30 min TTL).
+// Signs a Bunny Stream HLS playlist URL with token-auth (30 min TTL).
 // POST body: { library_id: string, video_guid: string }
 // Response 200: { signed_url, expires }
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -20,13 +20,6 @@ async function sha256(input: string): Promise<Uint8Array> {
   const buf = new TextEncoder().encode(input);
   const digest = await crypto.subtle.digest("SHA-256", buf);
   return new Uint8Array(digest);
-}
-
-function clientIp(req: Request): string {
-  const xff = req.headers.get("x-forwarded-for") || "";
-  const first = xff.split(",")[0]?.trim();
-  if (first) return first;
-  return req.headers.get("x-real-ip") || "0.0.0.0";
 }
 
 Deno.serve(async (req) => {
@@ -72,10 +65,9 @@ Deno.serve(async (req) => {
       });
     }
 
-    const ip = clientIp(req);
     const tokenPath = `/${video_guid}/`; // directory, trailing slash — covers playlist + .ts segments
     const expires = Math.floor(Date.now() / 1000) + 1800;
-    const raw = `${KEY}${tokenPath}${expires}${ip}`;
+    const raw = `${KEY}${tokenPath}${expires}`;
     const hash = await sha256(raw);
     const token = base64url(hash);
 
