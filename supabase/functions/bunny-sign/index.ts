@@ -53,15 +53,16 @@ Deno.serve(async (req) => {
       });
     }
 
-    const path = `/${video_guid}/playlist.m3u8`;
+    const tokenPath = `/${video_guid}/`;
     const expires = Math.floor(Date.now() / 1000) + 1800;
-    const raw = `${KEY}${path}${expires}`;
+    const raw = `${KEY}${tokenPath}${expires}`;
     const hashBuf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
     const b64 = btoa(String.fromCharCode(...new Uint8Array(hashBuf)));
     const token = b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+    const encodedTokenPath = encodeURIComponent(tokenPath);
 
-    const signed_url = `https://${HOSTNAME}${path}?token=${token}&expires=${expires}`;
-    console.log(JSON.stringify({ path, expires, hostname: HOSTNAME, signed_url }));
+    const signed_url = `https://${HOSTNAME}/bcdn_token=${token}&expires=${expires}&token_path=${encodedTokenPath}/${video_guid}/playlist.m3u8`;
+    console.log(JSON.stringify({ tokenPath, expires, hostname: HOSTNAME, signed_url }));
 
     const wantsDebug = body?.debug === true;
     if (wantsDebug) {
@@ -76,7 +77,8 @@ Deno.serve(async (req) => {
             signed_url,
             expires,
             debug: {
-              path,
+              tokenPath,
+              encodedTokenPath,
               raw_hash_input_preview: `${raw.slice(0, 8)}...${raw.slice(-8)}`,
               hash_b64_preview: b64.slice(0, 16),
             },
