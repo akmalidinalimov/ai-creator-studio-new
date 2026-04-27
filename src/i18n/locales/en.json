@@ -128,6 +128,15 @@
     "next": "Next",
     "markComplete": "Mark complete",
     "markedCompleteToast": "Lesson marked complete",
+    "video": { "unavailable": "Video is not available for this lesson." },
+    "bunny": {
+      "loading": "Loading secure video…",
+      "errorTitle": "Video failed to load",
+      "signError": "Could not sign video URL. Please try again.",
+      "playbackError": "Playback error. Please retry.",
+      "notSupported": "Your browser does not support HLS playback.",
+      "invalidId": "This Bunny video has an invalid Library ID / Video GUID."
+    },
     "tabs": {
       "description": "Description",
       "notes": "Notes",

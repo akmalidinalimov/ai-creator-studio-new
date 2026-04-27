@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { CheckCircle2, Circle, ChevronRight, ChevronLeft, Send, Sparkles, Bookmark, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { ProtectedVideo } from "@/components/lesson/ProtectedVideo";
+import { BunnyVideoPlayer } from "@/components/BunnyVideoPlayer";
 
 interface Msg { role: "user" | "assistant"; content: string }
 
@@ -257,7 +258,69 @@ export default function LessonPage() {
 
   if (!lesson) return <PageShell><div className="text-muted-foreground">{t("lesson.loading")}</div></PageShell>;
 
-  const videoSrc = lesson.video_url || "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
+  const provider = lesson.video_provider || "upload";
+  const bunnyRaw: string = lesson.provider_video_id || lesson.video_url || "";
+  const [bunnyLib, bunnyGuid] = bunnyRaw.includes("/") ? bunnyRaw.split("/") : ["", ""];
+
+  const renderPlayer = () => {
+    if (provider === "bunny") {
+      if (!bunnyLib || !bunnyGuid) {
+        return (
+          <div className="aspect-video w-full bg-black flex items-center justify-center p-6 text-center text-white/80 text-sm">
+            {t("lesson.bunny.invalidId")}
+          </div>
+        );
+      }
+      return (
+        <BunnyVideoPlayer
+          ref={(h) => { (videoRef as any).current = h?.video || null; }}
+          libraryId={bunnyLib}
+          videoGuid={bunnyGuid}
+          watermarkEmail={user?.email || "student"}
+        />
+      );
+    }
+    if (provider === "youtube" && lesson.provider_video_id) {
+      return (
+        <iframe
+          className="w-full aspect-video"
+          src={`https://www.youtube.com/embed/${lesson.provider_video_id}?rel=0&modestbranding=1`}
+          title={lesson.title}
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+        />
+      );
+    }
+    if (provider === "vimeo" && lesson.provider_video_id) {
+      return (
+        <iframe
+          className="w-full aspect-video"
+          src={`https://player.vimeo.com/video/${lesson.provider_video_id}`}
+          title={lesson.title}
+          allow="autoplay; fullscreen; picture-in-picture"
+          allowFullScreen
+        />
+      );
+    }
+    if (provider === "mux" && lesson.provider_video_id) {
+      // Mux HLS could be wired similarly to Bunny; for now use ProtectedVideo with the URL.
+      const muxUrl = `https://stream.mux.com/${lesson.provider_video_id}.m3u8`;
+      return (
+        <ProtectedVideo src={muxUrl} videoRef={videoRef} watermarkText={user?.email || "student"} settings={protectionSettings} />
+      );
+    }
+    // Upload / direct URL
+    if (lesson.video_url) {
+      return (
+        <ProtectedVideo src={lesson.video_url} videoRef={videoRef} watermarkText={user?.email || "student"} settings={protectionSettings} />
+      );
+    }
+    return (
+      <div className="aspect-video w-full bg-black flex items-center justify-center p-6 text-center text-white/80 text-sm">
+        {t("lesson.video.unavailable")}
+      </div>
+    );
+  };
 
   return (
     <PageShell>
@@ -270,12 +333,7 @@ export default function LessonPage() {
           </div>
 
           <Card className="overflow-hidden bg-black shadow-elevated">
-            <ProtectedVideo
-              src={videoSrc}
-              videoRef={videoRef}
-              watermarkText={user?.email || "student"}
-              settings={protectionSettings}
-            />
+            {renderPlayer()}
           </Card>
 
 
