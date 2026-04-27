@@ -85,10 +85,6 @@ export default function LessonPage() {
       const cur = (prog || []).find((p: any) => p.lesson_id === lessonId);
       setProgress(cur || null);
 
-      const { data: n } = await supabase.from("lesson_notes").select("body").eq("user_id", user.id).eq("lesson_id", lessonId).maybeSingle();
-      setNotes(n?.body || "");
-      const { data: bm } = await supabase.from("lesson_bookmarks").select("*").eq("user_id", user.id).eq("lesson_id", lessonId).order("timestamp_seconds");
-      setBookmarks(bm || []);
       const { data: hist } = await supabase.from("ai_chat_messages").select("role, content").eq("user_id", user.id).eq("lesson_id", lessonId).order("created_at").limit(50);
       setChatHistory((hist || []) as Msg[]);
     })();
