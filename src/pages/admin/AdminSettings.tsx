@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
@@ -12,6 +13,7 @@ import { TelegramLoginButton } from "@/components/TelegramLoginButton";
 import { KnowledgeManager } from "@/components/admin/KnowledgeManager";
 
 export default function AdminSettings() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const [botUsername, setBotUsername] = useState("");
   const [botToken, setBotToken] = useState("");
@@ -44,11 +46,11 @@ export default function AdminSettings() {
     if (error) return toast.error(error.message);
     setSavedUsername(cleanUsername);
     setSavedToken(botToken.trim());
-    toast.success("Saved");
+    toast.success(t("admin.settings.savedToast"));
   };
 
   const verifyToken = async () => {
-    if (!botToken.trim()) return toast.error("Enter a bot token first");
+    if (!botToken.trim()) return toast.error(t("admin.settings.enterTokenFirst"));
     setVerifying(true);
     setBotInfo(null);
     try {
@@ -56,13 +58,12 @@ export default function AdminSettings() {
       const json = await res.json();
       if (!json.ok) throw new Error(json.description || "Invalid token");
       setBotInfo(json.result);
-      toast.success(`Connected to @${json.result.username}`);
-      // Auto-fill username if empty or mismatched
+      toast.success(`@${json.result.username}`);
       if (!botUsername || botUsername.replace(/^@/, "") !== json.result.username) {
         setBotUsername(json.result.username);
       }
     } catch (e: any) {
-      toast.error(e.message || "Could not verify token");
+      toast.error(e.message || t("admin.settings.couldNotVerify"));
     } finally {
       setVerifying(false);
     }
@@ -70,7 +71,7 @@ export default function AdminSettings() {
 
   const copy = (text: string) => {
     navigator.clipboard.writeText(text);
-    toast.success("Copied");
+    toast.success(t("admin.common.copied"));
   };
 
   const steps = useMemo(() => {
@@ -80,32 +81,31 @@ export default function AdminSettings() {
     const verified = !!botInfo;
     const domainSet = !!domain;
     return [
-      { done: tokenEntered, label: "Paste your bot token" },
-      { done: verified, label: "Verify token with Telegram (click Verify)" },
-      { done: usernameEntered, label: "Bot username filled in" },
-      { done: domainSet, label: `Set domain in @BotFather → /setdomain → ${domain}` },
-      { done: saved && saved === !!savedToken, label: "Save settings" },
-      { done: false, label: "Click the Telegram login button below to test end-to-end", interactive: true },
+      { done: tokenEntered, label: t("admin.settings.step1") },
+      { done: verified, label: t("admin.settings.step2") },
+      { done: usernameEntered, label: t("admin.settings.step3") },
+      { done: domainSet, label: t("admin.settings.step4", { domain }) },
+      { done: saved && saved === !!savedToken, label: t("admin.settings.step5") },
+      { done: false, label: t("admin.settings.step6"), interactive: true },
     ];
-  }, [botToken, botUsername, savedToken, savedUsername, botInfo, domain]);
+  }, [botToken, botUsername, savedToken, savedUsername, botInfo, domain, t]);
 
   return (
     <PageShell>
       <div className="max-w-3xl space-y-6">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
-          <p className="text-muted-foreground mt-1">Platform integrations and configuration.</p>
+          <h1 className="text-3xl font-semibold tracking-tight">{t("admin.settings.title")}</h1>
+          <p className="text-muted-foreground mt-1">{t("admin.settings.subtitle")}</p>
         </div>
 
         <Card className="p-6 shadow-soft space-y-5">
           <div>
-            <h2 className="text-lg font-semibold">Telegram Login</h2>
-            <p className="text-sm text-muted-foreground mt-1">Let students sign in with their Telegram account.</p>
+            <h2 className="text-lg font-semibold">{t("admin.settings.telegramTitle")}</h2>
+            <p className="text-sm text-muted-foreground mt-1">{t("admin.settings.telegramSub")}</p>
           </div>
 
-          {/* Setup checklist */}
           <div className="rounded-lg border bg-muted/30 p-4">
-            <p className="font-medium mb-3">Setup checklist</p>
+            <p className="font-medium mb-3">{t("admin.settings.checklist")}</p>
             <ol className="space-y-2">
               {steps.map((s, i) => (
                 <li key={i} className="flex items-start gap-2 text-sm">
@@ -123,7 +123,7 @@ export default function AdminSettings() {
           </div>
 
           <div className="space-y-1.5">
-            <Label>Telegram bot token</Label>
+            <Label>{t("admin.settings.botToken")}</Label>
             <div className="flex gap-2">
               <Input
                 type={showToken ? "text" : "password"}
@@ -135,83 +135,80 @@ export default function AdminSettings() {
                 {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </Button>
               <Button type="button" variant="outline" onClick={verifyToken} disabled={verifying || !botToken.trim()}>
-                {verifying ? "Verifying…" : "Verify"}
+                {verifying ? t("admin.settings.verifying") : t("admin.settings.verify")}
               </Button>
             </div>
             {botInfo && (
               <p className="text-xs text-primary mt-1">
-                ✓ Connected to @{botInfo.username} ({botInfo.first_name})
+                ✓ {t("admin.settings.connectedTo", { username: botInfo.username, name: botInfo.first_name })}
               </p>
             )}
           </div>
 
           <div className="space-y-1.5">
-            <Label>Telegram bot username</Label>
+            <Label>{t("admin.settings.botUsername")}</Label>
             <Input value={botUsername} onChange={(e) => setBotUsername(e.target.value)} placeholder="AICreatorsBot" />
           </div>
 
           <div className="rounded-lg border bg-muted/30 p-4 text-sm space-y-3">
-            <p className="font-medium">Configure your bot in @BotFather</p>
+            <p className="font-medium">{t("admin.settings.botFatherTitle")}</p>
             <ol className="list-decimal list-inside space-y-2 text-muted-foreground">
               <li>
-                Open <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="underline inline-flex items-center gap-1">
+                <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="underline inline-flex items-center gap-1">
                   @BotFather <ExternalLink className="h-3 w-3" />
-                </a> and send <code className="px-1 bg-background rounded">/mybots</code> → pick your bot.
+                </a> → <code className="px-1 bg-background rounded">/mybots</code>
               </li>
               <li>
-                Choose <strong>Bot Settings → Domain</strong> (or send <code className="px-1 bg-background rounded">/setdomain</code>) and paste:
+                <strong>Bot Settings → Domain</strong> (<code className="px-1 bg-background rounded">/setdomain</code>)
                 <div className="mt-1 flex items-center gap-2">
                   <code className="px-2 py-1 bg-background rounded border text-foreground">{domain}</code>
                   <Button size="sm" variant="ghost" onClick={() => copy(domain)}><Copy className="h-3 w-3" /></Button>
                 </div>
               </li>
-              <li>Come back here, click <strong>Verify</strong>, then <strong>Save</strong>.</li>
-              <li>To link a student, set their <code className="px-1 bg-background rounded">telegram_username</code> on the Users page.</li>
+              <li><strong>{t("admin.settings.verify")}</strong> → <strong>{t("admin.settings.save")}</strong></li>
             </ol>
           </div>
 
           <div className="flex justify-end">
-            <Button onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
+            <Button onClick={save} disabled={saving}>{saving ? t("admin.settings.saving") : t("admin.settings.save")}</Button>
           </div>
         </Card>
 
-        {/* End-to-end test */}
         <Card className="p-6 shadow-soft space-y-4">
           <div>
-            <h2 className="text-lg font-semibold">Test the login button</h2>
+            <h2 className="text-lg font-semibold">{t("admin.settings.testTitle")}</h2>
             <p className="text-sm text-muted-foreground mt-1">
-              The official Telegram widget should appear below once the username is saved and the domain is set in @BotFather.
-              Click it to run a real auth round-trip.
+              {t("admin.settings.testDesc")}
             </p>
           </div>
           {savedUsername ? (
             <div className="rounded-lg border bg-muted/30 p-6 flex justify-center">
-              <TelegramLoginButton fallbackLabel="Continue with Telegram" onAuth={async (tg) => {
+              <TelegramLoginButton fallbackLabel="Telegram" onAuth={async (tg) => {
                 try {
                   const { data, error } = await supabase.functions.invoke("telegram-auth", {
                     body: { tg, redirectTo: `${window.location.origin}/dashboard` },
                   });
                   if (error) throw error;
                   if ((data as any)?.url) {
-                    toast.success("Auth verified — redirecting…");
+                    toast.success("✓");
                     window.location.href = (data as any).url;
                   } else {
-                    toast.error((data as any)?.error || "Unexpected response");
+                    toast.error((data as any)?.error || "error");
                   }
                 } catch (e: any) {
-                  toast.error(e.message || "Telegram auth failed");
+                  toast.error(e.message || "error");
                 }
               }} />
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground italic">Save a bot username above to render the login widget.</p>
+            <p className="text-sm text-muted-foreground italic">{t("admin.settings.saveBotFirst")}</p>
           )}
           <div className="text-xs text-muted-foreground space-y-1">
-            <p><strong>Common issues:</strong></p>
+            <p><strong>{t("admin.settings.commonIssues")}</strong></p>
             <ul className="list-disc list-inside space-y-0.5">
-              <li>Widget doesn't render → domain not set in @BotFather, or you're on a different domain than configured.</li>
-              <li>"Bot domain invalid" → re-run <code>/setdomain</code> with the exact host above.</li>
-              <li>"No account linked" → add the user's <code>telegram_username</code> on the Users page first.</li>
+              <li>{t("admin.settings.issue1")}</li>
+              <li>{t("admin.settings.issue2")}</li>
+              <li>{t("admin.settings.issue3")}</li>
             </ul>
           </div>
         </Card>
@@ -224,6 +221,7 @@ export default function AdminSettings() {
 }
 
 function AIAssistantCard({ userId }: { userId?: string }) {
+  const { t } = useTranslation();
   const [prompt, setPrompt] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -243,53 +241,53 @@ function AIAssistantCard({ userId }: { userId?: string }) {
     } as any, { onConflict: "key" });
     setSaving(false);
     if (error) return toast.error(error.message);
-    toast.success("AI assistant settings saved");
+    toast.success(t("admin.settings.ai.savedToast"));
   };
 
   return (
     <Card className="p-6 shadow-soft space-y-5">
       <div>
-        <h2 className="text-lg font-semibold">AI Study Assistant</h2>
-        <p className="text-sm text-muted-foreground mt-1">Customize the assistant's tone, scope, and the knowledge base it can draw from across all courses.</p>
+        <h2 className="text-lg font-semibold">{t("admin.settings.ai.title")}</h2>
+        <p className="text-sm text-muted-foreground mt-1">{t("admin.settings.ai.desc")}</p>
       </div>
       <div className="space-y-1.5">
-        <Label>System prompt</Label>
+        <Label>{t("admin.settings.ai.systemPrompt")}</Label>
         <textarea
           className="w-full min-h-[160px] rounded-md border bg-background p-3 text-sm font-mono"
           value={prompt} onChange={(e) => setPrompt(e.target.value)}
-          placeholder="You are a friendly study assistant for {course_title}. Answer in the student's chosen language. Use the lesson context when helpful: {transcript}. Be concise, encouraging, and ask follow-up questions when appropriate."
+          placeholder={t("admin.settings.ai.promptPh")}
         />
         <p className="text-xs text-muted-foreground">
-          Tip: include lines like "Refuse to discuss topics unrelated to this course" to keep the tutor on-topic. Use <code>{"{course_title}"}</code>, <code>{"{transcript}"}</code>, <code>{"{language}"}</code> as variables we'll substitute at runtime.
+          {t("admin.settings.ai.promptTip")}
         </p>
       </div>
 
       <div className="space-y-2 pt-4 border-t">
         <div>
-          <Label className="text-base">Knowledge base (platform-wide)</Label>
+          <Label className="text-base">{t("admin.settings.ai.kbLabel")}</Label>
           <p className="text-xs text-muted-foreground mt-1">
-            Upload PDFs, Word docs, or text files. They're parsed, chunked, and indexed for semantic search — the assistant fetches the most relevant passages per student question, regardless of total library size.
+            {t("admin.settings.ai.kbDesc")}
           </p>
         </div>
         <KnowledgeManager scope="platform" />
       </div>
 
       <div className="flex justify-end">
-        <Button onClick={save} disabled={saving}>{saving ? "Saving…" : "Save prompt"}</Button>
+        <Button onClick={save} disabled={saving}>{saving ? t("admin.settings.saving") : t("admin.settings.ai.savePrompt")}</Button>
       </div>
     </Card>
   );
 }
 
-const PROTECTION_KEYS = [
-  { key: "watermark", label: "Forensic watermark", desc: "Translucent overlay with student email + timestamp on every video." },
-  { key: "no_right_click", label: "Disable right-click", desc: "Block context menu on the video and lesson container." },
-  { key: "pause_on_blur", label: "Pause on blur", desc: "Pause video when the tab loses focus or is hidden." },
-  { key: "devtools_detect", label: "DevTools detection", desc: "Pause and overlay when developer tools are detected." },
-  { key: "hardened_controls", label: "Hardened video controls", desc: "Disable download, picture-in-picture, remote playback." },
-];
-
 function ContentProtectionCard({ userId }: { userId?: string }) {
+  const { t } = useTranslation();
+  const PROTECTION_KEYS = [
+    { key: "watermark", label: t("admin.settings.protection.watermarkLabel"), desc: t("admin.settings.protection.watermarkDesc") },
+    { key: "no_right_click", label: t("admin.settings.protection.noRightClickLabel"), desc: t("admin.settings.protection.noRightClickDesc") },
+    { key: "pause_on_blur", label: t("admin.settings.protection.pauseOnBlurLabel"), desc: t("admin.settings.protection.pauseOnBlurDesc") },
+    { key: "devtools_detect", label: t("admin.settings.protection.devtoolsLabel"), desc: t("admin.settings.protection.devtoolsDesc") },
+    { key: "hardened_controls", label: t("admin.settings.protection.hardenedLabel"), desc: t("admin.settings.protection.hardenedDesc") },
+  ];
   const [val, setVal] = useState<Record<string, boolean>>({
     watermark: true, no_right_click: true, pause_on_blur: true, devtools_detect: true, hardened_controls: true,
   });
@@ -315,14 +313,14 @@ function ContentProtectionCard({ userId }: { userId?: string }) {
     } as any, { onConflict: "key" });
     setSaving(false);
     if (error) return toast.error(error.message);
-    toast.success("Content protection saved");
+    toast.success(t("admin.settings.protection.savedToast"));
   };
 
   return (
     <Card className="p-6 shadow-soft space-y-4">
       <div>
-        <h2 className="text-lg font-semibold">Content Protection</h2>
-        <p className="text-sm text-muted-foreground mt-1">Layered defenses against screen recording on lesson playback. Admin pages are unaffected.</p>
+        <h2 className="text-lg font-semibold">{t("admin.settings.protection.title")}</h2>
+        <p className="text-sm text-muted-foreground mt-1">{t("admin.settings.protection.desc")}</p>
       </div>
       <ul className="space-y-3">
         {PROTECTION_KEYS.map((p) => (
@@ -341,13 +339,11 @@ function ContentProtectionCard({ userId }: { userId?: string }) {
         ))}
       </ul>
       <div className="rounded-lg border border-amber-300/40 bg-amber-50/50 dark:bg-amber-950/20 p-4 text-sm">
-        <strong>Note:</strong> Browsers cannot fully prevent screen recording. These layers make it harder and let you trace any leak via the watermark.
-        For maximum protection, use <strong>Mux</strong> or <strong>Bunny Stream</strong> with their built-in DRM (Widevine / FairPlay) — paid feature, but the only true block.
+        <strong>{t("admin.settings.protection.note")}</strong> {t("admin.settings.protection.noteBody")}
       </div>
       <div className="flex justify-end">
-        <Button onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
+        <Button onClick={save} disabled={saving}>{saving ? t("admin.settings.saving") : t("admin.settings.save")}</Button>
       </div>
     </Card>
   );
 }
-
