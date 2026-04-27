@@ -11,3 +11,6 @@ verify_jwt = true
 
 [functions.lesson-video-url]
 verify_jwt = true
+
+[functions.bunny-sign]
+verify_jwt = true
