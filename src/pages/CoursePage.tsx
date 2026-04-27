@@ -64,26 +64,26 @@ export default function CoursePage() {
           <div className="space-y-6">
             {modules.map((m, i) => (
               <Card key={m.id} className="overflow-hidden shadow-soft">
-                <div className="px-5 py-4 border-b bg-muted/30">
+                <div className="px-4 sm:px-5 py-4 border-b bg-muted/30 min-w-0">
                   <div className="text-xs text-muted-foreground">{t("coursePage.moduleN", { n: i + 1 })}</div>
-                  <h3 className="text-lg font-semibold tracking-tight">{m.title}</h3>
-                  {m.summary && <p className="text-sm text-muted-foreground mt-1">{m.summary}</p>}
+                  <h3 className="text-base sm:text-lg font-semibold tracking-tight break-words">{m.title}</h3>
+                  {m.summary && <p className="text-sm text-muted-foreground mt-1 break-words">{m.summary}</p>}
                 </div>
                 <ul className="divide-y">
                   {m.lessons.map((l: any, j: number) => (
                     <li key={l.id}>
-                      <Link to={`/lesson/${courseId}/${l.id}`} className="flex items-center gap-3 px-5 py-3 hover:bg-muted/40 transition-colors">
-                        {completed.has(l.id) ? <CheckCircle2 className="h-4 w-4 text-foreground" /> : <Circle className="h-4 w-4 text-muted-foreground" />}
+                      <Link to={`/lesson/${courseId}/${l.id}`} className="flex items-center gap-3 px-4 sm:px-5 py-3 hover:bg-muted/40 transition-colors min-h-[44px]">
+                        {completed.has(l.id) ? <CheckCircle2 className="h-4 w-4 text-foreground shrink-0" /> : <Circle className="h-4 w-4 text-muted-foreground shrink-0" />}
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium truncate">{j + 1}. {l.title}</div>
+                          <div className="text-sm font-medium break-words">{j + 1}. {l.title}</div>
                         </div>
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground"><Clock className="h-3 w-3" />{Math.round((l.duration_seconds || 0) / 60)}m</div>
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground shrink-0"><Clock className="h-3 w-3" />{Math.round((l.duration_seconds || 0) / 60)}m</div>
                       </Link>
                     </li>
                   ))}
                 </ul>
-                <div className="px-5 py-3 border-t bg-muted/20">
-                  <Button asChild variant="outline" size="sm"><Link to={`/quiz/${m.id}`}>{t("coursePage.takeQuiz")}</Link></Button>
+                <div className="px-4 sm:px-5 py-3 border-t bg-muted/20">
+                  <Button asChild variant="outline" size="sm" className="w-full sm:w-auto min-h-[44px] sm:min-h-0"><Link to={`/quiz/${m.id}`}>{t("coursePage.takeQuiz")}</Link></Button>
                 </div>
               </Card>
             ))}
