@@ -38,8 +38,6 @@ export const BunnyVideoPlayer = forwardRef<BunnyPlayerHandle, Props>(function Bu
     autoplay: autoPlay ? "true" : "false",
     loop: "false",
     muted: "false",
-    preload: "metadata",
-    responsive: "true",
   });
   const src = `https://iframe.mediadelivery.net/embed/${libraryId}/${videoGuid}?${params.toString()}`;
 
