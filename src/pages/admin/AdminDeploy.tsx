@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -6,20 +7,23 @@ import { Button } from "@/components/ui/button";
 import { Github, Copy, ExternalLink, Server, Cloud, Globe } from "lucide-react";
 import { toast } from "sonner";
 
-const Code = ({ children }: { children: string }) => (
-  <div className="relative group">
-    <pre className="bg-muted/40 border rounded-md p-3 text-xs overflow-x-auto leading-relaxed font-mono">{children}</pre>
-    <Button
-      type="button"
-      size="icon"
-      variant="ghost"
-      className="absolute top-1.5 right-1.5 h-7 w-7 opacity-0 group-hover:opacity-100"
-      onClick={() => { navigator.clipboard.writeText(children); toast.success("Copied"); }}
-    >
-      <Copy className="h-3.5 w-3.5" />
-    </Button>
-  </div>
-);
+const Code = ({ children }: { children: string }) => {
+  const { t } = useTranslation();
+  return (
+    <div className="relative group">
+      <pre className="bg-muted/40 border rounded-md p-3 text-xs overflow-x-auto leading-relaxed font-mono">{children}</pre>
+      <Button
+        type="button"
+        size="icon"
+        variant="ghost"
+        className="absolute top-1.5 right-1.5 h-7 w-7 opacity-0 group-hover:opacity-100"
+        onClick={() => { navigator.clipboard.writeText(children); toast.success(t("admin.deploy.copied")); }}
+      >
+        <Copy className="h-3.5 w-3.5" />
+      </Button>
+    </div>
+  );
+};
 
 const Step = ({ n, title, children }: { n: number; title: string; children: React.ReactNode }) => (
   <div className="space-y-2">
@@ -32,39 +36,40 @@ const Step = ({ n, title, children }: { n: number; title: string; children: Reac
 );
 
 export default function AdminDeploy() {
+  const { t } = useTranslation();
   const [tab, setTab] = useState("vps");
   return (
     <PageShell>
       <div className="space-y-6 max-w-5xl">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Deploy</h1>
-          <p className="text-muted-foreground mt-1">Ship your platform to your own infrastructure.</p>
+          <h1 className="text-3xl font-semibold tracking-tight">{t("admin.deploy.title")}</h1>
+          <p className="text-muted-foreground mt-1">{t("admin.deploy.subtitle")}</p>
         </div>
 
         <Card className="p-6 shadow-soft space-y-3">
           <div className="flex items-start gap-3">
             <Github className="h-5 w-5 mt-0.5" />
             <div className="flex-1">
-              <h3 className="font-semibold">1. Connect to GitHub</h3>
-              <p className="text-sm text-muted-foreground mt-1">In Lovable, open the GitHub menu (top right) → "Connect to GitHub" → authorize and create the repository. Every Lovable change syncs in both directions.</p>
+              <h3 className="font-semibold">{t("admin.deploy.step1Title")}</h3>
+              <p className="text-sm text-muted-foreground mt-1">{t("admin.deploy.step1Desc")}</p>
             </div>
-            <Button asChild variant="outline" size="sm"><a href="https://docs.lovable.dev/integrations/git-integration" target="_blank" rel="noreferrer">Docs <ExternalLink className="h-3 w-3" /></a></Button>
+            <Button asChild variant="outline" size="sm"><a href="https://docs.lovable.dev/integrations/git-integration" target="_blank" rel="noreferrer">{t("admin.deploy.docs")} <ExternalLink className="h-3 w-3" /></a></Button>
           </div>
         </Card>
 
         <Card className="p-6 shadow-soft space-y-2">
-          <h3 className="font-semibold">2. Backend stays on Lovable Cloud</h3>
-          <p className="text-sm text-muted-foreground">Auth, database, file storage, and edge functions remain managed. Only the React frontend deploys to your VPS or static host. Your env vars:</p>
+          <h3 className="font-semibold">{t("admin.deploy.step2Title")}</h3>
+          <p className="text-sm text-muted-foreground">{t("admin.deploy.step2Desc")}</p>
           <Code>{`VITE_SUPABASE_URL=${import.meta.env.VITE_SUPABASE_URL}\nVITE_SUPABASE_PUBLISHABLE_KEY=${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}\nVITE_SUPABASE_PROJECT_ID=${import.meta.env.VITE_SUPABASE_PROJECT_ID}`}</Code>
         </Card>
 
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
-            <TabsTrigger value="vps"><Server className="h-3.5 w-3.5" />Hostinger VPS</TabsTrigger>
-            <TabsTrigger value="vercel">Vercel</TabsTrigger>
-            <TabsTrigger value="netlify">Netlify</TabsTrigger>
-            <TabsTrigger value="cloudflare"><Cloud className="h-3.5 w-3.5" />Cloudflare</TabsTrigger>
-            <TabsTrigger value="static"><Globe className="h-3.5 w-3.5" />Static</TabsTrigger>
+            <TabsTrigger value="vps"><Server className="h-3.5 w-3.5" />{t("admin.deploy.tabs.vps")}</TabsTrigger>
+            <TabsTrigger value="vercel">{t("admin.deploy.tabs.vercel")}</TabsTrigger>
+            <TabsTrigger value="netlify">{t("admin.deploy.tabs.netlify")}</TabsTrigger>
+            <TabsTrigger value="cloudflare"><Cloud className="h-3.5 w-3.5" />{t("admin.deploy.tabs.cloudflare")}</TabsTrigger>
+            <TabsTrigger value="static"><Globe className="h-3.5 w-3.5" />{t("admin.deploy.tabs.static")}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="vps" className="space-y-5 mt-5">
@@ -157,8 +162,8 @@ export default function AdminDeploy() {
         </Tabs>
 
         <Card className="p-6 shadow-soft">
-          <h3 className="font-semibold mb-2">📹 Scaling video for 30-hour courses</h3>
-          <p className="text-sm text-muted-foreground">Direct upload works for &lt;200 MB lessons. For HD video at scale (500+ students), use <strong>Bunny Stream</strong> (~$1/month per 100 GB delivered, global CDN, automatic HLS encoding) or <strong>Mux</strong>. In the lesson editor, switch the video source to Embed → Bunny / Mux and paste your video ID. The player auto-uses HLS adaptive bitrate via hls.js.</p>
+          <h3 className="font-semibold mb-2">{t("admin.deploy.scaling")}</h3>
+          <p className="text-sm text-muted-foreground">{t("admin.deploy.scalingDesc")}</p>
         </Card>
       </div>
     </PageShell>

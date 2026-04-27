@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
@@ -20,38 +21,23 @@ interface AuditRow {
   created_at: string;
 }
 
-const ACTION_LABELS: Record<string, string> = {
-  promote_to_admin: "Promoted to admin",
-  demote_to_student: "Demoted to student",
-  deactivate_user: "Deactivated user",
-  activate_user: "Activated user",
-  remove_user: "Removed user",
-  create_user: "Created user",
-  csv_import_users: "Imported users (CSV)",
-  resend_welcome_email: "Resent welcome email",
-  clear_lockout: "Cleared lockout",
-  create_course: "Created course",
-  publish_course: "Published course",
-  unpublish_course: "Unpublished course",
-  delete_course: "Deleted course",
-  create_lesson: "Created lesson",
-  delete_lesson: "Deleted lesson",
-  revoke_2fa: "Revoked 2FA",
-  update_profile: "Updated profile",
-};
-
-function timeAgo(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(ms / 60_000);
-  if (m < 1) return "just now";
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  return `${d}d ago`;
-}
-
 export default function AdminAudit() {
+  const { t } = useTranslation();
+  const timeAgo = (iso: string): string => {
+    const ms = Date.now() - new Date(iso).getTime();
+    const m = Math.floor(ms / 60_000);
+    if (m < 1) return t("admin.audit.timeAgo.justNow");
+    if (m < 60) return t("admin.audit.timeAgo.minutes", { n: m });
+    const h = Math.floor(m / 60);
+    if (h < 24) return t("admin.audit.timeAgo.hours", { n: h });
+    const d = Math.floor(h / 24);
+    return t("admin.audit.timeAgo.days", { n: d });
+  };
+  const actionLabel = (a: string) => {
+    const k = `admin.audit.actions.${a}`;
+    const v = t(k);
+    return v === k ? a : v;
+  };
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [profileMap, setProfileMap] = useState<Record<string, { name: string | null; email: string }>>({});
   const [actorFilter, setActorFilter] = useState<string>("all");
@@ -114,21 +100,21 @@ export default function AdminAudit() {
       <div className="space-y-6">
         <div className="flex items-end justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Audit log</h1>
-            <p className="text-muted-foreground mt-1">Every admin action, with full payload.</p>
+            <h1 className="text-3xl font-semibold tracking-tight">{t("admin.audit.title")}</h1>
+            <p className="text-muted-foreground mt-1">{t("admin.audit.subtitle")}</p>
           </div>
-          <Button asChild variant="outline" size="sm"><Link to="/admin/dashboard">← Dashboard</Link></Button>
+          <Button asChild variant="outline" size="sm"><Link to="/admin/dashboard">{t("admin.audit.backDashboard")}</Link></Button>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative flex-1 min-w-[220px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Search by action, actor email, target email…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+            <Input placeholder={t("admin.audit.searchPh")} value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
           </div>
           <Select value={actorFilter} onValueChange={setActorFilter}>
             <SelectTrigger className="w-[200px]"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All actors</SelectItem>
+              <SelectItem value="all">{t("admin.audit.allActors")}</SelectItem>
               {actors.map((id) => (
                 <SelectItem key={id} value={id}>{profileMap[id]?.email || id.slice(0, 8)}</SelectItem>
               ))}
@@ -137,10 +123,10 @@ export default function AdminAudit() {
           <Select value={days} onValueChange={setDays}>
             <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="1">Last 24h</SelectItem>
-              <SelectItem value="7">Last 7 days</SelectItem>
-              <SelectItem value="30">Last 30 days</SelectItem>
-              <SelectItem value="90">Last 90 days</SelectItem>
+              <SelectItem value="1">{t("admin.audit.ranges.1")}</SelectItem>
+              <SelectItem value="7">{t("admin.audit.ranges.7")}</SelectItem>
+              <SelectItem value="30">{t("admin.audit.ranges.30")}</SelectItem>
+              <SelectItem value="90">{t("admin.audit.ranges.90")}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -151,15 +137,15 @@ export default function AdminAudit() {
               <thead className="bg-muted/40 text-xs">
                 <tr>
                   <th className="text-left p-3 w-8"></th>
-                  <th className="text-left p-3">When</th>
-                  <th className="text-left p-3">Actor</th>
-                  <th className="text-left p-3">Action</th>
-                  <th className="text-left p-3">Target</th>
+                  <th className="text-left p-3">{t("admin.audit.headers.when")}</th>
+                  <th className="text-left p-3">{t("admin.audit.headers.actor")}</th>
+                  <th className="text-left p-3">{t("admin.audit.headers.action")}</th>
+                  <th className="text-left p-3">{t("admin.audit.headers.target")}</th>
                 </tr>
               </thead>
               <tbody>
-                {loading && <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">Loading…</td></tr>}
-                {!loading && filtered.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">No actions in this range.</td></tr>}
+                {loading && <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">{t("admin.audit.loading")}</td></tr>}
+                {!loading && filtered.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">{t("admin.audit.empty")}</td></tr>}
                 {filtered.map((r) => {
                   const open = expanded.has(r.id);
                   const actor = profileMap[r.actor_user_id];
@@ -173,7 +159,7 @@ export default function AdminAudit() {
                           <div className="font-medium">{actor?.name || actor?.email || r.actor_user_id.slice(0, 8)}</div>
                           {actor?.name && <div className="text-xs text-muted-foreground">{actor.email}</div>}
                         </td>
-                        <td className="p-3 align-top"><Badge variant="secondary">{ACTION_LABELS[r.action] || r.action}</Badge></td>
+                        <td className="p-3 align-top"><Badge variant="secondary">{actionLabel(r.action)}</Badge></td>
                         <td className="p-3 align-top text-xs text-muted-foreground">
                           {target ? (target.email) : (r.target_resource_type ? `${r.target_resource_type}:${r.target_resource_id?.slice(0,8)}` : "—")}
                         </td>

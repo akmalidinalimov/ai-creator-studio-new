@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { PageShell } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -31,11 +32,7 @@ type ErrorRow = {
   created_at: string;
 };
 
-const RANGES = [
-  { value: "1", label: "Last 24 hours" },
-  { value: "7", label: "Last 7 days" },
-  { value: "30", label: "Last 30 days" },
-];
+
 
 const PALETTE = ["hsl(var(--primary))", "hsl(var(--accent))", "hsl(var(--secondary))", "hsl(var(--muted-foreground))", "hsl(var(--destructive))"];
 
@@ -43,6 +40,12 @@ const fmtBucket = (d: Date, days: number) =>
   days <= 1 ? `${String(d.getHours()).padStart(2, "0")}:00` : `${d.getMonth() + 1}/${d.getDate()}`;
 
 export default function AdminAIAnalytics() {
+  const { t } = useTranslation();
+  const RANGES = [
+    { value: "1", label: t("admin.aiAnalytics.ranges.1") },
+    { value: "7", label: t("admin.aiAnalytics.ranges.7") },
+    { value: "30", label: t("admin.aiAnalytics.ranges.30") },
+  ];
   const [days, setDays] = useState("7");
   const [loading, setLoading] = useState(true);
   const [metrics, setMetrics] = useState<MetricRow[]>([]);
@@ -135,8 +138,8 @@ export default function AdminAIAnalytics() {
       <div className="container py-8 space-y-6">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">AI Assistant Analytics</h1>
-            <p className="text-sm text-muted-foreground mt-1">Study-assistant request volume, latency, fallbacks, and errors.</p>
+            <h1 className="text-2xl font-semibold tracking-tight">{t("admin.aiAnalytics.title")}</h1>
+            <p className="text-sm text-muted-foreground mt-1">{t("admin.aiAnalytics.subtitle")}</p>
           </div>
           <Select value={days} onValueChange={setDays}>
             <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
@@ -152,16 +155,16 @@ export default function AdminAIAnalytics() {
           </div>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <StatCard icon={<Activity className="size-4" />} label="Total requests" value={stats.total.toLocaleString()} />
-            <StatCard icon={<Sparkles className="size-4" />} label="Avg latency" value={`${stats.avgLatency} ms`} />
-            <StatCard icon={<Clock className="size-4" />} label="p95 latency" value={`${stats.p95} ms`} />
-            <StatCard icon={<Repeat className="size-4" />} label="Fallback used" value={stats.fallbacks.toLocaleString()} />
-            <StatCard icon={<AlertTriangle className="size-4" />} label="Error rate" value={`${stats.errorRate.toFixed(1)}%`} tone={stats.errorRate > 5 ? "warn" : "ok"} />
+            <StatCard icon={<Activity className="size-4" />} label={t("admin.aiAnalytics.stats.total")} value={stats.total.toLocaleString()} />
+            <StatCard icon={<Sparkles className="size-4" />} label={t("admin.aiAnalytics.stats.avgLatency")} value={`${stats.avgLatency} ms`} />
+            <StatCard icon={<Clock className="size-4" />} label={t("admin.aiAnalytics.stats.p95")} value={`${stats.p95} ms`} />
+            <StatCard icon={<Repeat className="size-4" />} label={t("admin.aiAnalytics.stats.fallback")} value={stats.fallbacks.toLocaleString()} />
+            <StatCard icon={<AlertTriangle className="size-4" />} label={t("admin.aiAnalytics.stats.errorRate")} value={`${stats.errorRate.toFixed(1)}%`} tone={stats.errorRate > 5 ? "warn" : "ok"} highLabel={t("admin.aiAnalytics.high")} />
           </div>
         )}
 
         <div className="grid lg:grid-cols-2 gap-4">
-          <ChartCard title="Requests over time">
+          <ChartCard title={t("admin.aiAnalytics.charts.requests")}>
             <ResponsiveContainer width="100%" height={240}>
               <AreaChart data={timeseries}>
                 <defs>
@@ -179,7 +182,7 @@ export default function AdminAIAnalytics() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Average latency over time (ms)">
+          <ChartCard title={t("admin.aiAnalytics.charts.latency")}>
             <ResponsiveContainer width="100%" height={240}>
               <LineChart data={timeseries}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -191,7 +194,7 @@ export default function AdminAIAnalytics() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Error rate over time (%)">
+          <ChartCard title={t("admin.aiAnalytics.charts.errorRate")}>
             <ResponsiveContainer width="100%" height={240}>
               <LineChart data={timeseries}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -203,9 +206,9 @@ export default function AdminAIAnalytics() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Failure status codes">
+          <ChartCard title={t("admin.aiAnalytics.charts.failures")}>
             {statusBreakdown.length === 0 ? (
-              <div className="h-[240px] flex items-center justify-center text-sm text-muted-foreground">No errors in this range 🎉</div>
+              <div className="h-[240px] flex items-center justify-center text-sm text-muted-foreground">{t("admin.aiAnalytics.charts.noErrors")}</div>
             ) : (
               <ResponsiveContainer width="100%" height={240}>
                 <PieChart>
@@ -220,9 +223,9 @@ export default function AdminAIAnalytics() {
           </ChartCard>
         </div>
 
-        <ChartCard title="Per-model breakdown">
+        <ChartCard title={t("admin.aiAnalytics.charts.byModel")}>
           {byModel.length === 0 ? (
-            <div className="h-32 flex items-center justify-center text-sm text-muted-foreground">No data yet.</div>
+            <div className="h-32 flex items-center justify-center text-sm text-muted-foreground">{t("admin.aiAnalytics.charts.noData")}</div>
           ) : (
             <>
               <ResponsiveContainer width="100%" height={260}>
@@ -240,12 +243,12 @@ export default function AdminAIAnalytics() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-muted-foreground border-b border-border">
-                      <th className="py-2 pr-4">Model</th>
-                      <th className="py-2 pr-4">Total</th>
-                      <th className="py-2 pr-4">Success</th>
-                      <th className="py-2 pr-4">Errors</th>
-                      <th className="py-2 pr-4">Fallback used</th>
-                      <th className="py-2 pr-4">Avg latency</th>
+                      <th className="py-2 pr-4">{t("admin.aiAnalytics.table.model")}</th>
+                      <th className="py-2 pr-4">{t("admin.aiAnalytics.table.total")}</th>
+                      <th className="py-2 pr-4">{t("admin.aiAnalytics.table.success")}</th>
+                      <th className="py-2 pr-4">{t("admin.aiAnalytics.table.errors")}</th>
+                      <th className="py-2 pr-4">{t("admin.aiAnalytics.table.fallback")}</th>
+                      <th className="py-2 pr-4">{t("admin.aiAnalytics.table.avgLatency")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -267,19 +270,19 @@ export default function AdminAIAnalytics() {
         </ChartCard>
 
         <Card>
-          <CardHeader><CardTitle className="text-base flex items-center gap-2"><Server className="size-4" /> Recent errors</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base flex items-center gap-2"><Server className="size-4" /> {t("admin.aiAnalytics.recentErrors")}</CardTitle></CardHeader>
           <CardContent>
             {errors.length === 0 ? (
-              <div className="text-sm text-muted-foreground">No errors logged in this range.</div>
+              <div className="text-sm text-muted-foreground">{t("admin.aiAnalytics.noRecentErrors")}</div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-muted-foreground border-b border-border">
-                      <th className="py-2 pr-4">When</th>
-                      <th className="py-2 pr-4">Model</th>
-                      <th className="py-2 pr-4">Status</th>
-                      <th className="py-2 pr-4">Excerpt</th>
+                      <th className="py-2 pr-4">{t("admin.aiAnalytics.errorTable.when")}</th>
+                      <th className="py-2 pr-4">{t("admin.aiAnalytics.errorTable.model")}</th>
+                      <th className="py-2 pr-4">{t("admin.aiAnalytics.errorTable.status")}</th>
+                      <th className="py-2 pr-4">{t("admin.aiAnalytics.errorTable.excerpt")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -302,7 +305,7 @@ export default function AdminAIAnalytics() {
   );
 }
 
-const StatCard = ({ icon, label, value, tone }: { icon: React.ReactNode; label: string; value: string; tone?: "ok" | "warn" }) => (
+const StatCard = ({ icon, label, value, tone, highLabel }: { icon: React.ReactNode; label: string; value: string; tone?: "ok" | "warn"; highLabel?: string }) => (
   <Card>
     <CardContent className="p-4">
       <div className="flex items-center justify-between text-muted-foreground">
@@ -311,7 +314,7 @@ const StatCard = ({ icon, label, value, tone }: { icon: React.ReactNode; label: 
       </div>
       <div className="mt-2 flex items-end gap-2">
         <div className="text-2xl font-semibold tracking-tight">{value}</div>
-        {tone === "warn" && <Badge variant="destructive" className="text-[10px]">High</Badge>}
+        {tone === "warn" && <Badge variant="destructive" className="text-[10px]">{highLabel ?? "High"}</Badge>}
       </div>
     </CardContent>
   </Card>
