@@ -44,6 +44,12 @@ const fmtBucket = (d: Date, days: number) =>
   days <= 1 ? `${String(d.getHours()).padStart(2, "0")}:00` : `${d.getMonth() + 1}/${d.getDate()}`;
 
 export default function AdminAIAnalytics() {
+  const { t } = useTranslation();
+  const RANGES = [
+    { value: "1", label: t("admin.aiAnalytics.ranges.1") },
+    { value: "7", label: t("admin.aiAnalytics.ranges.7") },
+    { value: "30", label: t("admin.aiAnalytics.ranges.30") },
+  ];
   const [days, setDays] = useState("7");
   const [loading, setLoading] = useState(true);
   const [metrics, setMetrics] = useState<MetricRow[]>([]);
