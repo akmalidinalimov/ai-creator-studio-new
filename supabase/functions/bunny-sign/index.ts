@@ -33,16 +33,41 @@ function bytesToHex(bytes: Uint8Array) {
   return h;
 }
 
-async function hmacSha256Base64Url(key: string, msg: string) {
+async function hmacSha256Base64UrlBytes(keyBytes: Uint8Array, msgBytes: Uint8Array) {
   const k = await crypto.subtle.importKey(
     "raw",
-    new TextEncoder().encode(key),
+    keyBytes,
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],
   );
-  const sig = await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(msg));
+  const sig = await crypto.subtle.sign("HMAC", k, msgBytes);
   return bytesToBase64Url(new Uint8Array(sig));
+}
+
+async function hmacSha256Base64Url(key: string, msg: string) {
+  return hmacSha256Base64UrlBytes(new TextEncoder().encode(key), new TextEncoder().encode(msg));
+}
+
+function hexDecode(s: string): Uint8Array {
+  const clean = s.replace(/-/g, "").toLowerCase();
+  if (!/^[0-9a-f]+$/.test(clean) || clean.length % 2 !== 0) return new Uint8Array();
+  const bytes = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(clean.substr(i * 2, 2), 16);
+  return bytes;
+}
+
+async function sha256Base64UrlBytes(bytes: Uint8Array) {
+  const hashBuf = await crypto.subtle.digest("SHA-256", bytes);
+  return bytesToBase64Url(new Uint8Array(hashBuf));
+}
+
+function concatBytes(...arrs: Uint8Array[]) {
+  const total = arrs.reduce((n, a) => n + a.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const a of arrs) { out.set(a, off); off += a.length; }
+  return out;
 }
 
 async function computeVariants(KEY: string, token_path: string, expires: number, video_guid: string) {
@@ -66,6 +91,46 @@ async function computeVariants(KEY: string, token_path: string, expires: number,
   // bonus: try with full path including playlist.m3u8 (no trailing slash on token_path)
   const fullPath = `${token_path}${video_guid ? "" : ""}playlist.m3u8`;
   variants.push({ variant: "sha256_fullpath_playlist", token: await sha256Base64Url(`${KEY}${fullPath}${expires}`) });
+
+  // ----- Additional variants (12-19) -----
+  const enc = new TextEncoder();
+  const keyHexBytes = hexDecode(KEY);
+  const tpBytes = enc.encode(token_path);
+  const expBytes = enc.encode(String(expires));
+  const spaceBytes = enc.encode(" ");
+
+  variants.push({
+    variant: "sha256_concat_hexbytes",
+    token: await sha256Base64UrlBytes(concatBytes(keyHexBytes, tpBytes, expBytes)),
+  });
+  variants.push({
+    variant: "hmac_sha256_hexbytes_path_exp",
+    token: await hmacSha256Base64UrlBytes(keyHexBytes, concatBytes(tpBytes, expBytes)),
+  });
+  variants.push({
+    variant: "hmac_sha256_hexbytes_pe_join",
+    token: await hmacSha256Base64UrlBytes(keyHexBytes, concatBytes(tpBytes, spaceBytes, expBytes)),
+  });
+  variants.push({
+    variant: "hmac_sha256_string_pe_join",
+    token: await hmacSha256Base64Url(KEY, `${token_path} ${expires}`),
+  });
+  variants.push({
+    variant: "sha256_concat_no_slash",
+    token: await sha256Base64Url(`${KEY}${token_path.slice(1, -1)}${expires}`),
+  });
+  variants.push({
+    variant: "sha256_concat_video_guid_only",
+    token: await sha256Base64Url(`${KEY}${video_guid}${expires}`),
+  });
+  variants.push({
+    variant: "sha256_concat_with_paramname",
+    token: await sha256Base64Url(`${KEY}bcdn_token${token_path}${expires}`),
+  });
+  variants.push({
+    variant: "hmac_sha256_path_exp_secret_in_msg",
+    token: await hmacSha256Base64Url(KEY, `${KEY}${token_path}${expires}`),
+  });
 
   return variants;
 }
@@ -149,7 +214,9 @@ Deno.serve(async (req) => {
           secret_length: KEY?.length ?? 0,
           secret_first_chars: KEY?.slice(0, 2) ?? "",
           secret_last_chars: KEY?.slice(-2) ?? "",
+          secret_hex_byte_count: hexDecode(KEY).length,
           raw_length: raw.length,
+          raw_length_string_mode: (KEY + token_path + expires).length,
           hostname: HOSTNAME,
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
