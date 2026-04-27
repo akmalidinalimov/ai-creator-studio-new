@@ -32,11 +32,7 @@ type ErrorRow = {
   created_at: string;
 };
 
-const RANGES = [
-  { value: "1", label: "Last 24 hours" },
-  { value: "7", label: "Last 7 days" },
-  { value: "30", label: "Last 30 days" },
-];
+
 
 const PALETTE = ["hsl(var(--primary))", "hsl(var(--accent))", "hsl(var(--secondary))", "hsl(var(--muted-foreground))", "hsl(var(--destructive))"];
 
