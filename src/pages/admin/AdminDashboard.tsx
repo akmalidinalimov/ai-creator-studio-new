@@ -9,6 +9,8 @@ import { toast } from "sonner";
 import { Users as UsersIcon, LogIn, Activity, Trophy, Shield } from "lucide-react";
 import { Link } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
+import { useTranslation } from "react-i18next";
+import { enUS, ru, uz } from "date-fns/locale";
 
 const PALETTE = [
   "hsl(var(--primary))",
@@ -25,6 +27,8 @@ const startOfDay = (d: Date) => { const x = new Date(d); x.setHours(0,0,0,0); re
 const fmtDay = (d: Date) => d.toISOString().slice(5, 10);
 
 export default function AdminDashboard() {
+  const { t, i18n } = useTranslation();
+  const dateLocale = i18n.language === "ru" ? ru : i18n.language === "uz" ? uz : enUS;
   const [courses, setCourses] = useState<{ id: string; title: string; published: boolean }[]>([]);
   const [courseId, setCourseId] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -234,7 +238,7 @@ export default function AdminDashboard() {
         setStuck([]);
       }
     } catch (e: any) {
-      toast.error(e.message || "Failed to load analytics");
+      toast.error(e.message || t("admin.dashboard.loadFailed"));
     } finally {
       setLoading(false);
     }
@@ -245,28 +249,28 @@ export default function AdminDashboard() {
       <div className="space-y-6">
         <div className="flex items-end justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Dashboard</h1>
-            <p className="text-muted-foreground mt-1">Real-time learning analytics.</p>
+            <h1 className="text-3xl font-semibold tracking-tight">{t("admin.dashboard.title")}</h1>
+            <p className="text-muted-foreground mt-1">{t("admin.dashboard.subtitle")}</p>
           </div>
           <Select value={courseId} onValueChange={setCourseId}>
-            <SelectTrigger className="w-[260px]"><SelectValue placeholder="Select course" /></SelectTrigger>
+            <SelectTrigger className="w-[260px]"><SelectValue placeholder={t("admin.dashboard.selectCourse")} /></SelectTrigger>
             <SelectContent>
               {courses.map((c) => (
-                <SelectItem key={c.id} value={c.id}>{c.title}{!c.published && " (draft)"}</SelectItem>
+                <SelectItem key={c.id} value={c.id}>{c.title}{!c.published && t("admin.dashboard.draftSuffix")}</SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatCard icon={<UsersIcon className="h-4 w-4" />} label="Total students" value={stats.total} />
-          <StatCard icon={<LogIn className="h-4 w-4" />} label="Logins (30d)" value={stats.logins30d} />
-          <StatCard icon={<Activity className="h-4 w-4" />} label="Active (7d)" value={stats.active7d} />
-          <StatCard icon={<Trophy className="h-4 w-4" />} label="Course completions" value={stats.completions} />
+          <StatCard icon={<UsersIcon className="h-4 w-4" />} label={t("admin.dashboard.stats.totalStudents")} value={stats.total} />
+          <StatCard icon={<LogIn className="h-4 w-4" />} label={t("admin.dashboard.stats.logins30d")} value={stats.logins30d} />
+          <StatCard icon={<Activity className="h-4 w-4" />} label={t("admin.dashboard.stats.active7d")} value={stats.active7d} />
+          <StatCard icon={<Trophy className="h-4 w-4" />} label={t("admin.dashboard.stats.completions")} value={stats.completions} />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <ChartCard title="Daily logins (30d)">
+          <ChartCard title={t("admin.dashboard.charts.dailyLogins")}>
             <ResponsiveContainer width="100%" height={240}>
               <AreaChart data={dailyLogins}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -278,7 +282,7 @@ export default function AdminDashboard() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Daily active learners (30d)">
+          <ChartCard title={t("admin.dashboard.charts.dau")}>
             <ResponsiveContainer width="100%" height={240}>
               <LineChart data={dau}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -290,7 +294,7 @@ export default function AdminDashboard() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Module engagement">
+          <ChartCard title={t("admin.dashboard.charts.moduleEngagement")}>
             <ResponsiveContainer width="100%" height={280}>
               <PieChart>
                 <Pie data={moduleEngagement} dataKey="value" nameKey="name" outerRadius={90} label={(e) => `${e.value}`}>
@@ -302,7 +306,7 @@ export default function AdminDashboard() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Module completion funnel">
+          <ChartCard title={t("admin.dashboard.charts.moduleFunnel")}>
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={moduleFunnel}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -317,7 +321,7 @@ export default function AdminDashboard() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Lessons completed per day (30d)">
+          <ChartCard title={t("admin.dashboard.charts.lessonsPerDay")}>
             <ResponsiveContainer width="100%" height={240}>
               <BarChart data={lessonsPerDay}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -329,7 +333,7 @@ export default function AdminDashboard() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Stuck students by module (7d+)">
+          <ChartCard title={t("admin.dashboard.charts.stuckByModule")}>
             <ResponsiveContainer width="100%" height={240}>
               <BarChart data={stuckByModule}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -344,23 +348,23 @@ export default function AdminDashboard() {
 
         <Card className="overflow-hidden shadow-soft">
           <div className="p-4 border-b">
-            <h3 className="font-semibold">Stuck students</h3>
-            <p className="text-xs text-muted-foreground">Last activity over 7 days ago, course incomplete.</p>
+            <h3 className="font-semibold">{t("admin.dashboard.stuck.title")}</h3>
+            <p className="text-xs text-muted-foreground">{t("admin.dashboard.stuck.subtitle")}</p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-muted/40 text-xs">
                 <tr>
-                  <th className="text-left p-3">Name</th>
-                  <th className="text-left p-3">Last lesson</th>
-                  <th className="text-left p-3">Days idle</th>
-                  <th className="text-left p-3">Progress</th>
+                  <th className="text-left p-3">{t("admin.dashboard.stuck.name")}</th>
+                  <th className="text-left p-3">{t("admin.dashboard.stuck.lastLesson")}</th>
+                  <th className="text-left p-3">{t("admin.dashboard.stuck.daysIdle")}</th>
+                  <th className="text-left p-3">{t("admin.dashboard.stuck.progress")}</th>
                   <th className="p-3"></th>
                 </tr>
               </thead>
               <tbody>
-                {loading && <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">Loading…</td></tr>}
-                {!loading && stuck.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">No stuck students 🎉</td></tr>}
+                {loading && <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">{t("admin.dashboard.stuck.loading")}</td></tr>}
+                {!loading && stuck.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">{t("admin.dashboard.stuck.empty")}</td></tr>}
                 {stuck.map((s, i) => (
                   <tr key={i} className="border-t hover:bg-muted/20">
                     <td className="p-3 font-medium">{s.name}<div className="text-xs text-muted-foreground">{s.email}</div></td>
@@ -368,7 +372,7 @@ export default function AdminDashboard() {
                     <td className="p-3 tabular-nums">{s.days_since}d</td>
                     <td className="p-3 tabular-nums">{s.pct}%</td>
                     <td className="p-3 text-right">
-                      <Button variant="outline" size="sm" onClick={() => toast.info("Re-engagement email queued (configure email infra to send)")}>Send email</Button>
+                      <Button variant="outline" size="sm" onClick={() => toast.info(t("admin.dashboard.stuck.queuedToast"))}>{t("admin.dashboard.stuck.sendEmail")}</Button>
                     </td>
                   </tr>
                 ))}
@@ -380,30 +384,30 @@ export default function AdminDashboard() {
         <Card className="overflow-hidden shadow-soft">
           <div className="p-4 border-b flex items-center justify-between">
             <div>
-              <h3 className="font-semibold flex items-center gap-2"><Shield className="h-4 w-4" /> Recent admin actions</h3>
-              <p className="text-xs text-muted-foreground">Last 25 administrative changes.</p>
+              <h3 className="font-semibold flex items-center gap-2"><Shield className="h-4 w-4" /> {t("admin.dashboard.recent.title")}</h3>
+              <p className="text-xs text-muted-foreground">{t("admin.dashboard.recent.subtitle")}</p>
             </div>
-            <Link to="/admin/audit"><Button variant="outline" size="sm">View all</Button></Link>
+            <Link to="/admin/audit"><Button variant="outline" size="sm">{t("admin.dashboard.recent.viewAll")}</Button></Link>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-muted/40 text-xs">
                 <tr>
-                  <th className="text-left p-3">When</th>
-                  <th className="text-left p-3">Actor</th>
-                  <th className="text-left p-3">Action</th>
-                  <th className="text-left p-3">Target</th>
+                  <th className="text-left p-3">{t("admin.dashboard.recent.headers.when")}</th>
+                  <th className="text-left p-3">{t("admin.dashboard.recent.headers.actor")}</th>
+                  <th className="text-left p-3">{t("admin.dashboard.recent.headers.action")}</th>
+                  <th className="text-left p-3">{t("admin.dashboard.recent.headers.target")}</th>
                 </tr>
               </thead>
               <tbody>
                 {recentActions.length === 0 && (
-                  <tr><td colSpan={4} className="p-6 text-center text-muted-foreground">No admin actions yet.</td></tr>
+                  <tr><td colSpan={4} className="p-6 text-center text-muted-foreground">{t("admin.dashboard.recent.empty")}</td></tr>
                 )}
                 {recentActions.map((a) => (
                   <tr key={a.id} className="border-t hover:bg-muted/20">
-                    <td className="p-3 text-muted-foreground whitespace-nowrap">{formatDistanceToNow(new Date(a.created_at), { addSuffix: true })}</td>
+                    <td className="p-3 text-muted-foreground whitespace-nowrap">{formatDistanceToNow(new Date(a.created_at), { addSuffix: true, locale: dateLocale })}</td>
                     <td className="p-3 font-medium">{a.actor_name}</td>
-                    <td className="p-3"><code className="text-xs bg-muted px-1.5 py-0.5 rounded">{a.action}</code></td>
+                    <td className="p-3"><code className="text-xs bg-muted px-1.5 py-0.5 rounded">{t(`admin.audit.actions.${a.action}`, { defaultValue: a.action })}</code></td>
                     <td className="p-3 text-muted-foreground">{a.target_name || a.target_resource_type || "—"}</td>
                   </tr>
                 ))}
