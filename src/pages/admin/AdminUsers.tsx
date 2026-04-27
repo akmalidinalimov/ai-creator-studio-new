@@ -178,13 +178,15 @@ export default function AdminUsers() {
     }]);
     const r = res?.results?.[0];
     if (r?.status === "created") {
-      toast.success(`Created ${newEmail}${r.action_link ? " — invite link sent" : ""}`);
+      toast.success(r.action_link
+        ? t("admin.users.toasts.createdInvite", { email: newEmail })
+        : t("admin.users.toasts.created", { email: newEmail }));
       setOpenAdd(false);
       setNewName(""); setNewLastName(""); setNewEmail(""); setNewPassword(randPassword());
       setNewTg(""); setNewRole("student"); setNewCourses(new Set());
       reload();
     } else {
-      toast.error(r?.error || res?.error || "Failed");
+      toast.error(r?.error || res?.error || t("admin.users.toasts.createFailed"));
     }
   };
 
@@ -195,7 +197,7 @@ export default function AdminUsers() {
     a.href = url; a.download = "users_import_template.csv";
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
-    toast.success("Template downloaded");
+    toast.success(t("admin.users.templateDownloaded"));
   };
 
   const parseCsv = (txt: string) => {
@@ -222,9 +224,9 @@ export default function AdminUsers() {
       seen.add((email || "").toLowerCase());
       let reason: string | undefined;
       let valid = true;
-      if (!validEmail) { valid = false; reason = "Malformed email"; }
-      else if (dup) { valid = false; reason = "Duplicate email"; }
-      else if (!validRole) { valid = false; reason = "Invalid role"; }
+      if (!validEmail) { valid = false; reason = t("validation.emailInvalid"); }
+      else if (dup) { valid = false; reason = t("admin.users.csvHeaders.email"); }
+      else if (!validRole) { valid = false; reason = t("admin.users.role"); }
       return {
         name: name || "",
         last_name: last_name || undefined,
@@ -254,7 +256,7 @@ export default function AdminUsers() {
     const res = await r.json();
     setImporting(false);
     const created = (res?.results || []).filter((x: any) => x.status === "created").length;
-    toast.success(`Imported ${created} of ${valid.length}`);
+    toast.success(t("admin.users.toasts.imported", { n: created, total: valid.length }));
     setOpenCsv(false); setCsvText(""); setCsvParsed([]); reload();
   };
 
@@ -273,7 +275,7 @@ export default function AdminUsers() {
       const j = await r.json();
       if (j?.ok) ok++;
     }
-    toast.success(`Welcome email resent to ${ok} of ${emails.length}`);
+    toast.success(t("admin.users.toasts.welcomeResent", { ok, total: emails.length }));
   };
 
   const clearLockout = async (email: string) => {
@@ -283,8 +285,8 @@ export default function AdminUsers() {
       body: JSON.stringify({ action: "clear_lockout", email }),
     });
     const j = await r.json();
-    if (j?.ok) { toast.success("Lockout cleared"); reload(); }
-    else toast.error(j?.error || "Failed");
+    if (j?.ok) { toast.success(t("admin.users.toasts.lockoutCleared")); reload(); }
+    else toast.error(j?.error || t("admin.users.toasts.createFailed"));
   };
 
   const logAction = async (action: string, body: Record<string, unknown>) => {
@@ -318,12 +320,12 @@ export default function AdminUsers() {
       const { error } = await supabase.from("user_roles").insert({ user_id: user.id, role: "admin" });
       if (error) return toast.error(error.message);
       logAction("promote_to_admin", { target_user_id: user.id, details: { email: user.email } });
-      toast.success(`${user.email} is now admin`);
+      toast.success(t("admin.users.toasts.promoted", { email: user.email }));
     } else {
       const { error } = await supabase.from("user_roles").delete().eq("user_id", user.id).eq("role", "admin");
       if (error) return toast.error(error.message);
       logAction("demote_to_student", { target_user_id: user.id, details: { email: user.email } });
-      toast.success(`${user.email} demoted to student`);
+      toast.success(t("admin.users.toasts.demoted", { email: user.email }));
     }
     setConfirmRole(null);
     reload();
@@ -333,7 +335,7 @@ export default function AdminUsers() {
     const { error } = await supabase.from("profiles").update({ status }).eq("id", user.id);
     if (error) return toast.error(error.message);
     logAction(status === "active" ? "activate_user" : "deactivate_user", { target_user_id: user.id, details: { email: user.email } });
-    toast.success(`User ${status}`);
+    toast.success(status === "active" ? t("admin.users.toasts.userActive") : t("admin.users.toasts.userInactive"));
     reload();
   };
 
@@ -341,7 +343,7 @@ export default function AdminUsers() {
     const { error } = await (supabase.from("profiles") as any).update(patch).eq("id", user.id);
     if (error) return toast.error(error.message);
     logAction("update_profile", { target_user_id: user.id, details: { changed: Object.keys(patch) } });
-    toast.success("Saved");
+    toast.success(t("admin.users.toasts.saved"));
     reload();
   };
 
@@ -350,7 +352,7 @@ export default function AdminUsers() {
       redirectTo: `${window.location.origin}/reset-password`,
     });
     if (error) return toast.error(error.message);
-    toast.success(`Password reset email sent to ${user.email}`);
+    toast.success(t("admin.users.toasts.passwordReset", { email: user.email }));
   };
 
   const removeUser = async (user: UserRow) => {
@@ -361,7 +363,7 @@ export default function AdminUsers() {
     });
     const res = await r.json();
     if (res?.error) return toast.error(res.error);
-    toast.success("User removed");
+    toast.success(t("admin.users.toasts.userRemoved"));
     setConfirmDelete(null); setManageUser(null); reload();
   };
 
