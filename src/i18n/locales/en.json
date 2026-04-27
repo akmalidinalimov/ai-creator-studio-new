@@ -11,7 +11,8 @@
     "or": "or",
     "optional": "Optional",
     "search": "Search",
-    "language": "Language"
+    "language": "Language",
+    "retry": "Retry"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -107,6 +108,64 @@
     "send": "Send",
     "rateLesson": "Rate this lesson"
   },
+  "coursePage": {
+    "backToDashboard": "← Dashboard",
+    "notFound": "Course not found.",
+    "moduleN": "Module {{n}}",
+    "takeQuiz": "Take module quiz →",
+    "yourProgress": "Your progress",
+    "continue": "Continue",
+    "viewCertificate": "View certificate",
+    "stats": {
+      "modules": "modules",
+      "lessons": "lessons",
+      "total": "total"
+    }
+  },
+  "lesson": {
+    "loading": "Loading…",
+    "prev": "Prev",
+    "next": "Next",
+    "markComplete": "Mark complete",
+    "markedCompleteToast": "Lesson marked complete",
+    "tabs": {
+      "description": "Description",
+      "notes": "Notes",
+      "bookmarks": "Bookmarks",
+      "transcript": "Transcript"
+    },
+    "notes": {
+      "autosave": "Auto-saves as you type",
+      "insertTimestamp": "Insert timestamp",
+      "placeholder": "Write your notes here…"
+    },
+    "bookmarks": {
+      "labelPlaceholder": "Label (optional)",
+      "addAtCurrent": "Add at current time",
+      "empty": "No bookmarks yet.",
+      "atPrefix": "At"
+    },
+    "transcript": {
+      "unavailable": "Transcript not yet available for this lesson."
+    },
+    "sidebar": {
+      "courseContent": "Course content",
+      "moduleN": "Module {{n}}"
+    },
+    "ai": {
+      "title": "AI Study Assistant",
+      "empty": "Ask anything about this lesson. Try: \"Explain this\", \"Give me 3 practice questions\", \"Summarize\".",
+      "placeholder": "Ask the assistant…",
+      "chips": {
+        "explain": "Explain this",
+        "practice": "3 practice questions",
+        "summarize": "Summarize",
+        "stuck": "I'm stuck"
+      },
+      "busy": "AI tutor is busy, please try again.",
+      "interrupted": "_(response interrupted)_"
+    }
+  },
   "quiz": {
     "title": "Quiz",
     "submit": "Submit",
@@ -114,7 +173,15 @@
     "score": "Score",
     "passed": "Passed!",
     "failed": "Try again",
-    "question": "Question {{current}} of {{total}}"
+    "question": "Question {{current}} of {{total}}",
+    "back": "← Back",
+    "headerWith": "Quiz: {{title}}",
+    "passLine": "Pass with 80% or higher.",
+    "submitAnswers": "Submit answers",
+    "tryAgain": "Try again",
+    "backToCourse": "Back to course",
+    "passedWith": "Passed with {{pct}}%!",
+    "needToPass": "{{pct}}% — need 80% to pass"
   },
   "settings": {
     "title": "Settings",
@@ -155,5 +222,152 @@
     "title": "Page not found",
     "subtitle": "The page you're looking for doesn't exist.",
     "goHome": "Go home"
+  },
+  "telegram": {
+    "defaultLabel": "Sign in with Telegram",
+    "notConfigured": "Telegram login isn't configured yet — admin can set it up in Settings → Telegram Login.",
+    "popupBlocked": "Popup blocked — please allow popups for this site.",
+    "cancelled": "Telegram sign-in cancelled."
+  },
+  "landing": {
+    "nav": {
+      "curriculum": "Curriculum",
+      "instructor": "Instructor",
+      "pricing": "Pricing",
+      "faq": "FAQ",
+      "signIn": "Sign in",
+      "startFree": "Start free"
+    },
+    "hero": {
+      "headlineDefault": "Build, ship, and monetize {with AI}.",
+      "subDefault": "A 14-hour curriculum for the new generation of AI-native creators. Foundations to image, video, content, and monetization — without the fluff. Five modules, twenty lessons, designed to compound.",
+      "startLearning": "Start learning free",
+      "viewCurriculum": "View curriculum",
+      "trust": "Joined by {{count}} · 4.9/5 rating",
+      "trustCountStrong": "1,247 creators",
+      "sampleBadge": "Sample lesson · 8 min",
+      "playLabel": "Play sample"
+    },
+    "trust": {
+      "creators": "creators",
+      "rating": "rating",
+      "countries": "countries",
+      "ofCurriculum": "of curriculum"
+    },
+    "outcomes": {
+      "heading": "By the end, you will:",
+      "subheading": "Three concrete outcomes — not vague promises.",
+      "items": [
+        { "title": "Ship a mini-film.", "body": "From script to anchor frames to multishot animation. By the end of module 3, you have a finished film." },
+        { "title": "Build a recognizable style.", "body": "Composition, references, palettes. Students leave with a visual signature, not a prompt cheat-sheet." },
+        { "title": "Turn skill into income.", "body": "Productize, sell, scale. Module 5 covers offers, pricing, and the launch playbook that actually works." }
+      ]
+    },
+    "curriculum": {
+      "heading": "What you'll learn over 14 hours",
+      "sub": "Five modules. Twenty lessons. Built to compound.",
+      "comingSoon": "Curriculum coming soon.",
+      "lessonsCount": "{{n}} lessons · {{min}} min",
+      "minSuffix": "min"
+    },
+    "instructor": {
+      "heading": "Meet your instructor",
+      "bioDefault": "An AI-native filmmaker, designer, and educator. Built award-winning short films using only AI tools, taught hundreds of students across Central Asia, and shipped commercial work for brands like Uzum, Humo, and Click. This curriculum is the playbook used to do it.",
+      "credibility": "Built X · taught Y · shipped Z"
+    },
+    "howItWorks": {
+      "heading": "How it works",
+      "steps": [
+        { "title": "Sign up free.", "body": "One click with Telegram, Google, or email. No card required." },
+        { "title": "Watch and take notes.", "body": "Lessons stream in HD. Your AI Study Assistant has the transcript memorized." },
+        { "title": "Ship your first project.", "body": "Module exercises produce real work — image sets, scripts, mini-films, offers." }
+      ]
+    },
+    "showcase": {
+      "heading": "What our students build.",
+      "sub": "Module exercises, capstone projects, and commercial work — shipped by students across the curriculum."
+    },
+    "pricing": {
+      "heading": "Start free. Upgrade when you're hooked.",
+      "label": "AI Creators · Full Course",
+      "price": "Free",
+      "priceSuffix": "for now",
+      "features": [
+        "All 5 modules · 20 lessons · 14 hours",
+        "AI Study Assistant trained on every lesson",
+        "Streaming HD video on every device",
+        "Notes, bookmarks, and transcripts",
+        "Telegram-native sign-in",
+        "New lessons added monthly"
+      ],
+      "cta": "Start learning free",
+      "footnote": "Premium tier coming soon · taught in English with Russian + Uzbek subtitles."
+    },
+    "faq": {
+      "heading": "Questions, answered.",
+      "items": [
+        { "q": "Do I need any AI experience to start?", "a": "No. The first module assumes zero background — you'll be generating images by lesson 3." },
+        { "q": "How much time per week?", "a": "3–5 hours. The full curriculum is ~14 hours; most students finish in 4–6 weeks." },
+        { "q": "Can I follow on my phone?", "a": "Yes. The video player and AI tutor are mobile-first. Lessons stream in adaptive HD." },
+        { "q": "What if I get stuck on a lesson?", "a": "Every lesson has the AI Study Assistant — it's trained on the transcript and can explain, summarize, or quiz you." },
+        { "q": "Do you provide certificates?", "a": "Module-level certificates of completion will roll out in the next update." },
+        { "q": "Is the content in English, Russian, or Uzbek?", "a": "Lessons are taught in English with Russian and Uzbek subtitles. UI is fully translated." },
+        { "q": "Can I download the videos?", "a": "No — videos stream from secure storage to protect creator IP. Notes and transcripts are downloadable." },
+        { "q": "How do I cancel?", "a": "Signup is free. There's nothing to cancel until our premium tier launches." }
+      ]
+    },
+    "finalCta": {
+      "heading": "Ready to start building?",
+      "sub": "Free signup · 2 minutes · cancel anytime.",
+      "button": "Start learning free"
+    },
+    "footer": {
+      "tagline": "A 14-hour curriculum for AI-native creators. Built in Tashkent, taught everywhere.",
+      "course": "Course",
+      "company": "Company",
+      "contact": "Contact",
+      "copyright": "© 2026 AI Creators · Made in Tashkent"
+    }
+  },
+  "admin": {
+    "common": {
+      "back": "Back",
+      "saveChanges": "Save changes",
+      "newCourse": "+ New course",
+      "addUser": "+ Add user",
+      "importCsv": "Import CSV"
+    },
+    "dashboard": {
+      "title": "Dashboard",
+      "subtitle": "Real-time learning analytics.",
+      "selectCourse": "Select course",
+      "stats": {
+        "totalStudents": "Total students",
+        "logins30d": "Logins (30d)",
+        "active7d": "Active (7d)",
+        "completions": "Course completions"
+      },
+      "charts": {
+        "dailyLogins": "Daily logins (30d)",
+        "dau": "Daily active learners (30d)",
+        "moduleEngagement": "Module engagement",
+        "moduleFunnel": "Module completion funnel",
+        "lessonsPerDay": "Lessons completed per day (30d)",
+        "stuckByModule": "Stuck students by module (7d+)"
+      },
+      "stuck": {
+        "title": "Stuck students",
+        "subtitle": "Last activity over 7 days ago, course incomplete.",
+        "name": "Name",
+        "lastLesson": "Last lesson",
+        "daysIdle": "Days idle",
+        "progress": "Progress",
+        "loading": "Loading…",
+        "empty": "No stuck students 🎉"
+      },
+      "recent": {
+        "title": "Recent admin actions"
+      }
+    }
   }
 }

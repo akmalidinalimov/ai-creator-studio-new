@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -25,17 +26,6 @@ interface LandingCopy {
   faq?: { q: string; a: string }[];
 }
 
-const DEFAULT_FAQ = [
-  { q: "Do I need any AI experience to start?", a: "No. The first module assumes zero background — you'll be generating images by lesson 3." },
-  { q: "How much time per week?", a: "3–5 hours. The full curriculum is ~14 hours; most students finish in 4–6 weeks." },
-  { q: "Can I follow on my phone?", a: "Yes. The video player and AI tutor are mobile-first. Lessons stream in adaptive HD." },
-  { q: "What if I get stuck on a lesson?", a: "Every lesson has the AI Study Assistant — it's trained on the transcript and can explain, summarize, or quiz you." },
-  { q: "Do you provide certificates?", a: "Module-level certificates of completion will roll out in the next update." },
-  { q: "Is the content in English, Russian, or Uzbek?", a: "Lessons are taught in English with Russian and Uzbek subtitles. UI is fully translated." },
-  { q: "Can I download the videos?", a: "No — videos stream from secure storage to protect creator IP. Notes and transcripts are downloadable." },
-  { q: "How do I cancel?", a: "Signup is free. There's nothing to cancel until our premium tier launches." },
-];
-
 const SHOWCASE = [
   { url: "https://images.unsplash.com/photo-1542831371-29b0f74f9713?w=800&q=80", name: "Aziza · Tashkent", type: "Mini-film · Module 3" },
   { url: "https://images.unsplash.com/photo-1635776062127-d379bfcba9f8?w=800&q=80", name: "Bekzod · Samarkand", type: "Brand identity · Module 2" },
@@ -45,12 +35,6 @@ const SHOWCASE = [
   { url: "https://images.unsplash.com/photo-1614729939124-032d1e6d7b48?w=800&q=80", name: "Diyor · Khiva", type: "Short film · Module 4" },
 ];
 
-const fmtMin = (s?: number | null) => {
-  if (!s) return "";
-  const m = Math.round(s / 60);
-  return `${m} min`;
-};
-
 const Brand = ({ to = "/" }: { to?: string }) => (
   <Link to={to} className="flex items-center gap-2 font-semibold tracking-tight">
     <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-primary text-primary-foreground text-[13px] font-bold ring-[3px] ring-primary/10">A</span>
@@ -59,6 +43,7 @@ const Brand = ({ to = "/" }: { to?: string }) => (
 );
 
 export default function Landing() {
+  const { t } = useTranslation();
   const { user, role, loading: authLoading } = useAuth();
   const nav = useNavigate();
   const [scrolled, setScrolled] = useState(false);
@@ -81,7 +66,6 @@ export default function Landing() {
 
   useEffect(() => {
     (async () => {
-      // Load default-for-signup published course's curriculum
       const { data: course } = await supabase
         .from("courses")
         .select("id, title")
@@ -98,14 +82,11 @@ export default function Landing() {
         .order("position", { ascending: true });
       const cleaned = (mods || []).map((m: any) => ({
         ...m,
-        lessons: (m.lessons || [])
-          .filter((l: any) => l.published)
-          .sort((a: any, b: any) => a.position - b.position),
+        lessons: (m.lessons || []).filter((l: any) => l.published).sort((a: any, b: any) => a.position - b.position),
       }));
       setModules(cleaned);
     })();
 
-    // Load admin-editable copy
     (async () => {
       const keys = ["landing.hero.headline", "landing.hero.sub", "landing.instructor.bio", "landing.instructor.photo_url", "landing.faq"];
       const { data } = await supabase.from("platform_settings").select("key, value").in("key", keys);
@@ -120,11 +101,15 @@ export default function Landing() {
     })();
   }, []);
 
-  const faq = copy.faq && copy.faq.length > 0 ? copy.faq : DEFAULT_FAQ;
-  const headline = copy.headline || "Build, ship, and monetize {with AI}.";
-  const sub = copy.sub || "A 14-hour curriculum for the new generation of AI-native creators. Foundations to image, video, content, and monetization — without the fluff. Five modules, twenty lessons, designed to compound.";
+  const outcomes = useMemo(() => (t("landing.outcomes.items", { returnObjects: true }) as { title: string; body: string }[]) || [], [t]);
+  const howSteps = useMemo(() => (t("landing.howItWorks.steps", { returnObjects: true }) as { title: string; body: string }[]) || [], [t]);
+  const pricingFeatures = useMemo(() => (t("landing.pricing.features", { returnObjects: true }) as string[]) || [], [t]);
+  const faqDefault = useMemo(() => (t("landing.faq.items", { returnObjects: true }) as { q: string; a: string }[]) || [], [t]);
+  const faq = copy.faq && copy.faq.length > 0 ? copy.faq : faqDefault;
 
-  // Render headline: split on {...} tokens for italic teal
+  const headline = copy.headline || t("landing.hero.headlineDefault");
+  const sub = copy.sub || t("landing.hero.subDefault");
+
   const renderHeadline = (text: string) => {
     const parts = text.split(/(\{[^}]+\})/g);
     return parts.map((p, i) => {
@@ -135,133 +120,111 @@ export default function Landing() {
     });
   };
 
+  const outcomeIcons = [Film, Wand2, DollarSign];
+  const stepIcons = [UserPlus, BookOpen, Rocket];
+
   return (
     <div className="min-h-screen bg-background text-foreground">
-      {/* NAV */}
-      <header
-        className={`fixed top-0 inset-x-0 z-40 transition-all duration-300 ${
-          scrolled ? "bg-background/85 backdrop-blur-md border-b border-border" : "bg-transparent"
-        }`}
-      >
+      <header className={`fixed top-0 inset-x-0 z-40 transition-all duration-300 ${scrolled ? "bg-background/85 backdrop-blur-md border-b border-border" : "bg-transparent"}`}>
         <div className="container flex h-16 items-center justify-between gap-4">
           <Brand />
           <nav className="hidden md:flex items-center gap-7 text-sm">
-            <a href="#curriculum" className="text-muted-foreground hover:text-foreground transition-colors">Curriculum</a>
-            <a href="#instructor" className="text-muted-foreground hover:text-foreground transition-colors">Instructor</a>
-            <a href="#pricing" className="text-muted-foreground hover:text-foreground transition-colors">Pricing</a>
-            <a href="#faq" className="text-muted-foreground hover:text-foreground transition-colors">FAQ</a>
+            <a href="#curriculum" className="text-muted-foreground hover:text-foreground transition-colors">{t("landing.nav.curriculum")}</a>
+            <a href="#instructor" className="text-muted-foreground hover:text-foreground transition-colors">{t("landing.nav.instructor")}</a>
+            <a href="#pricing" className="text-muted-foreground hover:text-foreground transition-colors">{t("landing.nav.pricing")}</a>
+            <a href="#faq" className="text-muted-foreground hover:text-foreground transition-colors">{t("landing.nav.faq")}</a>
           </nav>
           <div className="flex items-center gap-2">
             <Button asChild variant="outline" size="sm" className="hidden sm:inline-flex">
-              <Link to="/login">Sign in</Link>
+              <Link to="/login">{t("landing.nav.signIn")}</Link>
             </Button>
             <Button asChild size="sm">
-              <Link to="/signup">Start free <ArrowRight className="h-3.5 w-3.5" /></Link>
+              <Link to="/signup">{t("landing.nav.startFree")} <ArrowRight className="h-3.5 w-3.5" /></Link>
             </Button>
           </div>
         </div>
       </header>
 
-      {/* HERO */}
       <section className="relative pt-28 md:pt-32 pb-16 md:pb-24 overflow-hidden">
         <div className="absolute top-32 -left-16 text-primary/[0.07] pointer-events-none hidden md:block">
           <SuzaniStar size={520} />
         </div>
         <div className="container relative grid md:grid-cols-2 gap-10 lg:gap-16 items-center">
           <div className="space-y-6 max-w-xl">
-            <h1 className="font-serif text-[40px] md:text-[56px] leading-[1.05] font-semibold tracking-tight">
-              {renderHeadline(headline)}
-            </h1>
+            <h1 className="font-serif text-[40px] md:text-[56px] leading-[1.05] font-semibold tracking-tight">{renderHeadline(headline)}</h1>
             <p className="text-lg text-muted-foreground leading-relaxed">{sub}</p>
             <div className="flex flex-wrap gap-3 pt-2">
-              <Button asChild size="lg" className="gap-2">
-                <Link to="/signup">Start learning free <ArrowRight className="h-4 w-4" /></Link>
-              </Button>
-              <Button asChild size="lg" variant="outline">
-                <a href="#curriculum">View curriculum</a>
-              </Button>
+              <Button asChild size="lg" className="gap-2"><Link to="/signup">{t("landing.hero.startLearning")} <ArrowRight className="h-4 w-4" /></Link></Button>
+              <Button asChild size="lg" variant="outline"><a href="#curriculum">{t("landing.hero.viewCurriculum")}</a></Button>
             </div>
             <div className="flex items-center gap-3 pt-4">
               <div className="flex -space-x-2">
                 {[0, 1, 2, 3].map((i) => (
-                  <div
-                    key={i}
-                    className="w-8 h-8 rounded-full border-2 border-background"
-                    style={{ background: `hsl(${174 + i * 20}, 50%, ${40 + i * 8}%)` }}
-                  />
+                  <div key={i} className="w-8 h-8 rounded-full border-2 border-background" style={{ background: `hsl(${174 + i * 20}, 50%, ${40 + i * 8}%)` }} />
                 ))}
               </div>
               <p className="text-sm text-muted-foreground">
-                Joined by <span className="font-medium text-foreground">1,247 creators</span> · 4.9/5 rating
+                <span className="font-medium text-foreground">{t("landing.hero.trustCountStrong")}</span> · 4.9/5 {t("landing.trust.rating")}
               </p>
             </div>
           </div>
 
-          {/* Hero art */}
           <div className="relative aspect-[5/4] rounded-[22px] overflow-hidden shadow-elevated"
                style={{ background: "linear-gradient(135deg, hsl(174 78% 26%) 0%, hsl(180 60% 8%) 100%)" }}>
-            <div className="absolute inset-0 opacity-60"
-                 style={{ background: "radial-gradient(circle at 70% 30%, hsl(43 89% 38% / 0.35) 0%, transparent 60%)" }} />
+            <div className="absolute inset-0 opacity-60" style={{ background: "radial-gradient(circle at 70% 30%, hsl(43 89% 38% / 0.35) 0%, transparent 60%)" }} />
             <div className="absolute inset-0 flex items-center justify-center">
-              <button
-                aria-label="Play sample"
-                className="w-20 h-20 rounded-full bg-primary/95 text-primary-foreground flex items-center justify-center shadow-[0_0_0_8px_hsl(172_66%_50%/0.2)] hover:scale-105 transition-transform"
-              >
+              <button aria-label={t("landing.hero.playLabel")} className="w-20 h-20 rounded-full bg-primary/95 text-primary-foreground flex items-center justify-center shadow-[0_0_0_8px_hsl(172_66%_50%/0.2)] hover:scale-105 transition-transform">
                 <Play className="h-8 w-8 ml-1" fill="currentColor" />
               </button>
             </div>
             <div className="absolute bottom-4 left-4 px-3 py-1.5 rounded-full bg-background/90 text-xs font-medium backdrop-blur-sm">
-              Sample lesson · 8 min
+              {t("landing.hero.sampleBadge")}
             </div>
           </div>
         </div>
       </section>
 
-      {/* TRUST BAR */}
       <section className="border-y border-border bg-secondary/40">
         <div className="container py-5 flex flex-wrap items-center justify-center gap-x-10 gap-y-2 text-sm">
-          <span className="text-muted-foreground"><span className="font-semibold text-foreground">1,247</span> creators</span>
+          <span className="text-muted-foreground"><span className="font-semibold text-foreground">1,247</span> {t("landing.trust.creators")}</span>
           <span className="hidden sm:block w-px h-4 bg-border" />
-          <span className="text-muted-foreground"><span className="font-semibold text-foreground">4.9/5</span> rating</span>
+          <span className="text-muted-foreground"><span className="font-semibold text-foreground">4.9/5</span> {t("landing.trust.rating")}</span>
           <span className="hidden sm:block w-px h-4 bg-border" />
-          <span className="text-muted-foreground"><span className="font-semibold text-foreground">30+</span> countries</span>
+          <span className="text-muted-foreground"><span className="font-semibold text-foreground">30+</span> {t("landing.trust.countries")}</span>
           <span className="hidden sm:block w-px h-4 bg-border" />
-          <span className="text-muted-foreground"><span className="font-semibold text-foreground">14h</span> of curriculum</span>
+          <span className="text-muted-foreground"><span className="font-semibold text-foreground">14h</span> {t("landing.trust.ofCurriculum")}</span>
         </div>
       </section>
 
-      {/* OUTCOMES */}
       <section id="outcomes" className="py-20 md:py-28">
         <div className="container">
-          <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-3">By the end, you will:</h2>
-          <p className="text-muted-foreground mb-12 max-w-2xl">Three concrete outcomes — not vague promises.</p>
+          <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-3">{t("landing.outcomes.heading")}</h2>
+          <p className="text-muted-foreground mb-12 max-w-2xl">{t("landing.outcomes.subheading")}</p>
           <div className="grid md:grid-cols-3 gap-6">
-            {[
-              { Icon: Film, title: "Ship a mini-film.", body: "From script to anchor frames to multishot animation. By the end of module 3, you have a finished film." },
-              { Icon: Wand2, title: "Build a recognizable style.", body: "Composition, references, palettes. Students leave with a visual signature, not a prompt cheat-sheet." },
-              { Icon: DollarSign, title: "Turn skill into income.", body: "Productize, sell, scale. Module 5 covers offers, pricing, and the launch playbook that actually works." },
-            ].map(({ Icon, title, body }) => (
-              <div key={title} className="p-7 rounded-2xl bg-card border border-border shadow-soft">
-                <div className="w-11 h-11 rounded-xl bg-accent/60 flex items-center justify-center mb-5">
-                  <Icon className="h-5 w-5 text-primary" />
+            {outcomes.map((item, i) => {
+              const Icon = outcomeIcons[i] || Film;
+              return (
+                <div key={i} className="p-7 rounded-2xl bg-card border border-border shadow-soft">
+                  <div className="w-11 h-11 rounded-xl bg-accent/60 flex items-center justify-center mb-5">
+                    <Icon className="h-5 w-5 text-primary" />
+                  </div>
+                  <h3 className="font-serif text-2xl font-semibold mb-2">{item.title}</h3>
+                  <p className="text-muted-foreground leading-relaxed">{item.body}</p>
                 </div>
-                <h3 className="font-serif text-2xl font-semibold mb-2">{title}</h3>
-                <p className="text-muted-foreground leading-relaxed">{body}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </section>
 
-      {/* CURRICULUM */}
       <section id="curriculum" className="py-20 md:py-28 bg-secondary/30">
         <div className="container">
-          <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-3">What you'll learn over 14 hours</h2>
-          <p className="text-muted-foreground mb-10 max-w-2xl">Five modules. Twenty lessons. Built to compound.</p>
+          <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-3">{t("landing.curriculum.heading")}</h2>
+          <p className="text-muted-foreground mb-10 max-w-2xl">{t("landing.curriculum.sub")}</p>
 
           {modules.length === 0 ? (
             <div className="rounded-xl border border-border bg-card p-10 text-center text-muted-foreground">
-              Curriculum coming soon.
+              {t("landing.curriculum.comingSoon")}
             </div>
           ) : (
             <Accordion type="single" collapsible defaultValue={modules[0]?.id} className="space-y-3">
@@ -269,17 +232,13 @@ export default function Landing() {
                 const totalSec = m.lessons.reduce((s, l) => s + (l.duration_seconds || 0), 0);
                 const totalMin = Math.round(totalSec / 60);
                 return (
-                  <AccordionItem
-                    key={m.id}
-                    value={m.id}
-                    className="border border-border rounded-xl bg-card px-5 shadow-soft"
-                  >
+                  <AccordionItem key={m.id} value={m.id} className="border border-border rounded-xl bg-card px-5 shadow-soft">
                     <AccordionTrigger className="hover:no-underline py-5">
                       <div className="flex items-center gap-4 text-left">
                         <span className="font-serif text-2xl text-primary tabular-nums">0{i + 1}</span>
                         <div>
                           <div className="font-semibold text-base">{m.title}</div>
-                          <div className="text-xs text-muted-foreground mt-0.5">{m.lessons.length} lessons · {totalMin} min</div>
+                          <div className="text-xs text-muted-foreground mt-0.5">{t("landing.curriculum.lessonsCount", { n: m.lessons.length, min: totalMin })}</div>
                         </div>
                       </div>
                     </AccordionTrigger>
@@ -289,7 +248,7 @@ export default function Landing() {
                           <li key={l.id} className="flex items-center justify-between text-sm border-b border-border/50 pb-2 last:border-b-0 last:pb-0">
                             <span className="text-foreground/80">{l.title}</span>
                             {l.duration_seconds && (
-                              <span className="text-xs text-muted-foreground tabular-nums">{fmtMin(l.duration_seconds)}</span>
+                              <span className="text-xs text-muted-foreground tabular-nums">{Math.round(l.duration_seconds / 60)} {t("landing.curriculum.minSuffix")}</span>
                             )}
                           </li>
                         ))}
@@ -303,19 +262,16 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* INSTRUCTOR */}
       <section id="instructor" className="py-20 md:py-28">
         <div className="container grid md:grid-cols-[1fr_240px] gap-10 md:gap-16 items-center">
           <div>
-            <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-5">Meet your instructor</h2>
+            <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-5">{t("landing.instructor.heading")}</h2>
             <div className="space-y-4 text-muted-foreground leading-relaxed prose-tight max-w-2xl">
-              {(copy.instructorBio || "An AI-native filmmaker, designer, and educator. Built award-winning short films using only AI tools, taught hundreds of students across Central Asia, and shipped commercial work for brands like Uzum, Humo, and Click. This curriculum is the playbook used to do it.")
-                .split("\n\n")
-                .map((p, i) => <p key={i}>{p}</p>)}
+              {(copy.instructorBio || t("landing.instructor.bioDefault")).split("\n\n").map((p, i) => <p key={i}>{p}</p>)}
             </div>
             <div className="mt-5 inline-flex items-center gap-2 text-sm text-primary font-medium">
               <Star className="h-4 w-4 fill-current" />
-              Built X · taught Y · shipped Z
+              {t("landing.instructor.credibility")}
             </div>
           </div>
           <div className="md:order-last order-first">
@@ -332,34 +288,31 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* HOW IT WORKS */}
       <section className="py-20 md:py-28 bg-secondary/30">
         <div className="container">
-          <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-12">How it works</h2>
+          <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-12">{t("landing.howItWorks.heading")}</h2>
           <div className="grid md:grid-cols-3 gap-8">
-            {[
-              { Icon: UserPlus, title: "Sign up free.", body: "One click with Telegram, Google, or email. No card required." },
-              { Icon: BookOpen, title: "Watch and take notes.", body: "Lessons stream in HD. Your AI Study Assistant has the transcript memorized." },
-              { Icon: Rocket, title: "Ship your first project.", body: "Module exercises produce real work — image sets, scripts, mini-films, offers." },
-            ].map((s, i) => (
-              <div key={s.title} className="space-y-4">
-                <div className="flex items-baseline gap-3">
-                  <span className="font-serif text-5xl text-primary tabular-nums leading-none">0{i + 1}</span>
-                  <s.Icon className="h-5 w-5 text-muted-foreground" />
+            {howSteps.map((s, i) => {
+              const Icon = stepIcons[i] || Rocket;
+              return (
+                <div key={i} className="space-y-4">
+                  <div className="flex items-baseline gap-3">
+                    <span className="font-serif text-5xl text-primary tabular-nums leading-none">0{i + 1}</span>
+                    <Icon className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <h3 className="font-semibold text-lg">{s.title}</h3>
+                  <p className="text-muted-foreground leading-relaxed">{s.body}</p>
                 </div>
-                <h3 className="font-semibold text-lg">{s.title}</h3>
-                <p className="text-muted-foreground leading-relaxed">{s.body}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </section>
 
-      {/* SHOWCASE */}
       <section id="showcase" className="py-20 md:py-28">
         <div className="container">
-          <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-3">What our students build.</h2>
-          <p className="text-muted-foreground mb-10 max-w-2xl">Module exercises, capstone projects, and commercial work — shipped by students across the curriculum.</p>
+          <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-3">{t("landing.showcase.heading")}</h2>
+          <p className="text-muted-foreground mb-10 max-w-2xl">{t("landing.showcase.sub")}</p>
         </div>
         <div className="overflow-x-auto scrollbar-hide snap-x snap-mandatory">
           <div className="flex gap-4 px-[max(1rem,calc((100vw-1280px)/2+1rem))] pb-2">
@@ -378,115 +331,82 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* PRICING */}
       <section id="pricing" className="py-20 md:py-28 bg-secondary/30">
         <div className="container max-w-xl">
-          <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight text-center mb-12">
-            Start free. Upgrade when you're hooked.
-          </h2>
+          <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight text-center mb-12">{t("landing.pricing.heading")}</h2>
           <div className="rounded-2xl border-2 border-primary/20 bg-card p-8 shadow-elevated">
-            <div className="text-xs uppercase tracking-wider text-primary font-semibold mb-2">AI Creators · Full Course</div>
+            <div className="text-xs uppercase tracking-wider text-primary font-semibold mb-2">{t("landing.pricing.label")}</div>
             <div className="flex items-baseline gap-2 mb-6">
-              <span className="font-serif text-5xl font-semibold">Free</span>
-              <span className="text-muted-foreground text-sm">for now</span>
+              <span className="font-serif text-5xl font-semibold">{t("landing.pricing.price")}</span>
+              <span className="text-muted-foreground text-sm">{t("landing.pricing.priceSuffix")}</span>
             </div>
             <ul className="space-y-3 mb-8">
-              {[
-                "All 5 modules · 20 lessons · 14 hours",
-                "AI Study Assistant trained on every lesson",
-                "Streaming HD video on every device",
-                "Notes, bookmarks, and transcripts",
-                "Telegram-native sign-in",
-                "New lessons added monthly",
-              ].map((f) => (
-                <li key={f} className="flex items-start gap-2 text-sm">
+              {pricingFeatures.map((f, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm">
                   <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                   <span>{f}</span>
                 </li>
               ))}
             </ul>
-            <Button asChild size="lg" className="w-full">
-              <Link to="/signup">Start learning free <ArrowRight className="h-4 w-4" /></Link>
-            </Button>
+            <Button asChild size="lg" className="w-full"><Link to="/signup">{t("landing.pricing.cta")} <ArrowRight className="h-4 w-4" /></Link></Button>
           </div>
-          <p className="text-xs text-center text-muted-foreground mt-4">
-            Premium tier coming soon · taught in English with Russian + Uzbek subtitles.
-          </p>
+          <p className="text-xs text-center text-muted-foreground mt-4">{t("landing.pricing.footnote")}</p>
         </div>
       </section>
 
-      {/* FAQ */}
       <section id="faq" className="py-20 md:py-28">
         <div className="container max-w-3xl">
-          <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-10 text-center">Questions, answered.</h2>
+          <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-10 text-center">{t("landing.faq.heading")}</h2>
           <Accordion type="single" collapsible className="space-y-2">
             {faq.map((item, i) => (
-              <AccordionItem
-                key={i}
-                value={`q-${i}`}
-                className="border border-border rounded-xl bg-card px-5"
-              >
-                <AccordionTrigger className="hover:no-underline py-4 text-left text-base font-medium">
-                  {item.q}
-                </AccordionTrigger>
-                <AccordionContent className="pb-4 text-muted-foreground leading-relaxed">
-                  {item.a}
-                </AccordionContent>
+              <AccordionItem key={i} value={`q-${i}`} className="border border-border rounded-xl bg-card px-5">
+                <AccordionTrigger className="hover:no-underline py-4 text-left text-base font-medium">{item.q}</AccordionTrigger>
+                <AccordionContent className="pb-4 text-muted-foreground leading-relaxed">{item.a}</AccordionContent>
               </AccordionItem>
             ))}
           </Accordion>
         </div>
       </section>
 
-      {/* FINAL CTA */}
       <section className="py-20 md:py-28 bg-secondary/60 border-y border-border">
         <div className="container max-w-2xl text-center space-y-6">
-          <h2 className="font-serif text-[36px] md:text-[48px] font-semibold tracking-tight">
-            Ready to start building?
-          </h2>
-          <p className="text-muted-foreground text-lg">Free signup · 2 minutes · cancel anytime.</p>
-          <Button asChild size="lg" className="text-base h-12 px-8">
-            <Link to="/signup">Start learning free <ArrowRight className="h-5 w-5" /></Link>
-          </Button>
+          <h2 className="font-serif text-[36px] md:text-[48px] font-semibold tracking-tight">{t("landing.finalCta.heading")}</h2>
+          <p className="text-muted-foreground text-lg">{t("landing.finalCta.sub")}</p>
+          <Button asChild size="lg" className="text-base h-12 px-8"><Link to="/signup">{t("landing.finalCta.button")} <ArrowRight className="h-5 w-5" /></Link></Button>
         </div>
       </section>
 
-      {/* FOOTER */}
       <footer className="bg-background border-t border-border">
         <div className="container py-12 grid md:grid-cols-3 gap-8">
           <div className="space-y-4">
             <Brand />
-            <p className="text-sm text-muted-foreground max-w-xs">A 14-hour curriculum for AI-native creators. Built in Tashkent, taught everywhere.</p>
+            <p className="text-sm text-muted-foreground max-w-xs">{t("landing.footer.tagline")}</p>
             <div className="flex gap-3">
-              <a href="https://t.me" target="_blank" rel="noreferrer" aria-label="Telegram" className="text-muted-foreground hover:text-primary transition-colors">
-                <MessageCircle className="h-5 w-5" />
-              </a>
-              <a href="https://twitter.com" target="_blank" rel="noreferrer" aria-label="Twitter" className="text-muted-foreground hover:text-primary transition-colors">
-                <Twitter className="h-5 w-5" />
-              </a>
+              <a href="https://t.me" target="_blank" rel="noreferrer" aria-label="Telegram" className="text-muted-foreground hover:text-primary transition-colors"><MessageCircle className="h-5 w-5" /></a>
+              <a href="https://twitter.com" target="_blank" rel="noreferrer" aria-label="Twitter" className="text-muted-foreground hover:text-primary transition-colors"><Twitter className="h-5 w-5" /></a>
             </div>
           </div>
           <div className="space-y-3 text-sm">
-            <div className="font-semibold text-xs uppercase tracking-wider text-muted-foreground">Course</div>
+            <div className="font-semibold text-xs uppercase tracking-wider text-muted-foreground">{t("landing.footer.course")}</div>
             <div className="space-y-2">
-              <a href="#curriculum" className="block hover:text-primary">Curriculum</a>
-              <a href="#instructor" className="block hover:text-primary">Instructor</a>
-              <a href="#pricing" className="block hover:text-primary">Pricing</a>
-              <a href="#faq" className="block hover:text-primary">FAQ</a>
+              <a href="#curriculum" className="block hover:text-primary">{t("landing.nav.curriculum")}</a>
+              <a href="#instructor" className="block hover:text-primary">{t("landing.nav.instructor")}</a>
+              <a href="#pricing" className="block hover:text-primary">{t("landing.nav.pricing")}</a>
+              <a href="#faq" className="block hover:text-primary">{t("landing.nav.faq")}</a>
             </div>
           </div>
           <div className="space-y-3 text-sm">
-            <div className="font-semibold text-xs uppercase tracking-wider text-muted-foreground">Company</div>
+            <div className="font-semibold text-xs uppercase tracking-wider text-muted-foreground">{t("landing.footer.company")}</div>
             <div className="space-y-2">
-              <Link to="/login" className="block hover:text-primary">Sign in</Link>
-              <Link to="/signup" className="block hover:text-primary">Sign up</Link>
-              <a href="mailto:hello@aicreators.app" className="block hover:text-primary">Contact</a>
+              <Link to="/login" className="block hover:text-primary">{t("landing.nav.signIn")}</Link>
+              <Link to="/signup" className="block hover:text-primary">{t("auth.signUp")}</Link>
+              <a href="mailto:hello@aicreators.app" className="block hover:text-primary">{t("landing.footer.contact")}</a>
             </div>
           </div>
         </div>
         <div className="border-t border-border">
           <div className="container py-5 text-xs text-muted-foreground flex flex-wrap items-center justify-between gap-2">
-            <span>© 2026 AI Creators · Made in Tashkent</span>
+            <span>{t("landing.footer.copyright")}</span>
             <span>{courseTitle}</span>
           </div>
         </div>
