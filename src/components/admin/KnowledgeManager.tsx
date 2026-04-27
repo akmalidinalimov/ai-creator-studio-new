@@ -139,7 +139,7 @@ export function KnowledgeManager({
           setJobs((prev) => prev.map((j) => {
             if (j.documentId !== row.id) return j;
             if (row.status === "ready") return { ...j, stage: "done" };
-            if (row.status === "failed") return { ...j, stage: "error", error: friendlyError(row.error || "Indexing failed") };
+            if (row.status === "failed") return { ...j, stage: "error", error: friendlyError(row.error || "Indexing failed", t) };
             return j;
           }));
         })
@@ -178,7 +178,7 @@ export function KnowledgeManager({
 
       const { error: upErr } = await uploadWithProgress(path, file, (pct) => updateJob(jobId, { progress: pct }));
       if (upErr) {
-        updateJob(jobId, { stage: "error", error: friendlyError(upErr) });
+        updateJob(jobId, { stage: "error", error: friendlyError(upErr, t) });
         continue;
       }
 
@@ -196,7 +196,7 @@ export function KnowledgeManager({
       } as any).select().single();
 
       if (insErr || !doc) {
-        updateJob(jobId, { stage: "error", error: friendlyError(insErr?.message || "Could not record document") });
+        updateJob(jobId, { stage: "error", error: friendlyError(insErr?.message || "Could not record document", t) });
         continue;
       }
 
@@ -204,7 +204,7 @@ export function KnowledgeManager({
 
       const { error: fnErr } = await supabase.functions.invoke("ingest-knowledge", { body: { documentId: (doc as any).id } });
       if (fnErr) {
-        updateJob(jobId, { stage: "error", error: friendlyError(fnErr.message) });
+        updateJob(jobId, { stage: "error", error: friendlyError(fnErr.message, t) });
       }
       // Otherwise we wait for the realtime status update to mark "done" / "error".
     }
@@ -216,7 +216,7 @@ export function KnowledgeManager({
     setJobs((p) => [...p, { id: jobId, name: doc.file_name, size: doc.size_bytes, stage: "indexing", progress: 100, documentId: doc.id }]);
     await supabase.from("ai_knowledge_documents").update({ status: "pending", error: null }).eq("id", doc.id);
     const { error } = await supabase.functions.invoke("ingest-knowledge", { body: { documentId: doc.id } });
-    if (error) updateJob(jobId, { stage: "error", error: friendlyError(error.message) });
+    if (error) updateJob(jobId, { stage: "error", error: friendlyError(error.message, t) });
   };
 
   const remove = async (doc: Doc) => {
@@ -337,7 +337,7 @@ export function KnowledgeManager({
                   )}
                   {d.status === "failed" && d.error && (
                     <div className="text-xs text-destructive mt-1 flex items-start gap-1">
-                      <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" /> {friendlyError(d.error)}
+                      <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" /> {friendlyError(d.error, t)}
                     </div>
                   )}
                 </div>
