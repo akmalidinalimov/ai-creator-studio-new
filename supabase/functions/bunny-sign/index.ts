@@ -10,10 +10,64 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+function bytesToBase64Url(bytes: Uint8Array) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  const b64 = btoa(s);
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
 async function sha256Base64Url(raw: string) {
   const hashBuf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
-  const b64 = btoa(String.fromCharCode(...new Uint8Array(hashBuf)));
-  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  return bytesToBase64Url(new Uint8Array(hashBuf));
+}
+
+async function sha256Of(raw: string): Promise<Uint8Array> {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
+  return new Uint8Array(buf);
+}
+
+function bytesToHex(bytes: Uint8Array) {
+  let h = "";
+  for (let i = 0; i < bytes.length; i++) h += bytes[i].toString(16).padStart(2, "0");
+  return h;
+}
+
+async function hmacSha256Base64Url(key: string, msg: string) {
+  const k = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(key),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(msg));
+  return bytesToBase64Url(new Uint8Array(sig));
+}
+
+async function computeVariants(KEY: string, token_path: string, expires: number, video_guid: string) {
+  const variants: { variant: string; token: string }[] = [];
+
+  variants.push({ variant: "sha256_concat", token: await sha256Base64Url(`${KEY}${token_path}${expires}`) });
+  variants.push({ variant: "sha256_concat_iponly", token: await sha256Base64Url(`${KEY}${token_path}${expires}`) });
+  variants.push({ variant: "sha256_reverse", token: await sha256Base64Url(`${token_path}${expires}${KEY}`) });
+  variants.push({ variant: "sha256_path_first", token: await sha256Base64Url(`${KEY}${expires}${token_path}`) });
+  variants.push({ variant: "hmac_sha256_path_expires", token: await hmacSha256Base64Url(KEY, `${token_path}${expires}`) });
+  variants.push({ variant: "hmac_sha256_expires_path", token: await hmacSha256Base64Url(KEY, `${expires}${token_path}`) });
+  variants.push({ variant: "hmac_sha256_path_only", token: await hmacSha256Base64Url(KEY, token_path) });
+
+  // sha256 -> hex -> base64url
+  const hexBytes = bytesToHex(await sha256Of(`${KEY}${token_path}${expires}`));
+  variants.push({ variant: "sha256_hex", token: bytesToBase64Url(new TextEncoder().encode(hexBytes)) });
+
+  variants.push({ variant: "sha256_encoded_path", token: await sha256Base64Url(`${KEY}${encodeURIComponent(token_path)}${expires}`) });
+  variants.push({ variant: "sha256_with_playlist", token: await sha256Base64Url(`${KEY}${token_path}playlist.m3u8${expires}`) });
+
+  // bonus: try with full path including playlist.m3u8 (no trailing slash on token_path)
+  const fullPath = `${token_path}${video_guid ? "" : ""}playlist.m3u8`;
+  variants.push({ variant: "sha256_fullpath_playlist", token: await sha256Base64Url(`${KEY}${fullPath}${expires}`) });
+
+  return variants;
 }
 
 Deno.serve(async (req) => {
@@ -72,13 +126,25 @@ Deno.serve(async (req) => {
       }
 
       const raw = `${KEY}${token_path}${expires}`;
-      const computed_token = await sha256Base64Url(raw);
-      const matches = computed_token === expected_token;
+      const video_guid = String(body?.video_guid || "").trim();
+      const variants = await computeVariants(KEY, token_path, expires, video_guid);
+
+      const candidates = variants.map((v) => ({
+        variant: v.variant,
+        token_preview: `${v.token.slice(0, 8)}...${v.token.slice(-8)}`,
+        matches: v.token === expected_token,
+      }));
+      const matchedVariant = variants.find((v) => v.token === expected_token);
 
       return new Response(
         JSON.stringify({
-          matches,
-          computed_token_preview: `${computed_token.slice(0, 8)}...${computed_token.slice(-8)}`,
+          match: {
+            variant: matchedVariant?.variant ?? null,
+            computed_token_preview: matchedVariant
+              ? `${matchedVariant.token.slice(0, 8)}...${matchedVariant.token.slice(-8)}`
+              : null,
+          },
+          candidates,
           expected_token_preview: `${expected_token.slice(0, 8)}...${expected_token.slice(-8)}`,
           secret_length: KEY?.length ?? 0,
           secret_first_chars: KEY?.slice(0, 2) ?? "",
