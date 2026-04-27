@@ -381,12 +381,17 @@ export default function LessonPage() {
             </div>
             <div className="p-3 border-t space-y-2">
               <div className="flex flex-wrap gap-1">
-                {["Explain this", "3 practice questions", "Summarize", "I'm stuck"].map((q) => (
-                  <button key={q} onClick={() => sendChat(q)} disabled={chatLoading} className="text-[11px] px-2 py-1 rounded-full border hover:bg-muted disabled:opacity-50">{q}</button>
+                {[
+                  { key: "explain", label: t("lesson.ai.chips.explain") },
+                  { key: "practice", label: t("lesson.ai.chips.practice") },
+                  { key: "summarize", label: t("lesson.ai.chips.summarize") },
+                  { key: "stuck", label: t("lesson.ai.chips.stuck") },
+                ].map((q) => (
+                  <button key={q.key} onClick={() => sendChat(q.label)} disabled={chatLoading} className="text-[11px] px-2 py-1 rounded-full border hover:bg-muted disabled:opacity-50">{q.label}</button>
                 ))}
               </div>
               <form onSubmit={(e) => { e.preventDefault(); sendChat(chatInput); }} className="flex gap-2">
-                <Input value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Ask the assistant…" disabled={chatLoading} />
+                <Input value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder={t("lesson.ai.placeholder")} disabled={chatLoading} />
                 <Button type="submit" size="icon" disabled={chatLoading || !chatInput.trim()}><Send className="h-4 w-4" /></Button>
               </form>
             </div>
