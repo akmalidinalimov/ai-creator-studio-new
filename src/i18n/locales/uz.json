@@ -538,6 +538,7 @@
       "indexing": "Indekslash",
       "ready": "Tayyor",
       "failed": "Xatolik",
+      "pending": "Kutilmoqda",
       "dismiss": "Yashirish",
       "uploadFailed": "Yuklash xatosi",
       "indexingFailed": "Indekslash xatosi",
