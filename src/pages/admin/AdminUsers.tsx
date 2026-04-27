@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
@@ -55,6 +56,7 @@ Elnur,Aliyev,elnur@example.com,AdminPass456!,@elnura,admin
 const FN_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
 
 export default function AdminUsers() {
+  const { t } = useTranslation();
   const { session } = useAuth();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
