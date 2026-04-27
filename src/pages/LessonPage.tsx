@@ -38,9 +38,6 @@ export default function LessonPage() {
   const [modules, setModules] = useState<any[]>([]);
   const [completed, setCompleted] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState<{ last_position_seconds: number } | null>(null);
-  const [notes, setNotes] = useState("");
-  const [bookmarks, setBookmarks] = useState<any[]>([]);
-  const [bmLabel, setBmLabel] = useState("");
   const [chatHistory, setChatHistory] = useState<Msg[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
