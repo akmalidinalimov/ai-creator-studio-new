@@ -33,16 +33,41 @@ function bytesToHex(bytes: Uint8Array) {
   return h;
 }
 
-async function hmacSha256Base64Url(key: string, msg: string) {
+async function hmacSha256Base64UrlBytes(keyBytes: Uint8Array, msgBytes: Uint8Array) {
   const k = await crypto.subtle.importKey(
     "raw",
-    new TextEncoder().encode(key),
+    keyBytes,
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],
   );
-  const sig = await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(msg));
+  const sig = await crypto.subtle.sign("HMAC", k, msgBytes);
   return bytesToBase64Url(new Uint8Array(sig));
+}
+
+async function hmacSha256Base64Url(key: string, msg: string) {
+  return hmacSha256Base64UrlBytes(new TextEncoder().encode(key), new TextEncoder().encode(msg));
+}
+
+function hexDecode(s: string): Uint8Array {
+  const clean = s.replace(/-/g, "").toLowerCase();
+  if (!/^[0-9a-f]+$/.test(clean) || clean.length % 2 !== 0) return new Uint8Array();
+  const bytes = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(clean.substr(i * 2, 2), 16);
+  return bytes;
+}
+
+async function sha256Base64UrlBytes(bytes: Uint8Array) {
+  const hashBuf = await crypto.subtle.digest("SHA-256", bytes);
+  return bytesToBase64Url(new Uint8Array(hashBuf));
+}
+
+function concatBytes(...arrs: Uint8Array[]) {
+  const total = arrs.reduce((n, a) => n + a.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const a of arrs) { out.set(a, off); off += a.length; }
+  return out;
 }
 
 async function computeVariants(KEY: string, token_path: string, expires: number, video_guid: string) {
