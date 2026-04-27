@@ -52,13 +52,13 @@ export default function CoursePage() {
 
   return (
     <PageShell>
-      <div className="grid lg:grid-cols-[1fr_320px] gap-8">
-        <div className="space-y-8">
-          <div>
+      <div className="grid lg:grid-cols-[1fr_320px] gap-8 min-w-0">
+        <div className="space-y-8 min-w-0">
+          <div className="min-w-0">
             <Link to="/dashboard" className="text-xs text-muted-foreground hover:text-foreground">{t("coursePage.backToDashboard")}</Link>
-            <h1 className="text-4xl font-semibold tracking-tight mt-2">{course.title}</h1>
-            <p className="text-lg text-muted-foreground mt-2 max-w-2xl">{course.tagline}</p>
-            <p className="mt-4 text-sm leading-relaxed max-w-2xl">{course.description}</p>
+            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-semibold tracking-tight mt-2 break-words">{course.title}</h1>
+            <p className="text-base sm:text-lg text-muted-foreground mt-2 max-w-2xl break-words">{course.tagline}</p>
+            <p className="mt-4 text-sm leading-relaxed max-w-2xl break-words">{course.description}</p>
           </div>
 
           <div className="space-y-6">
