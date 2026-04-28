@@ -242,6 +242,21 @@
     "popupBlocked": "Pop-up bloklandi — iltimos, ushbu sayt uchun pop-uplarga ruxsat bering.",
     "cancelled": "Telegram orqali kirish bekor qilindi."
   },
+  "telegramDeeplink": {
+    "label": "Telegram orqali kirish",
+    "waiting": "Telegramda Start tugmasini bosing…",
+    "didntOpen": "Telegram ochilmadimi?",
+    "openAgain": "Qaytadan ochish",
+    "expired": "Vaqt tugadi. Qaytadan urinib ko'ring.",
+    "retry": "Qaytadan urinish",
+    "startFailed": "Login boshlanmadi. Qaytadan urinib ko'ring."
+  },
+  "authMagic": {
+    "signingIn": "Kirilmoqda…",
+    "invalid": "Havola yaroqsiz yoki muddati tugagan.",
+    "invalidTitle": "Kirish amalga oshmadi",
+    "backToLogin": "Login sahifasiga qaytish"
+  },
   "landing": {
     "nav": {
       "curriculum": "Kurs dasturi",
