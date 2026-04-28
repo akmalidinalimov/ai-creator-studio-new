@@ -552,12 +552,47 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
     });
     return;
   }
+
+  if (cmd === "/sozlamalar" || cmd === "/settings") {
+    await renderSettings(admin, chatId, profile.id, locale);
+    return;
+  }
+}
+
+function settingsKeyboard(locale: Locale, prefs: { notifications_enabled: boolean; reminder_time: string; timezone: string }) {
+  const t = T[locale];
+  const time = (prefs.reminder_time || "20:00:00").slice(0, 5);
+  const tz = prefs.timezone || "Asia/Tashkent";
+  return {
+    inline_keyboard: [
+      [{ text: t.settingsBell(prefs.notifications_enabled), callback_data: "settings:toggle_bell" }],
+      [{ text: t.settingsTime(time), callback_data: "settings:pick_time" }],
+      [{ text: t.settingsTz(tz), callback_data: "settings:pick_tz" }],
+      [{ text: t.settingsDisableAll, callback_data: "settings:disable_all" }],
+    ],
+  };
+}
+
+async function renderSettings(admin: any, chatId: number, userId: string, locale: Locale) {
+  const { data: prefs } = await admin
+    .from("profiles")
+    .select("notifications_enabled, reminder_time, timezone")
+    .eq("id", userId)
+    .maybeSingle();
+  const t = T[locale];
+  await sendMessage(chatId, t.settingsTitle, settingsKeyboard(locale, prefs || { notifications_enabled: true, reminder_time: "20:00:00", timezone: "Asia/Tashkent" }));
 }
 
 async function handleCallback(admin: any, cq: any) {
   const data: string = cq.data || "";
   const tgId = cq.from.id as number;
   const chatId = cq.message?.chat?.id;
+
+  if (data === "ack:not_today") {
+    await answerCallback(cq.id, "OK 👍");
+    return;
+  }
+
   if (data.startsWith("setlang:") && chatId) {
     const lang = data.split(":")[1] as Locale;
     if (["uz", "ru", "en"].includes(lang)) {
@@ -566,11 +601,90 @@ async function handleCallback(admin: any, cq: any) {
         await admin.from("profiles").update({ preferred_locale: lang }).eq("id", profile.id);
       }
       await answerCallback(cq.id);
-      // Confirmation message attaches the reply keyboard with the NEW locale's labels.
       await sendWithKeyboard(chatId, T[lang].langSet, lang);
       return;
     }
   }
+
+  if (data.startsWith("settings:") && chatId) {
+    const profile = await findProfileByTelegramId(admin, tgId);
+    if (!profile) {
+      await answerCallback(cq.id);
+      return;
+    }
+    const locale: Locale = normLocale(profile.preferred_locale);
+    const t = T[locale];
+    const action = data.slice("settings:".length);
+
+    if (action === "toggle_bell") {
+      const { data: cur } = await admin
+        .from("profiles")
+        .select("notifications_enabled")
+        .eq("id", profile.id)
+        .maybeSingle();
+      const newVal = !(cur?.notifications_enabled ?? true);
+      await admin.from("profiles").update({ notifications_enabled: newVal }).eq("id", profile.id);
+      await answerCallback(cq.id, newVal ? t.settingsBellOn : t.settingsBellOff);
+      await renderSettings(admin, chatId, profile.id, locale);
+      return;
+    }
+
+    if (action === "disable_all") {
+      await admin.from("profiles").update({ notifications_enabled: false }).eq("id", profile.id);
+      await answerCallback(cq.id, t.settingsAllOff);
+      await renderSettings(admin, chatId, profile.id, locale);
+      return;
+    }
+
+    if (action === "pick_time") {
+      // Render hour picker 00-23 in 4 rows of 6
+      const rows: any[][] = [];
+      for (let r = 0; r < 4; r++) {
+        const row: any[] = [];
+        for (let c = 0; c < 6; c++) {
+          const hh = (r * 6 + c).toString().padStart(2, "0");
+          row.push({ text: `${hh}:00`, callback_data: `settings:set_time:${hh}` });
+        }
+        rows.push(row);
+      }
+      rows.push([{ text: t.back, callback_data: "settings:back" }]);
+      await answerCallback(cq.id);
+      await sendMessage(chatId, t.settingsPickHour, { inline_keyboard: rows });
+      return;
+    }
+
+    if (action.startsWith("set_time:")) {
+      const hh = action.slice("set_time:".length);
+      const time = `${hh}:00:00`;
+      await admin.from("profiles").update({ reminder_time: time }).eq("id", profile.id);
+      await answerCallback(cq.id, t.settingsTimeSet(`${hh}:00`));
+      await renderSettings(admin, chatId, profile.id, locale);
+      return;
+    }
+
+    if (action === "pick_tz") {
+      const rows = TIMEZONES.map((tz) => [{ text: tz, callback_data: `settings:set_tz:${tz}` }]);
+      rows.push([{ text: t.back, callback_data: "settings:back" }]);
+      await answerCallback(cq.id);
+      await sendMessage(chatId, t.settingsPickTz, { inline_keyboard: rows });
+      return;
+    }
+
+    if (action.startsWith("set_tz:")) {
+      const tz = action.slice("set_tz:".length);
+      await admin.from("profiles").update({ timezone: tz }).eq("id", profile.id);
+      await answerCallback(cq.id, t.settingsTzSet(tz));
+      await renderSettings(admin, chatId, profile.id, locale);
+      return;
+    }
+
+    if (action === "back") {
+      await answerCallback(cq.id);
+      await renderSettings(admin, chatId, profile.id, locale);
+      return;
+    }
+  }
+
   await answerCallback(cq.id);
 }
 
