@@ -12,7 +12,12 @@ const corsHeaders = {
 function localizedDate(locale: string): string {
   const d = new Date();
   try {
-    const lng = locale === "uz" ? "uz-UZ" : locale === "ru" ? "ru-RU" : "en-US";
+    if (locale === "uz") {
+      const dd = String(d.getDate()).padStart(2, "0");
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      return `${dd}.${mm}.${d.getFullYear()}`;
+    }
+    const lng = locale === "ru" ? "ru-RU" : "en-US";
     return new Intl.DateTimeFormat(lng, { year: "numeric", month: "long", day: "numeric" }).format(d);
   } catch {
     return d.toISOString().slice(0, 10);
