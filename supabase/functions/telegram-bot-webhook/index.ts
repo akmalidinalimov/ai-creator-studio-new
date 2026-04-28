@@ -129,7 +129,7 @@ const T = {
     backToSite: "Back to site →",
     welcome: (n: string) =>
       `Welcome, ${n}! Thanks for joining the course. Use the buttons below to get started:`,
-    btnFirstLesson: "📚 Open first lesson",
+    btnFirstLesson: "📚 Watch lesson",
     btnCourse: "📋 Course page",
     btnHelp: "💬 Help",
     streakReply: (s: number, w: number, p: number) =>
