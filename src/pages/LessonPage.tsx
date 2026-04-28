@@ -15,24 +15,18 @@ import { BunnyVideoPlayer } from "@/components/BunnyVideoPlayer";
 
 interface Msg { role: "user" | "assistant"; content: string }
 
-const LANGUAGES = [
-  { code: "en", label: "English" }, { code: "ru", label: "Русский" },
-  { code: "uz", label: "O'zbek" }, { code: "es", label: "Español" },
-  { code: "pt", label: "Português" }, { code: "ar", label: "العربية" },
-  { code: "fr", label: "Français" }, { code: "de", label: "Deutsch" },
-  { code: "hi", label: "हिन्दी" }, { code: "zh", label: "中文" },
-];
-function detectLang(): string {
-  if (typeof navigator === "undefined") return "en";
-  const code = (navigator.language || "en").toLowerCase().split("-")[0];
-  return LANGUAGES.some((l) => l.code === code) ? code : "en";
+const SUPPORTED_ASSISTANT_LANGS = ["uz", "ru", "en"] as const;
+function normalizeAssistantLang(code?: string | null): "uz" | "ru" | "en" {
+  const c = (code || "").toLowerCase().split("-")[0];
+  return (SUPPORTED_ASSISTANT_LANGS as readonly string[]).includes(c) ? (c as any) : "uz";
 }
 
 export default function LessonPage() {
   const { courseId, lessonId } = useParams();
   const { user, session } = useAuth();
   const navigate = useNavigate();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const language = normalizeAssistantLang(i18n.language);
 
   const [lesson, setLesson] = useState<any>(null);
   const [modules, setModules] = useState<any[]>([]);
