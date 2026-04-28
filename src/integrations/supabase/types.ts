@@ -332,6 +332,27 @@ export type Database = {
         }
         Relationships: []
       }
+      daily_watch_summary: {
+        Row: {
+          total_seconds: number
+          updated_at: string
+          user_id: string
+          watch_date: string
+        }
+        Insert: {
+          total_seconds?: number
+          updated_at?: string
+          user_id: string
+          watch_date: string
+        }
+        Update: {
+          total_seconds?: number
+          updated_at?: string
+          user_id?: string
+          watch_date?: string
+        }
+        Relationships: []
+      }
       email_events: {
         Row: {
           id: string
@@ -500,30 +521,39 @@ export type Database = {
       lesson_progress: {
         Row: {
           completed_at: string | null
+          duration_seconds_v2: number | null
           id: string
           last_position_seconds: number | null
           lesson_id: string
+          max_position_seconds: number
           seconds_watched: number | null
           updated_at: string
           user_id: string
+          watch_seconds_total: number
         }
         Insert: {
           completed_at?: string | null
+          duration_seconds_v2?: number | null
           id?: string
           last_position_seconds?: number | null
           lesson_id: string
+          max_position_seconds?: number
           seconds_watched?: number | null
           updated_at?: string
           user_id: string
+          watch_seconds_total?: number
         }
         Update: {
           completed_at?: string | null
+          duration_seconds_v2?: number | null
           id?: string
           last_position_seconds?: number | null
           lesson_id?: string
+          max_position_seconds?: number
           seconds_watched?: number | null
           updated_at?: string
           user_id?: string
+          watch_seconds_total?: number
         }
         Relationships: [
           {
@@ -936,6 +966,15 @@ export type Database = {
           scope: Database["public"]["Enums"]["knowledge_scope"]
           similarity: number
         }[]
+      }
+      track_video_progress: {
+        Args: {
+          p_current_time: number
+          p_delta_seconds: number
+          p_duration: number
+          p_lesson_id: string
+        }
+        Returns: Json
       }
     }
     Enums: {

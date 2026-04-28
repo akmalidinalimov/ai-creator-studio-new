@@ -12,7 +12,8 @@
     "optional": "Ixtiyoriy",
     "search": "Qidirish",
     "language": "Til",
-    "retry": "Qayta urinish"
+    "retry": "Qayta urinish",
+    "more": "yana"
   },
   "nav": {
     "dashboard": "Bosh sahifa",
@@ -129,7 +130,9 @@
     "markComplete": "Tugatildi",
     "allModules": "Barcha modullar",
     "markedCompleteToast": "Dars tugatildi deb belgilandi",
-    "video": { "unavailable": "Bu dars uchun video mavjud emas." },
+    "video": {
+      "unavailable": "Bu dars uchun video mavjud emas."
+    },
     "bunny": {
       "loading": "Himoyalangan video yuklanmoqda…",
       "errorTitle": "Videoni yuklab bo'lmadi",
@@ -268,9 +271,18 @@
       "heading": "Yakunda siz quyidagilarni o'rganasiz:",
       "subheading": "Uchta aniq natija — quruq va'dalar emas.",
       "items": [
-        { "title": "Mini-film yarating.", "body": "Stsenariydan kalit kadrlargacha va ko'p planli animatsiyagacha. 3-modul yakunida sizning tayyor filmingiz bo'ladi." },
-        { "title": "O'z uslubingizni shakllantiring.", "body": "Kompozitsiya, namunalar, palitra. Talabalar sun'iy intellekt prompt-cheat sheet bilan emas, vizual imzo bilan chiqadi." },
-        { "title": "Mahoratni daromadga aylantiring.", "body": "Mahsulotlashtiring, soting, kengaytiring. 5-modul takliflar, narx-navo va ishlaydigan ishga tushirish rejasini o'z ichiga oladi." }
+        {
+          "title": "Mini-film yarating.",
+          "body": "Stsenariydan kalit kadrlargacha va ko'p planli animatsiyagacha. 3-modul yakunida sizning tayyor filmingiz bo'ladi."
+        },
+        {
+          "title": "O'z uslubingizni shakllantiring.",
+          "body": "Kompozitsiya, namunalar, palitra. Talabalar sun'iy intellekt prompt-cheat sheet bilan emas, vizual imzo bilan chiqadi."
+        },
+        {
+          "title": "Mahoratni daromadga aylantiring.",
+          "body": "Mahsulotlashtiring, soting, kengaytiring. 5-modul takliflar, narx-navo va ishlaydigan ishga tushirish rejasini o'z ichiga oladi."
+        }
       ]
     },
     "curriculum": {
@@ -288,9 +300,18 @@
     "howItWorks": {
       "heading": "Bu qanday ishlaydi",
       "steps": [
-        { "title": "Bepul ro'yxatdan o'ting.", "body": "Telegram, Google yoki email orqali bir bosishda. Karta talab qilinmaydi." },
-        { "title": "Tomosha qiling va eslatma yozing.", "body": "Darslar HD sifatida oqadi. AI O'quv yordamchingiz matnni eslab qoladi." },
-        { "title": "Birinchi loyihangizni ishga tushiring.", "body": "Modul mashqlari haqiqiy ish — rasm to'plamlari, stsenariylar, mini-filmlar, takliflar yaratadi." }
+        {
+          "title": "Bepul ro'yxatdan o'ting.",
+          "body": "Telegram, Google yoki email orqali bir bosishda. Karta talab qilinmaydi."
+        },
+        {
+          "title": "Tomosha qiling va eslatma yozing.",
+          "body": "Darslar HD sifatida oqadi. AI O'quv yordamchingiz matnni eslab qoladi."
+        },
+        {
+          "title": "Birinchi loyihangizni ishga tushiring.",
+          "body": "Modul mashqlari haqiqiy ish — rasm to'plamlari, stsenariylar, mini-filmlar, takliflar yaratadi."
+        }
       ]
     },
     "showcase": {
@@ -316,14 +337,38 @@
     "faq": {
       "heading": "Savollarga javoblar.",
       "items": [
-        { "q": "Boshlash uchun AI tajribasi kerakmi?", "a": "Yo'q. Birinchi modul nol bilim bilan boshlanadi — 3-darsda siz allaqachon rasmlar yaratishni boshlaysiz." },
-        { "q": "Haftasiga qancha vaqt kerak?", "a": "3–5 soat. To'liq kurs ~14 soat; ko'pchilik talabalar 4–6 hafta ichida tugatadi." },
-        { "q": "Telefonda kuzatib borish mumkinmi?", "a": "Ha. Video pleer va AI ustoz mobil-birinchi yondashuvda. Darslar moslashuvchan HD sifatida oqadi." },
-        { "q": "Darsda qiynalsam-chi?", "a": "Har bir darsda AI O'quv yordamchisi bor — u matnga o'rgatilgan va tushuntirib, qisqacha aytib yoki test qilib bera oladi." },
-        { "q": "Sertifikat berasizmi?", "a": "Modul darajasidagi tugatish sertifikatlari keyingi yangilanishda chiqadi." },
-        { "q": "Kontent ingliz, rus yoki o'zbek tilidami?", "a": "Darslar ingliz tilida olib boriladi, rus va o'zbek subtitrlari bilan. Interfeys to'liq tarjima qilingan." },
-        { "q": "Videolarni yuklab olish mumkinmi?", "a": "Yo'q — videolar ijodkor mulkini himoya qilish uchun xavfsiz xotiradan oqadi. Eslatmalar va matnlarni yuklab olish mumkin." },
-        { "q": "Qanday bekor qilaman?", "a": "Ro'yxatdan o'tish bepul. Premium tarifimiz ishga tushgunga qadar bekor qilinadigan narsa yo'q." }
+        {
+          "q": "Boshlash uchun AI tajribasi kerakmi?",
+          "a": "Yo'q. Birinchi modul nol bilim bilan boshlanadi — 3-darsda siz allaqachon rasmlar yaratishni boshlaysiz."
+        },
+        {
+          "q": "Haftasiga qancha vaqt kerak?",
+          "a": "3–5 soat. To'liq kurs ~14 soat; ko'pchilik talabalar 4–6 hafta ichida tugatadi."
+        },
+        {
+          "q": "Telefonda kuzatib borish mumkinmi?",
+          "a": "Ha. Video pleer va AI ustoz mobil-birinchi yondashuvda. Darslar moslashuvchan HD sifatida oqadi."
+        },
+        {
+          "q": "Darsda qiynalsam-chi?",
+          "a": "Har bir darsda AI O'quv yordamchisi bor — u matnga o'rgatilgan va tushuntirib, qisqacha aytib yoki test qilib bera oladi."
+        },
+        {
+          "q": "Sertifikat berasizmi?",
+          "a": "Modul darajasidagi tugatish sertifikatlari keyingi yangilanishda chiqadi."
+        },
+        {
+          "q": "Kontent ingliz, rus yoki o'zbek tilidami?",
+          "a": "Darslar ingliz tilida olib boriladi, rus va o'zbek subtitrlari bilan. Interfeys to'liq tarjima qilingan."
+        },
+        {
+          "q": "Videolarni yuklab olish mumkinmi?",
+          "a": "Yo'q — videolar ijodkor mulkini himoya qilish uchun xavfsiz xotiradan oqadi. Eslatmalar va matnlarni yuklab olish mumkin."
+        },
+        {
+          "q": "Qanday bekor qilaman?",
+          "a": "Ro'yxatdan o'tish bepul. Premium tarifimiz ishga tushgunga qadar bekor qilinadigan narsa yo'q."
+        }
       ]
     },
     "finalCta": {
@@ -375,7 +420,10 @@
     "overview": {
       "title": "Administrator",
       "subtitle": "Talabalar, kurslar va platforma holatini boshqarish.",
-      "tabs": { "overview": "Umumiy", "students": "Talabalar" },
+      "tabs": {
+        "overview": "Umumiy",
+        "students": "Talabalar"
+      },
       "stats": {
         "totalStudents": "Jami talabalar",
         "new7d": "Yangi (7k)",
@@ -436,7 +484,12 @@
         "subtitle": "Oxirgi 25 ta administrator o'zgarishi.",
         "viewAll": "Barchasini ko'rish",
         "empty": "Hali administrator amallari yo'q.",
-        "headers": { "when": "Qachon", "actor": "Kim", "action": "Amal", "target": "Obyekt" }
+        "headers": {
+          "when": "Qachon",
+          "actor": "Kim",
+          "action": "Amal",
+          "target": "Obyekt"
+        }
       },
       "loadFailed": "Analitikani yuklab bo'lmadi"
     },
@@ -784,7 +837,12 @@
         "30": "Oxirgi 30 kun",
         "90": "Oxirgi 90 kun"
       },
-      "headers": { "when": "Qachon", "actor": "Kim", "action": "Amal", "target": "Obyekt" },
+      "headers": {
+        "when": "Qachon",
+        "actor": "Kim",
+        "action": "Amal",
+        "target": "Obyekt"
+      },
       "loading": "Yuklanmoqda…",
       "empty": "Bu davrda amallar yo'q.",
       "actions": {
@@ -821,10 +879,31 @@
       "docs": "Hujjatlar",
       "step2Title": "2. Backend Lovable Cloud da qoladi",
       "step2Desc": "Auth, DB, fayl saqlash va edge-funksiyalar boshqariladigan bo'lib qoladi. Faqat React frontend o'z VPS yoki statik xostingingizga joylanadi. Env o'zgaruvchilaringiz:",
-      "tabs": { "vps": "Hostinger VPS", "vercel": "Vercel", "netlify": "Netlify", "cloudflare": "Cloudflare", "static": "Statik" },
+      "tabs": {
+        "vps": "Hostinger VPS",
+        "vercel": "Vercel",
+        "netlify": "Netlify",
+        "cloudflare": "Cloudflare",
+        "static": "Statik"
+      },
       "scaling": "📹 30 soatlik kurslar uchun video masshtablash",
       "scalingDesc": "To'g'ridan-to'g'ri yuklash <200 MB darslar uchun ishlaydi. Katta hajmda HD video uchun (500+ talaba) Bunny Stream (~$1/oy 100 GB ga, global CDN, avtomatik HLS) yoki Mux dan foydalaning. Dars muharririda video manbasini Embed → Bunny / Mux ga o'tkazing va video ID ni joylashtiring. Pleyer hls.js orqali avtomatik HLS adaptive bitrate ishlatadi.",
       "copied": "Nusxalandi"
     }
+  },
+  "weekly_study_time": {
+    "title": "Haftalik o'rganish",
+    "empty": "Hali ma'lumot yo'q"
+  },
+  "forecast": {
+    "title": "Tugatish prognozi",
+    "subline": "Joriy tezligingizda",
+    "keep_going_title": "Davom eting!",
+    "keep_going_sub": "Bu hafta darslarni davom ettiring",
+    "complete": "Tabriklaymiz!"
+  },
+  "modules": {
+    "progress_title": "Modullar bo'yicha taraqqiyot",
+    "not_started": "Hali boshlanmadi"
   }
 }

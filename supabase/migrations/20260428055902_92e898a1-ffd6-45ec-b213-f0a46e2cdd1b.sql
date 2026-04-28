@@ -1,0 +1,2 @@
+REVOKE EXECUTE ON FUNCTION public.track_video_progress(uuid, numeric, numeric, numeric) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.track_video_progress(uuid, numeric, numeric, numeric) TO authenticated;

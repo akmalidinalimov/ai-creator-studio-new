@@ -12,7 +12,8 @@
     "optional": "Optional",
     "search": "Search",
     "language": "Language",
-    "retry": "Retry"
+    "retry": "Retry",
+    "more": "more"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -129,7 +130,9 @@
     "markComplete": "Mark complete",
     "allModules": "All modules",
     "markedCompleteToast": "Lesson marked complete",
-    "video": { "unavailable": "Video is not available for this lesson." },
+    "video": {
+      "unavailable": "Video is not available for this lesson."
+    },
     "bunny": {
       "loading": "Loading secure video…",
       "errorTitle": "Video failed to load",
@@ -268,9 +271,18 @@
       "heading": "By the end, you will:",
       "subheading": "Three concrete outcomes — not vague promises.",
       "items": [
-        { "title": "Ship a mini-film.", "body": "From script to anchor frames to multishot animation. By the end of module 3, you have a finished film." },
-        { "title": "Build a recognizable style.", "body": "Composition, references, palettes. Students leave with a visual signature, not a prompt cheat-sheet." },
-        { "title": "Turn skill into income.", "body": "Productize, sell, scale. Module 5 covers offers, pricing, and the launch playbook that actually works." }
+        {
+          "title": "Ship a mini-film.",
+          "body": "From script to anchor frames to multishot animation. By the end of module 3, you have a finished film."
+        },
+        {
+          "title": "Build a recognizable style.",
+          "body": "Composition, references, palettes. Students leave with a visual signature, not a prompt cheat-sheet."
+        },
+        {
+          "title": "Turn skill into income.",
+          "body": "Productize, sell, scale. Module 5 covers offers, pricing, and the launch playbook that actually works."
+        }
       ]
     },
     "curriculum": {
@@ -288,9 +300,18 @@
     "howItWorks": {
       "heading": "How it works",
       "steps": [
-        { "title": "Sign up free.", "body": "One click with Telegram, Google, or email. No card required." },
-        { "title": "Watch and take notes.", "body": "Lessons stream in HD. Your AI Study Assistant has the transcript memorized." },
-        { "title": "Ship your first project.", "body": "Module exercises produce real work — image sets, scripts, mini-films, offers." }
+        {
+          "title": "Sign up free.",
+          "body": "One click with Telegram, Google, or email. No card required."
+        },
+        {
+          "title": "Watch and take notes.",
+          "body": "Lessons stream in HD. Your AI Study Assistant has the transcript memorized."
+        },
+        {
+          "title": "Ship your first project.",
+          "body": "Module exercises produce real work — image sets, scripts, mini-films, offers."
+        }
       ]
     },
     "showcase": {
@@ -316,14 +337,38 @@
     "faq": {
       "heading": "Questions, answered.",
       "items": [
-        { "q": "Do I need any AI experience to start?", "a": "No. The first module assumes zero background — you'll be generating images by lesson 3." },
-        { "q": "How much time per week?", "a": "3–5 hours. The full curriculum is ~14 hours; most students finish in 4–6 weeks." },
-        { "q": "Can I follow on my phone?", "a": "Yes. The video player and AI tutor are mobile-first. Lessons stream in adaptive HD." },
-        { "q": "What if I get stuck on a lesson?", "a": "Every lesson has the AI Study Assistant — it's trained on the transcript and can explain, summarize, or quiz you." },
-        { "q": "Do you provide certificates?", "a": "Module-level certificates of completion will roll out in the next update." },
-        { "q": "Is the content in English, Russian, or Uzbek?", "a": "Lessons are taught in English with Russian and Uzbek subtitles. UI is fully translated." },
-        { "q": "Can I download the videos?", "a": "No — videos stream from secure storage to protect creator IP. Notes and transcripts are downloadable." },
-        { "q": "How do I cancel?", "a": "Signup is free. There's nothing to cancel until our premium tier launches." }
+        {
+          "q": "Do I need any AI experience to start?",
+          "a": "No. The first module assumes zero background — you'll be generating images by lesson 3."
+        },
+        {
+          "q": "How much time per week?",
+          "a": "3–5 hours. The full curriculum is ~14 hours; most students finish in 4–6 weeks."
+        },
+        {
+          "q": "Can I follow on my phone?",
+          "a": "Yes. The video player and AI tutor are mobile-first. Lessons stream in adaptive HD."
+        },
+        {
+          "q": "What if I get stuck on a lesson?",
+          "a": "Every lesson has the AI Study Assistant — it's trained on the transcript and can explain, summarize, or quiz you."
+        },
+        {
+          "q": "Do you provide certificates?",
+          "a": "Module-level certificates of completion will roll out in the next update."
+        },
+        {
+          "q": "Is the content in English, Russian, or Uzbek?",
+          "a": "Lessons are taught in English with Russian and Uzbek subtitles. UI is fully translated."
+        },
+        {
+          "q": "Can I download the videos?",
+          "a": "No — videos stream from secure storage to protect creator IP. Notes and transcripts are downloadable."
+        },
+        {
+          "q": "How do I cancel?",
+          "a": "Signup is free. There's nothing to cancel until our premium tier launches."
+        }
       ]
     },
     "finalCta": {
@@ -375,7 +420,10 @@
     "overview": {
       "title": "Admin",
       "subtitle": "Manage students, courses, and platform health.",
-      "tabs": { "overview": "Overview", "students": "Students" },
+      "tabs": {
+        "overview": "Overview",
+        "students": "Students"
+      },
       "stats": {
         "totalStudents": "Total students",
         "new7d": "New (7d)",
@@ -436,7 +484,12 @@
         "subtitle": "Last 25 administrative changes.",
         "viewAll": "View all",
         "empty": "No admin actions yet.",
-        "headers": { "when": "When", "actor": "Actor", "action": "Action", "target": "Target" }
+        "headers": {
+          "when": "When",
+          "actor": "Actor",
+          "action": "Action",
+          "target": "Target"
+        }
       },
       "loadFailed": "Failed to load analytics"
     },
@@ -784,7 +837,12 @@
         "30": "Last 30 days",
         "90": "Last 90 days"
       },
-      "headers": { "when": "When", "actor": "Actor", "action": "Action", "target": "Target" },
+      "headers": {
+        "when": "When",
+        "actor": "Actor",
+        "action": "Action",
+        "target": "Target"
+      },
       "loading": "Loading…",
       "empty": "No actions in this range.",
       "actions": {
@@ -821,10 +879,31 @@
       "docs": "Docs",
       "step2Title": "2. Backend stays on Lovable Cloud",
       "step2Desc": "Auth, database, file storage, and edge functions remain managed. Only the React frontend deploys to your VPS or static host. Your env vars:",
-      "tabs": { "vps": "Hostinger VPS", "vercel": "Vercel", "netlify": "Netlify", "cloudflare": "Cloudflare", "static": "Static" },
+      "tabs": {
+        "vps": "Hostinger VPS",
+        "vercel": "Vercel",
+        "netlify": "Netlify",
+        "cloudflare": "Cloudflare",
+        "static": "Static"
+      },
       "scaling": "📹 Scaling video for 30-hour courses",
       "scalingDesc": "Direct upload works for <200 MB lessons. For HD video at scale (500+ students), use Bunny Stream (~$1/month per 100 GB delivered, global CDN, automatic HLS encoding) or Mux. In the lesson editor, switch the video source to Embed → Bunny / Mux and paste your video ID. The player auto-uses HLS adaptive bitrate via hls.js.",
       "copied": "Copied"
     }
+  },
+  "weekly_study_time": {
+    "title": "Weekly study",
+    "empty": "No data yet"
+  },
+  "forecast": {
+    "title": "Completion forecast",
+    "subline": "At your current pace",
+    "keep_going_title": "Keep going!",
+    "keep_going_sub": "Pick a lesson this week",
+    "complete": "Congrats!"
+  },
+  "modules": {
+    "progress_title": "Module progress",
+    "not_started": "Not started"
   }
 }
