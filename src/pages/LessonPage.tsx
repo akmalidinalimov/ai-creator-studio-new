@@ -261,6 +261,9 @@ export default function LessonPage() {
           libraryId={bunnyLib}
           videoGuid={bunnyGuid}
           watermarkEmail={user?.email || "student"}
+          resumeSeconds={progress?.last_position_seconds || 0}
+          onTimeUpdate={onBunnyTime}
+          onEnded={onBunnyEnded}
         />
       );
     }
