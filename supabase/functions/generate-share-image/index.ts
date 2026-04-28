@@ -141,6 +141,7 @@ Deno.serve(async (req) => {
   const svg = buildSvg({ fullName, courseTitle, date, headline, subtitle, dateLabel });
 
   try {
+    await ensureWasm();
     const resvg = new Resvg(svg, { fitTo: { mode: "width", value: 1080 } });
     const png = resvg.render().asPng();
     return new Response(png, {
