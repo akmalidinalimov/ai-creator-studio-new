@@ -146,6 +146,45 @@ async function sendMessage(chatId: number, text: string, reply_markup?: unknown)
   });
 }
 
+function getMainKeyboard(locale: Locale) {
+  const t = T[locale];
+  return {
+    keyboard: [
+      [{ text: t.kbDavom }],
+      [{ text: t.kbStreak }, { text: t.kbCert }],
+      [{ text: t.kbLang }, { text: t.kbHelp }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+  };
+}
+
+// Send a message that always carries the persistent reply keyboard.
+async function sendWithKeyboard(chatId: number, text: string, locale: Locale) {
+  return sendMessage(chatId, text, getMainKeyboard(locale));
+}
+
+// After sending an inline-keyboard message, follow up with a tiny hint that
+// re-applies the persistent reply keyboard (since you can't combine both).
+async function sendKeyboardHint(chatId: number, locale: Locale) {
+  return sendMessage(chatId, T[locale].kbHint, getMainKeyboard(locale));
+}
+
+// Map ANY localized keyboard label to a canonical command, regardless of user's
+// current locale (a student might tap a button rendered in their old locale).
+function buttonTextToCommand(text: string): string | null {
+  const trimmed = text.trim();
+  for (const loc of ["uz", "ru", "en"] as Locale[]) {
+    const t = T[loc];
+    if (trimmed === t.kbDavom) return "/davom";
+    if (trimmed === t.kbStreak) return "/streak";
+    if (trimmed === t.kbCert) return "/sertifikat";
+    if (trimmed === t.kbLang) return "/til";
+    if (trimmed === t.kbHelp) return "/yordam";
+  }
+  return null;
+}
+
 async function answerCallback(id: string, text?: string) {
   return tgApi("answerCallbackQuery", { callback_query_id: id, text: text || "" });
 }
