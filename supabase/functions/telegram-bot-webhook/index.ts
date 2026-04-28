@@ -80,6 +80,12 @@ const T = {
     noProfile: "Аккаунт не найден. Сначала зарегистрируйтесь на сайте.",
     noNextLesson: "Новых уроков нет. Попробуйте позже.",
     noCourse: "Курс не найден.",
+    kbDavom: "📚 Продолжить",
+    kbStreak: "📊 Моя статистика",
+    kbCert: "🎓 Сертификат",
+    kbLang: "🌐 Язык",
+    kbHelp: "❓ Помощь",
+    kbHint: "👇 Используйте кнопки ниже",
   },
   en: {
     expired: "Login link expired. Return to the site and try again.",
