@@ -334,14 +334,6 @@ export default function LessonPage() {
           <div className="px-4 py-3 border-b flex items-center gap-2 flex-wrap">
             <Sparkles className="h-4 w-4" />
             <span className="text-sm font-medium">{t("lesson.ai.title")}</span>
-            <div className="ml-auto">
-              <Select value={language} onValueChange={onLanguageChange}>
-                <SelectTrigger className="h-8 text-xs w-[130px]"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {LANGUAGES.map((l) => <SelectItem key={l.code} value={l.code} className="text-xs">{l.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
           </div>
           <div className="flex-1 max-h-[400px] overflow-y-auto p-3 space-y-3 scrollbar-thin">
             {chatHistory.length === 0 && (
