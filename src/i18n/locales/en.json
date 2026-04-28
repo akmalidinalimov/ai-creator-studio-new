@@ -242,6 +242,21 @@
     "popupBlocked": "Popup blocked — please allow popups for this site.",
     "cancelled": "Telegram sign-in cancelled."
   },
+  "telegramDeeplink": {
+    "label": "Sign in with Telegram",
+    "waiting": "Tap Start in Telegram…",
+    "didntOpen": "Telegram didn't open?",
+    "openAgain": "Open again",
+    "expired": "Timed out. Try again.",
+    "retry": "Try again",
+    "startFailed": "Couldn't start sign-in. Try again."
+  },
+  "authMagic": {
+    "signingIn": "Signing you in…",
+    "invalid": "This link is invalid or expired.",
+    "invalidTitle": "Couldn't sign in",
+    "backToLogin": "Back to login"
+  },
   "landing": {
     "nav": {
       "curriculum": "Curriculum",

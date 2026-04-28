@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { Loader2, Mail, Lock } from "lucide-react";
-import { TelegramLoginButton } from "@/components/TelegramLoginButton";
+import { TelegramDeeplinkButton } from "@/components/TelegramDeeplinkButton";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
 const GoogleIcon = () => (
@@ -160,21 +160,8 @@ export default function Login() {
     setLoading(false);
   };
 
-  const onTelegram = async (tg: any) => {
-    setLoading(true);
-    try {
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-auth`;
-      const r = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tg, redirectTo: `${window.location.origin}/dashboard` }),
-      });
-      const res = await r.json();
-      if (res?.url) { window.location.href = res.url; return; }
-      toast.error(res?.error || t("auth.telegramFailed"));
-    } finally {
-      setLoading(false);
-    }
+  const onTelegramSuccess = () => {
+    navigate(role === "admin" ? "/admin" : "/dashboard", { replace: true });
   };
 
   const isLocked = lockedUntil !== null && remainingMs > 0;
@@ -197,7 +184,7 @@ export default function Login() {
       <Button variant="outline" className="w-full" onClick={onGoogle} disabled={loading || isLocked}>
         <GoogleIcon /> {t("auth.continueGoogle")}
       </Button>
-      <TelegramLoginButton onAuth={onTelegram} />
+      <TelegramDeeplinkButton onSuccess={onTelegramSuccess} />
       <Button variant="outline" className="w-full" onClick={onMagicLink} disabled={loading || isLocked || !email}>
         <Mail className="h-4 w-4" /> {t("auth.magicLink")}
       </Button>

@@ -18,6 +18,7 @@ import QuizPage from "./pages/QuizPage";
 import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 import Landing from "./pages/Landing";
+import AuthMagicLink from "./pages/AuthMagicLink";
 
 // Lazy-load admin pages (code-split)
 const AdminDashboard = lazy(() => import("./pages/admin/AdminDashboard"));
@@ -52,6 +53,7 @@ const App = () => (
             <Route path="/signup" element={<Signup />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/auth/magic" element={<AuthMagicLink />} />
             <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
             <Route path="/course/:courseId" element={<RequireAuth><CoursePage /></RequireAuth>} />
             <Route path="/lesson/:courseId/:lessonId" element={<RequireAuth><LessonPage /></RequireAuth>} />
