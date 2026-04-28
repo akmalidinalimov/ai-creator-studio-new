@@ -555,13 +555,25 @@ Deno.serve(async (req) => {
         if (arg.startsWith("login_")) {
           const tok = arg.slice(6);
           await handleStartLogin(admin, msg, tok, locale);
+        } else if (profileForLocale) {
+          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
         } else {
           await sendMessage(msg.chat.id, T[locale].helpReply);
         }
       } else if (text === "/start") {
-        await sendMessage(msg.chat.id, T[locale].helpReply);
+        if (profileForLocale) {
+          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
+        } else {
+          await sendMessage(msg.chat.id, T[locale].helpReply);
+        }
       } else if (text.startsWith("/")) {
         await handleCommand(admin, msg, text.split(/\s+/)[0]);
+      } else {
+        // Reply-keyboard button text router — match across all locales.
+        const mapped = buttonTextToCommand(text);
+        if (mapped) {
+          await handleCommand(admin, msg, mapped);
+        }
       }
     } else if (update.callback_query) {
       await handleCallback(admin, update.callback_query);
