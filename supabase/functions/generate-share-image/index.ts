@@ -2,7 +2,18 @@
 // Uses pdf-lib to render a PDF page at 1080x1080, then converts via @cf-wasm/resvg-js.
 // Output is a PNG (≤500KB) suitable for Instagram/Telegram stories.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { Resvg } from "https://esm.sh/@cf-wasm/resvg@2.6.2/others";
+import { Resvg, initWasm } from "https://esm.sh/@resvg/resvg-wasm@2.6.2";
+
+let wasmReady: Promise<void> | null = null;
+async function ensureWasm() {
+  if (!wasmReady) {
+    wasmReady = (async () => {
+      const wasm = await fetch("https://esm.sh/@resvg/resvg-wasm@2.6.2/index_bg.wasm").then((r) => r.arrayBuffer());
+      await initWasm(wasm);
+    })();
+  }
+  return wasmReady;
+}
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
