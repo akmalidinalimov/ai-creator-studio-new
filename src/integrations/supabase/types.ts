@@ -739,6 +739,51 @@ export type Database = {
           },
         ]
       }
+      notification_template_variables: {
+        Row: {
+          description: string | null
+          template_key: string
+          variable_name: string
+        }
+        Insert: {
+          description?: string | null
+          template_key: string
+          variable_name: string
+        }
+        Update: {
+          description?: string | null
+          template_key?: string
+          variable_name?: string
+        }
+        Relationships: []
+      }
+      notification_templates: {
+        Row: {
+          body: string
+          button_label: string | null
+          locale: string
+          template_key: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          body: string
+          button_label?: string | null
+          locale: string
+          template_key: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          body?: string
+          button_label?: string | null
+          locale?: string
+          template_key?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       notifications_log: {
         Row: {
           id: string
