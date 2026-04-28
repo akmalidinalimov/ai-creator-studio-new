@@ -424,16 +424,17 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   }
 
   const cmd = cmdRaw.split("@")[0].toLowerCase();
+  const kb = getMainKeyboard(locale);
 
   if (cmd === "/davom") {
     const courseId = await getDefaultCourseId(admin);
     if (!courseId) {
-      await sendMessage(chatId, t.noCourse);
+      await sendWithKeyboard(chatId, t.noCourse, locale);
       return;
     }
     const next = await getNextIncompleteLesson(admin, profile.id, courseId);
     if (!next) {
-      await sendMessage(chatId, t.noNextLesson);
+      await sendWithKeyboard(chatId, t.noNextLesson, locale);
       return;
     }
     const url = await createMagicLink(admin, profile.id, "deeplink_lesson", `/lesson/${courseId}/${next.id}`);
@@ -444,7 +445,7 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   if (cmd === "/dars") {
     const courseId = await getDefaultCourseId(admin);
     if (!courseId) {
-      await sendMessage(chatId, t.noCourse);
+      await sendWithKeyboard(chatId, t.noCourse, locale);
       return;
     }
     const url = await createMagicLink(admin, profile.id, "deeplink_course", `/course/${courseId}`);
@@ -454,25 +455,28 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
 
   if (cmd === "/streak") {
     const s = await computeStats(admin, profile.id);
-    await sendMessage(chatId, t.streakReply(s.streak, s.weekMin, s.pct));
+    await sendWithKeyboard(chatId, t.streakReply(s.streak, s.weekMin, s.pct), locale);
     return;
   }
 
   if (cmd === "/sertifikat") {
     const s = await computeStats(admin, profile.id);
     if (s.pct >= 100) {
-      await sendMessage(chatId, t.certReady);
+      await sendWithKeyboard(chatId, t.certReady, locale);
     } else {
-      await sendMessage(chatId, t.certNotYet);
+      await sendWithKeyboard(chatId, t.certNotYet, locale);
     }
     return;
   }
 
   if (cmd === "/yordam") {
-    const buttons = SUPPORT_HANDLE
-      ? [[{ text: t.btnHelp, url: `https://t.me/${SUPPORT_HANDLE}` }]]
-      : [];
-    await sendMessage(chatId, t.helpReply, { inline_keyboard: buttons });
+    if (SUPPORT_HANDLE) {
+      await sendMessage(chatId, t.helpReply, {
+        inline_keyboard: [[{ text: t.btnHelp, url: `https://t.me/${SUPPORT_HANDLE}` }]],
+      });
+    } else {
+      await sendWithKeyboard(chatId, t.helpReply, locale);
+    }
     return;
   }
 
