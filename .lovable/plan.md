@@ -1,29 +1,34 @@
-# Fix horizontal scroll on "Barcha modullar" (course) page for mobile
+# v1.9.3 — Rename G'alabam → Statistikam, remove Yordam button
 
-## Root cause
-`src/pages/CoursePage.tsx` has elements that overflow on a 375px viewport:
-- `text-4xl` heading on long titles forces wider-than-viewport content.
-- Grid/flex children lack `min-w-0`, so long words push past the viewport edge.
-- Lesson row uses `truncate` inside a flex parent that itself can overflow.
+Small polish to the persistent reply keyboard in `supabase/functions/telegram-bot-webhook/index.ts`. Slash commands (`/galaba`, `/yordam`) continue to work; only the visible buttons change.
 
-## Changes (single file: `src/pages/CoursePage.tsx`)
+## Changes
 
-1. Add `min-w-0` to the outer grid, both columns, and the heading wrapper so flex/grid children can shrink.
-2. Make typography responsive:
-   - Course title: `text-2xl sm:text-3xl lg:text-4xl` (was `text-4xl`)
-   - Tagline: `text-base sm:text-lg` (was `text-lg`)
-   - Module title: `text-base sm:text-lg`
-3. Add `break-words` to title, tagline, description, module title/summary, and lesson title — and replace the lesson title's `truncate` with `break-words` so long Cyrillic/Uzbek words wrap rather than overflow.
-4. Tighten card padding on mobile (`px-4 sm:px-5`) so module cards don't push past container padding.
-5. Mark the check icon and duration block as `shrink-0` so the lesson row layout stays stable when wrapping.
-6. Make the "Take quiz" button full-width on mobile with a 44px tap target.
-7. Bump lesson row min-height to 44px for tappability.
+### 1. Rename the "streak" button label (all 3 locales)
+In the `T` translations constant:
+- `uz.kbStreak`: `"🏆 G'alabam"` → `"📊 Statistikam"`
+- `ru.kbStreak`: `"🏆 Мои победы"` → `"📊 Моя статистика"`
+- `en.kbStreak`: `"🏆 My streak"` → `"📊 My stats"`
 
-No changes to data fetching, routes, sidebar progress card content, or i18n.
+Note: this makes `kbStreak` identical to the existing `kbStreakOld` alias — that's fine, the router in `buttonTextToCommand` will still route it to `/galaba`.
 
-## Verify
-At 375px width on `/course/:courseId`:
-- No horizontal scroll.
-- Long lesson titles wrap onto a second line instead of being clipped or pushing the page.
-- Module cards fill width, "Take quiz" button is full-width.
-- Sidebar (progress card) stacks below the modules, no overflow.
+### 2. Remove the Yordam button from the keyboard layout
+In `getMainKeyboard()`, change row 3 from:
+```ts
+[{ text: t.kbLang }, { text: t.kbHelp }],
+```
+to:
+```ts
+[{ text: t.kbLang }],
+```
+
+The `kbHelp` translation string and the `/yordam` slash command are kept intact (so users typing `/yordam` and the help reply text still work). The `buttonTextToCommand` mapping for `kbHelp` is also left in place so that any stale "❓ Yordam" buttons rendered on a user's old keyboard still route correctly until Telegram refreshes.
+
+### 3. Deploy
+Deploy the `telegram-bot-webhook` edge function so the new keyboard ships immediately.
+
+## Out of scope
+- No DB changes.
+- No frontend changes.
+- BotFather command list unchanged.
+- All other v1.9.x behavior (login flow, /galaba, /dars magic link, language switch, certificate flow) untouched.
