@@ -724,6 +724,30 @@ export type Database = {
           },
         ]
       }
+      notifications_log: {
+        Row: {
+          id: string
+          notification_type: string
+          payload: Json
+          sent_at: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          notification_type: string
+          payload?: Json
+          sent_at?: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          notification_type?: string
+          payload?: Json
+          sent_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       platform_settings: {
         Row: {
           key: string
@@ -752,11 +776,17 @@ export type Database = {
           email: string
           goals: string | null
           id: string
+          last_daily_reminder_at: string | null
+          last_inactive_warning_at: string | null
+          last_inactive_warning_day: number | null
           last_name: string | null
+          last_streak_warning_at: string | null
           name: string | null
+          notifications_enabled: boolean
           onboarding_completed: boolean | null
           preferred_language: string | null
           preferred_locale: string
+          reminder_time: string
           status: Database["public"]["Enums"]["user_status"]
           telegram_id: number | null
           telegram_onboarded_at: string | null
@@ -771,11 +801,17 @@ export type Database = {
           email: string
           goals?: string | null
           id: string
+          last_daily_reminder_at?: string | null
+          last_inactive_warning_at?: string | null
+          last_inactive_warning_day?: number | null
           last_name?: string | null
+          last_streak_warning_at?: string | null
           name?: string | null
+          notifications_enabled?: boolean
           onboarding_completed?: boolean | null
           preferred_language?: string | null
           preferred_locale?: string
+          reminder_time?: string
           status?: Database["public"]["Enums"]["user_status"]
           telegram_id?: number | null
           telegram_onboarded_at?: string | null
@@ -790,11 +826,17 @@ export type Database = {
           email?: string
           goals?: string | null
           id?: string
+          last_daily_reminder_at?: string | null
+          last_inactive_warning_at?: string | null
+          last_inactive_warning_day?: number | null
           last_name?: string | null
+          last_streak_warning_at?: string | null
           name?: string | null
+          notifications_enabled?: boolean
           onboarding_completed?: boolean | null
           preferred_language?: string | null
           preferred_locale?: string
+          reminder_time?: string
           status?: Database["public"]["Enums"]["user_status"]
           telegram_id?: number | null
           telegram_onboarded_at?: string | null
