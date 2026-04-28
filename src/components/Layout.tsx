@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { LogOut, Settings, Shield, LayoutDashboard, BookOpen, Users, Rocket, BarChart3, FileText } from "lucide-react";
+import { LogOut, Settings, Shield, LayoutDashboard, BookOpen, Users, Rocket, BarChart3, FileText, Bell } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
 export const Logo = ({ className = "", to = "/dashboard" }: { className?: string; to?: string }) => (
@@ -93,6 +93,9 @@ export const TopNav = () => {
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link to="/admin/audit"><FileText className="mr-2 h-4 w-4" /> {t("nav.auditLog")}</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/admin/notifications"><Bell className="mr-2 h-4 w-4" /> {t("nav.notifications")}</Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link to="/admin/deploy"><Rocket className="mr-2 h-4 w-4" /> {t("nav.deploy")}</Link>
