@@ -31,7 +31,7 @@ const T = {
     backToSite: "Saytga qaytish →",
     welcome: (n: string) =>
       `Xush kelibsiz, ${n}! Kursimizga qo'shilganingiz uchun rahmat. Quyidagi tugmalar orqali boshlashingiz mumkin:`,
-    btnFirstLesson: "📚 Birinchi darsni ochish",
+    btnFirstLesson: "📚 Darsni Ko'rish",
     btnCourse: "📋 Kurs sahifasi",
     btnHelp: "💬 Yordam",
     streakReply: (s: number, w: number, p: number) =>
@@ -80,7 +80,7 @@ const T = {
     backToSite: "Вернуться на сайт →",
     welcome: (n: string) =>
       `Добро пожаловать, ${n}! Спасибо, что присоединились к курсу. Кнопки ниже помогут начать:`,
-    btnFirstLesson: "📚 Открыть первый урок",
+    btnFirstLesson: "📚 Посмотреть урок",
     btnCourse: "📋 Страница курса",
     btnHelp: "💬 Помощь",
     streakReply: (s: number, w: number, p: number) =>
@@ -129,7 +129,7 @@ const T = {
     backToSite: "Back to site →",
     welcome: (n: string) =>
       `Welcome, ${n}! Thanks for joining the course. Use the buttons below to get started:`,
-    btnFirstLesson: "📚 Open first lesson",
+    btnFirstLesson: "📚 Watch lesson",
     btnCourse: "📋 Course page",
     btnHelp: "💬 Help",
     streakReply: (s: number, w: number, p: number) =>
