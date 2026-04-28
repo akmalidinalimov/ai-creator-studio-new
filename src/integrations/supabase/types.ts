@@ -756,8 +756,10 @@ export type Database = {
           name: string | null
           onboarding_completed: boolean | null
           preferred_language: string | null
+          preferred_locale: string
           status: Database["public"]["Enums"]["user_status"]
           telegram_id: number | null
+          telegram_onboarded_at: string | null
           telegram_username: string | null
           timezone: string | null
           updated_at: string
@@ -773,8 +775,10 @@ export type Database = {
           name?: string | null
           onboarding_completed?: boolean | null
           preferred_language?: string | null
+          preferred_locale?: string
           status?: Database["public"]["Enums"]["user_status"]
           telegram_id?: number | null
+          telegram_onboarded_at?: string | null
           telegram_username?: string | null
           timezone?: string | null
           updated_at?: string
@@ -790,8 +794,10 @@ export type Database = {
           name?: string | null
           onboarding_completed?: boolean | null
           preferred_language?: string | null
+          preferred_locale?: string
           status?: Database["public"]["Enums"]["user_status"]
           telegram_id?: number | null
+          telegram_onboarded_at?: string | null
           telegram_username?: string | null
           timezone?: string | null
           updated_at?: string
@@ -892,6 +898,63 @@ export type Database = {
           current_streak?: number
           last_active_date?: string | null
           longest_streak?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
+      telegram_login_tokens: {
+        Row: {
+          authenticated_at: string | null
+          created_at: string
+          expires_at: string
+          status: string
+          token: string
+          user_id: string | null
+        }
+        Insert: {
+          authenticated_at?: string | null
+          created_at?: string
+          expires_at?: string
+          status?: string
+          token: string
+          user_id?: string | null
+        }
+        Update: {
+          authenticated_at?: string | null
+          created_at?: string
+          expires_at?: string
+          status?: string
+          token?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      telegram_magic_links: {
+        Row: {
+          created_at: string
+          expires_at: string
+          purpose: string
+          target_path: string | null
+          token: string
+          used_at: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at?: string
+          purpose?: string
+          target_path?: string | null
+          token: string
+          used_at?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          purpose?: string
+          target_path?: string | null
+          token?: string
+          used_at?: string | null
           user_id?: string
         }
         Relationships: []
