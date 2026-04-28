@@ -506,7 +506,8 @@ async function handleCallback(admin: any, cq: any) {
         await admin.from("profiles").update({ preferred_locale: lang }).eq("id", profile.id);
       }
       await answerCallback(cq.id);
-      await sendMessage(chatId, T[lang].langSet);
+      // Confirmation message attaches the reply keyboard with the NEW locale's labels.
+      await sendWithKeyboard(chatId, T[lang].langSet, lang);
       return;
     }
   }
