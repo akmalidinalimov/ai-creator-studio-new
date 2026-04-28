@@ -46,6 +46,12 @@ const T = {
     noProfile: "Akkauntingiz topilmadi. Avval saytda ro'yxatdan o'tishingiz kerak.",
     noNextLesson: "Yangi dars yo'q. Keyinroq qayta urinib ko'ring.",
     noCourse: "Kurs topilmadi.",
+    kbDavom: "📚 Davom etish",
+    kbStreak: "📊 Statistikam",
+    kbCert: "🎓 Sertifikat",
+    kbLang: "🌐 Til",
+    kbHelp: "❓ Yordam",
+    kbHint: "👇 Quyidagi tugmalardan foydalaning",
   },
   ru: {
     expired: "Срок действия ссылки истёк. Вернитесь на сайт и попробуйте ещё раз.",
