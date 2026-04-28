@@ -27,7 +27,7 @@ const T = {
     noUsername:
       "Telegram'da @username o'rnatishingiz kerak. Settings → Username. Keyin qaytadan urinib ko'ring.",
     howTo: "❓ Qanday qilish kerak?",
-    success: "Siz muvaffaqiyatli saytga kirdingiz. Endi saytga qaytib darsliklarni ko'rishingiz mumkin.",
+    success: "✅ Siz muvaffaqiyatli saytga kirdingiz. Endi saytga qaytib yoki shu telegram orqali darsliklarni ko'rishingiz mumkin.",
     backToSite: "Saytga qaytish →",
     welcome: (n: string) =>
       `Xush kelibsiz, ${n}! Kursimizga qo'shilganingiz uchun rahmat. Quyidagi tugmalar orqali boshlashingiz mumkin:`,
@@ -35,7 +35,7 @@ const T = {
     btnCourse: "📋 Kurs sahifasi",
     btnHelp: "💬 Yordam",
     streakReply: (s: number, w: number, p: number) =>
-      `🔥 Streak: <b>${s}</b> kun\n⏱ Bu hafta: <b>${w}</b> daqiqa\n📈 Kurs: <b>${p}%</b>`,
+      `🏆 G'alabangiz: <b>${s}</b> kun ketma-ket\n⏱ Bu hafta: <b>${w}</b> daqiqa\n📈 Kurs: <b>${p}%</b>`,
     nextLesson: "Keyingi dars sizni kutmoqda 👇",
     coursePage: "Kurs sahifasi 👇",
     certNotYet: "Sertifikatni kursni tugatgach yuboraman.",
@@ -47,11 +47,13 @@ const T = {
     noNextLesson: "Yangi dars yo'q. Keyinroq qayta urinib ko'ring.",
     noCourse: "Kurs topilmadi.",
     kbDavom: "📚 Davom etish",
-    kbStreak: "📊 Statistikam",
-    kbCert: "🎓 Sertifikat",
+    kbStreak: "🏆 G'alabam",
+    kbCert: "📋 Kurs Modullari",
     kbLang: "🌐 Til",
     kbHelp: "❓ Yordam",
     kbHint: "👇 Quyidagi tugmalardan foydalaning",
+    kbStreakOld: "📊 Statistikam",
+    kbCertOld: "🎓 Sertifikat",
   },
   ru: {
     expired: "Срок действия ссылки истёк. Вернитесь на сайт и попробуйте ещё раз.",
@@ -61,7 +63,7 @@ const T = {
     noUsername:
       "Установите @username в Telegram: Settings → Username. Затем попробуйте снова.",
     howTo: "❓ Как это сделать?",
-    success: "Вы успешно вошли в систему. Можете вернуться на сайт и продолжить обучение.",
+    success: "✅ Вы успешно вошли в систему. Можете вернуться на сайт или продолжить обучение прямо здесь, в Telegram.",
     backToSite: "Вернуться на сайт →",
     welcome: (n: string) =>
       `Добро пожаловать, ${n}! Спасибо, что присоединились к курсу. Кнопки ниже помогут начать:`,
@@ -69,7 +71,7 @@ const T = {
     btnCourse: "📋 Страница курса",
     btnHelp: "💬 Помощь",
     streakReply: (s: number, w: number, p: number) =>
-      `🔥 Стрик: <b>${s}</b> дн.\n⏱ За неделю: <b>${w}</b> мин.\n📈 Курс: <b>${p}%</b>`,
+      `🏆 Ваша победа: <b>${s}</b> дней подряд\n⏱ За неделю: <b>${w}</b> мин.\n📈 Курс: <b>${p}%</b>`,
     nextLesson: "Следующий урок ждёт 👇",
     coursePage: "Страница курса 👇",
     certNotYet: "Сертификат отправлю после завершения курса.",
@@ -81,11 +83,13 @@ const T = {
     noNextLesson: "Новых уроков нет. Попробуйте позже.",
     noCourse: "Курс не найден.",
     kbDavom: "📚 Продолжить",
-    kbStreak: "📊 Моя статистика",
-    kbCert: "🎓 Сертификат",
+    kbStreak: "🏆 Мои победы",
+    kbCert: "📋 Модули курса",
     kbLang: "🌐 Язык",
     kbHelp: "❓ Помощь",
     kbHint: "👇 Используйте кнопки ниже",
+    kbStreakOld: "📊 Моя статистика",
+    kbCertOld: "🎓 Сертификат",
   },
   en: {
     expired: "Login link expired. Return to the site and try again.",
@@ -95,7 +99,7 @@ const T = {
     noUsername:
       "Please set a @username in Telegram: Settings → Username. Then try again.",
     howTo: "❓ How to do this?",
-    success: "You're logged in. Return to the site and continue learning.",
+    success: "✅ You're logged in. You can return to the site or continue learning right here in Telegram.",
     backToSite: "Back to site →",
     welcome: (n: string) =>
       `Welcome, ${n}! Thanks for joining the course. Use the buttons below to get started:`,
@@ -103,7 +107,7 @@ const T = {
     btnCourse: "📋 Course page",
     btnHelp: "💬 Help",
     streakReply: (s: number, w: number, p: number) =>
-      `🔥 Streak: <b>${s}</b> days\n⏱ This week: <b>${w}</b> min\n📈 Course: <b>${p}%</b>`,
+      `🏆 Your streak: <b>${s}</b> days in a row\n⏱ This week: <b>${w}</b> min\n📈 Course: <b>${p}%</b>`,
     nextLesson: "Your next lesson awaits 👇",
     coursePage: "Course page 👇",
     certNotYet: "I'll send your certificate once you finish the course.",
@@ -115,11 +119,13 @@ const T = {
     noNextLesson: "No new lesson. Check back later.",
     noCourse: "Course not found.",
     kbDavom: "📚 Continue",
-    kbStreak: "📊 My stats",
-    kbCert: "🎓 Certificate",
+    kbStreak: "🏆 My streak",
+    kbCert: "📋 Course modules",
     kbLang: "🌐 Language",
     kbHelp: "❓ Help",
     kbHint: "👇 Use the buttons below",
+    kbStreakOld: "📊 My stats",
+    kbCertOld: "🎓 Certificate",
   },
 };
 
@@ -175,10 +181,14 @@ async function sendKeyboardHint(chatId: number, locale: Locale) {
 function buttonTextToCommand(text: string): string | null {
   const trimmed = text.trim();
   for (const loc of ["uz", "ru", "en"] as Locale[]) {
-    const t = T[loc];
+    const t = T[loc] as any;
     if (trimmed === t.kbDavom) return "/davom";
-    if (trimmed === t.kbStreak) return "/streak";
-    if (trimmed === t.kbCert) return "/sertifikat";
+    // New canonical g'alaba button + old "stats" labels as aliases.
+    if (trimmed === t.kbStreak) return "/galaba";
+    if (t.kbStreakOld && trimmed === t.kbStreakOld) return "/galaba";
+    // New "Course modules" button routes to /dars; old cert label as alias.
+    if (trimmed === t.kbCert) return "/dars";
+    if (t.kbCertOld && trimmed === t.kbCertOld) return "/sertifikat";
     if (trimmed === t.kbLang) return "/til";
     if (trimmed === t.kbHelp) return "/yordam";
   }
@@ -452,7 +462,7 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
     return;
   }
 
-  if (cmd === "/streak") {
+  if (cmd === "/galaba" || cmd === "/streak") {
     const s = await computeStats(admin, profile.id);
     await sendWithKeyboard(chatId, t.streakReply(s.streak, s.weekMin, s.pct), locale);
     return;
