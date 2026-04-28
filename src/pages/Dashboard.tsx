@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Flame, PlayCircle, BookOpen, ArrowRight } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { StudentAnalytics } from "@/components/dashboard/StudentAnalytics";
 
 interface CourseRow {
   id: string; title: string; tagline: string | null; cover_url: string | null; duration_hours: number | null;
