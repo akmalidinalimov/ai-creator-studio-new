@@ -31,7 +31,7 @@ const T = {
     backToSite: "Saytga qaytish →",
     welcome: (n: string) =>
       `Xush kelibsiz, ${n}! Kursimizga qo'shilganingiz uchun rahmat. Quyidagi tugmalar orqali boshlashingiz mumkin:`,
-    btnFirstLesson: "📚 Birinchi darsni ochish",
+    btnFirstLesson: "📚 Darsni Ko'rish",
     btnCourse: "📋 Kurs sahifasi",
     btnHelp: "💬 Yordam",
     streakReply: (s: number, w: number, p: number) =>
