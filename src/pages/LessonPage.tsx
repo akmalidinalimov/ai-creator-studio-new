@@ -90,30 +90,50 @@ export default function LessonPage() {
     })();
   }, [lessonId, courseId, user]);
 
-  // Resume
+  // Resume position is passed into the player via props (Bunny ?t=, native HTML5 below).
   useEffect(() => {
     if (videoRef.current && progress?.last_position_seconds) {
       videoRef.current.currentTime = progress.last_position_seconds;
     }
   }, [progress, lesson]);
 
-  // Save position every 5s + auto-complete at 90%
+  // Native HTML5 <video> tracking (upload / mux). Bunny tracking is wired via player.js.
+  const lastNativeTickRef = useRef<number>(0);
   useEffect(() => {
     if (!user || !lessonId) return;
     const id = setInterval(async () => {
       const v = videoRef.current; if (!v || v.paused) return;
-      const cur = Math.floor(v.currentTime);
+      const cur = v.currentTime || 0;
       const dur = v.duration || 0;
-      const isComplete = dur > 0 && cur / dur >= 0.9;
-      await supabase.from("lesson_progress").upsert({
-        user_id: user.id, lesson_id: lessonId,
-        last_position_seconds: cur,
-        seconds_watched: cur,
-        completed_at: isComplete ? new Date().toISOString() : null,
-      }, { onConflict: "user_id,lesson_id" });
-      if (isComplete) setCompleted((s) => new Set(s).add(lessonId));
+      const now = Date.now();
+      const delta = lastNativeTickRef.current ? Math.min(10, (now - lastNativeTickRef.current) / 1000) : 5;
+      lastNativeTickRef.current = now;
+      const { data } = await supabase.rpc("track_video_progress", {
+        p_lesson_id: lessonId, p_current_time: cur, p_duration: dur, p_delta_seconds: delta,
+      });
+      if ((data as any)?.completed) setCompleted((s) => new Set(s).add(lessonId));
     }, 5000);
     return () => clearInterval(id);
+  }, [user, lessonId]);
+
+  // Bunny progress callback (player.js timeupdate ~every 5s + ended)
+  const lastBunnyTickRef = useRef<number>(0);
+  const onBunnyTime = useCallback(async (seconds: number, duration: number) => {
+    if (!user || !lessonId) return;
+    const now = Date.now();
+    const delta = lastBunnyTickRef.current ? Math.min(10, (now - lastBunnyTickRef.current) / 1000) : 5;
+    lastBunnyTickRef.current = now;
+    const { data } = await supabase.rpc("track_video_progress", {
+      p_lesson_id: lessonId, p_current_time: seconds, p_duration: duration, p_delta_seconds: delta,
+    });
+    if ((data as any)?.completed) setCompleted((s) => new Set(s).add(lessonId!));
+  }, [user, lessonId]);
+  const onBunnyEnded = useCallback(async () => {
+    if (!user || !lessonId) return;
+    await supabase.from("lesson_progress").upsert({
+      user_id: user.id, lesson_id: lessonId, completed_at: new Date().toISOString(),
+    }, { onConflict: "user_id,lesson_id" });
+    setCompleted((s) => new Set(s).add(lessonId));
   }, [user, lessonId]);
 
   const markComplete = async () => {
