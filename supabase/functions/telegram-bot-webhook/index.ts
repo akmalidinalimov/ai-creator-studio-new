@@ -114,6 +114,12 @@ const T = {
     noProfile: "Account not found. Please sign up on the site first.",
     noNextLesson: "No new lesson. Check back later.",
     noCourse: "Course not found.",
+    kbDavom: "📚 Continue",
+    kbStreak: "📊 My stats",
+    kbCert: "🎓 Certificate",
+    kbLang: "🌐 Language",
+    kbHelp: "❓ Help",
+    kbHint: "👇 Use the buttons below",
   },
 };
 
