@@ -7,7 +7,7 @@ import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
 import { CheckCircle2, ChevronRight, ChevronLeft, Send, Sparkles, LayoutList } from "lucide-react";
 import { toast } from "sonner";
 import { ProtectedVideo } from "@/components/lesson/ProtectedVideo";
@@ -15,24 +15,18 @@ import { BunnyVideoPlayer } from "@/components/BunnyVideoPlayer";
 
 interface Msg { role: "user" | "assistant"; content: string }
 
-const LANGUAGES = [
-  { code: "en", label: "English" }, { code: "ru", label: "Русский" },
-  { code: "uz", label: "O'zbek" }, { code: "es", label: "Español" },
-  { code: "pt", label: "Português" }, { code: "ar", label: "العربية" },
-  { code: "fr", label: "Français" }, { code: "de", label: "Deutsch" },
-  { code: "hi", label: "हिन्दी" }, { code: "zh", label: "中文" },
-];
-function detectLang(): string {
-  if (typeof navigator === "undefined") return "en";
-  const code = (navigator.language || "en").toLowerCase().split("-")[0];
-  return LANGUAGES.some((l) => l.code === code) ? code : "en";
+const SUPPORTED_ASSISTANT_LANGS = ["uz", "ru", "en"] as const;
+function normalizeAssistantLang(code?: string | null): "uz" | "ru" | "en" {
+  const c = (code || "").toLowerCase().split("-")[0];
+  return (SUPPORTED_ASSISTANT_LANGS as readonly string[]).includes(c) ? (c as any) : "uz";
 }
 
 export default function LessonPage() {
   const { courseId, lessonId } = useParams();
   const { user, session } = useAuth();
   const navigate = useNavigate();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const language = normalizeAssistantLang(i18n.language);
 
   const [lesson, setLesson] = useState<any>(null);
   const [modules, setModules] = useState<any[]>([]);
@@ -41,28 +35,15 @@ export default function LessonPage() {
   const [chatHistory, setChatHistory] = useState<Msg[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
-  const [language, setLanguage] = useState<string>(detectLang());
   const [protectionSettings, setProtectionSettings] = useState<any | undefined>(undefined);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  // Load protection settings + preferred language
+  // Load protection settings
   useEffect(() => {
     supabase.rpc("get_public_setting", { _key: "content_protection" }).then(({ data }) => {
       if (data) setProtectionSettings(data);
     });
   }, []);
-  useEffect(() => {
-    if (!user) return;
-    supabase.from("profiles").select("preferred_language").eq("id", user.id).maybeSingle().then(({ data }) => {
-      const pl = (data as any)?.preferred_language;
-      if (pl && LANGUAGES.some((l) => l.code === pl)) setLanguage(pl);
-    });
-  }, [user]);
-
-  const onLanguageChange = (code: string) => {
-    setLanguage(code);
-    if (user) supabase.from("profiles").update({ preferred_language: code }).eq("id", user.id).then(() => {});
-  };
 
 
   // Load
@@ -353,14 +334,6 @@ export default function LessonPage() {
           <div className="px-4 py-3 border-b flex items-center gap-2 flex-wrap">
             <Sparkles className="h-4 w-4" />
             <span className="text-sm font-medium">{t("lesson.ai.title")}</span>
-            <div className="ml-auto">
-              <Select value={language} onValueChange={onLanguageChange}>
-                <SelectTrigger className="h-8 text-xs w-[130px]"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {LANGUAGES.map((l) => <SelectItem key={l.code} value={l.code} className="text-xs">{l.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
           </div>
           <div className="flex-1 max-h-[400px] overflow-y-auto p-3 space-y-3 scrollbar-thin">
             {chatHistory.length === 0 && (

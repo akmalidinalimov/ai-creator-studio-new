@@ -144,8 +144,9 @@ Deno.serve(async (req) => {
       effectivePrompt = courseRow.ai_system_prompt;
     }
 
-    const langCode = (language || "en").toString().toLowerCase().slice(0, 5);
-    const langName = LANG_NAMES[langCode] || LANG_NAMES[langCode.split("-")[0]] || "English";
+    const rawLang = (language || "uz").toString().toLowerCase().slice(0, 5).split("-")[0];
+    const langCode = ["uz", "ru", "en"].includes(rawLang) ? rawLang : "uz";
+    const langName = langCode === "uz" ? "Uzbek" : langCode === "ru" ? "Russian" : "English";
 
     // Semantic retrieval: embed the user question, fetch top chunks across platform + course scope.
     const courseId: string | null = courseRow?.id ?? null;
@@ -156,7 +157,7 @@ Deno.serve(async (req) => {
       .replaceAll("{transcript}", transcript || "(no transcript available)")
       .replaceAll("{language}", langName)
       + (knowledgeText ? `\n\n--- Reference material (cite by [source: filename] when used) ---\n${knowledgeText}` : "")
-      + `\n\nIMPORTANT: Respond in ${langName}.`;
+      + `\n\nCRITICAL LANGUAGE RULE: You MUST respond ONLY in ${langName}. Never use Spanish, Portuguese, or any other language. If the student writes in another language, still reply in ${langName}.`;
 
     // Persist user turn (best-effort)
     admin.from("ai_chat_messages").insert({
