@@ -1,21 +1,28 @@
-## Change "Birinchi darsni ochish" → "Darsni Ko'rish"
+## Root cause
 
-This text is the post-`/start` welcome keyboard button in the Telegram bot. It's hardcoded in `supabase/functions/telegram-bot-webhook/index.ts` (the `T.uz.btnFirstLesson` constant), not in the admin-editable `notification_templates` table or anywhere in the React app.
+Anonymous (logged-out) users on the **Signup** page see the toast/tooltip "Вход через Telegram ещё не настроен — администратор может включить его в Настройки → Telegram Login", even though Telegram is fully configured in the database.
 
-### Change
+`TelegramLoginButton.tsx` calls `supabase.rpc("get_public_setting", { _key: "telegram" })` to fetch the bot's public ID. The April 28 security-hardening migration (`20260428162429_…sql`) revoked `EXECUTE` on `public.get_public_setting(text)` from `PUBLIC` and `anon`, leaving only `authenticated` with access.
 
-In `supabase/functions/telegram-bot-webhook/index.ts`:
+Result for anon visitors:
+- RPC silently fails with "permission denied for function get_public_setting".
+- `data` is `null`, so `bot_id` stays `null`.
+- The component renders the disabled fallback with the "not configured" message.
 
-- Line 34 (UZ): `btnFirstLesson: "📚 Birinchi darsni ochish"` → `"📚 Darsni Ko'rish"`
+The RPC is designed to be safe for anon — it only returns the non-secret `bot_username`, the public numeric `bot_id` (digits before `:` of the bot token, which Telegram's OAuth widget needs publicly anyway), and the `content_protection` booleans. The hardening was overly broad.
 
-### Other locales — update for parity?
+## Fix
 
-The same button exists in RU and EN with matching meaning:
-- Line 83 (RU): `"📚 Открыть первый урок"` → `"📚 Посмотреть урок"`
-- Line 132 (EN): `"📚 Open first lesson"` → `"📚 Watch lesson"`
+Create a migration that re-grants `EXECUTE` on `public.get_public_setting(text)` to `anon`:
 
-I'll update all three so the button stays consistent across languages. If you only want UZ changed, say so before approving.
+```sql
+GRANT EXECUTE ON FUNCTION public.get_public_setting(text) TO anon;
+```
 
-### Deploy
+That's the only change needed. After it runs, the Signup page's Telegram button will resolve `bot_id` for unauthenticated visitors and open the real Telegram OAuth popup instead of the disabled tooltip.
 
-After the edit, redeploy the `telegram-bot-webhook` edge function so the new label appears in the next `/start` welcome message. No DB migration needed.
+## Verification after deploy
+
+1. Open Signup in an incognito window — the Telegram button should be active (solid blue, clickable) instead of greyed out.
+2. Clicking it should open `oauth.telegram.org/auth?bot_id=8243263934&…` rather than showing the toast.
+3. Admin/authenticated flows are unchanged (they already had access).
