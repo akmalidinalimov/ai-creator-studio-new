@@ -424,7 +424,6 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   }
 
   const cmd = cmdRaw.split("@")[0].toLowerCase();
-  const kb = getMainKeyboard(locale);
 
   if (cmd === "/davom") {
     const courseId = await getDefaultCourseId(admin);
