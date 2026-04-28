@@ -207,7 +207,6 @@ function ModuleProgressCard({ userId, courseId }: { userId: string; courseId?: s
 
   const visible = rows.slice(0, 5);
   const more = Math.max(0, rows.length - 5);
-  const truncate = (s: string) => (s.length > 20 ? s.slice(0, 20) + "…" : s);
 
   return (
     <Card className="rounded-2xl border bg-card p-4">
@@ -217,15 +216,16 @@ function ModuleProgressCard({ userId, courseId }: { userId: string; courseId?: s
       ) : rows.length === 0 ? (
         <div className="text-sm text-muted-foreground mt-2">{t("modules.not_started")}</div>
       ) : (
-        <div className="mt-3 space-y-2.5">
-          {visible.map((m) => {
+        <div className="mt-3 space-y-3">
+          {visible.map((m, i) => {
             const pct = m.total > 0 ? Math.round((m.completed / m.total) * 100) : 0;
             return (
-              <div key={m.id} className="space-y-1">
-                <div className="flex items-center justify-between gap-2 text-xs">
-                  <span className="truncate">{truncate(m.title)}</span>
-                  <span className="tabular-nums text-muted-foreground">{pct}%</span>
+              <div key={m.id} className="space-y-1 min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium shrink-0">{t("coursePage.moduleN", { n: i + 1 })}</span>
+                  <span className="text-sm font-semibold tabular-nums">{pct}%</span>
                 </div>
+                <div className="text-xs text-muted-foreground truncate">{m.title}</div>
                 <Progress value={pct} className="h-1.5" />
               </div>
             );
