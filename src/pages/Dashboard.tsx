@@ -89,41 +89,44 @@ export default function Dashboard() {
         ) : courses.length === 0 ? (
           <Card className="p-10 text-center"><p className="text-muted-foreground">{t("dashboard.noCourses")}</p></Card>
         ) : (
-          <div className="grid md:grid-cols-2 gap-5">
-            {courses.map((c) => {
-              const pct = c.total > 0 ? Math.round((c.completed / c.total) * 100) : 0;
-              return (
-                <Card key={c.id} className="p-6 shadow-soft hover:shadow-elevated transition-shadow">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
-                        <BookOpen className="h-3.5 w-3.5" />
-                        <span>{c.duration_hours}h • {c.total} {t("dashboard.lessons")}</span>
+          <>
+            <div className="grid md:grid-cols-2 gap-5">
+              {courses.map((c) => {
+                const pct = c.total > 0 ? Math.round((c.completed / c.total) * 100) : 0;
+                return (
+                  <Card key={c.id} className="p-6 shadow-soft hover:shadow-elevated transition-shadow">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
+                          <BookOpen className="h-3.5 w-3.5" />
+                          <span>{c.duration_hours}h • {c.total} {t("dashboard.lessons")}</span>
+                        </div>
+                        <h3 className="text-xl font-semibold tracking-tight">{c.title}</h3>
+                        <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{c.tagline}</p>
                       </div>
-                      <h3 className="text-xl font-semibold tracking-tight">{c.title}</h3>
-                      <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{c.tagline}</p>
+                      <div className="text-right">
+                        <div className="text-2xl font-semibold tabular-nums">{pct}%</div>
+                        <div className="text-xs text-muted-foreground">{t("dashboard.complete")}</div>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-2xl font-semibold tabular-nums">{pct}%</div>
-                      <div className="text-xs text-muted-foreground">{t("dashboard.complete")}</div>
+                    <Progress value={pct} className="mt-4 h-1.5" />
+                    <div className="mt-5 flex items-center justify-between gap-3">
+                      <Button asChild variant="default" size="sm">
+                        <Link to={c.nextLessonId ? `/lesson/${c.id}/${c.nextLessonId}` : `/course/${c.id}`}>
+                          <PlayCircle className="h-4 w-4" />
+                          {c.completed === 0 ? t("dashboard.startCourse") : pct === 100 ? t("dashboard.review") : t("dashboard.continueLearning")}
+                        </Link>
+                      </Button>
+                      <Button asChild variant="ghost" size="sm">
+                        <Link to={`/course/${c.id}`}>{t("dashboard.coursePage")} <ArrowRight className="h-4 w-4" /></Link>
+                      </Button>
                     </div>
-                  </div>
-                  <Progress value={pct} className="mt-4 h-1.5" />
-                  <div className="mt-5 flex items-center justify-between gap-3">
-                    <Button asChild variant="default" size="sm">
-                      <Link to={c.nextLessonId ? `/lesson/${c.id}/${c.nextLessonId}` : `/course/${c.id}`}>
-                        <PlayCircle className="h-4 w-4" />
-                        {c.completed === 0 ? t("dashboard.startCourse") : pct === 100 ? t("dashboard.review") : t("dashboard.continueLearning")}
-                      </Link>
-                    </Button>
-                    <Button asChild variant="ghost" size="sm">
-                      <Link to={`/course/${c.id}`}>{t("dashboard.coursePage")} <ArrowRight className="h-4 w-4" /></Link>
-                    </Button>
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
+                  </Card>
+                );
+              })}
+            </div>
+            {user && <StudentAnalytics userId={user.id} courseId={courses[0]?.id} />}
+          </>
         )}
       </div>
     </PageShell>
