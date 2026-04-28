@@ -65,8 +65,8 @@ export default function CoursePage() {
             {modules.map((m, i) => (
               <Card key={m.id} className="overflow-hidden shadow-soft">
                 <div className="px-4 sm:px-5 py-4 border-b bg-muted/30 min-w-0">
-                  <div className="text-xs text-muted-foreground">{t("coursePage.moduleN", { n: i + 1 })}</div>
-                  <h3 className="text-base sm:text-lg font-semibold tracking-tight break-words">{m.title}</h3>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("coursePage.moduleN", { n: i + 1 })}</div>
+                  <h3 className="text-base sm:text-lg font-semibold tracking-tight break-words mt-0.5">{m.title}</h3>
                   {m.summary && <p className="text-sm text-muted-foreground mt-1 break-words">{m.summary}</p>}
                 </div>
                 <ul className="divide-y">
