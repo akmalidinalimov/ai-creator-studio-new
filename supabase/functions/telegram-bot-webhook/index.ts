@@ -46,6 +46,12 @@ const T = {
     noProfile: "Akkauntingiz topilmadi. Avval saytda ro'yxatdan o'tishingiz kerak.",
     noNextLesson: "Yangi dars yo'q. Keyinroq qayta urinib ko'ring.",
     noCourse: "Kurs topilmadi.",
+    kbDavom: "📚 Davom etish",
+    kbStreak: "📊 Statistikam",
+    kbCert: "🎓 Sertifikat",
+    kbLang: "🌐 Til",
+    kbHelp: "❓ Yordam",
+    kbHint: "👇 Quyidagi tugmalardan foydalaning",
   },
   ru: {
     expired: "Срок действия ссылки истёк. Вернитесь на сайт и попробуйте ещё раз.",
@@ -74,6 +80,12 @@ const T = {
     noProfile: "Аккаунт не найден. Сначала зарегистрируйтесь на сайте.",
     noNextLesson: "Новых уроков нет. Попробуйте позже.",
     noCourse: "Курс не найден.",
+    kbDavom: "📚 Продолжить",
+    kbStreak: "📊 Моя статистика",
+    kbCert: "🎓 Сертификат",
+    kbLang: "🌐 Язык",
+    kbHelp: "❓ Помощь",
+    kbHint: "👇 Используйте кнопки ниже",
   },
   en: {
     expired: "Login link expired. Return to the site and try again.",
@@ -102,6 +114,12 @@ const T = {
     noProfile: "Account not found. Please sign up on the site first.",
     noNextLesson: "No new lesson. Check back later.",
     noCourse: "Course not found.",
+    kbDavom: "📚 Continue",
+    kbStreak: "📊 My stats",
+    kbCert: "🎓 Certificate",
+    kbLang: "🌐 Language",
+    kbHelp: "❓ Help",
+    kbHint: "👇 Use the buttons below",
   },
 };
 
@@ -126,6 +144,45 @@ async function sendMessage(chatId: number, text: string, reply_markup?: unknown)
     disable_web_page_preview: true,
     ...(reply_markup ? { reply_markup } : {}),
   });
+}
+
+function getMainKeyboard(locale: Locale) {
+  const t = T[locale];
+  return {
+    keyboard: [
+      [{ text: t.kbDavom }],
+      [{ text: t.kbStreak }, { text: t.kbCert }],
+      [{ text: t.kbLang }, { text: t.kbHelp }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+  };
+}
+
+// Send a message that always carries the persistent reply keyboard.
+async function sendWithKeyboard(chatId: number, text: string, locale: Locale) {
+  return sendMessage(chatId, text, getMainKeyboard(locale));
+}
+
+// After sending an inline-keyboard message, follow up with a tiny hint that
+// re-applies the persistent reply keyboard (since you can't combine both).
+async function sendKeyboardHint(chatId: number, locale: Locale) {
+  return sendMessage(chatId, T[locale].kbHint, getMainKeyboard(locale));
+}
+
+// Map ANY localized keyboard label to a canonical command, regardless of user's
+// current locale (a student might tap a button rendered in their old locale).
+function buttonTextToCommand(text: string): string | null {
+  const trimmed = text.trim();
+  for (const loc of ["uz", "ru", "en"] as Locale[]) {
+    const t = T[loc];
+    if (trimmed === t.kbDavom) return "/davom";
+    if (trimmed === t.kbStreak) return "/streak";
+    if (trimmed === t.kbCert) return "/sertifikat";
+    if (trimmed === t.kbLang) return "/til";
+    if (trimmed === t.kbHelp) return "/yordam";
+  }
+  return null;
 }
 
 async function answerCallback(id: string, text?: string) {
@@ -347,6 +404,9 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
     await sendMessage(chatId, t.welcome(firstName), { inline_keyboard: buttons });
     await admin.from("profiles").update({ telegram_onboarded_at: new Date().toISOString() }).eq("id", profile.id);
   }
+
+  // Always introduce/refresh the persistent reply keyboard after login.
+  await sendKeyboardHint(chatId, locale);
 }
 
 async function handleCommand(admin: any, msg: any, cmdRaw: string) {
@@ -368,12 +428,12 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   if (cmd === "/davom") {
     const courseId = await getDefaultCourseId(admin);
     if (!courseId) {
-      await sendMessage(chatId, t.noCourse);
+      await sendWithKeyboard(chatId, t.noCourse, locale);
       return;
     }
     const next = await getNextIncompleteLesson(admin, profile.id, courseId);
     if (!next) {
-      await sendMessage(chatId, t.noNextLesson);
+      await sendWithKeyboard(chatId, t.noNextLesson, locale);
       return;
     }
     const url = await createMagicLink(admin, profile.id, "deeplink_lesson", `/lesson/${courseId}/${next.id}`);
@@ -384,7 +444,7 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   if (cmd === "/dars") {
     const courseId = await getDefaultCourseId(admin);
     if (!courseId) {
-      await sendMessage(chatId, t.noCourse);
+      await sendWithKeyboard(chatId, t.noCourse, locale);
       return;
     }
     const url = await createMagicLink(admin, profile.id, "deeplink_course", `/course/${courseId}`);
@@ -394,25 +454,28 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
 
   if (cmd === "/streak") {
     const s = await computeStats(admin, profile.id);
-    await sendMessage(chatId, t.streakReply(s.streak, s.weekMin, s.pct));
+    await sendWithKeyboard(chatId, t.streakReply(s.streak, s.weekMin, s.pct), locale);
     return;
   }
 
   if (cmd === "/sertifikat") {
     const s = await computeStats(admin, profile.id);
     if (s.pct >= 100) {
-      await sendMessage(chatId, t.certReady);
+      await sendWithKeyboard(chatId, t.certReady, locale);
     } else {
-      await sendMessage(chatId, t.certNotYet);
+      await sendWithKeyboard(chatId, t.certNotYet, locale);
     }
     return;
   }
 
   if (cmd === "/yordam") {
-    const buttons = SUPPORT_HANDLE
-      ? [[{ text: t.btnHelp, url: `https://t.me/${SUPPORT_HANDLE}` }]]
-      : [];
-    await sendMessage(chatId, t.helpReply, { inline_keyboard: buttons });
+    if (SUPPORT_HANDLE) {
+      await sendMessage(chatId, t.helpReply, {
+        inline_keyboard: [[{ text: t.btnHelp, url: `https://t.me/${SUPPORT_HANDLE}` }]],
+      });
+    } else {
+      await sendWithKeyboard(chatId, t.helpReply, locale);
+    }
     return;
   }
 
@@ -442,7 +505,8 @@ async function handleCallback(admin: any, cq: any) {
         await admin.from("profiles").update({ preferred_locale: lang }).eq("id", profile.id);
       }
       await answerCallback(cq.id);
-      await sendMessage(chatId, T[lang].langSet);
+      // Confirmation message attaches the reply keyboard with the NEW locale's labels.
+      await sendWithKeyboard(chatId, T[lang].langSet, lang);
       return;
     }
   }
@@ -490,13 +554,25 @@ Deno.serve(async (req) => {
         if (arg.startsWith("login_")) {
           const tok = arg.slice(6);
           await handleStartLogin(admin, msg, tok, locale);
+        } else if (profileForLocale) {
+          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
         } else {
           await sendMessage(msg.chat.id, T[locale].helpReply);
         }
       } else if (text === "/start") {
-        await sendMessage(msg.chat.id, T[locale].helpReply);
+        if (profileForLocale) {
+          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
+        } else {
+          await sendMessage(msg.chat.id, T[locale].helpReply);
+        }
       } else if (text.startsWith("/")) {
         await handleCommand(admin, msg, text.split(/\s+/)[0]);
+      } else {
+        // Reply-keyboard button text router — match across all locales.
+        const mapped = buttonTextToCommand(text);
+        if (mapped) {
+          await handleCommand(admin, msg, mapped);
+        }
       }
     } else if (update.callback_query) {
       await handleCallback(admin, update.callback_query);
