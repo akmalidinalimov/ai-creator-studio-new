@@ -80,7 +80,7 @@ const T = {
     backToSite: "Вернуться на сайт →",
     welcome: (n: string) =>
       `Добро пожаловать, ${n}! Спасибо, что присоединились к курсу. Кнопки ниже помогут начать:`,
-    btnFirstLesson: "📚 Открыть первый урок",
+    btnFirstLesson: "📚 Посмотреть урок",
     btnCourse: "📋 Страница курса",
     btnHelp: "💬 Помощь",
     streakReply: (s: number, w: number, p: number) =>
