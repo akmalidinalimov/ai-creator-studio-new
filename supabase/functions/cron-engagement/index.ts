@@ -1,6 +1,7 @@
 // Engagement cron: daily reminders, streak warnings, re-engagement drips.
 // Designed to be invoked every 30 minutes (configure via Supabase Cron Jobs UI).
 // Quiet hours: skip 00:00-08:00 local time. Skip users with notifications_enabled=false.
+// v2.0.1: All copy is now loaded from public.notification_templates (admin-editable).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -17,46 +18,13 @@ const normLocale = (c?: string | null): Locale => {
   return "uz";
 };
 
-const T = {
-  uz: {
-    daily: (n: string) => `Salom, ${n}! Bugun kursda davom etamizmi? 📚`,
-    btnContinue: "Davom etish →",
-    btnNotToday: "Bugun emas",
-    streak: (s: number) => `🔥 ${s} kunlik g'alabangizni saqlang! Bugun bittagina dars qoldi.`,
-    btnNow: "⚡ Hoziroq davom etish",
-    inactive3: "Sog'indik sizni 👋 Kursdan davom etamizmi?",
-    inactive7: (n: string) => `${n}, kursingiz sizni kutmoqda. Birga davom etaylik?`,
-    inactive14: "Sizga maxsus xabar bor — qaytib keling va bonusni oling 🎁",
-    btnContinueDrip: "Davom etish →",
-    btnStartDrip: "Boshlash →",
-    btnDetailsDrip: "Tafsilotlar →",
-  },
-  ru: {
-    daily: (n: string) => `Привет, ${n}! Продолжим обучение сегодня? 📚`,
-    btnContinue: "Продолжить →",
-    btnNotToday: "Не сегодня",
-    streak: (s: number) => `🔥 Сохраните победу в ${s} дней! Сегодня остался один урок.`,
-    btnNow: "⚡ Продолжить сейчас",
-    inactive3: "Соскучились по вам 👋 Продолжим курс?",
-    inactive7: (n: string) => `${n}, ваш курс ждёт вас. Продолжим вместе?`,
-    inactive14: "У нас для вас особое сообщение — вернитесь и заберите бонус 🎁",
-    btnContinueDrip: "Продолжить →",
-    btnStartDrip: "Начать →",
-    btnDetailsDrip: "Подробнее →",
-  },
-  en: {
-    daily: (n: string) => `Hi ${n}! Continue learning today? 📚`,
-    btnContinue: "Continue →",
-    btnNotToday: "Not today",
-    streak: (s: number) => `🔥 Keep your ${s}-day streak alive! One lesson left today.`,
-    btnNow: "⚡ Continue now",
-    inactive3: "We miss you 👋 Want to continue the course?",
-    inactive7: (n: string) => `${n}, your course is waiting. Continue together?`,
-    inactive14: "We have a special message for you — come back and grab the bonus 🎁",
-    btnContinueDrip: "Continue →",
-    btnStartDrip: "Start →",
-    btnDetailsDrip: "Details →",
-  },
+// Hardcoded English defaults if a template row is missing entirely
+const FALLBACK: Record<string, { body: string; button_label?: string }> = {
+  daily_reminder: { body: "Hi {{first_name}}! Continue learning today? 📚", button_label: "Continue →" },
+  streak_warning: { body: "🔥 Keep your {{streak_days}}-day streak alive!", button_label: "⚡ Continue now" },
+  inactive_3: { body: "We miss you 👋 Want to continue the course?", button_label: "Continue →" },
+  inactive_7: { body: "{{first_name}}, your course is waiting.", button_label: "Start →" },
+  inactive_14: { body: "We have a special message for you 🎁", button_label: "Details →" },
 };
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
@@ -82,27 +50,40 @@ async function magicLink(admin: any, user_id: string, target_path: string): Prom
   return `${SITE_URL}/auth/magic?t=${token}`;
 }
 
-// Returns the local "wallclock" time in the given IANA timezone for the current instant.
+// Template loader with in-invocation cache + locale fallback chain (requested → uz → hardcoded EN)
+type TplRow = { template_key: string; locale: string; body: string; button_label: string | null };
+async function loadTemplates(admin: any): Promise<Map<string, TplRow>> {
+  const { data } = await admin.from("notification_templates").select("template_key, locale, body, button_label");
+  const m = new Map<string, TplRow>();
+  for (const r of (data || []) as TplRow[]) m.set(`${r.template_key}:${r.locale}`, r);
+  return m;
+}
+function pickTemplate(cache: Map<string, TplRow>, key: string, locale: Locale): { body: string; button_label?: string } {
+  const exact = cache.get(`${key}:${locale}`);
+  if (exact) return { body: exact.body, button_label: exact.button_label || undefined };
+  const uz = cache.get(`${key}:uz`);
+  if (uz) return { body: uz.body, button_label: uz.button_label || undefined };
+  const fb = FALLBACK[key];
+  if (fb) {
+    console.warn(`[cron-engagement] using hardcoded fallback for ${key}`);
+    return fb;
+  }
+  return { body: "" };
+}
+function interpolate(s: string, vars: Record<string, string | number>): string {
+  return s.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => String(vars[k] ?? ""));
+}
+
 function localTimeParts(tz: string): { hour: number; minute: number; ymd: string } {
   try {
     const d = new Date();
     const fmt = new Intl.DateTimeFormat("en-CA", {
-      timeZone: tz,
-      hour12: false,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
+      timeZone: tz, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
     });
     const parts = Object.fromEntries(fmt.formatToParts(d).map((p) => [p.type, p.value]));
     let h = parseInt(parts.hour || "0", 10);
-    if (h === 24) h = 0; // some envs return 24 for midnight
-    return {
-      hour: h,
-      minute: parseInt(parts.minute || "0", 10),
-      ymd: `${parts.year}-${parts.month}-${parts.day}`,
-    };
+    if (h === 24) h = 0;
+    return { hour: h, minute: parseInt(parts.minute || "0", 10), ymd: `${parts.year}-${parts.month}-${parts.day}` };
   } catch {
     const d = new Date();
     return { hour: d.getUTCHours(), minute: d.getUTCMinutes(), ymd: d.toISOString().slice(0, 10) };
@@ -115,29 +96,19 @@ function minutesBetween(h1: number, m1: number, h2: number, m2: number): number 
 
 async function getDefaultCourseId(admin: any): Promise<string | null> {
   const { data } = await admin
-    .from("courses")
-    .select("id, is_default_for_signup, created_at")
+    .from("courses").select("id, is_default_for_signup, created_at")
     .eq("published", true)
     .order("is_default_for_signup", { ascending: false })
     .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .limit(1).maybeSingle();
   return data?.id ?? null;
 }
 
 async function getNextIncompleteLesson(admin: any, userId: string, courseId: string): Promise<string | null> {
-  const { data: modules } = await admin
-    .from("modules")
-    .select("id, position")
-    .eq("course_id", courseId)
-    .order("position", { ascending: true });
+  const { data: modules } = await admin.from("modules").select("id, position").eq("course_id", courseId).order("position", { ascending: true });
   if (!modules?.length) return null;
   const moduleIds = modules.map((m: any) => m.id);
-  const { data: lessons } = await admin
-    .from("lessons")
-    .select("id, module_id, position")
-    .in("module_id", moduleIds)
-    .eq("published", true);
+  const { data: lessons } = await admin.from("lessons").select("id, module_id, position").in("module_id", moduleIds).eq("published", true);
   if (!lessons?.length) return null;
   const positionMap = new Map(modules.map((m: any, i: number) => [m.id, i]));
   lessons.sort((a: any, b: any) => {
@@ -145,10 +116,7 @@ async function getNextIncompleteLesson(admin: any, userId: string, courseId: str
     const pb = (positionMap.get(b.module_id) ?? 0) * 10000 + b.position;
     return pa - pb;
   });
-  const { data: progress } = await admin
-    .from("lesson_progress")
-    .select("lesson_id, completed_at")
-    .eq("user_id", userId);
+  const { data: progress } = await admin.from("lesson_progress").select("lesson_id, completed_at").eq("user_id", userId);
   const completed = new Set((progress || []).filter((p: any) => p.completed_at).map((p: any) => p.lesson_id));
   const next = lessons.find((l: any) => !completed.has(l.id));
   return next?.id ?? lessons[0].id;
@@ -167,13 +135,11 @@ Deno.serve(async (req) => {
 
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const courseId = await getDefaultCourseId(admin);
+  const templates = await loadTemplates(admin);
 
-  // Pull all eligible users
   const { data: users, error } = await admin
     .from("profiles")
-    .select(
-      "id, name, telegram_id, timezone, reminder_time, notifications_enabled, preferred_locale, created_at, last_daily_reminder_at, last_streak_warning_at, last_inactive_warning_at, last_inactive_warning_day",
-    )
+    .select("id, name, telegram_id, timezone, reminder_time, notifications_enabled, preferred_locale, created_at, last_daily_reminder_at, last_streak_warning_at, last_inactive_warning_at, last_inactive_warning_day")
     .eq("notifications_enabled", true)
     .not("telegram_id", "is", null);
 
@@ -181,47 +147,29 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
   }
 
-  let dailySent = 0;
-  let streakSent = 0;
-  let dripSent = 0;
+  let dailySent = 0, streakSent = 0, dripSent = 0;
 
   for (const u of users || []) {
     try {
       const tz = u.timezone || "Asia/Tashkent";
       const { hour, minute, ymd } = localTimeParts(tz);
-
-      // Quiet hours: skip 00:00-08:00 entirely
       if (hour < 8) continue;
 
       const locale = normLocale(u.preferred_locale);
-      const t = T[locale];
       const chatId = Number(u.telegram_id);
       const firstName = u.name || "";
 
-      // Latest activity
       const { data: lastProg } = await admin
-        .from("lesson_progress")
-        .select("updated_at")
-        .eq("user_id", u.id)
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .from("lesson_progress").select("updated_at").eq("user_id", u.id)
+        .order("updated_at", { ascending: false }).limit(1).maybeSingle();
       const lastActivity = lastProg?.updated_at ? new Date(lastProg.updated_at) : null;
 
-      // "today" boundary in user's timezone — compare as YMD string
       function ymdInTz(date: Date): string {
         try {
-          const fmt = new Intl.DateTimeFormat("en-CA", {
-            timeZone: tz,
-            year: "numeric",
-            month: "2-digit",
-            day: "2-digit",
-          });
+          const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
           const parts = Object.fromEntries(fmt.formatToParts(date).map((p) => [p.type, p.value]));
           return `${parts.year}-${parts.month}-${parts.day}`;
-        } catch {
-          return date.toISOString().slice(0, 10);
-        }
+        } catch { return date.toISOString().slice(0, 10); }
       }
       const watchedToday = lastActivity ? ymdInTz(lastActivity) === ymd : false;
       const lastDailyYmd = u.last_daily_reminder_at ? ymdInTz(new Date(u.last_daily_reminder_at)) : null;
@@ -230,27 +178,18 @@ Deno.serve(async (req) => {
       // ---------- DAILY REMINDER ----------
       const [rh, rm] = (u.reminder_time || "20:00:00").split(":").map((s: string) => parseInt(s, 10));
       const withinReminder = minutesBetween(hour, minute, rh || 20, rm || 0) <= 30;
-      // Skip if reminder time falls in quiet hours
       const reminderInQuiet = (rh || 20) < 8;
-      if (
-        withinReminder &&
-        !reminderInQuiet &&
-        !watchedToday &&
-        lastDailyYmd !== ymd &&
-        courseId
-      ) {
+      if (withinReminder && !reminderInQuiet && !watchedToday && lastDailyYmd !== ymd && courseId) {
+        const tpl = pickTemplate(templates, "daily_reminder", locale);
+        const text = interpolate(tpl.body, { first_name: firstName || "👋" });
         const nextId = await getNextIncompleteLesson(admin, u.id, courseId);
         const inline: any[][] = [];
-        if (nextId) {
+        if (nextId && tpl.button_label) {
           const url = await magicLink(admin, u.id, `/lesson/${courseId}/${nextId}`);
-          inline.push([{ text: t.btnContinue, url }]);
+          inline.push([{ text: tpl.button_label, url }]);
         }
-        inline.push([{ text: t.btnNotToday, callback_data: "ack:not_today" }]);
-        await tg("sendMessage", {
-          chat_id: chatId,
-          text: t.daily(firstName || "👋"),
-          reply_markup: { inline_keyboard: inline },
-        });
+        inline.push([{ text: locale === "ru" ? "Не сегодня" : locale === "en" ? "Not today" : "Bugun emas", callback_data: "ack:not_today" }]);
+        await tg("sendMessage", { chat_id: chatId, text, reply_markup: { inline_keyboard: inline } });
         await admin.from("profiles").update({ last_daily_reminder_at: new Date().toISOString() }).eq("id", u.id);
         await logNotif(admin, u.id, "daily_reminder", {});
         dailySent++;
@@ -259,97 +198,58 @@ Deno.serve(async (req) => {
       // ---------- STREAK WARNING (~21:00) ----------
       const within21 = minutesBetween(hour, minute, 21, 0) <= 30;
       if (within21 && !watchedToday && lastStreakYmd !== ymd) {
-        const { data: streakRow } = await admin
-          .from("streaks")
-          .select("current_streak")
-          .eq("user_id", u.id)
-          .maybeSingle();
+        const { data: streakRow } = await admin.from("streaks").select("current_streak").eq("user_id", u.id).maybeSingle();
         const cs = streakRow?.current_streak || 0;
         if (cs >= 1 && courseId) {
+          const tpl = pickTemplate(templates, "streak_warning", locale);
+          const text = interpolate(tpl.body, { first_name: firstName, streak_days: cs });
           const nextId = await getNextIncompleteLesson(admin, u.id, courseId);
           const inline: any[][] = [];
-          if (nextId) {
+          if (nextId && tpl.button_label) {
             const url = await magicLink(admin, u.id, `/lesson/${courseId}/${nextId}`);
-            inline.push([{ text: t.btnNow, url }]);
+            inline.push([{ text: tpl.button_label, url }]);
           }
-          await tg("sendMessage", {
-            chat_id: chatId,
-            text: t.streak(cs),
-            reply_markup: inline.length ? { inline_keyboard: inline } : undefined,
-          });
+          await tg("sendMessage", { chat_id: chatId, text, reply_markup: inline.length ? { inline_keyboard: inline } : undefined });
           await admin.from("profiles").update({ last_streak_warning_at: new Date().toISOString() }).eq("id", u.id);
           await logNotif(admin, u.id, "streak_warning", { streak: cs });
           streakSent++;
         }
       }
 
-      // ---------- RE-ENGAGEMENT DRIP ----------
-      // Send drip at most once per day (any user), gated by stage transitions
-      // Use a single 12:00 ± 30min window to deliver drips
+      // ---------- RE-ENGAGEMENT DRIP (~12:00) ----------
       const within12 = minutesBetween(hour, minute, 12, 0) <= 30;
       if (within12) {
-        // Skip first 3 days as a new user
         const accountAgeDays = Math.floor((Date.now() - new Date(u.created_at).getTime()) / 86_400_000);
         if (accountAgeDays < 3) continue;
-
         const daysSinceActivity = lastActivity
           ? Math.floor((Date.now() - lastActivity.getTime()) / 86_400_000)
           : accountAgeDays;
-
-        // If user has been active recently, reset drip stage
         if (daysSinceActivity < 3 && u.last_inactive_warning_day) {
-          await admin
-            .from("profiles")
-            .update({ last_inactive_warning_day: null, last_inactive_warning_at: null })
-            .eq("id", u.id);
+          await admin.from("profiles").update({ last_inactive_warning_day: null, last_inactive_warning_at: null }).eq("id", u.id);
           continue;
         }
-
         let stage: 3 | 7 | 14 | null = null;
         if (daysSinceActivity >= 14 && u.last_inactive_warning_day !== 14) stage = 14;
         else if (daysSinceActivity >= 7 && daysSinceActivity < 14 && u.last_inactive_warning_day !== 7) stage = 7;
         else if (daysSinceActivity >= 3 && daysSinceActivity < 7 && u.last_inactive_warning_day !== 3) stage = 3;
-
-        // Don't re-send same day
-        const lastInactiveYmd = u.last_inactive_warning_at
-          ? ymdInTz(new Date(u.last_inactive_warning_at))
-          : null;
+        const lastInactiveYmd = u.last_inactive_warning_at ? ymdInTz(new Date(u.last_inactive_warning_at)) : null;
         if (stage && lastInactiveYmd !== ymd) {
-          let text = "";
-          let btn = "";
+          const key = `inactive_${stage}`;
+          const tpl = pickTemplate(templates, key, locale);
+          const text = interpolate(tpl.body, { first_name: firstName || "👋" });
           let path = "/dashboard";
-          if (stage === 3) {
-            text = t.inactive3;
-            btn = t.btnContinueDrip;
-            if (courseId) {
-              const nextId = await getNextIncompleteLesson(admin, u.id, courseId);
-              if (nextId) path = `/lesson/${courseId}/${nextId}`;
-            }
-          } else if (stage === 7) {
-            text = t.inactive7(firstName || "👋");
-            btn = t.btnStartDrip;
-            if (courseId) {
-              const nextId = await getNextIncompleteLesson(admin, u.id, courseId);
-              if (nextId) path = `/lesson/${courseId}/${nextId}`;
-            }
-          } else {
-            text = t.inactive14;
-            btn = t.btnDetailsDrip;
+          if (stage !== 14 && courseId) {
+            const nextId = await getNextIncompleteLesson(admin, u.id, courseId);
+            if (nextId) path = `/lesson/${courseId}/${nextId}`;
           }
           const url = await magicLink(admin, u.id, path);
-          await tg("sendMessage", {
-            chat_id: chatId,
-            text,
-            reply_markup: { inline_keyboard: [[{ text: btn, url }]] },
-          });
-          await admin
-            .from("profiles")
-            .update({
-              last_inactive_warning_at: new Date().toISOString(),
-              last_inactive_warning_day: stage,
-            })
-            .eq("id", u.id);
-          await logNotif(admin, u.id, `inactive_${stage}`, { days: daysSinceActivity });
+          const reply_markup = tpl.button_label ? { inline_keyboard: [[{ text: tpl.button_label, url }]] } : undefined;
+          await tg("sendMessage", { chat_id: chatId, text, reply_markup });
+          await admin.from("profiles").update({
+            last_inactive_warning_at: new Date().toISOString(),
+            last_inactive_warning_day: stage,
+          }).eq("id", u.id);
+          await logNotif(admin, u.id, key, { days: daysSinceActivity });
           dripSent++;
         }
       }
