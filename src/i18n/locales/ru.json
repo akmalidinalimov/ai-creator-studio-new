@@ -242,6 +242,21 @@
     "popupBlocked": "Всплывающее окно заблокировано — разрешите всплывающие окна для этого сайта.",
     "cancelled": "Вход через Telegram отменён."
   },
+  "telegramDeeplink": {
+    "label": "Войти через Telegram",
+    "waiting": "Нажмите Start в Telegram…",
+    "didntOpen": "Telegram не открылся?",
+    "openAgain": "Открыть снова",
+    "expired": "Время вышло. Попробуйте ещё раз.",
+    "retry": "Повторить",
+    "startFailed": "Не удалось начать вход. Попробуйте снова."
+  },
+  "authMagic": {
+    "signingIn": "Вход…",
+    "invalid": "Ссылка недействительна или устарела.",
+    "invalidTitle": "Не удалось войти",
+    "backToLogin": "Вернуться к входу"
+  },
   "landing": {
     "nav": {
       "curriculum": "Программа",
