@@ -14,6 +14,21 @@ export type Database = {
   }
   public: {
     Tables: {
+      _internal_settings: {
+        Row: {
+          key: string
+          value: string
+        }
+        Insert: {
+          key: string
+          value: string
+        }
+        Update: {
+          key?: string
+          value?: string
+        }
+        Relationships: []
+      }
       admin_actions: {
         Row: {
           action: string
