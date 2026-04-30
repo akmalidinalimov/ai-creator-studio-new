@@ -44,7 +44,85 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
     if (error) toast.error(error.message);
   };
 
-  const onDrop = async (files: File[]) => {
+  // ===== Bunny Stream direct upload (v2.1) =====
+  const startBunnyUpload = async (file: File) => {
+    setBunnyUploading(true);
+    setBunnyProgress({ pct: 0, mbps: 0, fileName: file.name });
+    const startTs = Date.now();
+    try {
+      const { data: sess } = await supabase.auth.getSession();
+      const r = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/bunny-upload-init`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${sess.session?.access_token || ""}`,
+        },
+        body: JSON.stringify({ lesson_id: lessonId, filename: file.name, filesize: file.size }),
+      });
+      const init = await r.json();
+      if (!r.ok || !init?.videoId) {
+        throw new Error(init?.error || `Init failed (${r.status})`);
+      }
+      const { videoId, libraryId, authorization_signature, authorization_expire } = init;
+
+      await new Promise<void>((resolve, reject) => {
+        const upload = new tus.Upload(file, {
+          endpoint: "https://video.bunnycdn.com/tusupload",
+          retryDelays: [0, 3000, 6000, 12000, 24000],
+          headers: {
+            AuthorizationSignature: authorization_signature,
+            AuthorizationExpire: String(authorization_expire),
+            VideoId: videoId,
+            LibraryId: String(libraryId),
+          },
+          metadata: {
+            filetype: file.type || "video/mp4",
+            title: file.name,
+          },
+          chunkSize: 50 * 1024 * 1024,
+          onError: (err) => reject(err),
+          onProgress: (loaded, total) => {
+            const elapsed = (Date.now() - startTs) / 1000;
+            const mb = loaded / (1024 * 1024);
+            const mbps = elapsed > 0 ? mb / elapsed : 0;
+            setBunnyProgress({
+              pct: Math.round((loaded / total) * 100),
+              mbps,
+              fileName: file.name,
+            });
+          },
+          onSuccess: () => resolve(),
+        });
+        bunnyTusRef.current = upload;
+        upload.start();
+      });
+
+      await update({
+        video_provider: "bunny",
+        provider_video_id: `${libraryId}/${videoId}`,
+        video_url: null,
+        video_storage_path: null,
+      });
+      toast.success(t("admin.lessonDrawer.bunnyUploadedToast"));
+      onChanged();
+    } catch (e: any) {
+      console.error("bunny upload failed", e);
+      toast.error(e?.message || t("admin.lessonDrawer.bunnyUploadFailed"));
+    } finally {
+      setBunnyUploading(false);
+      setBunnyProgress(null);
+      bunnyTusRef.current = null;
+      if (bunnyFileInputRef.current) bunnyFileInputRef.current.value = "";
+    }
+  };
+
+  const cancelBunnyUpload = () => {
+    bunnyTusRef.current?.abort();
+    setBunnyUploading(false);
+    setBunnyProgress(null);
+  };
+
+
     if (!files[0]) return;
     const file = files[0];
     if (file.size > MAX_INLINE_UPLOAD) {
