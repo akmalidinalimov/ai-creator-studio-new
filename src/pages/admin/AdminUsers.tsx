@@ -219,63 +219,118 @@ export default function AdminUsers() {
   };
 
   const parseCsv = (txt: string) => {
-    const lines = txt.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    const seen = new Set<string>();
-    const seenTgIds = new Set<number>();
-    const rows: CsvRow[] = lines.map((line, i) => {
-      // Skip header (detect by presence of "email" + ("name" or "last_name"))
-      if (i === 0 && /email/i.test(line) && /(name|last_name)/i.test(line)) return null as any;
-      const parts = line.split(",").map((p) => p.trim());
-      // Formats supported:
-      //   New (7 cols): name,last_name,email,password,telegram_user_id,telegram_username,role
-      //   Legacy (6):   name,last_name,email,password,telegram_username,role
-      //   Legacy (5):   name,email,password,telegram_username,role
-      let name = "", last_name = "", email = "", password = "", tgIdRaw = "", tg = "", role = "";
-      if (parts.length >= 7) {
-        [name, last_name, email, password, tgIdRaw, tg, role] = parts;
-      } else if (parts.length >= 6) {
-        [name, last_name, email, password, tg, role] = parts;
-      } else {
-        [name, email, password, tg, role] = parts;
-      }
-      const r = (role || "student").toLowerCase();
-      const validRole = r === "admin" || r === "student";
-      const validEmail = !!email && /^\S+@\S+\.\S+$/.test(email);
-      const dup = seen.has((email || "").toLowerCase());
-      seen.add((email || "").toLowerCase());
+    if (!txt || !txt.trim()) { setCsvParsed([]); return; }
+    // Strip BOM
+    const cleaned = txt.replace(/^\uFEFF/, "");
+    const parsed = Papa.parse<string[]>(cleaned, {
+      skipEmptyLines: "greedy",
+      delimiter: ",",
+    });
+    const allRows = (parsed.data || []) as string[][];
+    if (allRows.length === 0) { setCsvParsed([]); return; }
 
+    // Detect header row
+    const first = allRows[0].map((c) => (c || "").trim().toLowerCase());
+    const hasHeader = first.includes("email") || first.includes("name") || first.includes("telegram_user_id") || first.includes("telegram_username");
+    let headerMap: Record<string, number> | null = null;
+    let dataRows: { row: string[]; rowNum: number }[];
+    if (hasHeader) {
+      headerMap = {};
+      first.forEach((h, i) => { if (h) headerMap![h] = i; });
+      dataRows = allRows.slice(1).map((row, idx) => ({ row, rowNum: idx + 2 }));
+    } else {
+      dataRows = allRows.map((row, idx) => ({ row, rowNum: idx + 1 }));
+    }
+
+    const seenEmails = new Set<string>();
+    const seenTgIds = new Set<number>();
+    const get = (row: string[], key: string, fallbackIdx: number): string => {
+      if (headerMap && headerMap[key] !== undefined) return (row[headerMap[key]] || "").trim();
+      return (row[fallbackIdx] || "").trim();
+    };
+
+    const rows: CsvRow[] = dataRows.map(({ row, rowNum }) => {
+      // Positional fallback (no header): name,last_name,email,password,telegram_user_id,telegram_username,role
+      const name = get(row, "name", 0);
+      const last_name = get(row, "last_name", 1);
+      const emailRaw = get(row, "email", 2).toLowerCase();
+      const password = get(row, "password", 3);
+      const tgIdRaw = get(row, "telegram_user_id", 4);
+      let tgUser = get(row, "telegram_username", 5);
+      const roleRaw = (get(row, "role", 6) || "student").toLowerCase();
+
+      // Strip @ from telegram username, lowercase, drop if empty
+      tgUser = tgUser.replace(/^@/, "").toLowerCase();
+
+      const validRole = roleRaw === "admin" || roleRaw === "student";
+      const role = (validRole ? roleRaw : "student") as "student" | "admin";
+
+      // telegram_user_id parsing (bigint)
       let tgId: number | undefined;
       let tgIdReason: string | undefined;
       if (tgIdRaw) {
-        const cleaned = tgIdRaw.replace(/[^\d]/g, "");
-        const n = Number(cleaned);
-        if (!cleaned || !Number.isInteger(n) || n <= 0) {
-          tgIdReason = t("admin.users.tgIdInvalid", { defaultValue: "Telegram ID must be a positive integer" });
-        } else if (seenTgIds.has(n)) {
-          tgIdReason = t("admin.users.tgIdDup", { defaultValue: "Duplicate telegram_user_id in CSV" });
+        const cleanedNum = tgIdRaw.replace(/[^\d]/g, "");
+        if (!cleanedNum || !/^\d+$/.test(cleanedNum)) {
+          tgIdReason = t("admin.users.csvErr.tgIdInvalid", { defaultValue: "telegram_user_id is not a valid bigint" });
         } else {
-          tgId = n;
-          seenTgIds.add(n);
+          const n = Number(cleanedNum);
+          if (!Number.isFinite(n) || !Number.isSafeInteger(n) || n <= 0) {
+            tgIdReason = t("admin.users.csvErr.tgIdInvalid", { defaultValue: "telegram_user_id is not a valid bigint" });
+          } else {
+            tgId = n;
+          }
         }
       }
 
-      let reason: string | undefined;
+      // Email format (optional, but if provided must be valid)
+      const hasEmail = !!emailRaw;
+      const emailFormatOk = !hasEmail || /^\S+@\S+\.\S+$/.test(emailRaw);
+
+      // Determine validity
       let valid = true;
-      if (!validEmail) { valid = false; reason = t("validation.emailInvalid"); }
-      else if (dup) { valid = false; reason = t("admin.users.csvHeaders.email"); }
-      else if (!validRole) { valid = false; reason = t("admin.users.role"); }
-      else if (tgIdReason) { valid = false; reason = tgIdReason; }
+      let reason: string | undefined;
+
+      if (!name || !name.trim()) {
+        valid = false;
+        reason = t("admin.users.csvErr.nameRequired", { defaultValue: "name is required" });
+      } else if (!hasEmail && tgId === undefined) {
+        valid = false;
+        reason = t("admin.users.csvErr.needIdentifier", { defaultValue: "Missing both email and telegram_user_id" });
+      } else if (hasEmail && !emailFormatOk) {
+        valid = false;
+        reason = t("admin.users.csvErr.emailInvalid", { defaultValue: "email format invalid" });
+      } else if (tgIdReason) {
+        valid = false;
+        reason = tgIdReason;
+      } else if (hasEmail && seenEmails.has(emailRaw)) {
+        valid = false;
+        reason = t("admin.users.csvErr.dupEmail", { defaultValue: "duplicate email within file" });
+      } else if (tgId !== undefined && seenTgIds.has(tgId)) {
+        valid = false;
+        reason = t("admin.users.csvErr.dupTgId", { defaultValue: "duplicate telegram_user_id within file" });
+      } else if (tgId !== undefined && existingTgIds.has(tgId) && (!hasEmail || existingTgIds.get(tgId) !== emailRaw)) {
+        valid = false;
+        reason = t("admin.users.csvErr.tgIdInDb", { defaultValue: "telegram_user_id already exists in database" });
+      }
+
+      if (valid) {
+        if (hasEmail) seenEmails.add(emailRaw);
+        if (tgId !== undefined) seenTgIds.add(tgId);
+      }
+
       return {
-        name: name || "",
-        last_name: last_name || undefined,
-        email: email || "",
+        rowNum,
+        name: name.trim(),
+        last_name: last_name ? last_name.trim() : undefined,
+        email: emailRaw,
         password: password || undefined,
         telegram_user_id: tgId,
-        telegram_username: (tg || "").replace(/^@/, "") || undefined,
-        role: (validRole ? r : "student") as "student" | "admin",
-        valid, reason,
+        telegram_username: tgUser || undefined,
+        role,
+        valid,
+        reason,
       };
-    }).filter(Boolean) as CsvRow[];
+    });
     setCsvParsed(rows);
   };
 
