@@ -738,7 +738,34 @@ export default function AdminUsers() {
                 </table>
               </div>
             )}
-            <div className="text-xs text-muted-foreground">{t("admin.users.validInvalid", { valid: csvParsed.filter(r => r.valid).length, invalid: csvParsed.filter(r => !r.valid).length })}</div>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="text-xs text-muted-foreground">
+                {t("admin.users.validInvalid", { valid: csvParsed.filter(r => r.valid).length, invalid: csvParsed.filter(r => !r.valid).length })}
+              </div>
+              {csvParsed.some(r => !r.valid) && (
+                <Collapsible open={showErrors} onOpenChange={setShowErrors}>
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" size="sm" className="h-7 text-xs text-destructive">
+                      {showErrors ? <ChevronDown className="h-3 w-3 mr-1" /> : <ChevronRight className="h-3 w-3 mr-1" />}
+                      {t("admin.users.csvErr.showErrors", { defaultValue: "Show invalid rows" })} ({csvParsed.filter(r => !r.valid).length})
+                    </Button>
+                  </CollapsibleTrigger>
+                </Collapsible>
+              )}
+            </div>
+            {showErrors && csvParsed.some(r => !r.valid) && (
+              <div className="border border-destructive/30 rounded-md max-h-48 overflow-y-auto bg-destructive/5">
+                <ul className="text-xs divide-y divide-destructive/20">
+                  {csvParsed.filter(r => !r.valid).map((r, i) => (
+                    <li key={i} className="p-2">
+                      <span className="font-mono text-muted-foreground mr-2">Row {r.rowNum}:</span>
+                      <span className="text-destructive">{r.reason}</span>
+                      {r.name && <span className="text-muted-foreground ml-2">({r.name}{r.email ? ` · ${r.email}` : ""}{r.telegram_user_id ? ` · TG:${r.telegram_user_id}` : ""})</span>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button onClick={importCsv} disabled={importing || csvParsed.filter(r => r.valid).length === 0}>
