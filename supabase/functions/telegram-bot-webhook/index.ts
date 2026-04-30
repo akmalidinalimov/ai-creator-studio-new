@@ -418,32 +418,22 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
     return;
   }
 
-  // Match: prefer telegram_id, fall back to username
-  let profile = await findProfileByTelegramId(admin, tgId);
-  if (!profile && tgUsername) {
-    profile = await findProfileByUsername(admin, tgUsername);
-  }
+  // v2.1: strict match by Telegram numeric user_id only.
+  // No more username matching — admin must pre-enter telegram_user_id for every student.
+  const profile = await findProfileByTelegramId(admin, tgId);
 
   if (!profile) {
-    if (!tgUsername) {
-      await sendMessage(chatId, t.noUsername, {
-        inline_keyboard: [[{ text: t.howTo, url: "https://telegram.org/faq#usernames-and-t-me" }]],
-      });
-    } else {
-      const adminBtn = SUPPORT_HANDLE
-        ? [[{ text: t.contactAdmin, url: `https://t.me/${SUPPORT_HANDLE}` }]]
-        : [];
-      await sendMessage(chatId, t.notEnrolled(tgUsername), { inline_keyboard: adminBtn });
+    const buttons: any[][] = [];
+    if (SUPPORT_HANDLE) {
+      buttons.push([{ text: t.contactAdmin, url: `https://t.me/${SUPPORT_HANDLE}` }]);
     }
+    await sendMessage(chatId, t.notRegistered, buttons.length ? { inline_keyboard: buttons } : undefined);
     return;
   }
 
-  // Persist telegram_id on first link
-  const updates: Record<string, unknown> = {};
-  if (!profile.telegram_id) updates.telegram_id = tgId;
-  if (tgUsername && profile.telegram_username !== tgUsername) updates.telegram_username = tgUsername;
-  if (Object.keys(updates).length) {
-    await admin.from("profiles").update(updates).eq("id", profile.id);
+  // Refresh @username metadata for admin display only (does NOT affect login).
+  if (tgUsername && profile.telegram_username !== tgUsername) {
+    await admin.from("profiles").update({ telegram_username: tgUsername }).eq("id", profile.id);
   }
 
   // Mark token authenticated
