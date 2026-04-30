@@ -667,11 +667,48 @@ export default function AdminUsers() {
                   <Input defaultValue={manageUser.email} onBlur={(e) => e.target.value !== manageUser.email && updateProfile(manageUser, { email: e.target.value })} />
                 </div>
                 <div className="space-y-1.5">
+                  <Label>{t("admin.users.tgIdLabel", { defaultValue: "Telegram ID" })}</Label>
+                  <Input
+                    defaultValue={manageUser.telegram_id ?? ""}
+                    inputMode="numeric"
+                    placeholder="123456789"
+                    onBlur={async (e) => {
+                      const raw = e.target.value.replace(/[^\d]/g, "");
+                      const next = raw ? Number(raw) : null;
+                      const cur = manageUser.telegram_id ?? null;
+                      if (next === cur) return;
+                      if (next !== null && (!Number.isInteger(next) || next <= 0)) {
+                        toast.error(t("admin.users.tgIdInvalid", { defaultValue: "Telegram ID must be a positive integer" }));
+                        e.target.value = cur ? String(cur) : "";
+                        return;
+                      }
+                      const { error } = await (supabase.from("profiles") as any)
+                        .update({ telegram_id: next })
+                        .eq("id", manageUser.id);
+                      if (error) {
+                        const msg = /duplicate|unique/i.test(error.message)
+                          ? t("admin.users.tgIdTaken", { defaultValue: "This Telegram ID is already linked to another user." })
+                          : error.message;
+                        toast.error(msg);
+                        e.target.value = cur ? String(cur) : "";
+                        return;
+                      }
+                      logAction("update_profile", { target_user_id: manageUser.id, details: { changed: ["telegram_id"] } });
+                      toast.success(t("admin.users.toasts.saved"));
+                      reload();
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground">{t("admin.users.tgIdHint", { defaultValue: "Numeric ID from /myid in the bot. Required for Telegram login." })}</p>
+                </div>
+                <div className="space-y-1.5">
                   <Label>{t("admin.users.manageTg")}</Label>
-                  <Input defaultValue={manageUser.telegram_username || ""} placeholder="username" onBlur={(e) => {
-                    const v = e.target.value.replace(/^@/, "") || null;
-                    if (v !== manageUser.telegram_username) updateProfile(manageUser, { telegram_username: v });
-                  }} />
+                  <Input
+                    value={manageUser.telegram_username ? `@${manageUser.telegram_username}` : ""}
+                    readOnly
+                    disabled
+                    placeholder={t("admin.users.tgUsernameReadonly", { defaultValue: "Auto-filled from Telegram (read-only)" })}
+                  />
+                  <p className="text-xs text-muted-foreground">{t("admin.users.tgUsernameNoteReadonly", { defaultValue: "Set automatically when the user logs in via the bot. Not used for matching." })}</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t("admin.users.role")}</Label>
