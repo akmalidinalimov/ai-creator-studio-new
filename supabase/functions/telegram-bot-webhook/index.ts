@@ -481,12 +481,18 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
     : normLocale(msg.from.language_code);
   const t = T[locale];
 
-  if (!profile) {
-    await sendMessage(chatId, t.noProfile);
+  const cmd = cmdRaw.split("@")[0].toLowerCase();
+
+  // /myid works for ANY user (registered or not). Handle before profile gate.
+  if (cmd === "/myid") {
+    await sendMessage(chatId, t.myidResponse(tgId));
     return;
   }
 
-  const cmd = cmdRaw.split("@")[0].toLowerCase();
+  if (!profile) {
+    await sendMessage(chatId, cmd === "/start" ? t.notRegistered : t.noProfile);
+    return;
+  }
 
   if (cmd === "/davom") {
     const courseId = await getDefaultCourseId(admin);
