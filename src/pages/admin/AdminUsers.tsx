@@ -36,6 +36,7 @@ interface CsvRow {
   last_name?: string;
   email: string;
   password?: string;
+  telegram_user_id?: number;
   telegram_username?: string;
   role: "student" | "admin";
   valid: boolean;
@@ -45,12 +46,12 @@ interface CsvRow {
 const randPassword = () =>
   Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6).toUpperCase();
 
-const CSV_TEMPLATE = `name,last_name,email,password,telegram_username,role
-Aida,Khan,aida@example.com,,@aidakhan,student
-Bilol,Karimov,bilol@example.com,SecurePass123!,,student
-Chen,Wei,chen@example.com,,,student
-Dilnoza,Yusupova,dilnoza@example.com,,,student
-Elnur,Aliyev,elnur@example.com,AdminPass456!,@elnura,admin
+const CSV_TEMPLATE = `name,last_name,email,password,telegram_user_id,telegram_username,role
+Aida,Khan,aida@example.com,,123456789,@aidakhan,student
+Bilol,Karimov,bilol@example.com,SecurePass123!,,,student
+Chen,Wei,chen@example.com,,987654321,,student
+Dilnoza,Yusupova,dilnoza@example.com,,,,student
+Elnur,Aliyev,elnur@example.com,AdminPass456!,555555555,@elnura,admin
 `;
 
 const FN_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
@@ -74,6 +75,7 @@ export default function AdminUsers() {
   const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState(randPassword());
   const [newTg, setNewTg] = useState("");
+  const [newTgId, setNewTgId] = useState("");
   const [newRole, setNewRole] = useState<"student" | "admin">("student");
   const [newCourses, setNewCourses] = useState<Set<string>>(new Set());
   const [sendInvite, setSendInvite] = useState(true);
@@ -144,7 +146,8 @@ export default function AdminUsers() {
           (u.name || "").toLowerCase().includes(q) ||
           (u.last_name || "").toLowerCase().includes(q) ||
           u.email.toLowerCase().includes(q) ||
-          (u.telegram_username || "").toLowerCase().includes(q)
+          (u.telegram_username || "").toLowerCase().includes(q) ||
+          (u.telegram_id ? String(u.telegram_id) : "").includes(q)
         );
       }
       return true;
@@ -168,12 +171,22 @@ export default function AdminUsers() {
 
   const handleAdd = async () => {
     if (!newEmail) return;
+    let tgId: number | undefined;
+    if (newTgId.trim()) {
+      const n = Number(newTgId.trim());
+      if (!Number.isInteger(n) || n <= 0) {
+        toast.error(t("admin.users.tgIdInvalid", { defaultValue: "Telegram ID must be a positive integer" }));
+        return;
+      }
+      tgId = n;
+    }
     const res = await callCreate([{
       name: newName,
       last_name: newLastName || undefined,
       email: newEmail,
       password: newPassword || undefined,
       telegram_username: newTg.replace(/^@/, "") || undefined,
+      telegram_user_id: tgId,
       role: newRole,
     }]);
     const r = res?.results?.[0];
@@ -183,7 +196,7 @@ export default function AdminUsers() {
         : t("admin.users.toasts.created", { email: newEmail }));
       setOpenAdd(false);
       setNewName(""); setNewLastName(""); setNewEmail(""); setNewPassword(randPassword());
-      setNewTg(""); setNewRole("student"); setNewCourses(new Set());
+      setNewTg(""); setNewTgId(""); setNewRole("student"); setNewCourses(new Set());
       reload();
     } else {
       toast.error(r?.error || res?.error || t("admin.users.toasts.createFailed"));
@@ -203,18 +216,21 @@ export default function AdminUsers() {
   const parseCsv = (txt: string) => {
     const lines = txt.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     const seen = new Set<string>();
+    const seenTgIds = new Set<number>();
     const rows: CsvRow[] = lines.map((line, i) => {
       // Skip header (detect by presence of "email" + ("name" or "last_name"))
       if (i === 0 && /email/i.test(line) && /(name|last_name)/i.test(line)) return null as any;
       const parts = line.split(",").map((p) => p.trim());
-      // Detect new vs legacy format.
-      // New: name,last_name,email,password,telegram_username,role  (6 cols)
-      // Legacy: name,email,password,telegram_username,role          (5 cols)
-      let name = "", last_name = "", email = "", password = "", tg = "", role = "";
-      if (parts.length >= 6) {
+      // Formats supported:
+      //   New (7 cols): name,last_name,email,password,telegram_user_id,telegram_username,role
+      //   Legacy (6):   name,last_name,email,password,telegram_username,role
+      //   Legacy (5):   name,email,password,telegram_username,role
+      let name = "", last_name = "", email = "", password = "", tgIdRaw = "", tg = "", role = "";
+      if (parts.length >= 7) {
+        [name, last_name, email, password, tgIdRaw, tg, role] = parts;
+      } else if (parts.length >= 6) {
         [name, last_name, email, password, tg, role] = parts;
       } else {
-        // Legacy 5-col fallback
         [name, email, password, tg, role] = parts;
       }
       const r = (role || "student").toLowerCase();
@@ -222,16 +238,34 @@ export default function AdminUsers() {
       const validEmail = !!email && /^\S+@\S+\.\S+$/.test(email);
       const dup = seen.has((email || "").toLowerCase());
       seen.add((email || "").toLowerCase());
+
+      let tgId: number | undefined;
+      let tgIdReason: string | undefined;
+      if (tgIdRaw) {
+        const cleaned = tgIdRaw.replace(/[^\d]/g, "");
+        const n = Number(cleaned);
+        if (!cleaned || !Number.isInteger(n) || n <= 0) {
+          tgIdReason = t("admin.users.tgIdInvalid", { defaultValue: "Telegram ID must be a positive integer" });
+        } else if (seenTgIds.has(n)) {
+          tgIdReason = t("admin.users.tgIdDup", { defaultValue: "Duplicate telegram_user_id in CSV" });
+        } else {
+          tgId = n;
+          seenTgIds.add(n);
+        }
+      }
+
       let reason: string | undefined;
       let valid = true;
       if (!validEmail) { valid = false; reason = t("validation.emailInvalid"); }
       else if (dup) { valid = false; reason = t("admin.users.csvHeaders.email"); }
       else if (!validRole) { valid = false; reason = t("admin.users.role"); }
+      else if (tgIdReason) { valid = false; reason = tgIdReason; }
       return {
         name: name || "",
         last_name: last_name || undefined,
         email: email || "",
         password: password || undefined,
+        telegram_user_id: tgId,
         telegram_username: (tg || "").replace(/^@/, "") || undefined,
         role: (validRole ? r : "student") as "student" | "admin",
         valid, reason,
@@ -460,7 +494,10 @@ export default function AdminUsers() {
                       {u.email}
                       {isLocked(u.email) && <Badge variant="destructive" className="ml-2 text-[10px]">{t("admin.users.locked")}</Badge>}
                     </td>
-                    <td className="p-3 text-xs text-muted-foreground">{u.telegram_username ? `@${u.telegram_username}` : "—"}</td>
+                    <td className="p-3 text-xs">
+                      <div className="font-mono text-foreground">{u.telegram_id ?? "—"}</div>
+                      {u.telegram_username && <div className="text-muted-foreground">@{u.telegram_username}</div>}
+                    </td>
                     <td className="p-3">{u.is_admin ? <Badge>{t("admin.users.admin").toLowerCase()}</Badge> : <Badge variant="secondary">{t("admin.users.student").toLowerCase()}</Badge>}</td>
                     <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : "bg-destructive/10 text-destructive"}`}>{u.status === "active" ? t("admin.users.active") : t("admin.users.inactive")}</span></td>
                     <td className="p-3 text-xs text-muted-foreground">{(enrollMap[u.id]?.size) || 0}</td>
@@ -496,7 +533,21 @@ export default function AdminUsers() {
                 <Button type="button" variant="outline" size="icon" onClick={() => { navigator.clipboard.writeText(newPassword); toast.success(t("admin.common.copied")); }}><Copy className="h-4 w-4" /></Button>
               </div>
             </div>
-            <div className="space-y-1.5"><Label>{t("admin.users.tgUsernameOptional")}</Label><Input value={newTg} onChange={(e) => setNewTg(e.target.value)} placeholder="@username" /></div>
+            <div className="space-y-1.5">
+              <Label>{t("admin.users.tgIdLabel", { defaultValue: "Telegram ID" })}</Label>
+              <Input
+                value={newTgId}
+                onChange={(e) => setNewTgId(e.target.value.replace(/[^\d]/g, ""))}
+                inputMode="numeric"
+                placeholder="123456789"
+              />
+              <p className="text-xs text-muted-foreground">{t("admin.users.tgIdHint", { defaultValue: "Numeric ID from /myid in the bot. Required for Telegram login." })}</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t("admin.users.tgUsernameOptional")}</Label>
+              <Input value={newTg} onChange={(e) => setNewTg(e.target.value)} placeholder="@username" />
+              <p className="text-xs text-muted-foreground">{t("admin.users.tgUsernameNoteOptional", { defaultValue: "Optional metadata only — not used for matching." })}</p>
+            </div>
             <div className="space-y-1.5">
               <Label>{t("admin.users.role")}</Label>
               <Select value={newRole} onValueChange={(v) => setNewRole(v as any)}>
@@ -538,7 +589,7 @@ export default function AdminUsers() {
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3">
               <div className="text-xs text-muted-foreground">
-                {t("admin.users.csvFormat")} <code>name,last_name,email,password,telegram_username,role</code><br />
+                {t("admin.users.csvFormat")} <code>name,last_name,email,password,telegram_user_id,telegram_username,role</code><br />
                 <span>{t("admin.users.csvFormatHint")}</span>
               </div>
               <Button variant="default" size="sm" onClick={downloadTemplate}><Download className="h-4 w-4" />{t("admin.users.downloadTemplate")}</Button>
@@ -547,7 +598,7 @@ export default function AdminUsers() {
               rows={6}
               value={csvText}
               onChange={(e) => { setCsvText(e.target.value); parseCsv(e.target.value); }}
-              placeholder="Aida,Khan,aida@example.com,,@aidakhan,student&#10;Bilol,Karimov,bilol@example.com,SecurePass123!,,student"
+              placeholder="Aida,Khan,aida@example.com,,123456789,@aidakhan,student&#10;Bilol,Karimov,bilol@example.com,SecurePass123!,,,student"
             />
             {csvParsed.length > 0 && (
               <div className="border rounded-md max-h-64 overflow-y-auto">
@@ -557,6 +608,7 @@ export default function AdminUsers() {
                       <th className="text-left p-2">{t("admin.users.csvHeaders.name")}</th>
                       <th className="text-left p-2">{t("admin.users.csvHeaders.lastName")}</th>
                       <th className="text-left p-2">{t("admin.users.csvHeaders.email")}</th>
+                      <th className="text-left p-2">{t("admin.users.tgIdLabel", { defaultValue: "Telegram ID" })}</th>
                       <th className="text-left p-2">{t("admin.users.csvHeaders.telegram")}</th>
                       <th className="text-left p-2">{t("admin.users.csvHeaders.role")}</th>
                       <th className="text-left p-2">{t("admin.users.csvHeaders.status")}</th>
@@ -568,6 +620,7 @@ export default function AdminUsers() {
                         <td className="p-2">{r.name}</td>
                         <td className="p-2">{r.last_name || "—"}</td>
                         <td className="p-2">{r.email}</td>
+                        <td className="p-2 text-xs font-mono">{r.telegram_user_id ?? "—"}</td>
                         <td className="p-2 text-xs">{r.telegram_username ? `@${r.telegram_username}` : "—"}</td>
                         <td className="p-2 text-xs">{r.role}</td>
                         <td className={`p-2 text-xs ${r.valid ? "text-foreground" : "text-destructive font-medium"}`}>
@@ -614,11 +667,48 @@ export default function AdminUsers() {
                   <Input defaultValue={manageUser.email} onBlur={(e) => e.target.value !== manageUser.email && updateProfile(manageUser, { email: e.target.value })} />
                 </div>
                 <div className="space-y-1.5">
+                  <Label>{t("admin.users.tgIdLabel", { defaultValue: "Telegram ID" })}</Label>
+                  <Input
+                    defaultValue={manageUser.telegram_id ?? ""}
+                    inputMode="numeric"
+                    placeholder="123456789"
+                    onBlur={async (e) => {
+                      const raw = e.target.value.replace(/[^\d]/g, "");
+                      const next = raw ? Number(raw) : null;
+                      const cur = manageUser.telegram_id ?? null;
+                      if (next === cur) return;
+                      if (next !== null && (!Number.isInteger(next) || next <= 0)) {
+                        toast.error(t("admin.users.tgIdInvalid", { defaultValue: "Telegram ID must be a positive integer" }));
+                        e.target.value = cur ? String(cur) : "";
+                        return;
+                      }
+                      const { error } = await (supabase.from("profiles") as any)
+                        .update({ telegram_id: next })
+                        .eq("id", manageUser.id);
+                      if (error) {
+                        const msg = /duplicate|unique/i.test(error.message)
+                          ? t("admin.users.tgIdTaken", { defaultValue: "This Telegram ID is already linked to another user." })
+                          : error.message;
+                        toast.error(msg);
+                        e.target.value = cur ? String(cur) : "";
+                        return;
+                      }
+                      logAction("update_profile", { target_user_id: manageUser.id, details: { changed: ["telegram_id"] } });
+                      toast.success(t("admin.users.toasts.saved"));
+                      reload();
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground">{t("admin.users.tgIdHint", { defaultValue: "Numeric ID from /myid in the bot. Required for Telegram login." })}</p>
+                </div>
+                <div className="space-y-1.5">
                   <Label>{t("admin.users.manageTg")}</Label>
-                  <Input defaultValue={manageUser.telegram_username || ""} placeholder="username" onBlur={(e) => {
-                    const v = e.target.value.replace(/^@/, "") || null;
-                    if (v !== manageUser.telegram_username) updateProfile(manageUser, { telegram_username: v });
-                  }} />
+                  <Input
+                    value={manageUser.telegram_username ? `@${manageUser.telegram_username}` : ""}
+                    readOnly
+                    disabled
+                    placeholder={t("admin.users.tgUsernameReadonly", { defaultValue: "Auto-filled from Telegram (read-only)" })}
+                  />
+                  <p className="text-xs text-muted-foreground">{t("admin.users.tgUsernameNoteReadonly", { defaultValue: "Set automatically when the user logs in via the bot. Not used for matching." })}</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t("admin.users.role")}</Label>
