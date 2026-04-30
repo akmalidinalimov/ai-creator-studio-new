@@ -598,6 +598,9 @@
       "deleteConfirm": "Delete this lesson permanently?",
       "deletedToast": "Lesson deleted",
       "bunnyHint": "Bunny gives you a Library ID and Video GUID. Format: 12345/abc-def-...",
+      "bunnyUploadBtn": "Upload directly to Bunny",
+      "bunnyUploadedToast": "Video uploaded to Bunny",
+      "bunnyUploadFailed": "Bunny upload failed",
       "muxHint": "Use the Mux Playback ID."
     },
     "quiz": {

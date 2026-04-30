@@ -598,6 +598,9 @@
       "deleteConfirm": "Ushbu darsni butunlay o'chirilsinmi?",
       "deletedToast": "Dars o'chirildi",
       "bunnyHint": "Bunny Library ID va Video GUID beradi. Format: 12345/abc-def-...",
+      "bunnyUploadBtn": "Bunny ga to'g'ridan-to'g'ri yuklash",
+      "bunnyUploadedToast": "Video Bunny ga yuklandi",
+      "bunnyUploadFailed": "Bunny ga yuklashda xatolik",
       "muxHint": "Mux Playback ID dan foydalaning."
     },
     "quiz": {

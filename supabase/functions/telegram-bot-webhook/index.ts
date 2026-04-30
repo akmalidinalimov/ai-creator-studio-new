@@ -21,6 +21,10 @@ function normLocale(code?: string | null): Locale {
 const T = {
   uz: {
     expired: "Kirish havolasining muddati tugagan. Saytga qaytib qaytadan urinib ko'ring.",
+    notRegistered:
+      "Sizning Telegram ID hali ro'yxatdan o'tmagan. Adminga murojaat qilib, ID raqamingizni yuboring. ID olish uchun: /myid",
+    myidResponse: (id: number) =>
+      `Sizning Telegram ID: <code>${id}</code>\n\nUshbu raqamni adminga yuboring.`,
     notEnrolled: (u: string) =>
       `Sizning <b>@${u}</b> akkauntingiz hali ro'yxatdan o'tmagan. Yordam uchun adminga murojaat qiling.`,
     contactAdmin: "💬 Admin bilan bog'lanish",
@@ -70,6 +74,10 @@ const T = {
   },
   ru: {
     expired: "Срок действия ссылки истёк. Вернитесь на сайт и попробуйте ещё раз.",
+    notRegistered:
+      "Ваш Telegram ID ещё не зарегистрирован. Свяжитесь с администратором и отправьте ему свой ID. Чтобы узнать ID: /myid",
+    myidResponse: (id: number) =>
+      `Ваш Telegram ID: <code>${id}</code>\n\nОтправьте этот номер администратору.`,
     notEnrolled: (u: string) =>
       `Аккаунт <b>@${u}</b> ещё не зарегистрирован. Свяжитесь с администратором.`,
     contactAdmin: "💬 Связаться с админом",
@@ -119,6 +127,10 @@ const T = {
   },
   en: {
     expired: "Login link expired. Return to the site and try again.",
+    notRegistered:
+      "Your Telegram ID is not registered yet. Contact the admin and send them your ID. To get your ID: /myid",
+    myidResponse: (id: number) =>
+      `Your Telegram ID: <code>${id}</code>\n\nSend this number to the admin.`,
     notEnrolled: (u: string) =>
       `Your account <b>@${u}</b> is not enrolled yet. Please contact the admin.`,
     contactAdmin: "💬 Contact admin",
@@ -406,32 +418,22 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
     return;
   }
 
-  // Match: prefer telegram_id, fall back to username
-  let profile = await findProfileByTelegramId(admin, tgId);
-  if (!profile && tgUsername) {
-    profile = await findProfileByUsername(admin, tgUsername);
-  }
+  // v2.1: strict match by Telegram numeric user_id only.
+  // No more username matching — admin must pre-enter telegram_user_id for every student.
+  const profile = await findProfileByTelegramId(admin, tgId);
 
   if (!profile) {
-    if (!tgUsername) {
-      await sendMessage(chatId, t.noUsername, {
-        inline_keyboard: [[{ text: t.howTo, url: "https://telegram.org/faq#usernames-and-t-me" }]],
-      });
-    } else {
-      const adminBtn = SUPPORT_HANDLE
-        ? [[{ text: t.contactAdmin, url: `https://t.me/${SUPPORT_HANDLE}` }]]
-        : [];
-      await sendMessage(chatId, t.notEnrolled(tgUsername), { inline_keyboard: adminBtn });
+    const buttons: any[][] = [];
+    if (SUPPORT_HANDLE) {
+      buttons.push([{ text: t.contactAdmin, url: `https://t.me/${SUPPORT_HANDLE}` }]);
     }
+    await sendMessage(chatId, t.notRegistered, buttons.length ? { inline_keyboard: buttons } : undefined);
     return;
   }
 
-  // Persist telegram_id on first link
-  const updates: Record<string, unknown> = {};
-  if (!profile.telegram_id) updates.telegram_id = tgId;
-  if (tgUsername && profile.telegram_username !== tgUsername) updates.telegram_username = tgUsername;
-  if (Object.keys(updates).length) {
-    await admin.from("profiles").update(updates).eq("id", profile.id);
+  // Refresh @username metadata for admin display only (does NOT affect login).
+  if (tgUsername && profile.telegram_username !== tgUsername) {
+    await admin.from("profiles").update({ telegram_username: tgUsername }).eq("id", profile.id);
   }
 
   // Mark token authenticated
@@ -479,12 +481,18 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
     : normLocale(msg.from.language_code);
   const t = T[locale];
 
-  if (!profile) {
-    await sendMessage(chatId, t.noProfile);
+  const cmd = cmdRaw.split("@")[0].toLowerCase();
+
+  // /myid works for ANY user (registered or not). Handle before profile gate.
+  if (cmd === "/myid") {
+    await sendMessage(chatId, t.myidResponse(tgId));
     return;
   }
 
-  const cmd = cmdRaw.split("@")[0].toLowerCase();
+  if (!profile) {
+    await sendMessage(chatId, cmd === "/start" ? t.notRegistered : t.noProfile);
+    return;
+  }
 
   if (cmd === "/davom") {
     const courseId = await getDefaultCourseId(admin);
@@ -732,13 +740,13 @@ Deno.serve(async (req) => {
         } else if (profileForLocale) {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
         } else {
-          await sendMessage(msg.chat.id, T[locale].helpReply);
+          await sendMessage(msg.chat.id, T[locale].notRegistered);
         }
       } else if (text === "/start") {
         if (profileForLocale) {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
         } else {
-          await sendMessage(msg.chat.id, T[locale].helpReply);
+          await sendMessage(msg.chat.id, T[locale].notRegistered);
         }
       } else if (text.startsWith("/")) {
         await handleCommand(admin, msg, text.split(/\s+/)[0]);
