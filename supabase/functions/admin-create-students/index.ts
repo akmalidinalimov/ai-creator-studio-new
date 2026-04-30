@@ -14,6 +14,7 @@ type Student = {
   email: string;
   password?: string;
   telegram_username?: string;
+  telegram_user_id?: number | string;
   role?: "student" | "admin";
 };
 
