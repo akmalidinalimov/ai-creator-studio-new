@@ -170,12 +170,22 @@ export default function AdminUsers() {
 
   const handleAdd = async () => {
     if (!newEmail) return;
+    let tgId: number | undefined;
+    if (newTgId.trim()) {
+      const n = Number(newTgId.trim());
+      if (!Number.isInteger(n) || n <= 0) {
+        toast.error(t("admin.users.tgIdInvalid", { defaultValue: "Telegram ID must be a positive integer" }));
+        return;
+      }
+      tgId = n;
+    }
     const res = await callCreate([{
       name: newName,
       last_name: newLastName || undefined,
       email: newEmail,
       password: newPassword || undefined,
       telegram_username: newTg.replace(/^@/, "") || undefined,
+      telegram_user_id: tgId,
       role: newRole,
     }]);
     const r = res?.results?.[0];
@@ -185,7 +195,7 @@ export default function AdminUsers() {
         : t("admin.users.toasts.created", { email: newEmail }));
       setOpenAdd(false);
       setNewName(""); setNewLastName(""); setNewEmail(""); setNewPassword(randPassword());
-      setNewTg(""); setNewRole("student"); setNewCourses(new Set());
+      setNewTg(""); setNewTgId(""); setNewRole("student"); setNewCourses(new Set());
       reload();
     } else {
       toast.error(r?.error || res?.error || t("admin.users.toasts.createFailed"));
