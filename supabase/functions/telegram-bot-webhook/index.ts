@@ -127,6 +127,10 @@ const T = {
   },
   en: {
     expired: "Login link expired. Return to the site and try again.",
+    notRegistered:
+      "Your Telegram ID is not registered yet. Contact the admin and send them your ID. To get your ID: /myid",
+    myidResponse: (id: number) =>
+      `Your Telegram ID: <code>${id}</code>\n\nSend this number to the admin.`,
     notEnrolled: (u: string) =>
       `Your account <b>@${u}</b> is not enrolled yet. Please contact the admin.`,
     contactAdmin: "💬 Contact admin",
