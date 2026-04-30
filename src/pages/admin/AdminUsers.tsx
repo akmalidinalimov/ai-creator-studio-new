@@ -643,12 +643,25 @@ export default function AdminUsers() {
       </Dialog>
 
       {/* CSV dialog */}
-      <Dialog open={openCsv} onOpenChange={(o) => {
+      <Dialog open={openCsv} onOpenChange={async (o) => {
         setOpenCsv(o);
-        if (o && !csvText) {
-          const sample = "Aida,Khan,aida@example.com,,123456789,@aidakhan,student\nBilol,Karimov,bilol@example.com,SecurePass123!,,,student";
-          setCsvText(sample);
-          parseCsv(sample);
+        if (o) {
+          setShowErrors(false);
+          // Load existing telegram_ids from DB for cross-check
+          try {
+            const { data } = await supabase.from("profiles").select("email, telegram_id").not("telegram_id", "is", null);
+            const map = new Map<number, string>();
+            (data || []).forEach((p: any) => { if (p.telegram_id) map.set(Number(p.telegram_id), (p.email || "").toLowerCase()); });
+            setExistingTgIds(map);
+          } catch {}
+          if (!csvText) {
+            const sample = "Aida,Khan,aida@example.com,,123456789,@aidakhan,student\nDilorom Yusupovna 🦋,,,,555111222,@dilorom,student";
+            setCsvText(sample);
+            parseCsv(sample);
+          } else {
+            // Re-validate with the freshly-loaded existing IDs
+            parseCsv(csvText);
+          }
         }
       }}>
         <DialogContent className="max-w-3xl">
