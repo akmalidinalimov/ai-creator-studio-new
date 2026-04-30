@@ -34,6 +34,7 @@ interface UserRow {
 }
 
 interface CsvRow {
+  rowNum: number;
   name: string;
   last_name?: string;
   email: string;
