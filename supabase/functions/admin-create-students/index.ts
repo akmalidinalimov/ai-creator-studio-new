@@ -125,11 +125,23 @@ Deno.serve(async (req) => {
 
     const results: Array<{ email: string; status: string; password?: string; userId?: string; error?: string; action_link?: string | null }> = [];
     for (const s of students) {
-      const email = (s.email || "").trim().toLowerCase();
+      let email = (s.email || "").trim().toLowerCase();
+      // Normalize telegram_user_id early so we can synthesize an email if needed
+      let tgIdNum: number | undefined;
+      if (s.telegram_user_id !== undefined && s.telegram_user_id !== null && String(s.telegram_user_id) !== "") {
+        const n = typeof s.telegram_user_id === "string" ? Number(s.telegram_user_id) : s.telegram_user_id;
+        if (Number.isFinite(n) && Number.isInteger(n) && (n as number) > 0) tgIdNum = n as number;
+      }
+      // If no email but we have a telegram id, synthesize a placeholder so auth.admin.createUser accepts it.
+      // Login will happen via the Telegram bot which matches profiles by telegram_id.
+      if (!email && tgIdNum) {
+        email = `tg-${tgIdNum}@telegram.local`;
+      }
       if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
-        results.push({ email: s.email, status: "invalid_email" });
+        results.push({ email: s.email || "", status: "invalid_email" });
         continue;
       }
+      // Password is always optional; generate one if not provided. Magic link / Telegram bot are the real login paths.
       const passwordProvided = !!(s.password && s.password.length >= 6);
       const password = passwordProvided ? s.password! : genPassword();
       const { data: created, error } = await admin.auth.admin.createUser({
