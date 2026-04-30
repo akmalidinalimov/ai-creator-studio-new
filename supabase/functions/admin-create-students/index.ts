@@ -146,7 +146,26 @@ Deno.serve(async (req) => {
       const profilePatch: Record<string, any> = { name: s.name || email.split("@")[0] };
       if (s.last_name !== undefined) profilePatch.last_name = s.last_name || null;
       if (s.telegram_username) profilePatch.telegram_username = s.telegram_username.replace(/^@/, "");
-      await admin.from("profiles").update(profilePatch).eq("id", userId);
+      if (s.telegram_user_id !== undefined && s.telegram_user_id !== null && s.telegram_user_id !== "") {
+        const tgId = typeof s.telegram_user_id === "string" ? Number(s.telegram_user_id) : s.telegram_user_id;
+        if (Number.isFinite(tgId) && Number.isInteger(tgId) && tgId > 0) {
+          // Pre-check uniqueness to give a clean error
+          const { data: dup } = await admin.from("profiles").select("id").eq("telegram_id", tgId).neq("id", userId).maybeSingle();
+          if (dup) {
+            results.push({ email, status: "error", error: `telegram_id ${tgId} already in use` });
+            // Roll back the auth user we just created
+            await admin.auth.admin.deleteUser(userId).catch(() => {});
+            continue;
+          }
+          profilePatch.telegram_id = tgId;
+        }
+      }
+      const { error: profErr } = await admin.from("profiles").update(profilePatch).eq("id", userId);
+      if (profErr) {
+        results.push({ email, status: "error", error: profErr.message });
+        await admin.auth.admin.deleteUser(userId).catch(() => {});
+        continue;
+      }
 
       if (s.role === "admin") {
         await admin.from("user_roles").insert({ user_id: userId, role: "admin" });
