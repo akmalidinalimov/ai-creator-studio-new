@@ -592,7 +592,31 @@ export default function AdminUsers() {
                 {t("admin.users.csvFormat")} <code>name,last_name,email,password,telegram_user_id,telegram_username,role</code><br />
                 <span>{t("admin.users.csvFormatHint")}</span>
               </div>
-              <Button variant="default" size="sm" onClick={downloadTemplate}><Download className="h-4 w-4" />{t("admin.users.downloadTemplate")}</Button>
+              <div className="flex items-center gap-2 shrink-0">
+                <input
+                  id="csv-file-input"
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      const text = String(reader.result || "");
+                      setCsvText(text);
+                      parseCsv(text);
+                    };
+                    reader.onerror = () => toast.error(t("admin.users.csvReadError", { defaultValue: "Failed to read file" }));
+                    reader.readAsText(file);
+                    e.target.value = "";
+                  }}
+                />
+                <Button variant="outline" size="sm" onClick={() => document.getElementById("csv-file-input")?.click()}>
+                  <UploadIcon className="h-4 w-4" />{t("admin.users.uploadCsv", { defaultValue: "Upload CSV file" })}
+                </Button>
+                <Button variant="default" size="sm" onClick={downloadTemplate}><Download className="h-4 w-4" />{t("admin.users.downloadTemplate")}</Button>
+              </div>
             </div>
             <Textarea
               rows={6}
