@@ -584,7 +584,7 @@ export default function AdminUsers() {
               rows={6}
               value={csvText}
               onChange={(e) => { setCsvText(e.target.value); parseCsv(e.target.value); }}
-              placeholder="Aida,Khan,aida@example.com,,@aidakhan,student&#10;Bilol,Karimov,bilol@example.com,SecurePass123!,,student"
+              placeholder="Aida,Khan,aida@example.com,,123456789,@aidakhan,student&#10;Bilol,Karimov,bilol@example.com,SecurePass123!,,,student"
             />
             {csvParsed.length > 0 && (
               <div className="border rounded-md max-h-64 overflow-y-auto">
@@ -594,6 +594,7 @@ export default function AdminUsers() {
                       <th className="text-left p-2">{t("admin.users.csvHeaders.name")}</th>
                       <th className="text-left p-2">{t("admin.users.csvHeaders.lastName")}</th>
                       <th className="text-left p-2">{t("admin.users.csvHeaders.email")}</th>
+                      <th className="text-left p-2">{t("admin.users.tgIdLabel", { defaultValue: "Telegram ID" })}</th>
                       <th className="text-left p-2">{t("admin.users.csvHeaders.telegram")}</th>
                       <th className="text-left p-2">{t("admin.users.csvHeaders.role")}</th>
                       <th className="text-left p-2">{t("admin.users.csvHeaders.status")}</th>
@@ -605,6 +606,7 @@ export default function AdminUsers() {
                         <td className="p-2">{r.name}</td>
                         <td className="p-2">{r.last_name || "—"}</td>
                         <td className="p-2">{r.email}</td>
+                        <td className="p-2 text-xs font-mono">{r.telegram_user_id ?? "—"}</td>
                         <td className="p-2 text-xs">{r.telegram_username ? `@${r.telegram_username}` : "—"}</td>
                         <td className="p-2 text-xs">{r.role}</td>
                         <td className={`p-2 text-xs ${r.valid ? "text-foreground" : "text-destructive font-medium"}`}>
