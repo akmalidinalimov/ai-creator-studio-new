@@ -87,6 +87,8 @@ export default function AdminUsers() {
   const [csvText, setCsvText] = useState("");
   const [csvParsed, setCsvParsed] = useState<CsvRow[]>([]);
   const [importing, setImporting] = useState(false);
+  const [showErrors, setShowErrors] = useState(false);
+  const [existingTgIds, setExistingTgIds] = useState<Map<number, string>>(new Map()); // tgId -> email
   // Lockouts
   const [lockedEmails, setLockedEmails] = useState<Set<string>>(new Set());
   // Manage drawer
