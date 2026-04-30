@@ -215,18 +215,21 @@ export default function AdminUsers() {
   const parseCsv = (txt: string) => {
     const lines = txt.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     const seen = new Set<string>();
+    const seenTgIds = new Set<number>();
     const rows: CsvRow[] = lines.map((line, i) => {
       // Skip header (detect by presence of "email" + ("name" or "last_name"))
       if (i === 0 && /email/i.test(line) && /(name|last_name)/i.test(line)) return null as any;
       const parts = line.split(",").map((p) => p.trim());
-      // Detect new vs legacy format.
-      // New: name,last_name,email,password,telegram_username,role  (6 cols)
-      // Legacy: name,email,password,telegram_username,role          (5 cols)
-      let name = "", last_name = "", email = "", password = "", tg = "", role = "";
-      if (parts.length >= 6) {
+      // Formats supported:
+      //   New (7 cols): name,last_name,email,password,telegram_user_id,telegram_username,role
+      //   Legacy (6):   name,last_name,email,password,telegram_username,role
+      //   Legacy (5):   name,email,password,telegram_username,role
+      let name = "", last_name = "", email = "", password = "", tgIdRaw = "", tg = "", role = "";
+      if (parts.length >= 7) {
+        [name, last_name, email, password, tgIdRaw, tg, role] = parts;
+      } else if (parts.length >= 6) {
         [name, last_name, email, password, tg, role] = parts;
       } else {
-        // Legacy 5-col fallback
         [name, email, password, tg, role] = parts;
       }
       const r = (role || "student").toLowerCase();
@@ -234,16 +237,34 @@ export default function AdminUsers() {
       const validEmail = !!email && /^\S+@\S+\.\S+$/.test(email);
       const dup = seen.has((email || "").toLowerCase());
       seen.add((email || "").toLowerCase());
+
+      let tgId: number | undefined;
+      let tgIdReason: string | undefined;
+      if (tgIdRaw) {
+        const cleaned = tgIdRaw.replace(/[^\d]/g, "");
+        const n = Number(cleaned);
+        if (!cleaned || !Number.isInteger(n) || n <= 0) {
+          tgIdReason = t("admin.users.tgIdInvalid", { defaultValue: "Telegram ID must be a positive integer" });
+        } else if (seenTgIds.has(n)) {
+          tgIdReason = t("admin.users.tgIdDup", { defaultValue: "Duplicate telegram_user_id in CSV" });
+        } else {
+          tgId = n;
+          seenTgIds.add(n);
+        }
+      }
+
       let reason: string | undefined;
       let valid = true;
       if (!validEmail) { valid = false; reason = t("validation.emailInvalid"); }
       else if (dup) { valid = false; reason = t("admin.users.csvHeaders.email"); }
       else if (!validRole) { valid = false; reason = t("admin.users.role"); }
+      else if (tgIdReason) { valid = false; reason = tgIdReason; }
       return {
         name: name || "",
         last_name: last_name || undefined,
         email: email || "",
         password: password || undefined,
+        telegram_user_id: tgId,
         telegram_username: (tg || "").replace(/^@/, "") || undefined,
         role: (validRole ? r : "student") as "student" | "admin",
         valid, reason,
