@@ -122,7 +122,7 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
     setBunnyProgress(null);
   };
 
-
+  const onDrop = async (files: File[]) => {
     if (!files[0]) return;
     const file = files[0];
     if (file.size > MAX_INLINE_UPLOAD) {
