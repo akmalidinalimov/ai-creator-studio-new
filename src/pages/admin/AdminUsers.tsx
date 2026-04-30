@@ -583,16 +583,19 @@ export default function AdminUsers() {
       </Dialog>
 
       {/* CSV dialog */}
-      <Dialog open={openCsv} onOpenChange={setOpenCsv}>
+      <Dialog open={openCsv} onOpenChange={(o) => {
+        setOpenCsv(o);
+        if (o && !csvText) {
+          const sample = "Aida,Khan,aida@example.com,,123456789,@aidakhan,student\nBilol,Karimov,bilol@example.com,SecurePass123!,,,student";
+          setCsvText(sample);
+          parseCsv(sample);
+        }
+      }}>
         <DialogContent className="max-w-3xl">
           <DialogHeader><DialogTitle>{t("admin.users.csvTitle")}</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3">
-              <div className="text-xs text-muted-foreground">
-                {t("admin.users.csvFormat")} <code>name,last_name,email,password,telegram_user_id,telegram_username,role</code><br />
-                <span>{t("admin.users.csvFormatHint")}</span>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
+            <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
                 <input
                   id="csv-file-input"
                   type="file"
@@ -613,16 +616,22 @@ export default function AdminUsers() {
                   }}
                 />
                 <Button variant="outline" size="sm" onClick={() => document.getElementById("csv-file-input")?.click()}>
-                  <UploadIcon className="h-4 w-4" />{t("admin.users.uploadCsv", { defaultValue: "Upload CSV file" })}
+                  <UploadIcon className="h-4 w-4 mr-1" />{t("admin.users.uploadCsv", { defaultValue: "Upload CSV file" })}
                 </Button>
-                <Button variant="default" size="sm" onClick={downloadTemplate}><Download className="h-4 w-4" />{t("admin.users.downloadTemplate")}</Button>
+                <Button variant="default" size="sm" onClick={downloadTemplate}>
+                  <Download className="h-4 w-4 mr-1" />{t("admin.users.downloadTemplate")}
+                </Button>
+              </div>
+              <div className="text-xs text-muted-foreground leading-relaxed">
+                <div>{t("admin.users.csvFormat")} <code className="text-[11px]">name,last_name,email,password,telegram_user_id,telegram_username,role</code></div>
+                <div className="mt-1">{t("admin.users.csvFormatHint")}</div>
               </div>
             </div>
             <Textarea
               rows={6}
               value={csvText}
               onChange={(e) => { setCsvText(e.target.value); parseCsv(e.target.value); }}
-              placeholder="Aida,Khan,aida@example.com,,123456789,@aidakhan,student&#10;Bilol,Karimov,bilol@example.com,SecurePass123!,,,student"
+              placeholder={"Aida,Khan,aida@example.com,,123456789,@aidakhan,student\nBilol,Karimov,bilol@example.com,SecurePass123!,,,student"}
             />
             {csvParsed.length > 0 && (
               <div className="border rounded-md max-h-64 overflow-y-auto">
