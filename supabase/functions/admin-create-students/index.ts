@@ -186,9 +186,11 @@ Deno.serve(async (req) => {
         );
       }
 
-      // Magic-link invite if requested OR if no password was provided
+      // Magic-link invite if requested OR if no password was provided.
+      // Skip for synthetic placeholder emails (Telegram-only users) — they log in via the bot.
+      const isPlaceholderEmail = email.endsWith("@telegram.local");
       let action_link: string | null = null;
-      if (sendInvite || !passwordProvided) {
+      if (!isPlaceholderEmail && (sendInvite || !passwordProvided)) {
         try {
           const { data: linkData } = await admin.auth.admin.generateLink({
             type: "magiclink",
