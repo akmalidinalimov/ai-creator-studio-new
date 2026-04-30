@@ -146,7 +146,8 @@ export default function AdminUsers() {
           (u.name || "").toLowerCase().includes(q) ||
           (u.last_name || "").toLowerCase().includes(q) ||
           u.email.toLowerCase().includes(q) ||
-          (u.telegram_username || "").toLowerCase().includes(q)
+          (u.telegram_username || "").toLowerCase().includes(q) ||
+          (u.telegram_id ? String(u.telegram_id) : "").includes(q)
         );
       }
       return true;
