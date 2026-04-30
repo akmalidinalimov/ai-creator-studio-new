@@ -533,7 +533,21 @@ export default function AdminUsers() {
                 <Button type="button" variant="outline" size="icon" onClick={() => { navigator.clipboard.writeText(newPassword); toast.success(t("admin.common.copied")); }}><Copy className="h-4 w-4" /></Button>
               </div>
             </div>
-            <div className="space-y-1.5"><Label>{t("admin.users.tgUsernameOptional")}</Label><Input value={newTg} onChange={(e) => setNewTg(e.target.value)} placeholder="@username" /></div>
+            <div className="space-y-1.5">
+              <Label>{t("admin.users.tgIdLabel", { defaultValue: "Telegram ID" })}</Label>
+              <Input
+                value={newTgId}
+                onChange={(e) => setNewTgId(e.target.value.replace(/[^\d]/g, ""))}
+                inputMode="numeric"
+                placeholder="123456789"
+              />
+              <p className="text-xs text-muted-foreground">{t("admin.users.tgIdHint", { defaultValue: "Numeric ID from /myid in the bot. Required for Telegram login." })}</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t("admin.users.tgUsernameOptional")}</Label>
+              <Input value={newTg} onChange={(e) => setNewTg(e.target.value)} placeholder="@username" />
+              <p className="text-xs text-muted-foreground">{t("admin.users.tgUsernameNoteOptional", { defaultValue: "Optional metadata only — not used for matching." })}</p>
+            </div>
             <div className="space-y-1.5">
               <Label>{t("admin.users.role")}</Label>
               <Select value={newRole} onValueChange={(v) => setNewRole(v as any)}>
