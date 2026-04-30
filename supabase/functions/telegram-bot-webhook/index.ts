@@ -740,13 +740,13 @@ Deno.serve(async (req) => {
         } else if (profileForLocale) {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
         } else {
-          await sendMessage(msg.chat.id, T[locale].helpReply);
+          await sendMessage(msg.chat.id, T[locale].notRegistered);
         }
       } else if (text === "/start") {
         if (profileForLocale) {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
         } else {
-          await sendMessage(msg.chat.id, T[locale].helpReply);
+          await sendMessage(msg.chat.id, T[locale].notRegistered);
         }
       } else if (text.startsWith("/")) {
         await handleCommand(admin, msg, text.split(/\s+/)[0]);
