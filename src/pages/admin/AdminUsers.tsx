@@ -36,6 +36,7 @@ interface CsvRow {
   last_name?: string;
   email: string;
   password?: string;
+  telegram_user_id?: number;
   telegram_username?: string;
   role: "student" | "admin";
   valid: boolean;
@@ -45,12 +46,12 @@ interface CsvRow {
 const randPassword = () =>
   Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6).toUpperCase();
 
-const CSV_TEMPLATE = `name,last_name,email,password,telegram_username,role
-Aida,Khan,aida@example.com,,@aidakhan,student
-Bilol,Karimov,bilol@example.com,SecurePass123!,,student
-Chen,Wei,chen@example.com,,,student
-Dilnoza,Yusupova,dilnoza@example.com,,,student
-Elnur,Aliyev,elnur@example.com,AdminPass456!,@elnura,admin
+const CSV_TEMPLATE = `name,last_name,email,password,telegram_user_id,telegram_username,role
+Aida,Khan,aida@example.com,,123456789,@aidakhan,student
+Bilol,Karimov,bilol@example.com,SecurePass123!,,,student
+Chen,Wei,chen@example.com,,987654321,,student
+Dilnoza,Yusupova,dilnoza@example.com,,,,student
+Elnur,Aliyev,elnur@example.com,AdminPass456!,555555555,@elnura,admin
 `;
 
 const FN_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
