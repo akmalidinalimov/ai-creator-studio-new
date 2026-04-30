@@ -21,6 +21,10 @@ function normLocale(code?: string | null): Locale {
 const T = {
   uz: {
     expired: "Kirish havolasining muddati tugagan. Saytga qaytib qaytadan urinib ko'ring.",
+    notRegistered:
+      "Sizning Telegram ID hali ro'yxatdan o'tmagan. Adminga murojaat qilib, ID raqamingizni yuboring. ID olish uchun: /myid",
+    myidResponse: (id: number) =>
+      `Sizning Telegram ID: <code>${id}</code>\n\nUshbu raqamni adminga yuboring.`,
     notEnrolled: (u: string) =>
       `Sizning <b>@${u}</b> akkauntingiz hali ro'yxatdan o'tmagan. Yordam uchun adminga murojaat qiling.`,
     contactAdmin: "💬 Admin bilan bog'lanish",
