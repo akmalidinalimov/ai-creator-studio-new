@@ -125,11 +125,23 @@ Deno.serve(async (req) => {
 
     const results: Array<{ email: string; status: string; password?: string; userId?: string; error?: string; action_link?: string | null }> = [];
     for (const s of students) {
-      const email = (s.email || "").trim().toLowerCase();
+      let email = (s.email || "").trim().toLowerCase();
+      // Normalize telegram_user_id early so we can synthesize an email if needed
+      let tgIdNum: number | undefined;
+      if (s.telegram_user_id !== undefined && s.telegram_user_id !== null && String(s.telegram_user_id) !== "") {
+        const n = typeof s.telegram_user_id === "string" ? Number(s.telegram_user_id) : s.telegram_user_id;
+        if (Number.isFinite(n) && Number.isInteger(n) && (n as number) > 0) tgIdNum = n as number;
+      }
+      // If no email but we have a telegram id, synthesize a placeholder so auth.admin.createUser accepts it.
+      // Login will happen via the Telegram bot which matches profiles by telegram_id.
+      if (!email && tgIdNum) {
+        email = `tg-${tgIdNum}@telegram.local`;
+      }
       if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
-        results.push({ email: s.email, status: "invalid_email" });
+        results.push({ email: s.email || "", status: "invalid_email" });
         continue;
       }
+      // Password is always optional; generate one if not provided. Magic link / Telegram bot are the real login paths.
       const passwordProvided = !!(s.password && s.password.length >= 6);
       const password = passwordProvided ? s.password! : genPassword();
       const { data: created, error } = await admin.auth.admin.createUser({
@@ -146,19 +158,15 @@ Deno.serve(async (req) => {
       const profilePatch: Record<string, any> = { name: s.name || email.split("@")[0] };
       if (s.last_name !== undefined) profilePatch.last_name = s.last_name || null;
       if (s.telegram_username) profilePatch.telegram_username = s.telegram_username.replace(/^@/, "");
-      if (s.telegram_user_id !== undefined && s.telegram_user_id !== null && s.telegram_user_id !== "") {
-        const tgId = typeof s.telegram_user_id === "string" ? Number(s.telegram_user_id) : s.telegram_user_id;
-        if (Number.isFinite(tgId) && Number.isInteger(tgId) && tgId > 0) {
-          // Pre-check uniqueness to give a clean error
-          const { data: dup } = await admin.from("profiles").select("id").eq("telegram_id", tgId).neq("id", userId).maybeSingle();
-          if (dup) {
-            results.push({ email, status: "error", error: `telegram_id ${tgId} already in use` });
-            // Roll back the auth user we just created
-            await admin.auth.admin.deleteUser(userId).catch(() => {});
-            continue;
-          }
-          profilePatch.telegram_id = tgId;
+      if (tgIdNum !== undefined) {
+        // Pre-check uniqueness to give a clean error
+        const { data: dup } = await admin.from("profiles").select("id").eq("telegram_id", tgIdNum).neq("id", userId).maybeSingle();
+        if (dup) {
+          results.push({ email, status: "error", error: `telegram_id ${tgIdNum} already in use` });
+          await admin.auth.admin.deleteUser(userId).catch(() => {});
+          continue;
         }
+        profilePatch.telegram_id = tgIdNum;
       }
       const { error: profErr } = await admin.from("profiles").update(profilePatch).eq("id", userId);
       if (profErr) {
@@ -178,9 +186,11 @@ Deno.serve(async (req) => {
         );
       }
 
-      // Magic-link invite if requested OR if no password was provided
+      // Magic-link invite if requested OR if no password was provided.
+      // Skip for synthetic placeholder emails (Telegram-only users) — they log in via the bot.
+      const isPlaceholderEmail = email.endsWith("@telegram.local");
       let action_link: string | null = null;
-      if (sendInvite || !passwordProvided) {
+      if (!isPlaceholderEmail && (sendInvite || !passwordProvided)) {
         try {
           const { data: linkData } = await admin.auth.admin.generateLink({
             type: "magiclink",

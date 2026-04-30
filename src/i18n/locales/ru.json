@@ -693,12 +693,22 @@
       "createUser": "Создать пользователя",
       "csvTitle": "Импорт пользователей из CSV",
       "csvFormat": "Формат:",
-      "csvFormatHint": "last_name, password, telegram_username, role — необязательны. По умолчанию: пусто, magic-link приглашение, без telegram, role=student.",
+      "csvFormatHint": "Обязательно только `name`. Должен быть указан `email` ИЛИ `telegram_user_id` (хотя бы один идентификатор). `last_name`, `password`, `telegram_username`, `role` — необязательны. Студентам через Telegram email не нужен.",
       "downloadTemplate": "Скачать шаблон",
       "uploadCsv": "Загрузить CSV",
       "csvReadError": "Не удалось прочитать файл",
       "templateDownloaded": "Шаблон скачан",
       "validInvalid": "{{valid}} корректно · {{invalid}} ошибок",
+      "csvErr": {
+        "showErrors": "Показать строки с ошибками",
+        "nameRequired": "имя обязательно",
+        "needIdentifier": "Отсутствуют и email, и telegram_user_id",
+        "emailInvalid": "неверный формат email",
+        "tgIdInvalid": "telegram_user_id не является корректным bigint",
+        "dupEmail": "повтор email в файле",
+        "dupTgId": "повтор telegram_user_id в файле",
+        "tgIdInDb": "telegram_user_id уже существует в базе"
+      },
       "csvHeaders": {
         "name": "Имя",
         "lastName": "Фамилия",
