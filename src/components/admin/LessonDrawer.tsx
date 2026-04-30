@@ -10,8 +10,9 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useDropzone } from "react-dropzone";
-import { Upload, Trash2, FileText, X, Loader2 } from "lucide-react";
+import { Upload, Trash2, FileText, X, Loader2, UploadCloud } from "lucide-react";
 import { toast } from "sonner";
+import * as tus from "tus-js-client";
 
 interface Props { lessonId: string; onClose: () => void; onChanged: () => void }
 
