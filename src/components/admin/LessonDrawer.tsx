@@ -352,6 +352,48 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
                   {lesson.video_provider === "bunny" && t("admin.lessonDrawer.bunnyHint")}
                   {lesson.video_provider === "mux" && t("admin.lessonDrawer.muxHint")}
                 </p>
+                {lesson.video_provider === "bunny" && (
+                  <div className="pt-2 space-y-2">
+                    <input
+                      ref={bunnyFileInputRef}
+                      type="file"
+                      accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.webm,.mkv"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) startBunnyUpload(f);
+                      }}
+                    />
+                    {!bunnyUploading && (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => bunnyFileInputRef.current?.click()}
+                      >
+                        <UploadCloud className="h-4 w-4" />
+                        {t("admin.lessonDrawer.bunnyUploadBtn")}
+                      </Button>
+                    )}
+                    {bunnyUploading && bunnyProgress && (
+                      <div className="border rounded-md p-3 space-y-2">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="truncate flex-1">{bunnyProgress.fileName}</span>
+                          <Button variant="ghost" size="icon" onClick={cancelBunnyUpload}>
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                        <div className="h-2 bg-muted rounded overflow-hidden">
+                          <div className="h-full bg-foreground transition-all" style={{ width: `${bunnyProgress.pct}%` }} />
+                        </div>
+                        <div className="flex justify-between text-[11px] text-muted-foreground tabular-nums">
+                          <span>{bunnyProgress.pct}%</span>
+                          <span>{bunnyProgress.mbps.toFixed(1)} MB/s</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="space-y-1.5">
                 <Label>{t("admin.lessonDrawer.duration")}</Label>
