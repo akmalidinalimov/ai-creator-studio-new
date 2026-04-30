@@ -494,7 +494,10 @@ export default function AdminUsers() {
                       {u.email}
                       {isLocked(u.email) && <Badge variant="destructive" className="ml-2 text-[10px]">{t("admin.users.locked")}</Badge>}
                     </td>
-                    <td className="p-3 text-xs text-muted-foreground">{u.telegram_username ? `@${u.telegram_username}` : "—"}</td>
+                    <td className="p-3 text-xs">
+                      <div className="font-mono text-foreground">{u.telegram_id ?? "—"}</div>
+                      {u.telegram_username && <div className="text-muted-foreground">@{u.telegram_username}</div>}
+                    </td>
                     <td className="p-3">{u.is_admin ? <Badge>{t("admin.users.admin").toLowerCase()}</Badge> : <Badge variant="secondary">{t("admin.users.student").toLowerCase()}</Badge>}</td>
                     <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : "bg-destructive/10 text-destructive"}`}>{u.status === "active" ? t("admin.users.active") : t("admin.users.inactive")}</span></td>
                     <td className="p-3 text-xs text-muted-foreground">{(enrollMap[u.id]?.size) || 0}</td>
