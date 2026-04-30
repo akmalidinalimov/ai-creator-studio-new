@@ -575,7 +575,7 @@ export default function AdminUsers() {
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3">
               <div className="text-xs text-muted-foreground">
-                {t("admin.users.csvFormat")} <code>name,last_name,email,password,telegram_username,role</code><br />
+                {t("admin.users.csvFormat")} <code>name,last_name,email,password,telegram_user_id,telegram_username,role</code><br />
                 <span>{t("admin.users.csvFormatHint")}</span>
               </div>
               <Button variant="default" size="sm" onClick={downloadTemplate}><Download className="h-4 w-4" />{t("admin.users.downloadTemplate")}</Button>
