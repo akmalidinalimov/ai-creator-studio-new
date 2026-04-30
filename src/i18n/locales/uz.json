@@ -695,6 +695,8 @@
       "csvFormat": "Format:",
       "csvFormatHint": "last_name, password, telegram_username, role — ixtiyoriy. Standart: bo'sh, magic-link taklif, telegram yo'q, role=student.",
       "downloadTemplate": "Shablonni yuklab olish",
+      "uploadCsv": "CSV faylni yuklash",
+      "csvReadError": "Faylni o'qib bo'lmadi",
       "templateDownloaded": "Shablon yuklandi",
       "validInvalid": "{{valid}} to'g'ri · {{invalid}} xato",
       "csvHeaders": {
