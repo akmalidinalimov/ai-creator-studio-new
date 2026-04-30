@@ -695,6 +695,8 @@
       "csvFormat": "Формат:",
       "csvFormatHint": "last_name, password, telegram_username, role — необязательны. По умолчанию: пусто, magic-link приглашение, без telegram, role=student.",
       "downloadTemplate": "Скачать шаблон",
+      "uploadCsv": "Загрузить CSV",
+      "csvReadError": "Не удалось прочитать файл",
       "templateDownloaded": "Шаблон скачан",
       "validInvalid": "{{valid}} корректно · {{invalid}} ошибок",
       "csvHeaders": {

@@ -695,6 +695,8 @@
       "csvFormat": "Format:",
       "csvFormatHint": "last_name, password, telegram_username, role are optional. Defaults: blank, magic-link invite, no telegram, role=student.",
       "downloadTemplate": "Download template",
+      "uploadCsv": "Upload CSV file",
+      "csvReadError": "Failed to read file",
       "templateDownloaded": "Template downloaded",
       "validInvalid": "{{valid}} valid · {{invalid}} invalid",
       "csvHeaders": {
