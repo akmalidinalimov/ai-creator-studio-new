@@ -693,12 +693,22 @@
       "createUser": "Foydalanuvchi yaratish",
       "csvTitle": "CSV-dan foydalanuvchilarni import qilish",
       "csvFormat": "Format:",
-      "csvFormatHint": "last_name, password, telegram_username, role — ixtiyoriy. Standart: bo'sh, magic-link taklif, telegram yo'q, role=student.",
+      "csvFormatHint": "Faqat `name` majburiy. `email` YOKI `telegram_user_id` bo'lishi kerak (kamida bittasi). `last_name`, `password`, `telegram_username`, `role` — ixtiyoriy. Telegram orqali kiruvchi talabalarga email kerak emas.",
       "downloadTemplate": "Shablonni yuklab olish",
       "uploadCsv": "CSV faylni yuklash",
       "csvReadError": "Faylni o'qib bo'lmadi",
       "templateDownloaded": "Shablon yuklandi",
       "validInvalid": "{{valid}} to'g'ri · {{invalid}} xato",
+      "csvErr": {
+        "showErrors": "Noto'g'ri qatorlarni ko'rsatish",
+        "nameRequired": "ism majburiy",
+        "needIdentifier": "email va telegram_user_id ikkalasi ham yo'q",
+        "emailInvalid": "email formati noto'g'ri",
+        "tgIdInvalid": "telegram_user_id noto'g'ri bigint",
+        "dupEmail": "fayl ichida takrorlangan email",
+        "dupTgId": "fayl ichida takrorlangan telegram_user_id",
+        "tgIdInDb": "telegram_user_id bazada allaqachon mavjud"
+      },
       "csvHeaders": {
         "name": "Ism",
         "lastName": "Familiya",
