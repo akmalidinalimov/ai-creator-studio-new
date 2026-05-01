@@ -1,78 +1,79 @@
-## Audit Summary
+## Answer to your question first
 
-I checked every Telegram notification path. Here's the full picture.
+**Yes — after the previous fix, the Telegram login flow already does exactly what you described.** No phone-number widget anywhere. Verified by reading the code:
 
-### What's working
-- **Cron schedule**: A pg_cron job (`cron-engagement-every-30-min`, every 30 min) correctly invokes the `cron-engagement` edge function with proper auth headers. It's running on schedule.
-- **Edge functions** themselves (`cron-engagement`, `notify-completion`, `telegram-bot-webhook`) are deployed and boot cleanly.
-- **Templates** for all 8 notification types exist in all 3 locales (uz/ru/en).
-- **User profiles** have `telegram_id` linked, `notifications_enabled = true`, valid timezone.
-- **`telegram-bot-webhook`** (handles `/start`, language buttons, settings buttons) is wired correctly.
+1. User clicks "Telegram orqali kirish" on `/login` or `/signup` → `TelegramDeeplinkButton` opens `t.me/<bot>?start=login_<token>` in a new tab. No `oauth.telegram.org`.
+2. Inside the bot, the webhook (`telegram-bot-webhook/index.ts`) looks up the user by **telegram_id OR @username** in the `profiles` table.
+3. If found → magic link to `/dashboard`, user is logged in.
+4. If NOT found → bot sends the "not registered" message with an inline button linking to the Google Form.
 
-### What's broken
+The "not registered" message currently in production (Uzbek):
+> "Sizning Telegram hisobingiz hali ro'yxatdan o'tmagan. Ro'yxatdan o'tish uchun quyidagi formani to'ldiring."
+> [📝 Formani to'ldirish] → `https://forms.gle/o8Dcx1tA8ZBeGk6t9`
 
-**1. Lesson/Module/Course completion notifications never fire (CRITICAL)**
+So the **behavior** matches your spec. What's missing is admin control — both the text and the form URL are hardcoded in the edge function. Your new ask is to make them editable from `/admin/settings`.
 
-The DB function `track_video_progress` is supposed to call `notify-completion` via HTTP when a lesson is first completed. The current code:
+## What this plan changes
 
-```sql
-PERFORM extensions.http_post(
-  url := edge_url,
-  headers := jsonb_build_object('Content-Type', 'application/json'),
-  body := jsonb_build_object('user_id', uid, 'lesson_id', p_lesson_id)
-);
+Make the enrollment message + button label + form URL editable from the admin panel for all 3 languages (uz / ru / en), with your preferred Uzbek text as the new default.
+
+### 1. Database — store enrollment settings
+
+Add a new row to the existing `platform_settings` table (key = `telegram_enrollment`) with shape:
+
+```json
+{
+  "form_url": "https://forms.gle/o8Dcx1tA8ZBeGk6t9",
+  "message": {
+    "uz": "Sizning ma'lumotingiz platformaga kiritilmagan ko'rinadi. Pastdagi tugmani bosib, ma'lumotingiz qoldiring va sizga 24 soat ichida platformaga dostup beriladi",
+    "ru": "Похоже, вашей информации нет на платформе. Нажмите кнопку ниже, оставьте свои данные — доступ будет открыт в течение 24 часов",
+    "en": "Your information doesn't appear to be on the platform. Tap the button below, leave your details, and you'll get access within 24 hours"
+  },
+  "button_label": {
+    "uz": "📝 Formani to'ldirish",
+    "ru": "📝 Заполнить форму",
+    "en": "📝 Fill out the form"
+  }
+}
 ```
 
-Two problems, compounding:
-- `extensions.http_post` **does not exist**. `pg_net` exposes `http_post` only in the `net` schema. The call throws `function does not exist`, which is silently swallowed by `EXCEPTION WHEN OTHERS THEN NULL`.
-- Even when fixed, the call is missing the `Authorization`/`apikey` headers that the Supabase edge function gateway requires.
+Seeded via SQL migration so production immediately uses the new Uzbek text you wrote. RLS already covers `platform_settings` (admin-only writes, public read via the existing `get_public_setting` RPC — but since this contains no secrets we'll just allow admins to read+write directly).
 
-**Evidence**: `notifications_log` has **0 rows total**. `notify-completion` edge function logs show **0 invocations ever**. Your completed lesson 1.4 has `completed_at` set in the DB, but no Telegram message was ever attempted.
+### 2. Edge function — read settings instead of hardcoded constants
 
-This means **none** of these have ever fired:
-- 🎬 Lesson complete
-- 🎉 Module complete
-- 🎓 Course complete (+ certificate + share image)
+In `supabase/functions/telegram-bot-webhook/index.ts`:
+- Remove the `ENROLL_FORM_URL` constant and the `notRegistered` / `fillForm` strings from the `T` translations.
+- At the top of `handleStartLogin` (and the `/start` branch in `handleCommand`), fetch the `telegram_enrollment` row from `platform_settings` once, fall back to the bundled defaults if the row is missing or a locale field is empty.
+- Send the message with the inline button using the resolved `form_url` and `button_label[locale]`.
 
-**2. Daily reminder / streak warning / re-engagement drip — likely never fired either**
+No other behavior changes — `/myid` still works, hybrid id+username matching stays, magic-link login on success stays.
 
-`cron-engagement` runs every 30 min, but `notifications_log` is empty even for `daily_reminder`, `streak_warning`, `inactive_3/7/14`. The function code itself looks correct, so the most likely cause is a missing secret. We need to verify two env vars are set on edge functions:
-- `TELEGRAM_BOT_TOKEN` — required to send any message; if missing, the function returns early with `"bot not configured"`
-- `SITE_URL` — required to build magic-link URLs in buttons
+### 3. Admin UI — new editable card on `/admin/settings`
 
-If `TELEGRAM_BOT_TOKEN` is unset, every cron run silently no-ops. I'll verify this with `fetch_secrets` and add whichever is missing.
+Add a third card under the existing Telegram bot card titled "Enrollment message" containing:
+- One **Input** for the Google Form URL (with URL validation on save).
+- Three **Textarea** fields, one per locale (Uzbek / Russian / English) for the message body. Tabs or stacked — stacked with locale labels keeps it simple.
+- Three **Input** fields for the button label per locale.
+- A **Save** button that upserts the row into `platform_settings` (key=`telegram_enrollment`).
+- A small preview block showing how it will look in Telegram for the currently-selected locale.
 
-### Fix Plan
+All UI strings localized in `en.json` / `ru.json` / `uz.json`.
 
-**Step 1 — Repair completion notifications (DB migration)**
+### 4. Verification after deploy
 
-Create a new migration that replaces `track_video_progress` so the HTTP call uses `net.http_post` with the project anon key as auth headers (mirrors how `cron-engagement` is invoked from cron):
+- Open `/admin/settings`, edit the Uzbek message, save → confirm row written.
+- From an unenrolled Telegram account, hit the deeplink → bot replies with the new admin-edited text and the configured form button.
+- From an enrolled account → still logs in as before, no regression.
 
-```sql
-PERFORM net.http_post(
-  url := edge_url,
-  headers := jsonb_build_object(
-    'Content-Type', 'application/json',
-    'apikey', '<anon key>',
-    'Authorization', 'Bearer <anon key>'
-  ),
-  body := jsonb_build_object('user_id', uid, 'lesson_id', p_lesson_id)
-);
-```
+## Files touched
 
-Also: replace the silent `EXCEPTION WHEN OTHERS THEN NULL` with `RAISE WARNING` so future failures are visible in Postgres logs (still won't break the user's progress save).
+- `supabase/migrations/<new>.sql` — seed `telegram_enrollment` row.
+- `supabase/functions/telegram-bot-webhook/index.ts` — load settings, drop hardcoded URL/strings.
+- `src/pages/admin/AdminSettings.tsx` — new "Enrollment message" card with form-URL + per-locale message + button label inputs.
+- `src/i18n/locales/{en,ru,uz}.json` — labels for the new admin card.
 
-**Step 2 — Verify edge-function secrets**
+## Out of scope (not changing)
 
-Use `fetch_secrets` to confirm `TELEGRAM_BOT_TOKEN` and `SITE_URL` are set on the functions runtime. If `TELEGRAM_BOT_TOKEN` is missing, request it from you. If `SITE_URL` is missing, set it to your published URL (`https://ai-creators-lesson.lovable.app`).
-
-**Step 3 — Verify with a live test**
-
-After the fix is deployed:
-- Manually invoke `notify-completion` once for your already-completed lesson 1.4 so you receive the message you missed.
-- Manually invoke `cron-engagement` once and confirm rows appear in `notifications_log` for any users in the reminder window.
-
-### Files changed
-
-- `supabase/migrations/<ts>_fix_track_video_progress_http.sql` — corrected `net.http_post` call with auth headers and visible warning on failure
-- (No edge function code changes needed — the bug is entirely in the DB → edge HTTP plumbing.)
+- Login flow itself (already correct — no phone widget).
+- `/myid`, `/galaba`, watch-tracking, AI assistant, magic links, CSV import, video upload limits.
+- Database schema beyond the one new row.

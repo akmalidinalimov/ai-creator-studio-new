@@ -18,7 +18,39 @@ function normLocale(code?: string | null): Locale {
   return "uz";
 }
 
-const ENROLL_FORM_URL = "https://forms.gle/o8Dcx1tA8ZBeGk6t9";
+// Default fallbacks if the platform_settings row is missing or a locale field is empty.
+const DEFAULT_ENROLL_FORM_URL = "https://forms.gle/o8Dcx1tA8ZBeGk6t9";
+const DEFAULT_ENROLL_MESSAGE: Record<Locale, string> = {
+  uz: "Sizning ma'lumotingiz platformaga kiritilmagan ko'rinadi. Pastdagi tugmani bosib, ma'lumotingiz qoldiring va sizga 24 soat ichida platformaga dostup beriladi",
+  ru: "Похоже, вашей информации нет на платформе. Нажмите кнопку ниже, оставьте свои данные — доступ будет открыт в течение 24 часов",
+  en: "Your information doesn't appear to be on the platform. Tap the button below, leave your details, and you'll get access within 24 hours",
+};
+const DEFAULT_ENROLL_BUTTON: Record<Locale, string> = {
+  uz: "📝 Formani to'ldirish",
+  ru: "📝 Заполнить форму",
+  en: "📝 Fill out the form",
+};
+
+async function getEnrollmentSettings(admin: any, locale: Locale): Promise<{ message: string; buttonLabel: string; formUrl: string }> {
+  try {
+    const { data } = await admin
+      .from("platform_settings")
+      .select("value")
+      .eq("key", "telegram_enrollment")
+      .maybeSingle();
+    const v = (data?.value || {}) as any;
+    const formUrl = (typeof v.form_url === "string" && v.form_url.trim()) || DEFAULT_ENROLL_FORM_URL;
+    const message = (v.message?.[locale] && String(v.message[locale]).trim()) || DEFAULT_ENROLL_MESSAGE[locale];
+    const buttonLabel = (v.button_label?.[locale] && String(v.button_label[locale]).trim()) || DEFAULT_ENROLL_BUTTON[locale];
+    return { message, buttonLabel, formUrl };
+  } catch (_e) {
+    return {
+      message: DEFAULT_ENROLL_MESSAGE[locale],
+      buttonLabel: DEFAULT_ENROLL_BUTTON[locale],
+      formUrl: DEFAULT_ENROLL_FORM_URL,
+    };
+  }
+}
 
 const T = {
   uz: {
@@ -431,8 +463,9 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
   }
 
   if (!profile) {
-    await sendMessage(chatId, t.notRegistered, {
-      inline_keyboard: [[{ text: t.fillForm, url: ENROLL_FORM_URL }]],
+    const enroll = await getEnrollmentSettings(admin, locale);
+    await sendMessage(chatId, enroll.message, {
+      inline_keyboard: [[{ text: enroll.buttonLabel, url: enroll.formUrl }]],
     });
     return;
   }
@@ -503,8 +536,9 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
 
   if (!profile) {
     if (cmd === "/start") {
-      await sendMessage(chatId, t.notRegistered, {
-        inline_keyboard: [[{ text: t.fillForm, url: ENROLL_FORM_URL }]],
+      const enroll = await getEnrollmentSettings(admin, locale);
+      await sendMessage(chatId, enroll.message, {
+        inline_keyboard: [[{ text: enroll.buttonLabel, url: enroll.formUrl }]],
       });
     } else {
       await sendMessage(chatId, t.noProfile);
@@ -758,16 +792,18 @@ Deno.serve(async (req) => {
         } else if (profileForLocale) {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
         } else {
-          await sendMessage(msg.chat.id, T[locale].notRegistered, {
-            inline_keyboard: [[{ text: T[locale].fillForm, url: ENROLL_FORM_URL }]],
+          const enroll = await getEnrollmentSettings(admin, locale);
+          await sendMessage(msg.chat.id, enroll.message, {
+            inline_keyboard: [[{ text: enroll.buttonLabel, url: enroll.formUrl }]],
           });
         }
       } else if (text === "/start") {
         if (profileForLocale) {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
         } else {
-          await sendMessage(msg.chat.id, T[locale].notRegistered, {
-            inline_keyboard: [[{ text: T[locale].fillForm, url: ENROLL_FORM_URL }]],
+          const enroll = await getEnrollmentSettings(admin, locale);
+          await sendMessage(msg.chat.id, enroll.message, {
+            inline_keyboard: [[{ text: enroll.buttonLabel, url: enroll.formUrl }]],
           });
         }
       } else if (text.startsWith("/")) {
