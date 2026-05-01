@@ -6,6 +6,7 @@ import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Eye, EyeOff, CheckCircle2, Circle, ExternalLink, Copy } from "lucide-react";
@@ -198,6 +199,7 @@ export default function AdminSettings() {
           </div>
         </Card>
 
+        <EnrollmentMessageCard userId={user?.id} />
         <AIAssistantCard userId={user?.id} />
         <ContentProtectionCard userId={user?.id} />
       </div>
