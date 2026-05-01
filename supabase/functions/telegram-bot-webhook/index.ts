@@ -463,8 +463,9 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
   }
 
   if (!profile) {
-    await sendMessage(chatId, t.notRegistered, {
-      inline_keyboard: [[{ text: t.fillForm, url: ENROLL_FORM_URL }]],
+    const enroll = await getEnrollmentSettings(admin, locale);
+    await sendMessage(chatId, enroll.message, {
+      inline_keyboard: [[{ text: enroll.buttonLabel, url: enroll.formUrl }]],
     });
     return;
   }
@@ -535,8 +536,9 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
 
   if (!profile) {
     if (cmd === "/start") {
-      await sendMessage(chatId, t.notRegistered, {
-        inline_keyboard: [[{ text: t.fillForm, url: ENROLL_FORM_URL }]],
+      const enroll = await getEnrollmentSettings(admin, locale);
+      await sendMessage(chatId, enroll.message, {
+        inline_keyboard: [[{ text: enroll.buttonLabel, url: enroll.formUrl }]],
       });
     } else {
       await sendMessage(chatId, t.noProfile);
@@ -790,16 +792,18 @@ Deno.serve(async (req) => {
         } else if (profileForLocale) {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
         } else {
-          await sendMessage(msg.chat.id, T[locale].notRegistered, {
-            inline_keyboard: [[{ text: T[locale].fillForm, url: ENROLL_FORM_URL }]],
+          const enroll = await getEnrollmentSettings(admin, locale);
+          await sendMessage(msg.chat.id, enroll.message, {
+            inline_keyboard: [[{ text: enroll.buttonLabel, url: enroll.formUrl }]],
           });
         }
       } else if (text === "/start") {
         if (profileForLocale) {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
         } else {
-          await sendMessage(msg.chat.id, T[locale].notRegistered, {
-            inline_keyboard: [[{ text: T[locale].fillForm, url: ENROLL_FORM_URL }]],
+          const enroll = await getEnrollmentSettings(admin, locale);
+          await sendMessage(msg.chat.id, enroll.message, {
+            inline_keyboard: [[{ text: enroll.buttonLabel, url: enroll.formUrl }]],
           });
         }
       } else if (text.startsWith("/")) {
