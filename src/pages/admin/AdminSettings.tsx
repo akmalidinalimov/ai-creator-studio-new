@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Eye, EyeOff, CheckCircle2, Circle, ExternalLink, Copy } from "lucide-react";
-import { TelegramLoginButton } from "@/components/TelegramLoginButton";
+import { TelegramDeeplinkButton } from "@/components/TelegramDeeplinkButton";
 import { KnowledgeManager } from "@/components/admin/KnowledgeManager";
 
 export default function AdminSettings() {
@@ -183,22 +183,7 @@ export default function AdminSettings() {
           </div>
           {savedUsername ? (
             <div className="rounded-lg border bg-muted/30 p-6 flex justify-center">
-              <TelegramLoginButton fallbackLabel="Telegram" onAuth={async (tg) => {
-                try {
-                  const { data, error } = await supabase.functions.invoke("telegram-auth", {
-                    body: { tg, redirectTo: `${window.location.origin}/dashboard` },
-                  });
-                  if (error) throw error;
-                  if ((data as any)?.url) {
-                    toast.success("✓");
-                    window.location.href = (data as any).url;
-                  } else {
-                    toast.error((data as any)?.error || "error");
-                  }
-                } catch (e: any) {
-                  toast.error(e.message || "error");
-                }
-              }} />
+              <TelegramDeeplinkButton onSuccess={() => { toast.success("✓"); window.location.href = `${window.location.origin}/dashboard`; }} />
             </div>
           ) : (
             <p className="text-sm text-muted-foreground italic">{t("admin.settings.saveBotFirst")}</p>

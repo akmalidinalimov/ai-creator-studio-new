@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { AuthShell } from "./Login";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
-import { TelegramLoginButton } from "@/components/TelegramLoginButton";
+import { TelegramDeeplinkButton } from "@/components/TelegramDeeplinkButton";
 
 export default function Signup() {
   const nav = useNavigate();
@@ -50,20 +50,14 @@ export default function Signup() {
     }
   };
 
-  const onTelegram = async (tg: any) => {
-    try {
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-auth`;
-      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tg, redirectTo: `${window.location.origin}/dashboard` }) });
-      const res = await r.json();
-      if (res?.url) { window.location.href = res.url; return; }
-      toast.error(res?.error || t("auth.telegramFailed"));
-    } catch (e: any) { toast.error(e.message || t("auth.telegramFailed")); }
+  const onTelegramSuccess = () => {
+    nav("/dashboard", { replace: true });
   };
 
   return (
     <AuthShell title={t("auth.createAccount")} subtitle={t("auth.startLearning")}>
       <Button variant="outline" className="w-full" onClick={onGoogle}>{t("auth.continueGoogle")}</Button>
-      <TelegramLoginButton onAuth={onTelegram} />
+      <TelegramDeeplinkButton onSuccess={onTelegramSuccess} />
       <div className="relative my-2"><div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div><div className="relative flex justify-center text-xs uppercase"><span className="bg-background px-2 text-muted-foreground">{t("common.or")}</span></div></div>
       <form onSubmit={onSubmit} className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
