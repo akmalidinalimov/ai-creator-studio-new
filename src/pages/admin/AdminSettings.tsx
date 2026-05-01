@@ -334,3 +334,147 @@ function ContentProtectionCard({ userId }: { userId?: string }) {
     </Card>
   );
 }
+
+type EnrollmentValue = {
+  form_url: string;
+  message: { uz: string; ru: string; en: string };
+  button_label: { uz: string; ru: string; en: string };
+};
+
+const DEFAULT_ENROLLMENT: EnrollmentValue = {
+  form_url: "https://forms.gle/o8Dcx1tA8ZBeGk6t9",
+  message: {
+    uz: "Sizning ma'lumotingiz platformaga kiritilmagan ko'rinadi. Pastdagi tugmani bosib, ma'lumotingiz qoldiring va sizga 24 soat ichida platformaga dostup beriladi",
+    ru: "Похоже, вашей информации нет на платформе. Нажмите кнопку ниже, оставьте свои данные — доступ будет открыт в течение 24 часов",
+    en: "Your information doesn't appear to be on the platform. Tap the button below, leave your details, and you'll get access within 24 hours",
+  },
+  button_label: {
+    uz: "📝 Formani to'ldirish",
+    ru: "📝 Заполнить форму",
+    en: "📝 Fill out the form",
+  },
+};
+
+function EnrollmentMessageCard({ userId }: { userId?: string }) {
+  const { t, i18n } = useTranslation();
+  const [value, setValue] = useState<EnrollmentValue>(DEFAULT_ENROLLMENT);
+  const [saving, setSaving] = useState(false);
+  const [previewLocale, setPreviewLocale] = useState<"uz" | "ru" | "en">(
+    (i18n.language?.slice(0, 2) as "uz" | "ru" | "en") || "uz",
+  );
+
+  useEffect(() => {
+    supabase
+      .from("platform_settings")
+      .select("value")
+      .eq("key", "telegram_enrollment")
+      .maybeSingle()
+      .then(({ data }) => {
+        const v = (data?.value as Partial<EnrollmentValue>) || {};
+        setValue({
+          form_url: v.form_url || DEFAULT_ENROLLMENT.form_url,
+          message: { ...DEFAULT_ENROLLMENT.message, ...(v.message || {}) },
+          button_label: { ...DEFAULT_ENROLLMENT.button_label, ...(v.button_label || {}) },
+        });
+      });
+  }, []);
+
+  const save = async () => {
+    const url = value.form_url.trim();
+    if (!/^https?:\/\//i.test(url)) {
+      toast.error(t("admin.settings.enrollment.invalidUrl"));
+      return;
+    }
+    setSaving(true);
+    const { error } = await supabase.from("platform_settings").upsert(
+      {
+        key: "telegram_enrollment",
+        value: { ...value, form_url: url },
+        updated_by: userId,
+      } as any,
+      { onConflict: "key" },
+    );
+    setSaving(false);
+    if (error) return toast.error(error.message);
+    toast.success(t("admin.settings.enrollment.savedToast"));
+  };
+
+  const setMsg = (loc: "uz" | "ru" | "en", v: string) =>
+    setValue((prev) => ({ ...prev, message: { ...prev.message, [loc]: v } }));
+  const setBtn = (loc: "uz" | "ru" | "en", v: string) =>
+    setValue((prev) => ({ ...prev, button_label: { ...prev.button_label, [loc]: v } }));
+
+  return (
+    <Card className="p-6 shadow-soft space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold">{t("admin.settings.enrollment.title")}</h2>
+        <p className="text-sm text-muted-foreground mt-1">{t("admin.settings.enrollment.desc")}</p>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>{t("admin.settings.enrollment.formUrl")}</Label>
+        <Input
+          type="url"
+          value={value.form_url}
+          onChange={(e) => setValue((p) => ({ ...p, form_url: e.target.value }))}
+          placeholder={t("admin.settings.enrollment.formUrlPh")}
+        />
+      </div>
+
+      {(["uz", "ru", "en"] as const).map((loc) => (
+        <div key={loc} className="space-y-3 rounded-lg border bg-muted/20 p-4">
+          <div className="space-y-1.5">
+            <Label>{t(`admin.settings.enrollment.message${loc.charAt(0).toUpperCase() + loc.slice(1)}` as any)}</Label>
+            <Textarea
+              rows={3}
+              value={value.message[loc]}
+              onChange={(e) => setMsg(loc, e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>{t(`admin.settings.enrollment.button${loc.charAt(0).toUpperCase() + loc.slice(1)}` as any)}</Label>
+            <Input value={value.button_label[loc]} onChange={(e) => setBtn(loc, e.target.value)} />
+          </div>
+        </div>
+      ))}
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+            {t("admin.settings.enrollment.preview")}
+          </Label>
+          <div className="flex gap-1">
+            {(["uz", "ru", "en"] as const).map((loc) => (
+              <Button
+                key={loc}
+                size="sm"
+                variant={previewLocale === loc ? "default" : "outline"}
+                onClick={() => setPreviewLocale(loc)}
+                className="h-7 px-2 text-xs uppercase"
+              >
+                {loc}
+              </Button>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-2xl bg-[#229ED9]/10 border border-[#229ED9]/20 p-4 space-y-3 max-w-md">
+          <p className="text-sm whitespace-pre-wrap leading-relaxed">{value.message[previewLocale]}</p>
+          <a
+            href={value.form_url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center justify-center w-full rounded-md bg-[#229ED9] hover:bg-[#1c8cc2] text-white text-sm font-medium py-2 px-4"
+          >
+            {value.button_label[previewLocale]}
+          </a>
+        </div>
+      </div>
+
+      <div className="flex justify-end">
+        <Button onClick={save} disabled={saving}>
+          {saving ? t("admin.settings.saving") : t("admin.settings.enrollment.save")}
+        </Button>
+      </div>
+    </Card>
+  );
+}
