@@ -18,11 +18,14 @@ function normLocale(code?: string | null): Locale {
   return "uz";
 }
 
+const ENROLL_FORM_URL = "https://forms.gle/o8Dcx1tA8ZBeGk6t9";
+
 const T = {
   uz: {
     expired: "Kirish havolasining muddati tugagan. Saytga qaytib qaytadan urinib ko'ring.",
     notRegistered:
-      "Sizning Telegram ID hali ro'yxatdan o'tmagan. Adminga murojaat qilib, ID raqamingizni yuboring. ID olish uchun: /myid",
+      "Sizning Telegram hisobingiz hali ro'yxatdan o'tmagan. Ro'yxatdan o'tish uchun quyidagi formani to'ldiring.",
+    fillForm: "📝 Formani to'ldirish",
     myidResponse: (id: number) =>
       `Sizning Telegram ID: <code>${id}</code>\n\nUshbu raqamni adminga yuboring.`,
     notEnrolled: (u: string) =>
@@ -75,7 +78,8 @@ const T = {
   ru: {
     expired: "Срок действия ссылки истёк. Вернитесь на сайт и попробуйте ещё раз.",
     notRegistered:
-      "Ваш Telegram ID ещё не зарегистрирован. Свяжитесь с администратором и отправьте ему свой ID. Чтобы узнать ID: /myid",
+      "Ваш Telegram аккаунт ещё не зарегистрирован. Заполните форму ниже для регистрации.",
+    fillForm: "📝 Заполнить форму",
     myidResponse: (id: number) =>
       `Ваш Telegram ID: <code>${id}</code>\n\nОтправьте этот номер администратору.`,
     notEnrolled: (u: string) =>
@@ -128,7 +132,8 @@ const T = {
   en: {
     expired: "Login link expired. Return to the site and try again.",
     notRegistered:
-      "Your Telegram ID is not registered yet. Contact the admin and send them your ID. To get your ID: /myid",
+      "Your Telegram account isn't registered yet. Fill out the form below to register.",
+    fillForm: "📝 Fill out the form",
     myidResponse: (id: number) =>
       `Your Telegram ID: <code>${id}</code>\n\nSend this number to the admin.`,
     notEnrolled: (u: string) =>
@@ -418,17 +423,24 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
     return;
   }
 
-  // v2.1: strict match by Telegram numeric user_id only.
-  // No more username matching — admin must pre-enter telegram_user_id for every student.
-  const profile = await findProfileByTelegramId(admin, tgId);
+  // v2.1.1: hybrid match — by Telegram numeric user_id OR by @username (case-insensitive).
+  // After first match by username, we permanently bind telegram_id so future logins are id-matched.
+  let profile = await findProfileByTelegramId(admin, tgId);
+  if (!profile && tgUsername) {
+    profile = await findProfileByUsername(admin, tgUsername);
+  }
 
   if (!profile) {
-    const buttons: any[][] = [];
-    if (SUPPORT_HANDLE) {
-      buttons.push([{ text: t.contactAdmin, url: `https://t.me/${SUPPORT_HANDLE}` }]);
-    }
-    await sendMessage(chatId, t.notRegistered, buttons.length ? { inline_keyboard: buttons } : undefined);
+    await sendMessage(chatId, t.notRegistered, {
+      inline_keyboard: [[{ text: t.fillForm, url: ENROLL_FORM_URL }]],
+    });
     return;
+  }
+
+  // Permanently bind telegram_id on first successful match (was NULL before).
+  if (!profile.telegram_id) {
+    await admin.from("profiles").update({ telegram_id: tgId }).eq("id", profile.id);
+    profile.telegram_id = tgId;
   }
 
   // Refresh @username metadata for admin display only (does NOT affect login).
@@ -490,7 +502,13 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   }
 
   if (!profile) {
-    await sendMessage(chatId, cmd === "/start" ? t.notRegistered : t.noProfile);
+    if (cmd === "/start") {
+      await sendMessage(chatId, t.notRegistered, {
+        inline_keyboard: [[{ text: t.fillForm, url: ENROLL_FORM_URL }]],
+      });
+    } else {
+      await sendMessage(chatId, t.noProfile);
+    }
     return;
   }
 
@@ -740,13 +758,17 @@ Deno.serve(async (req) => {
         } else if (profileForLocale) {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
         } else {
-          await sendMessage(msg.chat.id, T[locale].notRegistered);
+          await sendMessage(msg.chat.id, T[locale].notRegistered, {
+            inline_keyboard: [[{ text: T[locale].fillForm, url: ENROLL_FORM_URL }]],
+          });
         }
       } else if (text === "/start") {
         if (profileForLocale) {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
         } else {
-          await sendMessage(msg.chat.id, T[locale].notRegistered);
+          await sendMessage(msg.chat.id, T[locale].notRegistered, {
+            inline_keyboard: [[{ text: T[locale].fillForm, url: ENROLL_FORM_URL }]],
+          });
         }
       } else if (text.startsWith("/")) {
         await handleCommand(admin, msg, text.split(/\s+/)[0]);
