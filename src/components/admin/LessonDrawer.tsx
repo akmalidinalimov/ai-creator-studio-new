@@ -16,7 +16,7 @@ import * as tus from "tus-js-client";
 
 interface Props { lessonId: string; onClose: () => void; onChanged: () => void }
 
-const MAX_INLINE_UPLOAD = 2 * 1024 * 1024 * 1024; // 2 GB
+const MAX_INLINE_UPLOAD = 10 * 1024 * 1024 * 1024; // 10 GB
 
 export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
   const { t } = useTranslation();
