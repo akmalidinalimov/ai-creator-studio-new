@@ -18,11 +18,14 @@ function normLocale(code?: string | null): Locale {
   return "uz";
 }
 
+const ENROLL_FORM_URL = "https://forms.gle/o8Dcx1tA8ZBeGk6t9";
+
 const T = {
   uz: {
     expired: "Kirish havolasining muddati tugagan. Saytga qaytib qaytadan urinib ko'ring.",
     notRegistered:
-      "Sizning Telegram ID hali ro'yxatdan o'tmagan. Adminga murojaat qilib, ID raqamingizni yuboring. ID olish uchun: /myid",
+      "Sizning Telegram hisobingiz hali ro'yxatdan o'tmagan. Ro'yxatdan o'tish uchun quyidagi formani to'ldiring.",
+    fillForm: "📝 Formani to'ldirish",
     myidResponse: (id: number) =>
       `Sizning Telegram ID: <code>${id}</code>\n\nUshbu raqamni adminga yuboring.`,
     notEnrolled: (u: string) =>
@@ -75,7 +78,8 @@ const T = {
   ru: {
     expired: "Срок действия ссылки истёк. Вернитесь на сайт и попробуйте ещё раз.",
     notRegistered:
-      "Ваш Telegram ID ещё не зарегистрирован. Свяжитесь с администратором и отправьте ему свой ID. Чтобы узнать ID: /myid",
+      "Ваш Telegram аккаунт ещё не зарегистрирован. Заполните форму ниже для регистрации.",
+    fillForm: "📝 Заполнить форму",
     myidResponse: (id: number) =>
       `Ваш Telegram ID: <code>${id}</code>\n\nОтправьте этот номер администратору.`,
     notEnrolled: (u: string) =>
@@ -128,7 +132,8 @@ const T = {
   en: {
     expired: "Login link expired. Return to the site and try again.",
     notRegistered:
-      "Your Telegram ID is not registered yet. Contact the admin and send them your ID. To get your ID: /myid",
+      "Your Telegram account isn't registered yet. Fill out the form below to register.",
+    fillForm: "📝 Fill out the form",
     myidResponse: (id: number) =>
       `Your Telegram ID: <code>${id}</code>\n\nSend this number to the admin.`,
     notEnrolled: (u: string) =>
