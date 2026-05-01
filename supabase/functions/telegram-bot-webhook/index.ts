@@ -502,7 +502,13 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   }
 
   if (!profile) {
-    await sendMessage(chatId, cmd === "/start" ? t.notRegistered : t.noProfile);
+    if (cmd === "/start") {
+      await sendMessage(chatId, t.notRegistered, {
+        inline_keyboard: [[{ text: t.fillForm, url: ENROLL_FORM_URL }]],
+      });
+    } else {
+      await sendMessage(chatId, t.noProfile);
+    }
     return;
   }
 
@@ -752,13 +758,17 @@ Deno.serve(async (req) => {
         } else if (profileForLocale) {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
         } else {
-          await sendMessage(msg.chat.id, T[locale].notRegistered);
+          await sendMessage(msg.chat.id, T[locale].notRegistered, {
+            inline_keyboard: [[{ text: T[locale].fillForm, url: ENROLL_FORM_URL }]],
+          });
         }
       } else if (text === "/start") {
         if (profileForLocale) {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
         } else {
-          await sendMessage(msg.chat.id, T[locale].notRegistered);
+          await sendMessage(msg.chat.id, T[locale].notRegistered, {
+            inline_keyboard: [[{ text: T[locale].fillForm, url: ENROLL_FORM_URL }]],
+          });
         }
       } else if (text.startsWith("/")) {
         await handleCommand(admin, msg, text.split(/\s+/)[0]);
