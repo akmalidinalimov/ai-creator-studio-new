@@ -812,6 +812,22 @@
         "note": "Note:",
         "noteBody": "Browsers cannot fully prevent screen recording. These layers make it harder and let you trace any leak via the watermark.",
         "savedToast": "Content protection saved"
+      },
+      "enrollment": {
+        "title": "Telegram enrollment message",
+        "desc": "Sent in the bot when an unrecognized Telegram user opens the login link. Lets you direct them to a registration form.",
+        "formUrl": "Registration form URL",
+        "formUrlPh": "https://forms.gle/...",
+        "messageUz": "Message (Uzbek)",
+        "messageRu": "Message (Russian)",
+        "messageEn": "Message (English)",
+        "buttonUz": "Button label (Uzbek)",
+        "buttonRu": "Button label (Russian)",
+        "buttonEn": "Button label (English)",
+        "preview": "Preview",
+        "save": "Save enrollment message",
+        "savedToast": "Enrollment message saved",
+        "invalidUrl": "Form URL must start with http:// or https://"
       }
     },
     "aiAnalytics": {
