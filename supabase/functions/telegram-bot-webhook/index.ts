@@ -423,17 +423,24 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
     return;
   }
 
-  // v2.1: strict match by Telegram numeric user_id only.
-  // No more username matching — admin must pre-enter telegram_user_id for every student.
-  const profile = await findProfileByTelegramId(admin, tgId);
+  // v2.1.1: hybrid match — by Telegram numeric user_id OR by @username (case-insensitive).
+  // After first match by username, we permanently bind telegram_id so future logins are id-matched.
+  let profile = await findProfileByTelegramId(admin, tgId);
+  if (!profile && tgUsername) {
+    profile = await findProfileByUsername(admin, tgUsername);
+  }
 
   if (!profile) {
-    const buttons: any[][] = [];
-    if (SUPPORT_HANDLE) {
-      buttons.push([{ text: t.contactAdmin, url: `https://t.me/${SUPPORT_HANDLE}` }]);
-    }
-    await sendMessage(chatId, t.notRegistered, buttons.length ? { inline_keyboard: buttons } : undefined);
+    await sendMessage(chatId, t.notRegistered, {
+      inline_keyboard: [[{ text: t.fillForm, url: ENROLL_FORM_URL }]],
+    });
     return;
+  }
+
+  // Permanently bind telegram_id on first successful match (was NULL before).
+  if (!profile.telegram_id) {
+    await admin.from("profiles").update({ telegram_id: tgId }).eq("id", profile.id);
+    profile.telegram_id = tgId;
   }
 
   // Refresh @username metadata for admin display only (does NOT affect login).
