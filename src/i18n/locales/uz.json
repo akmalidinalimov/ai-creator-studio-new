@@ -812,6 +812,22 @@
         "note": "Eslatma:",
         "noteBody": "Brauzerlar ekran yozuvini to'liq oldini ola olmaydi. Bu qatlamlar yozuvni qiyinlashtiradi va suv belgisi orqali sizib chiqishni kuzatishga imkon beradi.",
         "savedToast": "Kontent himoyasi saqlandi"
+      },
+      "enrollment": {
+        "title": "Telegram ro'yxatga olish xabari",
+        "desc": "Botda noma'lum Telegram foydalanuvchisi kirish havolasini ochganda yuboriladi. Uni ro'yxatdan o'tish formasiga yo'naltirishga imkon beradi.",
+        "formUrl": "Ro'yxatdan o'tish formasi URL",
+        "formUrlPh": "https://forms.gle/...",
+        "messageUz": "Xabar (o'zbekcha)",
+        "messageRu": "Xabar (ruscha)",
+        "messageEn": "Xabar (inglizcha)",
+        "buttonUz": "Tugma matni (o'zbekcha)",
+        "buttonRu": "Tugma matni (ruscha)",
+        "buttonEn": "Tugma matni (inglizcha)",
+        "preview": "Ko'rinishi",
+        "save": "Xabarni saqlash",
+        "savedToast": "Xabar saqlandi",
+        "invalidUrl": "Forma URL http:// yoki https:// bilan boshlanishi kerak"
       }
     },
     "aiAnalytics": {
