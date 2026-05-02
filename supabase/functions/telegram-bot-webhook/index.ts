@@ -1168,6 +1168,8 @@ async function handleTeacherSession(admin: any, msg: any, profileId: string, loc
   await sendWithKeyboard(msg.chat.id, t.teacherBroadcastSent(sent), locale, false, "teacher");
   return true;
 }
+
+async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   const chatId = msg.chat.id;
   const tgId = msg.from.id as number;
   const profile = await findProfileByTelegramId(admin, tgId);
