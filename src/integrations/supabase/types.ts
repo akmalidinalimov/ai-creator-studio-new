@@ -1129,6 +1129,84 @@ export type Database = {
         }
         Relationships: []
       }
+      nudge_log: {
+        Row: {
+          clicked_at: string | null
+          error: string | null
+          id: string
+          magic_token: string | null
+          nudge_type: string
+          payload: Json
+          profile_id: string
+          sent_at: string
+          telegram_message_id: string | null
+        }
+        Insert: {
+          clicked_at?: string | null
+          error?: string | null
+          id?: string
+          magic_token?: string | null
+          nudge_type: string
+          payload?: Json
+          profile_id: string
+          sent_at?: string
+          telegram_message_id?: string | null
+        }
+        Update: {
+          clicked_at?: string | null
+          error?: string | null
+          id?: string
+          magic_token?: string | null
+          nudge_type?: string
+          payload?: Json
+          profile_id?: string
+          sent_at?: string
+          telegram_message_id?: string | null
+        }
+        Relationships: []
+      }
+      nudge_module_celebrations: {
+        Row: {
+          module_id: string
+          profile_id: string
+          queued_at: string
+          sent_at: string | null
+        }
+        Insert: {
+          module_id: string
+          profile_id: string
+          queued_at?: string
+          sent_at?: string | null
+        }
+        Update: {
+          module_id?: string
+          profile_id?: string
+          queued_at?: string
+          sent_at?: string | null
+        }
+        Relationships: []
+      }
+      nudge_preferences: {
+        Row: {
+          opt_in: boolean
+          paused_until: string | null
+          profile_id: string
+          updated_at: string
+        }
+        Insert: {
+          opt_in?: boolean
+          paused_until?: string | null
+          profile_id: string
+          updated_at?: string
+        }
+        Update: {
+          opt_in?: boolean
+          paused_until?: string | null
+          profile_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       platform_settings: {
         Row: {
           key: string
@@ -1171,6 +1249,7 @@ export type Database = {
           preferred_locale: string
           reminder_time: string
           status: Database["public"]["Enums"]["user_status"]
+          tashkent_offset_minutes: number
           telegram_id: number | null
           telegram_onboarded_at: string | null
           telegram_username: string | null
@@ -1198,6 +1277,7 @@ export type Database = {
           preferred_locale?: string
           reminder_time?: string
           status?: Database["public"]["Enums"]["user_status"]
+          tashkent_offset_minutes?: number
           telegram_id?: number | null
           telegram_onboarded_at?: string | null
           telegram_username?: string | null
@@ -1225,6 +1305,7 @@ export type Database = {
           preferred_locale?: string
           reminder_time?: string
           status?: Database["public"]["Enums"]["user_status"]
+          tashkent_offset_minutes?: number
           telegram_id?: number | null
           telegram_onboarded_at?: string | null
           telegram_username?: string | null
@@ -1682,6 +1763,18 @@ export type Database = {
           file_name: string
           scope: Database["public"]["Enums"]["knowledge_scope"]
           similarity: number
+        }[]
+      }
+      nudge_cron_set_enabled: {
+        Args: { _enabled: boolean }
+        Returns: undefined
+      }
+      nudge_cron_status: {
+        Args: never
+        Returns: {
+          active: boolean
+          jobname: string
+          schedule: string
         }[]
       }
       re_engagement_eligible_count: {
