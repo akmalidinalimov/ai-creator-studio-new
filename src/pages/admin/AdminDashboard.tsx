@@ -535,6 +535,14 @@ export default function AdminDashboard() {
           setSort={setNeverSort}
           t={t}
         />
+
+        <InactiveDialog
+          open={inactiveOpen !== null}
+          window={inactiveOpen ?? 3}
+          onOpenChange={(v) => !v && setInactiveOpen(null)}
+          rows={inactiveOpen === 7 ? inactive7List : inactive3List}
+          t={t}
+        />
       </div>
     </PageShell>
   );
