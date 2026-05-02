@@ -26,6 +26,8 @@ import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 import Landing from "./pages/Landing";
 import AuthMagicLink from "./pages/AuthMagicLink";
+import Leaderboard from "./pages/Leaderboard";
+import Badges from "./pages/Badges";
 
 // Lazy-load admin pages (code-split)
 const AdminDashboard = lazy(() => import("./pages/admin/AdminDashboard"));
@@ -70,6 +72,8 @@ const App = () => (
             <Route path="/lesson/:courseId/:lessonId" element={<RequireAuth><LessonPage /></RequireAuth>} />
             <Route path="/quiz/:moduleId" element={<RequireAuth><QuizPage /></RequireAuth>} />
             <Route path="/settings" element={<RequireAuth><Settings /></RequireAuth>} />
+            <Route path="/leaderboard" element={<RequireAuth><Leaderboard /></RequireAuth>} />
+            <Route path="/badges" element={<RequireAuth><Badges /></RequireAuth>} />
 
             <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
             <Route path="/admin/dashboard" element={<RequireAuth staffOnly><Suspense fallback={<AdminFallback />}><AdminDashboard /></Suspense></RequireAuth>} />

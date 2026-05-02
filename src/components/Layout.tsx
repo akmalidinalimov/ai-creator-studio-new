@@ -5,6 +5,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { LogOut, Settings, Shield, LayoutDashboard, BookOpen, Users, Rocket, BarChart3, FileText, Bell } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { StudentBottomNav } from "@/components/StudentBottomNav";
 
 export const Logo = ({ className = "", to = "/dashboard" }: { className?: string; to?: string }) => (
   <Link to={to} className={`flex items-center gap-2 font-semibold tracking-tight ${className}`}>
@@ -145,9 +146,14 @@ export const TopNav = () => {
   );
 };
 
-export const PageShell = ({ children }: { children: React.ReactNode }) => (
-  <div className="min-h-screen bg-background">
-    <TopNav />
-    <main className="container py-6 md:py-10 animate-fade-in">{children}</main>
-  </div>
-);
+export const PageShell = ({ children }: { children: React.ReactNode }) => {
+  const { role } = useAuth();
+  const isStudent = role !== "admin" && role !== "teacher";
+  return (
+    <div className="min-h-screen bg-background">
+      <TopNav />
+      <main className={`container py-6 md:py-10 animate-fade-in ${isStudent ? "pb-24 md:pb-10" : ""}`}>{children}</main>
+      {isStudent && <StudentBottomNav />}
+    </div>
+  );
+};

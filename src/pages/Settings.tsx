@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Monitor, LogOut } from "lucide-react";
@@ -50,6 +51,7 @@ export default function Settings() {
   const [goal, setGoal] = useState(5);
   const [pw, setPw] = useState("");
   const [events, setEvents] = useState<AuthEvent[]>([]);
+  const [digestOptIn, setDigestOptIn] = useState(true);
   const [signingOutOthers, setSigningOutOthers] = useState(false);
   const [language, setLanguage] = useState<LanguageCode>(
     ((i18n.resolvedLanguage || i18n.language || "uz").slice(0, 2) as LanguageCode)
@@ -72,7 +74,7 @@ export default function Settings() {
     (async () => {
       const { data } = await supabase
         .from("profiles")
-        .select("name, last_name, timezone, weekly_goal_lessons, preferred_language")
+        .select("name, last_name, timezone, weekly_goal_lessons, preferred_language, digest_opt_in")
         .eq("id", user.id)
         .maybeSingle();
       if (data) {
@@ -82,6 +84,7 @@ export default function Settings() {
         setGoal(data.weekly_goal_lessons || 5);
         const lng = (data as any).preferred_language;
         if (lng && ["uz", "ru", "en"].includes(lng)) setLanguage(lng as LanguageCode);
+        setDigestOptIn((data as any).digest_opt_in ?? true);
       }
       const { data: ev } = await supabase
         .from("auth_events")
@@ -165,6 +168,22 @@ export default function Settings() {
               ))}
             </SelectContent>
           </Select>
+        </Card>
+
+        <Card className="p-5 shadow-soft flex items-center justify-between gap-4">
+          <div>
+            <h2 className="font-semibold">📬 Haftalik digest</h2>
+            <p className="text-xs text-muted-foreground mt-1">Har yakshanba Telegramga haftalik natijalaringizni yuboramiz.</p>
+          </div>
+          <Switch
+            checked={digestOptIn}
+            onCheckedChange={async (v) => {
+              setDigestOptIn(v);
+              if (!user) return;
+              const { error } = await supabase.from("profiles").update({ digest_opt_in: v } as any).eq("id", user.id);
+              if (error) toast.error(error.message); else toast.success(v ? "Digest yoqildi" : "Digest o'chirildi");
+            }}
+          />
         </Card>
 
         <Card className="p-5 space-y-4 shadow-soft">
