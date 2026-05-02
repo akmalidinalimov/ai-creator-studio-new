@@ -286,12 +286,20 @@ export default function AdminDashboard() {
           </Select>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           <StatCard icon={<UsersIcon className="h-4 w-4" />} label={t("admin.dashboard.stats.totalStudents")} value={stats.total} />
           <StatCard icon={<LogIn className="h-4 w-4" />} label={t("admin.dashboard.stats.logins30d")} value={stats.logins30d} />
           <StatCard icon={<Activity className="h-4 w-4" />} label={t("admin.dashboard.stats.active7d")} value={stats.active7d} />
           <StatCard icon={<Trophy className="h-4 w-4" />} label={t("admin.dashboard.stats.completions")} value={stats.completions} />
           <StatCard icon={<UserCheck className="h-4 w-4" />} label={t("admin.dashboard.stats.activated")} value={stats.activated} tooltip={t("admin.dashboard.stats.activatedTooltip")} />
+          <StatCard
+            icon={<UserX className="h-4 w-4" />}
+            label={t("admin.dashboard.stats.neverLoggedIn")}
+            value={stats.neverLoggedIn}
+            tooltip={t("admin.dashboard.stats.neverLoggedInTooltip")}
+            variant="warning"
+            onClick={() => setNeverOpen(true)}
+          />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
