@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { Monitor, LogOut } from "lucide-react";
 import { SUPPORTED_LANGUAGES, type LanguageCode } from "@/i18n";
 import { HomeworkProfileSection } from "@/components/HomeworkProfileSection";
+import { NudgePreferencesCard } from "@/components/NudgePreferencesCard";
 
 interface AuthEvent {
   id: string;
