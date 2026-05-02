@@ -398,9 +398,32 @@ function getAdminKeyboard(locale: Locale) {
   };
 }
 
+function getTeacherKeyboard(locale: Locale) {
+  const t = T[locale] as any;
+  return {
+    keyboard: [
+      [{ text: t.tKbStats }, { text: t.tKbStudents }],
+      [{ text: t.tKbInactive }, { text: t.tKbTop }],
+      [{ text: t.tKbBroadcast }, { text: t.tKbSettings }],
+      [{ text: t.kbLang }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+  };
+}
+
+type Persona = "student" | "admin" | "teacher";
+
+function keyboardFor(locale: Locale, persona: Persona) {
+  if (persona === "admin") return getAdminKeyboard(locale);
+  if (persona === "teacher") return getTeacherKeyboard(locale);
+  return getMainKeyboard(locale);
+}
+
 // Send a message that always carries the persistent reply keyboard.
-async function sendWithKeyboard(chatId: number, text: string, locale: Locale, isAdmin = false) {
-  return sendMessage(chatId, text, isAdmin ? getAdminKeyboard(locale) : getMainKeyboard(locale));
+async function sendWithKeyboard(chatId: number, text: string, locale: Locale, isAdmin = false, persona?: Persona) {
+  const p: Persona = persona || (isAdmin ? "admin" : "student");
+  return sendMessage(chatId, text, keyboardFor(locale, p));
 }
 
 // Send a Telegram document (e.g., CSV) via multipart upload.
@@ -428,10 +451,27 @@ async function isAdminUser(admin: any, userId: string): Promise<boolean> {
   return !!data;
 }
 
+async function isTeacherUser(admin: any, userId: string): Promise<boolean> {
+  const { data } = await admin
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", userId)
+    .eq("role", "teacher")
+    .maybeSingle();
+  return !!data;
+}
+
+async function getPersona(admin: any, userId: string): Promise<Persona> {
+  if (await isAdminUser(admin, userId)) return "admin";
+  if (await isTeacherUser(admin, userId)) return "teacher";
+  return "student";
+}
+
 // After sending an inline-keyboard message, follow up with a tiny hint that
 // re-applies the persistent reply keyboard (since you can't combine both).
-async function sendKeyboardHint(chatId: number, locale: Locale, isAdmin = false) {
-  return sendMessage(chatId, T[locale].kbHint, isAdmin ? getAdminKeyboard(locale) : getMainKeyboard(locale));
+async function sendKeyboardHint(chatId: number, locale: Locale, isAdmin = false, persona?: Persona) {
+  const p: Persona = persona || (isAdmin ? "admin" : "student");
+  return sendMessage(chatId, T[locale].kbHint, keyboardFor(locale, p));
 }
 
 // Map ANY localized keyboard label to a canonical command, regardless of user's
