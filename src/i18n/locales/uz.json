@@ -475,7 +475,22 @@
         "active7d": "Faol (7k)",
         "completions": "Kursni tugatganlar",
         "activated": "Bir marta kirgan",
-        "activatedTooltip": "Hech bo'lmaganda bir marta saytga kirgan o'quvchilar soni"
+        "activatedTooltip": "Hech bo'lmaganda bir marta saytga kirgan o'quvchilar soni",
+        "neverLoggedIn": "Hech qachon kirmagan",
+        "neverLoggedInTooltip": "Ro'yxatdan o'tgan, lekin hali biror marta saytga kirmagan o'quvchilar. Ro'yxatni ko'rish uchun bosing."
+      },
+      "neverLoggedIn": {
+        "title": "Hech qachon kirmagan o'quvchilar",
+        "exportCsv": "CSV yuklab olish",
+        "empty": "Hammasi kamida bir marta kirgan",
+        "cols": {
+          "name": "Ism",
+          "tgUsername": "Telegram",
+          "tgId": "Telegram ID",
+          "email": "Email",
+          "enrolledAt": "Qo'shilgan",
+          "daysSince": "Kun (qo'shilgandan)"
+        }
       },
       "charts": {
         "dailyLogins": "Kunlik kirishlar (30k)",
