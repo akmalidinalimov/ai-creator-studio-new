@@ -88,6 +88,7 @@ const T = {
     kbDavom: "📚 Davom etish",
     kbStreak: "📊 Statistikam",
     kbCert: "📋 Kurs Modullari",
+    kbHomework: "📝 Mening vazifalarim",
     kbLang: "🌐 Til",
     kbHelp: "❓ Yordam",
     kbHint: "👇 Quyidagi tugmalardan foydalaning",
