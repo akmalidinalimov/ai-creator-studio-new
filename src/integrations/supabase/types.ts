@@ -1240,6 +1240,22 @@ export type Database = {
           telegram_username: string
         }[]
       }
+      staff_recent_auth_events: {
+        Args: { _since: string }
+        Returns: {
+          created_at: string
+          user_id: string
+        }[]
+      }
+      staff_recent_lesson_progress: {
+        Args: { _since: string }
+        Returns: {
+          completed_at: string
+          lesson_id: string
+          updated_at: string
+          user_id: string
+        }[]
+      }
       track_video_progress: {
         Args: {
           p_current_time: number
