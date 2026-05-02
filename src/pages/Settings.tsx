@@ -170,6 +170,22 @@ export default function Settings() {
           </Select>
         </Card>
 
+        <Card className="p-5 shadow-soft flex items-center justify-between gap-4">
+          <div>
+            <h2 className="font-semibold">📬 Haftalik digest</h2>
+            <p className="text-xs text-muted-foreground mt-1">Har yakshanba Telegramga haftalik natijalaringizni yuboramiz.</p>
+          </div>
+          <Switch
+            checked={digestOptIn}
+            onCheckedChange={async (v) => {
+              setDigestOptIn(v);
+              if (!user) return;
+              const { error } = await supabase.from("profiles").update({ digest_opt_in: v } as any).eq("id", user.id);
+              if (error) toast.error(error.message); else toast.success(v ? "Digest yoqildi" : "Digest o'chirildi");
+            }}
+          />
+        </Card>
+
         <Card className="p-5 space-y-4 shadow-soft">
           <h2 className="font-semibold">{t("settings.passwordSection")}</h2>
           <div className="space-y-1.5"><Label>{t("settings.newPassword")}</Label><Input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder={t("settings.minChars")} /></div>
