@@ -27,7 +27,7 @@ interface VariableRow {
   description: string | null;
 }
 
-const TEMPLATE_ORDER = [
+const STUDENT_ORDER = [
   "daily_reminder",
   "streak_warning",
   "lesson_complete",
@@ -39,6 +39,16 @@ const TEMPLATE_ORDER = [
   "settings_confirm",
 ];
 
+const ADMIN_ORDER = [
+  "admin_daily_brief",
+  "admin_new_student",
+  "admin_inactive_3d_digest",
+  "admin_inactive_7d_digest",
+  "admin_course_completion",
+];
+
+const TEMPLATE_ORDER = [...STUDENT_ORDER, ...ADMIN_ORDER];
+
 const TEMPLATE_LABEL: Record<string, string> = {
   daily_reminder: "Daily reminder",
   streak_warning: "Streak warning",
@@ -49,6 +59,11 @@ const TEMPLATE_LABEL: Record<string, string> = {
   inactive_7: "Inactive — day 7",
   inactive_14: "Inactive — day 14",
   settings_confirm: "Settings confirmation",
+  admin_daily_brief: "Admin — Daily brief",
+  admin_new_student: "Admin — New student enrolled",
+  admin_inactive_3d_digest: "Admin — 3-day inactive digest",
+  admin_inactive_7d_digest: "Admin — 7-day inactive digest",
+  admin_course_completion: "Admin — Course completion",
 };
 
 function interpolate(s: string, vars: Record<string, string | number>): string {
