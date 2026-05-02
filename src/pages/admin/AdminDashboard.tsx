@@ -97,15 +97,37 @@ export default function AdminDashboard() {
       const since30 = new Date(Date.now() - 30 * 86400_000).toISOString();
       const since7 = new Date(Date.now() - 7 * 86400_000).toISOString();
 
-      // Top stats
-      const { count: totalUsers } = await supabase.from("profiles").select("id", { count: "exact", head: true });
-      const { data: events30 } = await supabase.from("auth_events").select("user_id, created_at").gte("created_at", since30).limit(50000);
-      const { data: prog7 } = await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", since7).limit(50000);
+      // Resolve visible student scope (admins → all, teachers → their groups' students)
+      const { data: visIdsData } = await supabase.rpc("get_visible_student_ids");
+      const visibleIds: string[] = ((visIdsData || []) as any[]).map((r: any) => r.id);
+      const visibleSet = new Set(visibleIds);
+      setScopedIds(visibleIds);
+      if (isTeacher && visibleIds.length === 0) {
+        setNoGroups(true);
+        setStats({ total: 0, logins30d: 0, active7d: 0, completions: 0, activated: 0, neverLoggedIn: 0, inactive3d: 0, inactive7d: 0 });
+        setNeverList([]); setInactive3List([]); setInactive7List([]);
+        setDailyLogins([]); setDau([]); setLessonsPerDay([]);
+        setModuleEngagement([]); setModuleFunnel([]); setStuckByModule([]); setStuck([]);
+        setLoading(false);
+        return;
+      }
+      setNoGroups(false);
+
+      const inScope = (uid: string) => !isTeacher || visibleSet.has(uid);
+
+      // Top stats — total scoped students
+      const totalUsers = isTeacher ? visibleIds.length : (await supabase.from("profiles").select("id", { count: "exact", head: true })).count || 0;
+
+      const events30Raw = (await supabase.from("auth_events").select("user_id, created_at").gte("created_at", since30).limit(50000)).data || [];
+      const events30 = isTeacher ? events30Raw.filter((e: any) => inScope(e.user_id)) : events30Raw;
+      const prog7Raw = (await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", since7).limit(50000)).data || [];
+      const prog7 = isTeacher ? prog7Raw.filter((p: any) => inScope(p.user_id)) : prog7Raw;
       const active7 = new Set((prog7 || []).map((p: any) => p.user_id)).size;
 
       // Lifetime activated + never logged in via admin_list_users RPC (includes last_sign_in_at + is_admin)
       const { data: allUsers } = await supabase.rpc("admin_list_users");
-      const students = (allUsers || []).filter((u: any) => !u.is_admin);
+      const studentsAll = (allUsers || []).filter((u: any) => !u.is_admin);
+      const students = isTeacher ? studentsAll.filter((u: any) => visibleSet.has(u.id)) : studentsAll;
       const activated = students.filter((u: any) => u.last_sign_in_at).length;
       const neverList = students
         .filter((u: any) => !u.last_sign_in_at)
