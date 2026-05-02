@@ -37,6 +37,7 @@ export const TopNav = () => {
     { to: "/admin/dashboard", label: t("nav.dashboard"), match: (p: string) => p === "/admin/dashboard" || p === "/admin" },
     { to: "/admin/courses", label: t("nav.courses"), match: (p: string) => p.startsWith("/admin/courses") },
     { to: "/admin/users", label: t("nav.users"), match: (p: string) => p.startsWith("/admin/users") },
+    { to: "/admin/groups", label: "Groups", match: (p: string) => p.startsWith("/admin/groups") },
   ];
 
   return (
@@ -84,6 +85,9 @@ export const TopNav = () => {
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link to="/admin/users"><Users className="mr-2 h-4 w-4" /> {t("nav.users")}</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/admin/groups"><Users className="mr-2 h-4 w-4" /> Groups</Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link to="/admin/settings"><Settings className="mr-2 h-4 w-4" /> {t("nav.settings")}</Link>
