@@ -430,6 +430,15 @@ export default function AdminDashboard() {
               </Card>
             </Link>
           )}
+          {!isTeacher && (
+            <Link to="/admin/nudges" className="block">
+              <Card className="p-4 hover:bg-muted/50 transition cursor-pointer h-full">
+                <div className="text-xs text-muted-foreground">🔔 Smart eslatmalar</div>
+                <div className="text-2xl font-bold mt-1">Nudges</div>
+                <div className="text-xs text-muted-foreground">Rate-limited, opt-out</div>
+              </Card>
+            </Link>
+          )}
           {!isTeacher && <WeeklyDigestTile />}
         </div>
 

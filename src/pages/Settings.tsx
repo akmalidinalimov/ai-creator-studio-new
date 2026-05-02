@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { Monitor, LogOut } from "lucide-react";
 import { SUPPORTED_LANGUAGES, type LanguageCode } from "@/i18n";
 import { HomeworkProfileSection } from "@/components/HomeworkProfileSection";
+import { NudgePreferencesCard } from "@/components/NudgePreferencesCard";
 
 interface AuthEvent {
   id: string;
@@ -188,6 +189,8 @@ export default function Settings() {
             }}
           />
         </Card>
+
+        <NudgePreferencesCard userId={user?.id} />
 
         <Card className="p-5 space-y-4 shadow-soft">
           <h2 className="font-semibold">{t("settings.passwordSection")}</h2>

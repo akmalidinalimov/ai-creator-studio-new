@@ -89,6 +89,9 @@ Deno.serve(async (req) => {
     try {
       await admin.from("re_engagement_deliveries").update({ clicked_at: new Date().toISOString() }).eq("magic_token", token).is("clicked_at", null);
     } catch (_) { /* ignore */ }
+    try {
+      await admin.from("nudge_log").update({ clicked_at: new Date().toISOString() }).eq("magic_token", token).is("clicked_at", null);
+    } catch (_) { /* ignore */ }
 
     return new Response(
       JSON.stringify({ session, target_path: row.target_path || "/dashboard" }),
