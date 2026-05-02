@@ -115,6 +115,63 @@ export default function AdminDashboard() {
         }));
       setNeverList(neverList);
 
+      // Inactive 3d / 7d: students who logged in at least once but no auth_event
+      // OR lesson_progress activity in the window. Reuse events30 + we'll fetch
+      // lesson_progress within the 30-day window further below; here we need all-time
+      // last activity, so derive from events30 (30d window is sufficient — anything
+      // older than 30d already counts as ">30d inactive", which is also >7d inactive).
+      const lastAuthByUser = new Map<string, number>();
+      (events30 || []).forEach((e: any) => {
+        const t = new Date(e.created_at).getTime();
+        const cur = lastAuthByUser.get(e.user_id) || 0;
+        if (t > cur) lastAuthByUser.set(e.user_id, t);
+      });
+      // lesson_progress within 30d (we already have prog7; fetch a wider window)
+      const { data: prog30Activity } = await supabase
+        .from("lesson_progress")
+        .select("user_id, updated_at")
+        .gte("updated_at", new Date(Date.now() - 30 * 86400_000).toISOString())
+        .limit(100000);
+      const lastLessonByUser = new Map<string, number>();
+      (prog30Activity || []).forEach((p: any) => {
+        const t = new Date(p.updated_at).getTime();
+        const cur = lastLessonByUser.get(p.user_id) || 0;
+        if (t > cur) lastLessonByUser.set(p.user_id, t);
+      });
+
+      const now = Date.now();
+      const threshold3 = now - 3 * 86400_000;
+      const threshold7 = now - 7 * 86400_000;
+      const buildInactive = (thresholdMs: number) =>
+        students
+          .filter((u: any) => u.last_sign_in_at) // never-logged-in shown in own tile
+          .map((u: any) => {
+            const la = Math.max(lastAuthByUser.get(u.id) || 0, lastLessonByUser.get(u.id) || 0);
+            return { u, lastActivity: la };
+          })
+          .filter((x: any) => x.lastActivity < thresholdMs)
+          .map(({ u, lastActivity }: any) => ({
+            id: u.id,
+            name: [u.name, u.last_name].filter(Boolean).join(" ") || "—",
+            telegram_username: u.telegram_username || null,
+            telegram_id: u.telegram_id || null,
+            email: u.email || "",
+            last_activity_at: lastActivity > 0 ? new Date(lastActivity).toISOString() : null,
+            days_since: lastActivity > 0
+              ? Math.floor((now - lastActivity) / 86400_000)
+              : null,
+          }))
+          .sort((a: any, b: any) => {
+            const av = a.last_activity_at ? new Date(a.last_activity_at).getTime() : 0;
+            const bv = b.last_activity_at ? new Date(b.last_activity_at).getTime() : 0;
+            return av - bv; // most-stale first
+          });
+
+      const inactive3 = buildInactive(threshold3);
+      const inactive7 = buildInactive(threshold7);
+      setInactive3List(inactive3);
+      setInactive7List(inactive7);
+
       // Module + lesson info for course
       const { data: mods } = await supabase
         .from("modules")
