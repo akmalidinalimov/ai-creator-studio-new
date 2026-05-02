@@ -874,7 +874,9 @@ export default function AdminUsers() {
                     : allDup
                     ? t("admin.users.allInDb", { defaultValue: "All already in DB" })
                     : t("admin.users.addNewN", { defaultValue: "Add {{n}} new users", n: addedCount })}
-            </Button>
+                </Button>
+              );
+            })()}
           </DialogFooter>
         </DialogContent>
       </Dialog>
