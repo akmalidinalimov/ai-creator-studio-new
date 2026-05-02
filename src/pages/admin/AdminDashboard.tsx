@@ -527,6 +527,7 @@ export default function AdminDashboard() {
           </div>
         </Card>
 
+        {!isTeacher && (
         <Card className="overflow-hidden shadow-soft">
           <div className="p-4 border-b flex items-center justify-between">
             <div>
@@ -561,7 +562,7 @@ export default function AdminDashboard() {
             </table>
           </div>
         </Card>
-
+        )}
         <NeverLoggedInDialog
           open={neverOpen}
           onOpenChange={setNeverOpen}
