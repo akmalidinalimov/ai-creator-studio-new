@@ -39,7 +39,7 @@ type Delivery = {
   profile?: { name: string | null; last_name: string | null; telegram_username: string | null };
 };
 
-const renderTpl = (tpl: string, name: string) => (tpl || "").replaceAll("{{name}}", name || "do'stim");
+const renderTpl = (tpl: string, name: string) => (tpl || "").split("{{name}}").join(name || "do'stim");
 
 export default function AdminReengagement() {
   const [counts, setCounts] = useState({ never_logged_in: 0, with_tg: 0, without_tg: 0 });
