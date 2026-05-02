@@ -494,6 +494,13 @@ function buttonTextToCommand(text: string): string | null {
     if (trimmed === t.adminKbNever) return "/nevr";
     if (trimmed === t.adminKbNew) return "/yangilar";
     if (trimmed === t.adminKbStudentMode) return "/talaba";
+    // Teacher keyboard buttons
+    if (t.tKbStats && trimmed === t.tKbStats) return "/tstats";
+    if (t.tKbStudents && trimmed === t.tKbStudents) return "/tstudents";
+    if (t.tKbInactive && trimmed === t.tKbInactive) return "/tinactive";
+    if (t.tKbTop && trimmed === t.tKbTop) return "/ttop";
+    if (t.tKbBroadcast && trimmed === t.tKbBroadcast) return "/tbroadcast";
+    if (t.tKbSettings && trimmed === t.tKbSettings) return "/sozlamalar";
   }
   return null;
 }
