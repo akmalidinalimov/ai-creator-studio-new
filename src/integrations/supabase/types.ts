@@ -62,6 +62,30 @@ export type Database = {
         }
         Relationships: []
       }
+      admin_notification_log: {
+        Row: {
+          id: string
+          notification_type: string
+          payload: Json
+          sent_at: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          notification_type: string
+          payload?: Json
+          sent_at?: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          notification_type?: string
+          payload?: Json
+          sent_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       ai_chat_errors: {
         Row: {
           created_at: string
