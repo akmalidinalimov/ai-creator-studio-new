@@ -85,6 +85,10 @@ Deno.serve(async (req) => {
 
     const session = await mintSessionForUser(admin, userRow.user.email, `${SITE_URL}/dashboard`);
     await admin.from("telegram_magic_links").update({ used_at: new Date().toISOString() }).eq("token", token);
+    // Re-engagement: mark delivery clicked
+    try {
+      await admin.from("re_engagement_deliveries").update({ clicked_at: new Date().toISOString() }).eq("magic_token", token).is("clicked_at", null);
+    } catch (_) { /* ignore */ }
 
     return new Response(
       JSON.stringify({ session, target_path: row.target_path || "/dashboard" }),
