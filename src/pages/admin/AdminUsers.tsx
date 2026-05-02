@@ -956,12 +956,30 @@ export default function AdminUsers() {
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t("admin.users.role")}</Label>
-                  <div className="flex gap-2 items-center">
-                    <Badge>{manageUser.is_admin ? t("admin.users.admin").toLowerCase() : t("admin.users.student").toLowerCase()}</Badge>
-                    <Button size="sm" variant="outline" onClick={() => setConfirmRole({ user: manageUser, promote: !manageUser.is_admin })}>
-                      {manageUser.is_admin ? t("admin.users.demote") : t("admin.users.promote")}
-                    </Button>
-                  </div>
+                  <Select
+                    value={manageUser.is_admin ? "admin" : "student"}
+                    onValueChange={async (newRole) => {
+                      try {
+                        const { data, error } = await supabase.functions.invoke("admin-change-role", {
+                          body: { target_user_id: manageUser.id, new_role: newRole },
+                        });
+                        if (error) throw error;
+                        if ((data as any)?.error) throw new Error((data as any).error);
+                        toast.success(t("admin.users.toasts.saved"));
+                        reload();
+                      } catch (e: any) {
+                        toast.error(e.message || "Failed to change role");
+                      }
+                    }}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="student">Student</SelectItem>
+                      <SelectItem value="teacher">Teacher</SelectItem>
+                      <SelectItem value="admin">Admin</SelectItem>
+                      <SelectItem value="superadmin">Superadmin</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t("admin.users.headers.status")}</Label>
