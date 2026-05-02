@@ -1061,10 +1061,13 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
     return;
   }
 
-  // Admin commands — only for users with role='admin'.
-  const isAdmin = await isAdminUser(admin, profile.id);
-  if (isAdmin) {
+  // Admin / teacher routing
+  const persona = await getPersona(admin, profile.id);
+  if (persona === "admin") {
     const handled = await handleAdminCommand(admin, chatId, locale, cmd);
+    if (handled) return;
+  } else if (persona === "teacher") {
+    const handled = await handleTeacherCommand(admin, chatId, profile.id, locale, cmd);
     if (handled) return;
   }
 
