@@ -106,27 +106,47 @@ export default function AdminGroups() {
                 <TableHead>Teacher</TableHead>
                 <TableHead>Course</TableHead>
                 <TableHead>Students</TableHead>
+                <TableHead>Health</TableHead>
+                <TableHead>Default</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
+                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
               ) : groups.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No groups yet.</TableCell></TableRow>
-              ) : groups.map((g) => (
+                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">No groups yet.</TableCell></TableRow>
+              ) : groups.map((g) => {
+                const h = health[g.id] ?? 0;
+                const hColor = h >= 70 ? "bg-emerald-500" : h >= 40 ? "bg-amber-500" : "bg-rose-500";
+                return (
                 <TableRow key={g.id}>
-                  <TableCell className="font-medium">{g.name}</TableCell>
+                  <TableCell className="font-medium">
+                    <a className="hover:underline" href={`/admin/groups/${g.id}`}>{g.name}</a>
+                  </TableCell>
                   <TableCell>{teacherLabel(g.teacher_id)}</TableCell>
                   <TableCell>{courseTitle(g.course_id)}</TableCell>
                   <TableCell><Badge variant="secondary">{counts[g.id] || 0}</Badge></TableCell>
+                  <TableCell><span className={`inline-block px-2 py-0.5 rounded text-white text-xs ${hColor}`}>{h}</span></TableCell>
+                  <TableCell>
+                    <Button
+                      variant={g.is_default ? "default" : "outline"}
+                      size="sm"
+                      onClick={async () => {
+                        if (!g.is_default) await supabase.from("groups").update({ is_default: false }).neq("id", g.id);
+                        const { error } = await supabase.from("groups").update({ is_default: !g.is_default }).eq("id", g.id);
+                        if (error) toast.error(error.message); else { toast.success(g.is_default ? "Cleared default" : "Set as default"); reload(); }
+                      }}
+                    >{g.is_default ? "Default" : "Set"}</Button>
+                  </TableCell>
                   <TableCell className="text-right space-x-2">
                     <Button variant="outline" size="sm" onClick={() => setStudentsGroup(g)}><UsersIcon className="h-4 w-4" /></Button>
                     <Button variant="outline" size="sm" onClick={() => setEditGroup(g)}><Pencil className="h-4 w-4" /></Button>
                     <Button variant="outline" size="sm" onClick={() => setDeleteGroup(g)}><Trash2 className="h-4 w-4" /></Button>
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         </Card>
