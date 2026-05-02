@@ -106,7 +106,7 @@ export default function AdminUsers() {
 
   const reload = async () => {
     setLoading(true);
-    const { data, error } = await supabase.rpc("admin_list_users");
+    const { data, error } = await supabase.rpc(isTeacher ? "staff_list_students" as any : "admin_list_users");
     if (error) toast.error(error.message);
     const rows = (data || []) as any[];
     // Hydrate last_name from profiles (RPC doesn't return it)
