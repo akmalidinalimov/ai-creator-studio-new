@@ -35,10 +35,13 @@ export default function AdminDashboard() {
   const [courseId, setCourseId] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
-  const [stats, setStats] = useState({ total: 0, logins30d: 0, active7d: 0, completions: 0, activated: 0, neverLoggedIn: 0 });
+  const [stats, setStats] = useState({ total: 0, logins30d: 0, active7d: 0, completions: 0, activated: 0, neverLoggedIn: 0, inactive3d: 0, inactive7d: 0 });
   const [neverList, setNeverList] = useState<any[]>([]);
   const [neverOpen, setNeverOpen] = useState(false);
   const [neverSort, setNeverSort] = useState<{ key: string; dir: "asc" | "desc" }>({ key: "created_at", dir: "desc" });
+  const [inactive3List, setInactive3List] = useState<any[]>([]);
+  const [inactive7List, setInactive7List] = useState<any[]>([]);
+  const [inactiveOpen, setInactiveOpen] = useState<null | 3 | 7>(null);
   const [dailyLogins, setDailyLogins] = useState<{ day: string; count: number }[]>([]);
   const [dau, setDau] = useState<{ day: string; count: number }[]>([]);
   const [lessonsPerDay, setLessonsPerDay] = useState<{ day: string; count: number }[]>([]);
