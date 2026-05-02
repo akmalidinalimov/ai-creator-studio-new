@@ -475,7 +475,22 @@
         "active7d": "Active (7d)",
         "completions": "Course completions",
         "activated": "Logged in at least once",
-        "activatedTooltip": "Number of students who have signed in to the platform at least once"
+        "activatedTooltip": "Number of students who have signed in to the platform at least once",
+        "neverLoggedIn": "Never logged in",
+        "neverLoggedInTooltip": "Students who are enrolled but have never signed in. Click to see the list."
+      },
+      "neverLoggedIn": {
+        "title": "Students who never logged in",
+        "exportCsv": "Export CSV",
+        "empty": "Everyone has signed in at least once",
+        "cols": {
+          "name": "Name",
+          "tgUsername": "Telegram",
+          "tgId": "Telegram ID",
+          "email": "Email",
+          "enrolledAt": "Enrolled",
+          "daysSince": "Days since enrollment"
+        }
       },
       "charts": {
         "dailyLogins": "Daily logins (30d)",
