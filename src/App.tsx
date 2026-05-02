@@ -39,6 +39,7 @@ const AdminAudit = lazy(() => import("./pages/admin/AdminAudit"));
 const AdminBunnyDiagnostics = lazy(() => import("./pages/admin/AdminBunnyDiagnostics"));
 const AdminNotifications = lazy(() => import("./pages/admin/AdminNotifications"));
 const AdminGroups = lazy(() => import("./pages/admin/AdminGroups"));
+const GroupDetail = lazy(() => import("./pages/admin/GroupDetail"));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 60_000, refetchOnWindowFocus: false } },
