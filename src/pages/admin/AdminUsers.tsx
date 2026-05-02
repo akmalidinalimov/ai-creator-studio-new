@@ -64,7 +64,9 @@ const FN_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
 
 export default function AdminUsers() {
   const { t } = useTranslation();
-  const { session } = useAuth();
+  const { session, role } = useAuth();
+  const isTeacher = role === "teacher";
+  const isAdmin = role === "admin";
   const [users, setUsers] = useState<UserRow[]>([]);
   const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
   const [enrollMap, setEnrollMap] = useState<Record<string, Set<string>>>({});
