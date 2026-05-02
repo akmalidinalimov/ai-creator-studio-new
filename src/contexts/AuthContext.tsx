@@ -66,6 +66,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             });
         }, 0);
         if (event === "SIGNED_IN") {
+          // Notify admins on first sign-in (new student) — fire-and-forget.
+          setTimeout(() => {
+            supabase
+              .from("profiles")
+              .select("created_at")
+              .eq("id", s.user.id)
+              .maybeSingle()
+              .then(({ data }) => {
+                const created = (data as any)?.created_at;
+                if (!created) return;
+                if (Date.now() - new Date(created).getTime() < 5 * 60 * 1000) {
+                  supabase.functions.invoke("notify-admin-new-student", {
+                    body: { user_id: s.user.id },
+                  }).catch(() => {});
+                }
+              });
+          }, 0);
           setTimeout(() => {
             // Server-side capture (gets real IP from request headers)
             supabase.functions.invoke("log-auth-event", {
