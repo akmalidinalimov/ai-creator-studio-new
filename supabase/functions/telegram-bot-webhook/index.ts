@@ -1213,13 +1213,15 @@ Deno.serve(async (req) => {
         ? normLocale(profileForLocale.preferred_locale)
         : normLocale(msg.from.language_code);
 
+      const adminFlag = profileForLocale ? await isAdminUser(admin, profileForLocale.id) : false;
+
       if (text.startsWith("/start ")) {
         const arg = text.slice(7).trim();
         if (arg.startsWith("login_")) {
           const tok = arg.slice(6);
           await handleStartLogin(admin, msg, tok, locale);
         } else if (profileForLocale) {
-          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
+          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag);
         } else {
           const enroll = await getEnrollmentSettings(admin, locale);
           await sendMessage(msg.chat.id, enroll.message, {
@@ -1228,7 +1230,7 @@ Deno.serve(async (req) => {
         }
       } else if (text === "/start") {
         if (profileForLocale) {
-          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
+          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag);
         } else {
           const enroll = await getEnrollmentSettings(admin, locale);
           await sendMessage(msg.chat.id, enroll.message, {
