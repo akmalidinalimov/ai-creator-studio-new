@@ -84,6 +84,7 @@ const App = () => (
             <Route path="/admin/notifications" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminNotifications /></Suspense></RequireAuth>} />
             <Route path="/admin/groups" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminGroups /></Suspense></RequireAuth>} />
             <Route path="/admin/groups/:id" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><GroupDetail /></Suspense></RequireAuth>} />
+            <Route path="/admin/reengagement" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminReengagement /></Suspense></RequireAuth>} />
 
             <Route path="*" element={<NotFound />} />
           </Routes>
