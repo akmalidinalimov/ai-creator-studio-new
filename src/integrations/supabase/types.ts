@@ -1765,6 +1765,31 @@ export type Database = {
           similarity: number
         }[]
       }
+      nudge_candidates_inactive: {
+        Args: { _days: number }
+        Returns: {
+          id: string
+          name: string
+          preferred_language: string
+          preferred_locale: string
+          tashkent_offset_minutes: number
+          teacher_name: string
+          telegram_id: number
+        }[]
+      }
+      nudge_candidates_stuck: {
+        Args: never
+        Returns: {
+          id: string
+          lesson_id: string
+          lesson_title: string
+          name: string
+          preferred_language: string
+          preferred_locale: string
+          tashkent_offset_minutes: number
+          telegram_id: number
+        }[]
+      }
       nudge_cron_set_enabled: {
         Args: { _enabled: boolean }
         Returns: undefined
