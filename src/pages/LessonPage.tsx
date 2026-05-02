@@ -331,6 +331,8 @@ export default function LessonPage() {
           )}
         </div>
 
+        {lessonId && <HomeworkSection lessonId={lessonId} />}
+
         <Card className="shadow-soft flex flex-col" style={{ minHeight: 320 }}>
           <div className="px-4 py-3 border-b flex items-center gap-2 flex-wrap">
             <Sparkles className="h-4 w-4" />
