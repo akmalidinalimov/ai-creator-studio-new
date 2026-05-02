@@ -348,7 +348,7 @@ export default function AdminDashboard() {
           </Select>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3">
           <StatCard icon={<UsersIcon className="h-4 w-4" />} label={t("admin.dashboard.stats.totalStudents")} value={stats.total} />
           <StatCard icon={<LogIn className="h-4 w-4" />} label={t("admin.dashboard.stats.logins30d")} value={stats.logins30d} />
           <StatCard icon={<Activity className="h-4 w-4" />} label={t("admin.dashboard.stats.active7d")} value={stats.active7d} />
@@ -361,6 +361,22 @@ export default function AdminDashboard() {
             tooltip={t("admin.dashboard.stats.neverLoggedInTooltip")}
             variant="warning"
             onClick={() => setNeverOpen(true)}
+          />
+          <StatCard
+            icon={<Moon className="h-4 w-4" />}
+            label={t("admin.dashboard.stats.inactive3d")}
+            value={stats.inactive3d}
+            tooltip={t("admin.dashboard.stats.inactive3dTooltip")}
+            variant="warning"
+            onClick={() => setInactiveOpen(3)}
+          />
+          <StatCard
+            icon={<MoonStar className="h-4 w-4" />}
+            label={t("admin.dashboard.stats.inactive7d")}
+            value={stats.inactive7d}
+            tooltip={t("admin.dashboard.stats.inactive7dTooltip")}
+            variant="warning"
+            onClick={() => setInactiveOpen(7)}
           />
         </div>
 
