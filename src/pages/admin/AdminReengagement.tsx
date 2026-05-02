@@ -202,7 +202,7 @@ export default function AdminReengagement() {
       String(d.attempt_num),
       d.sent_at, d.clicked_at || "", d.activated_at || "", d.status,
     ]));
-    const csv = rows.map((r) => r.map((c) => `"${(c || "").toString().replaceAll('"', '""')}"`).join(",")).join("\n");
+    const csv = rows.map((r) => r.map((c) => `"${(c || "").toString().split('"').join('""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `reengagement-${active?.id}.csv`; a.click();
