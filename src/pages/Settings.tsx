@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { Monitor, LogOut } from "lucide-react";
 import { SUPPORTED_LANGUAGES, type LanguageCode } from "@/i18n";
+import { HomeworkProfileSection } from "@/components/HomeworkProfileSection";
 
 interface AuthEvent {
   id: string;
@@ -152,6 +153,8 @@ export default function Settings() {
           <div className="space-y-1.5"><Label>{t("settings.weeklyGoal")}</Label><Input type="number" value={goal} onChange={(e) => setGoal(parseInt(e.target.value) || 0)} /></div>
           <Button onClick={save}>{t("settings.saveProfile")}</Button>
         </Card>
+
+        <HomeworkProfileSection />
 
         <Card className="p-5 space-y-4 shadow-soft">
           <div>

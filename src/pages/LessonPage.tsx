@@ -12,6 +12,7 @@ import { CheckCircle2, ChevronRight, ChevronLeft, Send, Sparkles, LayoutList } f
 import { toast } from "sonner";
 import { ProtectedVideo } from "@/components/lesson/ProtectedVideo";
 import { BunnyVideoPlayer } from "@/components/BunnyVideoPlayer";
+import { HomeworkSection } from "@/components/lesson/HomeworkSection";
 
 interface Msg { role: "user" | "assistant"; content: string }
 
@@ -329,6 +330,8 @@ export default function LessonPage() {
             <Card className="p-5 text-sm leading-relaxed whitespace-pre-wrap">{lesson.description}</Card>
           )}
         </div>
+
+        {lessonId && <HomeworkSection lessonId={lessonId} />}
 
         <Card className="shadow-soft flex flex-col" style={{ minHeight: 320 }}>
           <div className="px-4 py-3 border-b flex items-center gap-2 flex-wrap">

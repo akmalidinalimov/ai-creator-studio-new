@@ -42,10 +42,13 @@ export const TopNav = () => {
         { to: "/admin/courses", label: t("nav.courses"), match: (p: string) => p.startsWith("/admin/courses") },
         { to: "/admin/users", label: t("nav.users"), match: (p: string) => p.startsWith("/admin/users") },
         { to: "/admin/groups", label: "Groups", match: (p: string) => p.startsWith("/admin/groups") },
+        { to: "/admin/homework", label: "📝 Vazifalar", match: (p: string) => p.startsWith("/admin/homework") },
+        { to: "/teacher/homework", label: "Bahalash", match: (p: string) => p.startsWith("/teacher/homework") },
       ]
     : [
         { to: "/admin/dashboard", label: t("nav.dashboard"), match: (p: string) => p === "/admin/dashboard" || p === "/admin" },
         { to: "/admin/users", label: "Mening talabalarim", match: (p: string) => p.startsWith("/admin/users") },
+        { to: "/teacher/homework", label: "📝 Vazifalar", match: (p: string) => p.startsWith("/teacher/homework") },
       ];
 
   return (
