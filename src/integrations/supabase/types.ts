@@ -356,6 +356,51 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_broadcast_rate: {
+        Row: {
+          actor_user_id: string
+          created_at: string
+          id: string
+          recipient_user_id: string | null
+          scope: string
+        }
+        Insert: {
+          actor_user_id: string
+          created_at?: string
+          id?: string
+          recipient_user_id?: string | null
+          scope: string
+        }
+        Update: {
+          actor_user_id?: string
+          created_at?: string
+          id?: string
+          recipient_user_id?: string | null
+          scope?: string
+        }
+        Relationships: []
+      }
+      bot_sessions: {
+        Row: {
+          data: Json
+          state: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          data?: Json
+          state: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          data?: Json
+          state?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       courses: {
         Row: {
           ai_knowledge_paths: string[] | null
