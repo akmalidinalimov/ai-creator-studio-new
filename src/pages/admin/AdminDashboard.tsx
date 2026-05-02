@@ -431,12 +431,23 @@ export default function AdminDashboard() {
   );
 }
 
-const StatCard = ({ icon, label, value }: { icon: React.ReactNode; label: string; value: any }) => (
-  <Card className="p-5 shadow-soft">
-    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">{icon}{label}</div>
-    <div className="text-3xl font-semibold tracking-tight mt-1 tabular-nums">{value}</div>
-  </Card>
-);
+const StatCard = ({ icon, label, value, tooltip }: { icon: React.ReactNode; label: string; value: any; tooltip?: string }) => {
+  const card = (
+    <Card className="p-5 shadow-soft h-full">
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">{icon}{label}</div>
+      <div className="text-3xl font-semibold tracking-tight mt-1 tabular-nums">{value}</div>
+    </Card>
+  );
+  if (!tooltip) return card;
+  return (
+    <TooltipProvider delayDuration={150}>
+      <UITooltip>
+        <TooltipTrigger asChild><div className="cursor-help">{card}</div></TooltipTrigger>
+        <TooltipContent className="max-w-xs text-xs">{tooltip}</TooltipContent>
+      </UITooltip>
+    </TooltipProvider>
+  );
+};
 
 const ChartCard = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <Card className="p-5 shadow-soft">
