@@ -384,8 +384,8 @@ async function isAdminUser(admin: any, userId: string): Promise<boolean> {
 
 // After sending an inline-keyboard message, follow up with a tiny hint that
 // re-applies the persistent reply keyboard (since you can't combine both).
-async function sendKeyboardHint(chatId: number, locale: Locale) {
-  return sendMessage(chatId, T[locale].kbHint, getMainKeyboard(locale));
+async function sendKeyboardHint(chatId: number, locale: Locale, isAdmin = false) {
+  return sendMessage(chatId, T[locale].kbHint, isAdmin ? getAdminKeyboard(locale) : getMainKeyboard(locale));
 }
 
 // Map ANY localized keyboard label to a canonical command, regardless of user's
@@ -395,14 +395,19 @@ function buttonTextToCommand(text: string): string | null {
   for (const loc of ["uz", "ru", "en"] as Locale[]) {
     const t = T[loc] as any;
     if (trimmed === t.kbDavom) return "/davom";
-    // New canonical g'alaba button + old "stats" labels as aliases.
     if (trimmed === t.kbStreak) return "/galaba";
     if (t.kbStreakOld && trimmed === t.kbStreakOld) return "/galaba";
-    // New "Course modules" button routes to /dars; old cert label as alias.
     if (trimmed === t.kbCert) return "/dars";
     if (t.kbCertOld && trimmed === t.kbCertOld) return "/sertifikat";
     if (trimmed === t.kbLang) return "/til";
     if (trimmed === t.kbHelp) return "/yordam";
+    // Admin keyboard buttons
+    if (trimmed === t.adminKbAnalytics) return "/analitika";
+    if (trimmed === t.adminKbInactive3) return "/inactive3";
+    if (trimmed === t.adminKbInactive7) return "/inactive7";
+    if (trimmed === t.adminKbNever) return "/nevr";
+    if (trimmed === t.adminKbNew) return "/yangilar";
+    if (trimmed === t.adminKbStudentMode) return "/talaba";
   }
   return null;
 }
