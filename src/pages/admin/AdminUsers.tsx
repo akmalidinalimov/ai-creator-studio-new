@@ -64,7 +64,9 @@ const FN_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
 
 export default function AdminUsers() {
   const { t } = useTranslation();
-  const { session } = useAuth();
+  const { session, role } = useAuth();
+  const isTeacher = role === "teacher";
+  const isAdmin = role === "admin";
   const [users, setUsers] = useState<UserRow[]>([]);
   const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
   const [enrollMap, setEnrollMap] = useState<Record<string, Set<string>>>({});
@@ -104,7 +106,7 @@ export default function AdminUsers() {
 
   const reload = async () => {
     setLoading(true);
-    const { data, error } = await supabase.rpc("admin_list_users");
+    const { data, error } = await supabase.rpc(isTeacher ? "staff_list_students" as any : "admin_list_users");
     if (error) toast.error(error.message);
     const rows = (data || []) as any[];
     // Hydrate last_name from profiles (RPC doesn't return it)
@@ -520,8 +522,8 @@ export default function AdminUsers() {
                 <Mail className="h-4 w-4" /> {t("admin.users.resendWelcomeN", { n: selected.size })}
               </Button>
             )}
-            <Button variant="outline" size="sm" onClick={() => setOpenCsv(true)}><UploadIcon className="h-4 w-4" />{t("admin.users.importCsv")}</Button>
-            <Button size="sm" onClick={() => { setNewPassword(randPassword()); setOpenAdd(true); }}><Plus className="h-4 w-4" />{t("admin.users.addUser")}</Button>
+            {isAdmin && <Button variant="outline" size="sm" onClick={() => setOpenCsv(true)}><UploadIcon className="h-4 w-4" />{t("admin.users.importCsv")}</Button>}
+            {isAdmin && <Button size="sm" onClick={() => { setNewPassword(randPassword()); setOpenAdd(true); }}><Plus className="h-4 w-4" />{t("admin.users.addUser")}</Button>}
           </div>
         </div>
 
@@ -590,7 +592,7 @@ export default function AdminUsers() {
                     <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : "bg-destructive/10 text-destructive"}`}>{u.status === "active" ? t("admin.users.active") : t("admin.users.inactive")}</span></td>
                     <td className="p-3 text-xs text-muted-foreground">{(enrollMap[u.id]?.size) || 0}</td>
                     <td className="p-3 text-xs text-muted-foreground">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}</td>
-                    <td className="p-3"><Button variant="ghost" size="sm" onClick={() => setManageUser(u)}>{t("admin.users.manage")}</Button></td>
+                    <td className="p-3">{isAdmin && <Button variant="ghost" size="sm" onClick={() => setManageUser(u)}>{t("admin.users.manage")}</Button>}</td>
                   </tr>
                 ))}
               </tbody>

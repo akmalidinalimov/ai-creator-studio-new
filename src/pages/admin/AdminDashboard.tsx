@@ -13,6 +13,7 @@ import { Link } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
 import { enUS, ru, uz } from "date-fns/locale";
+import { useAuth } from "@/contexts/AuthContext";
 
 const PALETTE = [
   "hsl(var(--primary))",
@@ -30,10 +31,14 @@ const fmtDay = (d: Date) => d.toISOString().slice(5, 10);
 
 export default function AdminDashboard() {
   const { t, i18n } = useTranslation();
+  const { role } = useAuth();
+  const isTeacher = role === "teacher";
   const dateLocale = i18n.language === "ru" ? ru : i18n.language === "uz" ? uz : enUS;
   const [courses, setCourses] = useState<{ id: string; title: string; published: boolean }[]>([]);
   const [courseId, setCourseId] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [scopedIds, setScopedIds] = useState<string[] | null>(null);
+  const [noGroups, setNoGroups] = useState(false);
 
   const [stats, setStats] = useState({ total: 0, logins30d: 0, active7d: 0, completions: 0, activated: 0, neverLoggedIn: 0, inactive3d: 0, inactive7d: 0 });
   const [neverList, setNeverList] = useState<any[]>([]);
@@ -52,6 +57,7 @@ export default function AdminDashboard() {
   const [recentActions, setRecentActions] = useState<any[]>([]);
 
   useEffect(() => {
+    if (isTeacher) return;
     (async () => {
       const { data } = await supabase
         .from("admin_actions")
@@ -92,15 +98,39 @@ export default function AdminDashboard() {
       const since30 = new Date(Date.now() - 30 * 86400_000).toISOString();
       const since7 = new Date(Date.now() - 7 * 86400_000).toISOString();
 
-      // Top stats
-      const { count: totalUsers } = await supabase.from("profiles").select("id", { count: "exact", head: true });
-      const { data: events30 } = await supabase.from("auth_events").select("user_id, created_at").gte("created_at", since30).limit(50000);
-      const { data: prog7 } = await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", since7).limit(50000);
+      // Resolve visible student scope (admins → all, teachers → their groups' students)
+      const { data: visIdsData } = await supabase.rpc("get_visible_student_ids");
+      const visibleIds: string[] = ((visIdsData || []) as any[]).map((r: any) => r.id);
+      const visibleSet = new Set(visibleIds);
+      setScopedIds(visibleIds);
+      if (isTeacher && visibleIds.length === 0) {
+        setNoGroups(true);
+        setStats({ total: 0, logins30d: 0, active7d: 0, completions: 0, activated: 0, neverLoggedIn: 0, inactive3d: 0, inactive7d: 0 });
+        setNeverList([]); setInactive3List([]); setInactive7List([]);
+        setDailyLogins([]); setDau([]); setLessonsPerDay([]);
+        setModuleEngagement([]); setModuleFunnel([]); setStuckByModule([]); setStuck([]);
+        setLoading(false);
+        return;
+      }
+      setNoGroups(false);
+
+      const inScope = (uid: string) => !isTeacher || visibleSet.has(uid);
+
+      // Top stats — total scoped students
+      const totalUsers = isTeacher ? visibleIds.length : (await supabase.from("profiles").select("id", { count: "exact", head: true })).count || 0;
+
+      const events30 = isTeacher
+        ? ((await supabase.rpc("staff_recent_auth_events", { _since: since30 })).data || [])
+        : ((await supabase.from("auth_events").select("user_id, created_at").gte("created_at", since30).limit(50000)).data || []);
+      const prog7 = isTeacher
+        ? ((await supabase.rpc("staff_recent_lesson_progress", { _since: since7 })).data || []).map((p: any) => ({ user_id: p.user_id, updated_at: p.updated_at }))
+        : ((await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", since7).limit(50000)).data || []);
       const active7 = new Set((prog7 || []).map((p: any) => p.user_id)).size;
 
-      // Lifetime activated + never logged in via admin_list_users RPC (includes last_sign_in_at + is_admin)
-      const { data: allUsers } = await supabase.rpc("admin_list_users");
-      const students = (allUsers || []).filter((u: any) => !u.is_admin);
+      // Lifetime activated + never logged in via staff_list_students RPC (scoped automatically)
+      const { data: allUsers } = await supabase.rpc("staff_list_students");
+      const studentsAll = (allUsers || []);
+      const students = studentsAll; // already scoped by RPC
       const activated = students.filter((u: any) => u.last_sign_in_at).length;
       const neverList = students
         .filter((u: any) => !u.last_sign_in_at)
@@ -126,12 +156,10 @@ export default function AdminDashboard() {
         const cur = lastAuthByUser.get(e.user_id) || 0;
         if (t > cur) lastAuthByUser.set(e.user_id, t);
       });
-      // lesson_progress within 30d (we already have prog7; fetch a wider window)
-      const { data: prog30Activity } = await supabase
-        .from("lesson_progress")
-        .select("user_id, updated_at")
-        .gte("updated_at", new Date(Date.now() - 30 * 86400_000).toISOString())
-        .limit(100000);
+      const since30Iso = new Date(Date.now() - 30 * 86400_000).toISOString();
+      const prog30Activity = isTeacher
+        ? ((await supabase.rpc("staff_recent_lesson_progress", { _since: since30Iso })).data || []).map((p: any) => ({ user_id: p.user_id, updated_at: p.updated_at }))
+        : ((await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", since30Iso).limit(100000)).data || []);
       const lastLessonByUser = new Map<string, number>();
       (prog30Activity || []).forEach((p: any) => {
         const t = new Date(p.updated_at).getTime();
@@ -184,9 +212,16 @@ export default function AdminDashboard() {
       const allLessonIds = modules.flatMap((m: any) => (m.lessons || []).filter((l: any) => l.published).map((l: any) => l.id));
 
       // Course progress (completed lessons across this course)
-      const { data: completedRows } = allLessonIds.length
-        ? await supabase.from("lesson_progress").select("user_id, lesson_id, updated_at").in("lesson_id", allLessonIds).not("completed_at", "is", null).limit(50000)
-        : { data: [] as any[] };
+      let completedRows: any[] = [];
+      if (allLessonIds.length) {
+        if (isTeacher) {
+          const { data } = await supabase.rpc("staff_recent_lesson_progress", { _since: "1970-01-01T00:00:00Z" });
+          completedRows = (data || []).filter((r: any) => r.completed_at && allLessonIds.includes(r.lesson_id));
+        } else {
+          const { data } = await supabase.from("lesson_progress").select("user_id, lesson_id, updated_at").in("lesson_id", allLessonIds).not("completed_at", "is", null).limit(50000);
+          completedRows = data || [];
+        }
+      }
 
       const completedSet = new Map<string, Set<string>>(); // user -> set of lesson ids
       (completedRows || []).forEach((r: any) => {
@@ -226,7 +261,9 @@ export default function AdminDashboard() {
       setDailyLogins(Array.from(loginMap, ([day, count]) => ({ day, count })));
 
       // DAU (30d)
-      const { data: prog30 } = await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", new Date(Date.now() - 30 * 86400_000).toISOString()).limit(100000);
+      const prog30 = isTeacher
+        ? prog30Activity
+        : ((await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", since30Iso).limit(100000)).data || []);
       (prog30 || []).forEach((p: any) => {
         const k = fmtDay(startOfDay(new Date(p.updated_at)));
         if (dayMap.has(k)) dayMap.get(k)!.add(p.user_id);
@@ -348,6 +385,11 @@ export default function AdminDashboard() {
           </Select>
         </div>
 
+        {noGroups && (
+          <Card className="p-6 border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-400">
+            Sizga hali biror guruh tayinlanmagan. Adminga murojaat qiling.
+          </Card>
+        )}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3">
           <StatCard icon={<UsersIcon className="h-4 w-4" />} label={t("admin.dashboard.stats.totalStudents")} value={stats.total} />
           <StatCard icon={<LogIn className="h-4 w-4" />} label={t("admin.dashboard.stats.logins30d")} value={stats.logins30d} />
@@ -492,6 +534,7 @@ export default function AdminDashboard() {
           </div>
         </Card>
 
+        {!isTeacher && (
         <Card className="overflow-hidden shadow-soft">
           <div className="p-4 border-b flex items-center justify-between">
             <div>
@@ -526,7 +569,7 @@ export default function AdminDashboard() {
             </table>
           </div>
         </Card>
-
+        )}
         <NeverLoggedInDialog
           open={neverOpen}
           onOpenChange={setNeverOpen}

@@ -33,12 +33,19 @@ export const TopNav = () => {
     `text-sm font-medium transition-colors ${active ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`;
 
   const isAdmin = role === "admin";
-  const adminLinks = [
-    { to: "/admin/dashboard", label: t("nav.dashboard"), match: (p: string) => p === "/admin/dashboard" || p === "/admin" },
-    { to: "/admin/courses", label: t("nav.courses"), match: (p: string) => p.startsWith("/admin/courses") },
-    { to: "/admin/users", label: t("nav.users"), match: (p: string) => p.startsWith("/admin/users") },
-    { to: "/admin/groups", label: "Groups", match: (p: string) => p.startsWith("/admin/groups") },
-  ];
+  const isTeacher = role === "teacher";
+  const isStaff = isAdmin || isTeacher;
+  const adminLinks = isAdmin
+    ? [
+        { to: "/admin/dashboard", label: t("nav.dashboard"), match: (p: string) => p === "/admin/dashboard" || p === "/admin" },
+        { to: "/admin/courses", label: t("nav.courses"), match: (p: string) => p.startsWith("/admin/courses") },
+        { to: "/admin/users", label: t("nav.users"), match: (p: string) => p.startsWith("/admin/users") },
+        { to: "/admin/groups", label: "Groups", match: (p: string) => p.startsWith("/admin/groups") },
+      ]
+    : [
+        { to: "/admin/dashboard", label: t("nav.dashboard"), match: (p: string) => p === "/admin/dashboard" || p === "/admin" },
+        { to: "/admin/users", label: "Mening talabalarim", match: (p: string) => p.startsWith("/admin/users") },
+      ];
 
   return (
     <header className="sticky top-0 z-30 w-full border-b border-border bg-background/80 backdrop-blur-md">
@@ -46,10 +53,10 @@ export const TopNav = () => {
         <div className="flex items-center gap-6 min-w-0">
           <Logo />
           <nav className="hidden md:flex items-center gap-5">
-            {!isAdmin && (
+            {!isStaff && (
               <Link to="/dashboard" className={linkCls(loc.pathname === "/dashboard")}>{t("nav.dashboard")}</Link>
             )}
-            {isAdmin && adminLinks.map((l) => (
+            {isStaff && adminLinks.map((l) => (
               <Link key={l.to} to={l.to} className={linkCls(l.match(loc.pathname))}>{l.label}</Link>
             ))}
           </nav>
@@ -66,14 +73,25 @@ export const TopNav = () => {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel className="font-normal">
-                <div className="text-sm font-medium">{user?.user_metadata?.name || (isAdmin ? t("nav.admin") : t("nav.student"))}</div>
+                <div className="text-sm font-medium">{user?.user_metadata?.name || (isAdmin ? t("nav.admin") : isTeacher ? "Teacher" : t("nav.student"))}</div>
                 <div className="text-xs text-muted-foreground truncate">{user?.email}</div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              {!isAdmin && (
+              {!isStaff && (
                 <DropdownMenuItem asChild>
                   <Link to="/dashboard"><LayoutDashboard className="mr-2 h-4 w-4" /> {t("nav.dashboard")}</Link>
                 </DropdownMenuItem>
+              )}
+              {isTeacher && (
+                <>
+                  <DropdownMenuItem asChild>
+                    <Link to="/admin/dashboard"><Shield className="mr-2 h-4 w-4" /> {t("nav.adminDashboard")}</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/admin/users"><Users className="mr-2 h-4 w-4" /> Mening talabalarim</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
               )}
               {isAdmin && (
                 <>

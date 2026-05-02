@@ -1198,6 +1198,12 @@ export type Database = {
         }[]
       }
       get_public_setting: { Args: { _key: string }; Returns: Json }
+      get_visible_student_ids: {
+        Args: { _scope_user_id?: string }
+        Returns: {
+          id: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -1215,6 +1221,39 @@ export type Database = {
           file_name: string
           scope: Database["public"]["Enums"]["knowledge_scope"]
           similarity: number
+        }[]
+      }
+      staff_list_students: {
+        Args: never
+        Returns: {
+          avatar_url: string
+          created_at: string
+          email: string
+          group_id: string
+          id: string
+          is_admin: boolean
+          last_name: string
+          last_sign_in_at: string
+          name: string
+          status: Database["public"]["Enums"]["user_status"]
+          telegram_id: number
+          telegram_username: string
+        }[]
+      }
+      staff_recent_auth_events: {
+        Args: { _since: string }
+        Returns: {
+          created_at: string
+          user_id: string
+        }[]
+      }
+      staff_recent_lesson_progress: {
+        Args: { _since: string }
+        Returns: {
+          completed_at: string
+          lesson_id: string
+          updated_at: string
+          user_id: string
         }[]
       }
       track_video_progress: {

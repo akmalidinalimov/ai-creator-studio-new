@@ -3,7 +3,7 @@ import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import i18n from "@/i18n";
 
-type AppRole = "admin" | "student";
+type AppRole = "admin" | "teacher" | "student";
 
 interface AuthCtx {
   session: Session | null;
@@ -33,11 +33,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const { data } = await supabase
       .from("user_roles")
       .select("role")
-      .eq("user_id", uid)
-      .order("role", { ascending: true }); // 'admin' < 'student' alphabetically
+      .eq("user_id", uid);
     if (data && data.length > 0) {
-      const isAdmin = data.some((r) => r.role === "admin");
-      setRole(isAdmin ? "admin" : "student");
+      const roles = data.map((r: any) => r.role);
+      if (roles.includes("admin")) setRole("admin");
+      else if (roles.includes("teacher")) setRole("teacher");
+      else setRole("student");
     } else {
       setRole(null);
     }
