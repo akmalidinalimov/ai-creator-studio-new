@@ -249,6 +249,7 @@ export default function AdminUsers() {
 
     const seenEmails = new Set<string>();
     const seenTgIds = new Set<number>();
+    const seenTgUsers = new Set<string>();
     const get = (row: string[], key: string, fallbackIdx: number): string => {
       if (headerMap && headerMap[key] !== undefined) return (row[headerMap[key]] || "").trim();
       return (row[fallbackIdx] || "").trim();
@@ -290,17 +291,20 @@ export default function AdminUsers() {
       // Email format (optional, but if provided must be valid)
       const hasEmail = !!emailRaw;
       const emailFormatOk = !hasEmail || /^\S+@\S+\.\S+$/.test(emailRaw);
+      const hasTgUser = !!tgUser;
 
-      // Determine validity
+      // Determine validity: name + at least one identifier (email | tgId | tgUser)
       let valid = true;
       let reason: string | undefined;
+      let duplicate = false;
+      let duplicateField: "email" | "telegram_user_id" | "telegram_username" | undefined;
 
       if (!name || !name.trim()) {
         valid = false;
         reason = t("admin.users.csvErr.nameRequired", { defaultValue: "name is required" });
-      } else if (!hasEmail && tgId === undefined) {
+      } else if (!hasEmail && tgId === undefined && !hasTgUser) {
         valid = false;
-        reason = t("admin.users.csvErr.needIdentifier", { defaultValue: "Missing both email and telegram_user_id" });
+        reason = t("admin.users.csvErr.needIdentifier", { defaultValue: "Need at least one identifier" });
       } else if (hasEmail && !emailFormatOk) {
         valid = false;
         reason = t("admin.users.csvErr.emailInvalid", { defaultValue: "email format invalid" });
@@ -313,14 +317,27 @@ export default function AdminUsers() {
       } else if (tgId !== undefined && seenTgIds.has(tgId)) {
         valid = false;
         reason = t("admin.users.csvErr.dupTgId", { defaultValue: "duplicate telegram_user_id within file" });
-      } else if (tgId !== undefined && existingTgIds.has(tgId) && (!hasEmail || existingTgIds.get(tgId) !== emailRaw)) {
+      } else if (hasTgUser && seenTgUsers.has(tgUser)) {
         valid = false;
-        reason = t("admin.users.csvErr.tgIdInDb", { defaultValue: "telegram_user_id already exists in database" });
+        reason = t("admin.users.csvErr.dupTgUser", { defaultValue: "duplicate telegram_username within file" });
+      } else {
+        // Row is structurally valid — now check DB for existing match (silently skip on import)
+        if (hasEmail && existingEmails.has(emailRaw)) {
+          duplicate = true;
+          duplicateField = "email";
+        } else if (tgId !== undefined && existingTgIds.has(tgId)) {
+          duplicate = true;
+          duplicateField = "telegram_user_id";
+        } else if (hasTgUser && existingTgUsers.has(tgUser)) {
+          duplicate = true;
+          duplicateField = "telegram_username";
+        }
       }
 
       if (valid) {
         if (hasEmail) seenEmails.add(emailRaw);
         if (tgId !== undefined) seenTgIds.add(tgId);
+        if (hasTgUser) seenTgUsers.add(tgUser);
       }
 
       return {
@@ -334,6 +351,8 @@ export default function AdminUsers() {
         role,
         valid,
         reason,
+        duplicate,
+        duplicateField,
       };
     });
     setCsvParsed(rows);
