@@ -1131,6 +1131,101 @@ export type Database = {
           },
         ]
       }
+      re_engagement_campaigns: {
+        Row: {
+          button_text_en: string
+          button_text_ru: string
+          button_text_uz: string
+          cadence_days: number[]
+          created_at: string
+          created_by: string | null
+          enabled: boolean
+          id: string
+          name: string
+          template_en: string
+          template_ru: string
+          template_uz: string
+        }
+        Insert: {
+          button_text_en?: string
+          button_text_ru?: string
+          button_text_uz?: string
+          cadence_days?: number[]
+          created_at?: string
+          created_by?: string | null
+          enabled?: boolean
+          id?: string
+          name: string
+          template_en?: string
+          template_ru?: string
+          template_uz?: string
+        }
+        Update: {
+          button_text_en?: string
+          button_text_ru?: string
+          button_text_uz?: string
+          cadence_days?: number[]
+          created_at?: string
+          created_by?: string | null
+          enabled?: boolean
+          id?: string
+          name?: string
+          template_en?: string
+          template_ru?: string
+          template_uz?: string
+        }
+        Relationships: []
+      }
+      re_engagement_deliveries: {
+        Row: {
+          activated_at: string | null
+          attempt_num: number
+          campaign_id: string
+          clicked_at: string | null
+          error: string | null
+          id: string
+          magic_token: string | null
+          profile_id: string
+          sent_at: string
+          status: string
+          telegram_message_id: string | null
+        }
+        Insert: {
+          activated_at?: string | null
+          attempt_num?: number
+          campaign_id: string
+          clicked_at?: string | null
+          error?: string | null
+          id?: string
+          magic_token?: string | null
+          profile_id: string
+          sent_at?: string
+          status?: string
+          telegram_message_id?: string | null
+        }
+        Update: {
+          activated_at?: string | null
+          attempt_num?: number
+          campaign_id?: string
+          clicked_at?: string | null
+          error?: string | null
+          id?: string
+          magic_token?: string | null
+          profile_id?: string
+          sent_at?: string
+          status?: string
+          telegram_message_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "re_engagement_deliveries_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "re_engagement_campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       streaks: {
         Row: {
           current_streak: number
@@ -1321,6 +1416,26 @@ export type Database = {
           file_name: string
           scope: Database["public"]["Enums"]["knowledge_scope"]
           similarity: number
+        }[]
+      }
+      re_engagement_eligible_count: {
+        Args: never
+        Returns: {
+          never_logged_in: number
+          with_tg: number
+          without_tg: number
+        }[]
+      }
+      re_engagement_eligible_profiles: {
+        Args: never
+        Returns: {
+          email: string
+          id: string
+          last_name: string
+          name: string
+          preferred_locale: string
+          telegram_id: number
+          telegram_username: string
         }[]
       }
       staff_group_members: {

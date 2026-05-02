@@ -420,6 +420,15 @@ export default function AdminDashboard() {
             variant="warning"
             onClick={() => setInactiveOpen(7)}
           />
+          {!isTeacher && (
+            <Link to="/admin/reengagement" className="block">
+              <Card className="p-4 hover:bg-muted/50 transition cursor-pointer h-full">
+                <div className="text-xs text-muted-foreground">🎯 Reaktivatsiya</div>
+                <div className="text-2xl font-bold mt-1">{stats.neverLoggedIn}</div>
+                <div className="text-xs text-muted-foreground">Hech qachon kirmaganlar uchun</div>
+              </Card>
+            </Link>
+          )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
