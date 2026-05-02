@@ -477,7 +477,11 @@
         "activated": "Logged in at least once",
         "activatedTooltip": "Number of students who have signed in to the platform at least once",
         "neverLoggedIn": "Never logged in",
-        "neverLoggedInTooltip": "Students who are enrolled but have never signed in. Click to see the list."
+        "neverLoggedInTooltip": "Students who are enrolled but have never signed in. Click to see the list.",
+        "inactive3d": "Inactive 3+ days",
+        "inactive3dTooltip": "Students who logged in at least once but had no activity (login or lesson) in the last 3 days.",
+        "inactive7d": "Inactive 7+ days",
+        "inactive7dTooltip": "Students who logged in at least once but had no activity (login or lesson) in the last 7 days."
       },
       "neverLoggedIn": {
         "title": "Students who never logged in",
@@ -524,7 +528,20 @@
           "target": "Target"
         }
       },
-      "loadFailed": "Failed to load analytics"
+      "loadFailed": "Failed to load analytics",
+      "inactiveDialog": {
+        "title3": "Inactive 3+ days",
+        "title7": "Inactive 7+ days",
+        "empty": "No inactive students.",
+        "exportCsv": "Export CSV",
+        "cols": {
+          "name": "Name",
+          "tgUsername": "Telegram",
+          "email": "Email",
+          "lastActivity": "Last activity",
+          "daysSince": "Days inactive"
+        }
+      }
     },
     "courses": {
       "title": "Courses",
@@ -960,6 +977,17 @@
       "scaling": "📹 Scaling video for 30-hour courses",
       "scalingDesc": "Direct upload works for <200 MB lessons. For HD video at scale (500+ students), use Bunny Stream (~$1/month per 100 GB delivered, global CDN, automatic HLS encoding) or Mux. In the lesson editor, switch the video source to Embed → Bunny / Mux and paste your video ID. The player auto-uses HLS adaptive bitrate via hls.js.",
       "copied": "Copied"
+    },
+    "notifications": {
+      "sectionStudent": "Student notifications",
+      "sectionAdmin": "Admin notifications",
+      "labels": {
+        "admin_daily_brief": "Admin — Daily brief",
+        "admin_new_student": "Admin — New student",
+        "admin_inactive_3d_digest": "Admin — 3-day inactive digest",
+        "admin_inactive_7d_digest": "Admin — 7-day inactive digest",
+        "admin_course_completion": "Admin — Course completion"
+      }
     }
   },
   "weekly_study_time": {
