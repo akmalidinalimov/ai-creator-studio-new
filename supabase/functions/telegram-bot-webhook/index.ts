@@ -1032,7 +1032,142 @@ async function handleAdminCommand(
   return false;
 }
 
-async function handleCommand(admin: any, msg: any, cmdRaw: string) {
+// =================== TEACHER COMMANDS ===================
+
+async function teacherGroups(admin: any, teacherId: string): Promise<{ id: string; name: string }[]> {
+  const { data } = await admin.from("groups").select("id, name").eq("teacher_id", teacherId);
+  return (data || []) as any[];
+}
+
+async function teacherStudentIds(admin: any, teacherId: string): Promise<string[]> {
+  const groups = await teacherGroups(admin, teacherId);
+  if (!groups.length) return [];
+  const { data } = await admin.from("profiles").select("id").in("group_id", groups.map((g) => g.id));
+  return ((data || []) as any[]).map((r) => r.id);
+}
+
+async function handleTeacherCommand(admin: any, chatId: number, teacherId: string, locale: Locale, cmd: string): Promise<boolean> {
+  const t = T[locale] as any;
+
+  if (cmd === "/cancel") {
+    await admin.from("bot_sessions").delete().eq("user_id", teacherId);
+    await sendWithKeyboard(chatId, t.teacherCancelled, locale, false, "teacher");
+    return true;
+  }
+
+  if (cmd === "/tstats") {
+    const groups = await teacherGroups(admin, teacherId);
+    if (!groups.length) {
+      await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher");
+      return true;
+    }
+    const lines: string[] = [t.teacherPanel];
+    for (const g of groups) {
+      const { data: ov } = await admin.rpc("staff_group_overview", { _group_id: g.id });
+      const o = (ov && ov[0]) || { total: 0, active_7d: 0, completion_pct: 0, avg_score: 0, health: 0 };
+      lines.push(`\n<b>${csvEscapeHtml(g.name)}</b>`);
+      lines.push(`👥 ${o.total} · 🟢 ${o.active_7d} (7d) · 📈 ${o.completion_pct}% · 🎯 ${o.avg_score} · ❤️ ${o.health}`);
+    }
+    await sendWithKeyboard(chatId, lines.join("\n"), locale, false, "teacher");
+    return true;
+  }
+
+  if (cmd === "/tstudents" || cmd === "/tinactive") {
+    const ids = await teacherStudentIds(admin, teacherId);
+    if (!ids.length) {
+      await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher");
+      return true;
+    }
+    const { data: profs } = await admin.from("profiles").select("id, name, last_name, telegram_username, created_at").in("id", ids);
+    const { data: lp } = await admin.from("lesson_progress").select("user_id, updated_at").in("user_id", ids).order("updated_at", { ascending: false }).limit(5000);
+    const lastMap = new Map<string, number>();
+    for (const r of lp || []) {
+      if (!lastMap.has(r.user_id)) lastMap.set(r.user_id, new Date(r.updated_at).getTime());
+    }
+    const now = Date.now();
+    let rows = (profs || []).map((p: any) => ({
+      name: [p.name, p.last_name].filter(Boolean).join(" ") || "—",
+      handle: p.telegram_username ? `@${p.telegram_username}` : "—",
+      days: lastMap.has(p.id) ? Math.floor((now - lastMap.get(p.id)!) / 86400_000) : null,
+    }));
+    if (cmd === "/tinactive") rows = rows.filter((r) => r.days === null || r.days >= 3);
+    rows.sort((a: any, b: any) => (b.days ?? 9999) - (a.days ?? 9999));
+    const top = rows.slice(0, 20).map((r) => `• <b>${csvEscapeHtml(r.name)}</b> ${csvEscapeHtml(r.handle)} (${r.days === null ? "∞" : r.days + "d"})`);
+    const header = cmd === "/tinactive" ? `<b>${t.tKbInactive}</b> — ${rows.length}` : `<b>${t.tKbStudents}</b> — ${rows.length}`;
+    await sendWithKeyboard(chatId, `${header}\n\n${top.join("\n") || "—"}`, locale, false, "teacher");
+    return true;
+  }
+
+  if (cmd === "/ttop") {
+    const { data } = await admin.rpc("staff_top_students", { _lim: 10 });
+    const rows = (data || []) as any[];
+    if (!rows.length) {
+      await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher");
+      return true;
+    }
+    const lines = rows.map((r, i) => `${i + 1}. <b>${csvEscapeHtml(r.name || "—")}</b> ${r.telegram_username ? "@" + r.telegram_username : ""} — ✅ ${r.completed_lessons} · 🎯 ${r.avg_score}`);
+    await sendWithKeyboard(chatId, `<b>${t.tKbTop}</b>\n\n${lines.join("\n")}`, locale, false, "teacher");
+    return true;
+  }
+
+  if (cmd === "/tbroadcast") {
+    const groups = await teacherGroups(admin, teacherId);
+    if (!groups.length) {
+      await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher");
+      return true;
+    }
+    // Rate-limit: 1 per hour
+    const since = new Date(Date.now() - 3600_000).toISOString();
+    const { count } = await admin.from("bot_broadcast_rate").select("id", { count: "exact", head: true }).eq("actor_user_id", teacherId).eq("scope", "teacher").gte("created_at", since);
+    if ((count || 0) >= 1) {
+      await sendWithKeyboard(chatId, t.teacherBroadcastRate, locale, false, "teacher");
+      return true;
+    }
+    await admin.from("bot_sessions").upsert({ user_id: teacherId, state: "teacher_broadcast", data: {}, updated_at: new Date().toISOString() });
+    await sendWithKeyboard(chatId, t.teacherBroadcastPrompt, locale, false, "teacher");
+    return true;
+  }
+
+  return false;
+}
+
+// Handle teacher broadcast text follow-up. Returns true if consumed.
+async function handleTeacherSession(admin: any, msg: any, profileId: string, locale: Locale): Promise<boolean> {
+  const t = T[locale] as any;
+  const { data: sess } = await admin.from("bot_sessions").select("state, data").eq("user_id", profileId).maybeSingle();
+  if (!sess || sess.state !== "teacher_broadcast") return false;
+  const text: string = (msg.text || "").trim();
+  if (!text || text.startsWith("/")) return false;
+  if (text.length > 300) {
+    await sendWithKeyboard(msg.chat.id, t.teacherBroadcastTooLong, locale, false, "teacher");
+    return true;
+  }
+  const groups = await teacherGroups(admin, profileId);
+  const groupName = groups.map((g: any) => g.name).join(", ");
+  const ids = await teacherStudentIds(admin, profileId);
+  const { data: profs } = ids.length
+    ? await admin.from("profiles").select("id, telegram_id, name").in("id", ids)
+    : { data: [] };
+  const recipients = (profs || []).filter((p: any) => p.telegram_id);
+  if (!recipients.length) {
+    await admin.from("bot_sessions").delete().eq("user_id", profileId);
+    await sendWithKeyboard(msg.chat.id, t.teacherBroadcastEmpty, locale, false, "teacher");
+    return true;
+  }
+  const body = `${t.teacherFromTeacher(groupName || "—")}${csvEscapeHtml(text)}`;
+  let sent = 0;
+  for (const r of recipients) {
+    try {
+      await sendMessage(r.telegram_id, body);
+      await admin.from("bot_broadcast_rate").insert({ actor_user_id: profileId, recipient_user_id: r.id, scope: "recipient" });
+      sent++;
+    } catch (_e) { /* ignore */ }
+  }
+  await admin.from("bot_broadcast_rate").insert({ actor_user_id: profileId, scope: "teacher" });
+  await admin.from("bot_sessions").delete().eq("user_id", profileId);
+  await sendWithKeyboard(msg.chat.id, t.teacherBroadcastSent(sent), locale, false, "teacher");
+  return true;
+}
   const chatId = msg.chat.id;
   const tgId = msg.from.id as number;
   const profile = await findProfileByTelegramId(admin, tgId);
