@@ -73,14 +73,25 @@ export const TopNav = () => {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel className="font-normal">
-                <div className="text-sm font-medium">{user?.user_metadata?.name || (isAdmin ? t("nav.admin") : t("nav.student"))}</div>
+                <div className="text-sm font-medium">{user?.user_metadata?.name || (isAdmin ? t("nav.admin") : isTeacher ? "Teacher" : t("nav.student"))}</div>
                 <div className="text-xs text-muted-foreground truncate">{user?.email}</div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              {!isAdmin && (
+              {!isStaff && (
                 <DropdownMenuItem asChild>
                   <Link to="/dashboard"><LayoutDashboard className="mr-2 h-4 w-4" /> {t("nav.dashboard")}</Link>
                 </DropdownMenuItem>
+              )}
+              {isTeacher && (
+                <>
+                  <DropdownMenuItem asChild>
+                    <Link to="/admin/dashboard"><Shield className="mr-2 h-4 w-4" /> {t("nav.adminDashboard")}</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/admin/users"><Users className="mr-2 h-4 w-4" /> Mening talabalarim</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
               )}
               {isAdmin && (
                 <>
