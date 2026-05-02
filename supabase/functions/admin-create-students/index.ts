@@ -16,6 +16,7 @@ type Student = {
   telegram_username?: string;
   telegram_user_id?: number | string;
   role?: "student" | "admin";
+  group_name?: string;
 };
 
 function genPassword(): string {
