@@ -212,9 +212,10 @@ export default function AdminDashboard() {
       const allLessonIds = modules.flatMap((m: any) => (m.lessons || []).filter((l: any) => l.published).map((l: any) => l.id));
 
       // Course progress (completed lessons across this course)
-      const { data: completedRows } = allLessonIds.length
+      const { data: completedRowsRaw } = allLessonIds.length
         ? await supabase.from("lesson_progress").select("user_id, lesson_id, updated_at").in("lesson_id", allLessonIds).not("completed_at", "is", null).limit(50000)
         : { data: [] as any[] };
+      const completedRows = isTeacher ? (completedRowsRaw || []).filter((r: any) => inScope(r.user_id)) : (completedRowsRaw || []);
 
       const completedSet = new Map<string, Set<string>>(); // user -> set of lesson ids
       (completedRows || []).forEach((r: any) => {
