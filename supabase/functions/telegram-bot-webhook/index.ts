@@ -131,7 +131,22 @@ const T = {
     adminNewTitle: "Oxirgi 7 kunda qo'shilgan talabalar",
     adminStudentModeOn: "Talaba rejimi yoqildi. Admin paneli uchun /admin yozing.",
     adminBackToAdmin: "Admin paneli",
-  },
+    // Teacher panel
+    tKbStats: "📊 Guruh statistikasi",
+    tKbStudents: "👥 Mening talabalarim",
+    tKbInactive: "😴 Faolsizlar",
+    tKbTop: "🏆 TOP talabalar",
+    tKbBroadcast: "📣 Guruhga xabar",
+    tKbSettings: "⚙️ Sozlamalar",
+    teacherPanel: "👩‍🏫 O'qituvchi paneli",
+    teacherNoGroups: "Sizga hali guruh biriktirilmagan. Admin bilan bog'laning.",
+    teacherBroadcastPrompt: "Guruhingizga yubormoqchi bo'lgan xabarni yozing (300 belgigacha). Bekor qilish uchun /cancel.",
+    teacherBroadcastSent: (n: number) => `✅ ${n} ta talabaga yuborildi.`,
+    teacherBroadcastEmpty: "Guruhingizda talaba yo'q.",
+    teacherBroadcastTooLong: "Xabar 300 belgidan oshmasligi kerak.",
+    teacherBroadcastRate: "Soatiga 1 ta xabar yuborish mumkin. Iltimos keyinroq urinib ko'ring.",
+    teacherCancelled: "Bekor qilindi.",
+    teacherFromTeacher: (n: string) => `📣 <b>O'qituvchidan xabar — ${n}</b>\n\n`,
   ru: {
     expired: "Срок действия ссылки истёк. Вернитесь на сайт и попробуйте ещё раз.",
     notRegistered:
