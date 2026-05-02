@@ -91,6 +91,14 @@ export default function AdminDashboard() {
       const { data: prog7 } = await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", since7).limit(50000);
       const active7 = new Set((prog7 || []).map((p: any) => p.user_id)).size;
 
+      // Lifetime activated: distinct students who ever signed in (auth_events with sign_in-like events)
+      const { data: allEvents } = await supabase.from("auth_events").select("user_id").limit(100000);
+      const { data: adminRoles } = await supabase.from("user_roles").select("user_id").eq("role", "admin");
+      const adminSet = new Set((adminRoles || []).map((r: any) => r.user_id));
+      const activatedSet = new Set<string>();
+      (allEvents || []).forEach((e: any) => { if (e.user_id && !adminSet.has(e.user_id)) activatedSet.add(e.user_id); });
+      const activated = activatedSet.size;
+
       // Module + lesson info for course
       const { data: mods } = await supabase
         .from("modules")
