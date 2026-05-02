@@ -490,3 +490,116 @@ const ChartCard = ({ title, children }: { title: string; children: React.ReactNo
     {children}
   </Card>
 );
+
+function NeverLoggedInDialog({ open, onOpenChange, rows, sort, setSort, t }: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  rows: any[];
+  sort: { key: string; dir: "asc" | "desc" };
+  setSort: (s: { key: string; dir: "asc" | "desc" }) => void;
+  t: (k: string, opts?: any) => string;
+}) {
+  const sorted = useMemo(() => {
+    const arr = [...rows];
+    arr.sort((a, b) => {
+      const av = a[sort.key];
+      const bv = b[sort.key];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (sort.key === "created_at") {
+        return (new Date(av).getTime() - new Date(bv).getTime()) * (sort.dir === "asc" ? 1 : -1);
+      }
+      if (typeof av === "number" && typeof bv === "number") {
+        return (av - bv) * (sort.dir === "asc" ? 1 : -1);
+      }
+      return String(av).localeCompare(String(bv)) * (sort.dir === "asc" ? 1 : -1);
+    });
+    return arr;
+  }, [rows, sort]);
+
+  const toggleSort = (key: string) => {
+    if (sort.key === key) setSort({ key, dir: sort.dir === "asc" ? "desc" : "asc" });
+    else setSort({ key, dir: key === "created_at" || key === "days_since" ? "desc" : "asc" });
+  };
+
+  const exportCsv = () => {
+    const headers = ["name", "telegram_username", "telegram_id", "email", "created_at", "days_since"];
+    const esc = (v: any) => {
+      const s = v == null ? "" : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [headers.join(",")].concat(
+      sorted.map((r) => headers.map((h) => esc(r[h])).join(","))
+    );
+    const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `hech-kirmagan-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const SortHead = ({ k, label }: { k: string; label: string }) => (
+    <th className="text-left p-3">
+      <button onClick={() => toggleSort(k)} className="inline-flex items-center gap-1 hover:text-foreground">
+        {label}
+        <ArrowUpDown className={`h-3 w-3 ${sort.key === k ? "opacity-100" : "opacity-30"}`} />
+      </button>
+    </th>
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center justify-between gap-3 pr-6">
+            <span>{t("admin.dashboard.neverLoggedIn.title")} ({rows.length})</span>
+            <Button size="sm" variant="outline" onClick={exportCsv} disabled={rows.length === 0}>
+              <Download className="h-4 w-4" />{t("admin.dashboard.neverLoggedIn.exportCsv")}
+            </Button>
+          </DialogTitle>
+        </DialogHeader>
+        <div className="max-h-[65vh] overflow-auto border rounded-md">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/40 text-xs sticky top-0">
+              <tr>
+                <SortHead k="name" label={t("admin.dashboard.neverLoggedIn.cols.name")} />
+                <SortHead k="telegram_username" label={t("admin.dashboard.neverLoggedIn.cols.tgUsername")} />
+                <SortHead k="telegram_id" label={t("admin.dashboard.neverLoggedIn.cols.tgId")} />
+                <SortHead k="email" label={t("admin.dashboard.neverLoggedIn.cols.email")} />
+                <SortHead k="created_at" label={t("admin.dashboard.neverLoggedIn.cols.enrolledAt")} />
+                <SortHead k="days_since" label={t("admin.dashboard.neverLoggedIn.cols.daysSince")} />
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.length === 0 && (
+                <tr><td colSpan={6} className="p-6 text-center text-muted-foreground">{t("admin.dashboard.neverLoggedIn.empty")}</td></tr>
+              )}
+              {sorted.map((r) => (
+                <tr key={r.id} className="border-t hover:bg-muted/20">
+                  <td className="p-3 font-medium">{r.name}</td>
+                  <td className="p-3">
+                    {r.telegram_username ? (
+                      <a
+                        href={`https://t.me/${r.telegram_username}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline"
+                      >@{r.telegram_username}</a>
+                    ) : "—"}
+                  </td>
+                  <td className="p-3 font-mono text-xs text-muted-foreground">{r.telegram_id ?? "—"}</td>
+                  <td className="p-3 text-muted-foreground">{r.email || "—"}</td>
+                  <td className="p-3 text-muted-foreground whitespace-nowrap">{new Date(r.created_at).toLocaleDateString()}</td>
+                  <td className="p-3 tabular-nums">{r.days_since}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
