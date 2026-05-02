@@ -453,18 +453,22 @@ export default function AdminDashboard() {
   );
 }
 
-const StatCard = ({ icon, label, value, tooltip }: { icon: React.ReactNode; label: string; value: any; tooltip?: string }) => {
+const StatCard = ({ icon, label, value, tooltip, variant, onClick }: { icon: React.ReactNode; label: string; value: any; tooltip?: string; variant?: "warning"; onClick?: () => void }) => {
+  const isWarn = variant === "warning";
   const card = (
-    <Card className="p-5 shadow-soft h-full">
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">{icon}{label}</div>
-      <div className="text-3xl font-semibold tracking-tight mt-1 tabular-nums">{value}</div>
+    <Card
+      className={`p-5 shadow-soft h-full ${isWarn ? "border-amber-500/40 bg-amber-500/5" : ""} ${onClick ? "cursor-pointer hover:bg-muted/30 transition-colors" : ""}`}
+      onClick={onClick}
+    >
+      <div className={`flex items-center gap-1.5 text-xs ${isWarn ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}>{icon}{label}</div>
+      <div className={`text-3xl font-semibold tracking-tight mt-1 tabular-nums ${isWarn ? "text-amber-700 dark:text-amber-400" : ""}`}>{value}</div>
     </Card>
   );
   if (!tooltip) return card;
   return (
     <TooltipProvider delayDuration={150}>
       <UITooltip>
-        <TooltipTrigger asChild><div className="cursor-help">{card}</div></TooltipTrigger>
+        <TooltipTrigger asChild><div className={onClick ? "" : "cursor-help"}>{card}</div></TooltipTrigger>
         <TooltipContent className="max-w-xs text-xs">{tooltip}</TooltipContent>
       </UITooltip>
     </TooltipProvider>
