@@ -338,9 +338,48 @@ function getMainKeyboard(locale: Locale) {
   };
 }
 
+function getAdminKeyboard(locale: Locale) {
+  const t = T[locale] as any;
+  return {
+    keyboard: [
+      [{ text: t.adminKbAnalytics }],
+      [{ text: t.adminKbInactive3 }, { text: t.adminKbInactive7 }],
+      [{ text: t.adminKbNever }, { text: t.adminKbNew }],
+      [{ text: t.adminKbStudentMode }, { text: t.kbLang }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+  };
+}
+
 // Send a message that always carries the persistent reply keyboard.
-async function sendWithKeyboard(chatId: number, text: string, locale: Locale) {
-  return sendMessage(chatId, text, getMainKeyboard(locale));
+async function sendWithKeyboard(chatId: number, text: string, locale: Locale, isAdmin = false) {
+  return sendMessage(chatId, text, isAdmin ? getAdminKeyboard(locale) : getMainKeyboard(locale));
+}
+
+// Send a Telegram document (e.g., CSV) via multipart upload.
+async function sendDocument(chatId: number, filename: string, content: string, caption?: string) {
+  const form = new FormData();
+  form.append("chat_id", String(chatId));
+  if (caption) {
+    form.append("caption", caption);
+    form.append("parse_mode", "HTML");
+  }
+  form.append("document", new Blob([content], { type: "text/csv;charset=utf-8" }), filename);
+  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, {
+    method: "POST",
+    body: form,
+  });
+}
+
+async function isAdminUser(admin: any, userId: string): Promise<boolean> {
+  const { data } = await admin
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", userId)
+    .eq("role", "admin")
+    .maybeSingle();
+  return !!data;
 }
 
 // After sending an inline-keyboard message, follow up with a tiny hint that
