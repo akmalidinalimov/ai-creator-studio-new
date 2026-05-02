@@ -18,6 +18,7 @@ type Group = {
   name: string;
   course_id: string | null;
   teacher_id: string | null;
+  is_default: boolean;
   created_at: string;
 };
 
