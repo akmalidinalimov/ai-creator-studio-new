@@ -429,6 +429,7 @@ export default function AdminDashboard() {
               </Card>
             </Link>
           )}
+          {!isTeacher && <WeeklyDigestTile />}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
