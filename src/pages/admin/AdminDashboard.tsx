@@ -14,6 +14,7 @@ import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
 import { enUS, ru, uz } from "date-fns/locale";
 import { useAuth } from "@/contexts/AuthContext";
+import { WeeklyDigestTile } from "@/components/admin/WeeklyDigestTile";
 
 const PALETTE = [
   "hsl(var(--primary))",
