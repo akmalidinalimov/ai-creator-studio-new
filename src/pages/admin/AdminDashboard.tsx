@@ -255,7 +255,8 @@ export default function AdminDashboard() {
       setDailyLogins(Array.from(loginMap, ([day, count]) => ({ day, count })));
 
       // DAU (30d)
-      const { data: prog30 } = await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", new Date(Date.now() - 30 * 86400_000).toISOString()).limit(100000);
+      const { data: prog30Raw } = await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", new Date(Date.now() - 30 * 86400_000).toISOString()).limit(100000);
+      const prog30 = isTeacher ? (prog30Raw || []).filter((p: any) => inScope(p.user_id)) : (prog30Raw || []);
       (prog30 || []).forEach((p: any) => {
         const k = fmtDay(startOfDay(new Date(p.updated_at)));
         if (dayMap.has(k)) dayMap.get(k)!.add(p.user_id);
