@@ -44,6 +44,8 @@ interface CsvRow {
   role: "student" | "admin";
   valid: boolean;
   reason?: string;
+  duplicate?: boolean;
+  duplicateField?: "email" | "telegram_user_id" | "telegram_username";
 }
 
 const randPassword = () =>
