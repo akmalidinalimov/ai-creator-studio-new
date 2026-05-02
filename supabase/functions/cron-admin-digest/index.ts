@@ -132,6 +132,8 @@ Deno.serve(async (req) => {
   if (!BOT_TOKEN) return new Response(JSON.stringify({ error: "bot not configured" }), { status: 200, headers: corsHeaders });
 
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const reqBody = await req.json().catch(() => ({}));
+  const force: boolean = !!reqBody?.force;
 
   // Find admin users with telegram_id and notifications enabled
   const { data: roles } = await admin.from("user_roles").select("user_id").eq("role", "admin");
@@ -160,7 +162,7 @@ Deno.serve(async (req) => {
       const tz = a.timezone || "Asia/Tashkent";
       const { hour, minute, ymd } = localTimeParts(tz);
       // Deliver at ~08:00 local time (within ±20 min window)
-      if (minutesBetween(hour, minute, 8, 0) > 20) { skipped++; continue; }
+      if (!force && minutesBetween(hour, minute, 8, 0) > 20) { skipped++; continue; }
 
       // Dedup per local day via admin_notification_log
       const dayStartUtc = new Date(`${ymd}T00:00:00Z`).toISOString(); // approximate; cheap dedup
@@ -171,7 +173,7 @@ Deno.serve(async (req) => {
         .eq("notification_type", "admin_daily_brief")
         .gte("sent_at", new Date(Date.now() - 22 * 3600 * 1000).toISOString())
         .limit(1);
-      if (prior && prior.length > 0) { skipped++; continue; }
+      if (!force && prior && prior.length > 0) { skipped++; continue; }
 
       if (!metrics) metrics = await computeMetrics(admin);
 
