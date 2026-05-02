@@ -1198,6 +1198,12 @@ export type Database = {
         }[]
       }
       get_public_setting: { Args: { _key: string }; Returns: Json }
+      get_visible_student_ids: {
+        Args: { _scope_user_id?: string }
+        Returns: {
+          id: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
