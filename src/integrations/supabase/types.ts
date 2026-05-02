@@ -299,6 +299,36 @@ export type Database = {
           },
         ]
       }
+      audit_log: {
+        Row: {
+          action: string
+          actor_user_id: string
+          created_at: string
+          id: string
+          new_value: Json
+          old_value: Json
+          target_user_id: string | null
+        }
+        Insert: {
+          action: string
+          actor_user_id: string
+          created_at?: string
+          id?: string
+          new_value?: Json
+          old_value?: Json
+          target_user_id?: string | null
+        }
+        Update: {
+          action?: string
+          actor_user_id?: string
+          created_at?: string
+          id?: string
+          new_value?: Json
+          old_value?: Json
+          target_user_id?: string | null
+        }
+        Relationships: []
+      }
       auth_events: {
         Row: {
           created_at: string
@@ -450,6 +480,7 @@ export type Database = {
           course_id: string | null
           created_at: string
           id: string
+          is_default: boolean
           name: string
           teacher_id: string | null
           updated_at: string
@@ -458,6 +489,7 @@ export type Database = {
           course_id?: string | null
           created_at?: string
           id?: string
+          is_default?: boolean
           name: string
           teacher_id?: string | null
           updated_at?: string
@@ -466,6 +498,7 @@ export type Database = {
           course_id?: string | null
           created_at?: string
           id?: string
+          is_default?: boolean
           name?: string
           teacher_id?: string | null
           updated_at?: string
@@ -1157,6 +1190,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      admin_assign_group: {
+        Args: { _group_id: string; _user_ids: string[] }
+        Returns: number
+      }
       admin_course_progress: {
         Args: { _course_id: string }
         Returns: {
@@ -1197,6 +1234,23 @@ export type Database = {
           telegram_username: string
         }[]
       }
+      admin_ungrouped_students: {
+        Args: never
+        Returns: {
+          created_at: string
+          email: string
+          id: string
+          last_name: string
+          last_sign_in_at: string
+          name: string
+          telegram_id: number
+          telegram_username: string
+        }[]
+      }
+      can_see_group: {
+        Args: { _group_id: string; _uid: string }
+        Returns: boolean
+      }
       get_public_setting: { Args: { _key: string }; Returns: Json }
       get_visible_student_ids: {
         Args: { _scope_user_id?: string }
@@ -1204,6 +1258,7 @@ export type Database = {
           id: string
         }[]
       }
+      group_health_score: { Args: { _group_id: string }; Returns: number }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -1221,6 +1276,51 @@ export type Database = {
           file_name: string
           scope: Database["public"]["Enums"]["knowledge_scope"]
           similarity: number
+        }[]
+      }
+      staff_group_members: {
+        Args: { _group_id: string }
+        Returns: {
+          avg_score: number
+          completed_lessons: number
+          email: string
+          id: string
+          last_activity_at: string
+          last_name: string
+          last_sign_in_at: string
+          name: string
+          telegram_id: number
+          telegram_username: string
+        }[]
+      }
+      staff_group_module_completion: {
+        Args: { _group_id: string }
+        Returns: {
+          completion_pct: number
+          module_id: string
+          module_position: number
+          title: string
+        }[]
+      }
+      staff_group_overview: {
+        Args: { _group_id: string }
+        Returns: {
+          active_7d: number
+          avg_score: number
+          completion_pct: number
+          health: number
+          total: number
+        }[]
+      }
+      staff_group_recent_activity: {
+        Args: { _group_id: string; _lim?: number }
+        Returns: {
+          kind: string
+          lesson_id: string
+          lesson_title: string
+          name: string
+          occurred_at: string
+          user_id: string
         }[]
       }
       staff_list_students: {
@@ -1256,6 +1356,17 @@ export type Database = {
           user_id: string
         }[]
       }
+      staff_top_students: {
+        Args: { _lim?: number }
+        Returns: {
+          avg_score: number
+          completed_lessons: number
+          id: string
+          last_activity_at: string
+          name: string
+          telegram_username: string
+        }[]
+      }
       track_video_progress: {
         Args: {
           p_current_time: number
@@ -1267,7 +1378,7 @@ export type Database = {
       }
     }
     Enums: {
-      app_role: "admin" | "student" | "teacher"
+      app_role: "admin" | "student" | "teacher" | "superadmin"
       chat_role: "user" | "assistant"
       knowledge_scope: "platform" | "course"
       knowledge_status: "pending" | "processing" | "ready" | "failed"
@@ -1399,7 +1510,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["admin", "student", "teacher"],
+      app_role: ["admin", "student", "teacher", "superadmin"],
       chat_role: ["user", "assistant"],
       knowledge_scope: ["platform", "course"],
       knowledge_status: ["pending", "processing", "ready", "failed"],
