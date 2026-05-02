@@ -12,6 +12,7 @@ import { CheckCircle2, ChevronRight, ChevronLeft, Send, Sparkles, LayoutList } f
 import { toast } from "sonner";
 import { ProtectedVideo } from "@/components/lesson/ProtectedVideo";
 import { BunnyVideoPlayer } from "@/components/BunnyVideoPlayer";
+import { HomeworkSection } from "@/components/lesson/HomeworkSection";
 
 interface Msg { role: "user" | "assistant"; content: string }
 
