@@ -635,6 +635,310 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
   await sendKeyboardHint(chatId, locale, adminAfterLogin);
 }
 
+// =================== ADMIN ANALYTICS HELPERS ===================
+
+type StudentRow = {
+  id: string;
+  name: string | null;
+  last_name: string | null;
+  email: string | null;
+  telegram_username: string | null;
+  telegram_id: number | null;
+  created_at: string;
+  last_sign_in_at: string | null;
+  last_lesson_at: string | null;
+  last_auth_event_at: string | null;
+};
+
+// Build the master list of students with their latest activity timestamps.
+// "activity" = auth_events.created_at OR lesson_progress.updated_at (per spec).
+async function loadStudentActivity(admin: any): Promise<StudentRow[]> {
+  // 1) All students via admin_list_users RPC (gives last_sign_in_at + is_admin)
+  const { data: users, error: usersErr } = await admin.rpc("admin_list_users");
+  if (usersErr) {
+    console.error("admin_list_users failed", usersErr);
+    return [];
+  }
+  const students = (users || []).filter((u: any) => !u.is_admin);
+  if (!students.length) return [];
+
+  const ids = students.map((u: any) => u.id);
+
+  // 2) Batched: fetch per-user max(updated_at) from lesson_progress.
+  const lessonMap = new Map<string, string>();
+  // Chunk to avoid URL/IN limits
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const { data: lp } = await admin
+      .from("lesson_progress")
+      .select("user_id, updated_at")
+      .in("user_id", chunk)
+      .order("updated_at", { ascending: false });
+    for (const r of lp || []) {
+      if (!lessonMap.has(r.user_id)) lessonMap.set(r.user_id, r.updated_at);
+    }
+  }
+
+  // 3) Batched: fetch per-user max(created_at) from auth_events.
+  const authMap = new Map<string, string>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const { data: ae } = await admin
+      .from("auth_events")
+      .select("user_id, created_at")
+      .in("user_id", chunk)
+      .order("created_at", { ascending: false });
+    for (const r of ae || []) {
+      if (!authMap.has(r.user_id)) authMap.set(r.user_id, r.created_at);
+    }
+  }
+
+  // 4) Need full names — admin_list_users only returns single 'name' field.
+  // Pull last_name from profiles in the same chunked manner.
+  const lastNameMap = new Map<string, string | null>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const { data: profs } = await admin
+      .from("profiles")
+      .select("id, last_name")
+      .in("id", chunk);
+    for (const r of profs || []) {
+      lastNameMap.set(r.id, r.last_name ?? null);
+    }
+  }
+
+  return students.map((u: any) => ({
+    id: u.id,
+    name: u.name ?? null,
+    last_name: lastNameMap.get(u.id) ?? null,
+    email: u.email ?? null,
+    telegram_username: u.telegram_username ?? null,
+    telegram_id: u.telegram_id ?? null,
+    created_at: u.created_at,
+    last_sign_in_at: u.last_sign_in_at ?? null,
+    last_lesson_at: lessonMap.get(u.id) ?? null,
+    last_auth_event_at: authMap.get(u.id) ?? null,
+  }));
+}
+
+// Last activity = max(last_auth_event_at, last_lesson_at).
+function lastActivityOf(s: StudentRow): Date | null {
+  const candidates = [s.last_auth_event_at, s.last_lesson_at]
+    .filter(Boolean)
+    .map((d) => new Date(d as string).getTime());
+  if (!candidates.length) return null;
+  return new Date(Math.max(...candidates));
+}
+
+function daysSince(d: Date | null, now = Date.now()): number | null {
+  if (!d) return null;
+  return Math.floor((now - d.getTime()) / 86400_000);
+}
+
+function csvEscape(v: any): string {
+  if (v === null || v === undefined) return "";
+  const s = String(v);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function buildStudentsCsv(rows: StudentRow[]): string {
+  const header = [
+    "id",
+    "name",
+    "last_name",
+    "email",
+    "telegram_username",
+    "telegram_id",
+    "enrolled_at",
+    "last_sign_in_at",
+    "last_activity_at",
+    "days_since_activity",
+    "days_since_enrollment",
+  ];
+  const now = Date.now();
+  const lines = [header.join(",")];
+  for (const s of rows) {
+    const last = lastActivityOf(s);
+    lines.push(
+      [
+        s.id,
+        s.name,
+        s.last_name,
+        s.email,
+        s.telegram_username,
+        s.telegram_id,
+        s.created_at,
+        s.last_sign_in_at,
+        last ? last.toISOString() : "",
+        daysSince(last, now) ?? "",
+        daysSince(new Date(s.created_at), now) ?? "",
+      ]
+        .map(csvEscape)
+        .join(","),
+    );
+  }
+  return lines.join("\n");
+}
+
+function fullName(s: StudentRow): string {
+  return [s.name, s.last_name].filter(Boolean).join(" ") || "—";
+}
+
+// Render a short Telegram-friendly preview (top N) for a list.
+function renderListPreview(rows: StudentRow[], maxRows = 10): string {
+  if (!rows.length) return "";
+  const lines: string[] = [];
+  const top = rows.slice(0, maxRows);
+  for (const s of top) {
+    const handle = s.telegram_username ? `@${s.telegram_username}` : "—";
+    const last = lastActivityOf(s);
+    const ds = daysSince(last);
+    const dsTxt = ds === null ? "∞" : `${ds}d`;
+    lines.push(`• <b>${csvEscapeHtml(fullName(s))}</b> ${csvEscapeHtml(handle)} (${dsTxt})`);
+  }
+  if (rows.length > maxRows) {
+    lines.push(`… +${rows.length - maxRows}`);
+  }
+  return lines.join("\n");
+}
+
+function csvEscapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+async function handleAdminCommand(
+  admin: any,
+  chatId: number,
+  locale: Locale,
+  cmd: string,
+): Promise<boolean> {
+  const t = T[locale] as any;
+
+  if (cmd === "/admin") {
+    await sendWithKeyboard(chatId, t.adminBackToAdmin, locale, true);
+    return true;
+  }
+
+  if (cmd === "/talaba") {
+    await sendWithKeyboard(chatId, t.adminStudentModeOn, locale, false);
+    return true;
+  }
+
+  if (cmd === "/analitika") {
+    const rows = await loadStudentActivity(admin);
+    const now = Date.now();
+    const total = rows.length;
+    const loggedOnce = rows.filter((s) => !!s.last_sign_in_at).length;
+    const neverLogged = total - loggedOnce;
+    const sevenDayMs = 7 * 86400_000;
+    const threeDayMs = 3 * 86400_000;
+    const active7d = rows.filter((s) => {
+      const la = lastActivityOf(s);
+      return la && now - la.getTime() <= sevenDayMs;
+    }).length;
+    const inactive3d = rows.filter((s) => {
+      if (!s.last_sign_in_at) return false; // never-logged-in handled separately
+      const la = lastActivityOf(s);
+      return !la || now - la.getTime() > threeDayMs;
+    }).length;
+    const inactive7d = rows.filter((s) => {
+      if (!s.last_sign_in_at) return false;
+      const la = lastActivityOf(s);
+      return !la || now - la.getTime() > sevenDayMs;
+    }).length;
+    const new7d = rows.filter(
+      (s) => now - new Date(s.created_at).getTime() <= sevenDayMs,
+    ).length;
+
+    // Lessons completed in last 7d
+    const sevenAgoIso = new Date(now - sevenDayMs).toISOString();
+    const { count: completions7d } = await admin
+      .from("lesson_progress")
+      .select("user_id", { count: "exact", head: true })
+      .gte("completed_at", sevenAgoIso);
+
+    const lines = [
+      t.adminAnalyticsTitle,
+      "",
+      t.adminLine(t.adminTotalStudents, total),
+      t.adminLine(t.adminLoggedOnce, loggedOnce),
+      t.adminLine(t.adminNeverLogged, neverLogged),
+      t.adminLine(t.adminActive7d, active7d),
+      t.adminLine(t.adminInactive3d, inactive3d),
+      t.adminLine(t.adminInactive7d, inactive7d),
+      t.adminLine(t.adminNew7d, new7d),
+      t.adminLine(t.adminCompletions7d, completions7d ?? 0),
+    ];
+    await sendWithKeyboard(chatId, lines.join("\n"), locale, true);
+    return true;
+  }
+
+  // Drill-down list commands → preview + CSV upload
+  const listKind: Record<string, { title: string; filter: (s: StudentRow, now: number) => boolean; filename: string }> = {
+    "/inactive3": {
+      title: t.adminInactive3Title,
+      filename: "inactive_3d.csv",
+      filter: (s, now) => {
+        if (!s.last_sign_in_at) return false;
+        const la = lastActivityOf(s);
+        return !la || now - la.getTime() > 3 * 86400_000;
+      },
+    },
+    "/inactive7": {
+      title: t.adminInactive7Title,
+      filename: "inactive_7d.csv",
+      filter: (s, now) => {
+        if (!s.last_sign_in_at) return false;
+        const la = lastActivityOf(s);
+        return !la || now - la.getTime() > 7 * 86400_000;
+      },
+    },
+    "/nevr": {
+      title: t.adminNeverTitle,
+      filename: "never_logged_in.csv",
+      filter: (s) => !s.last_sign_in_at,
+    },
+    "/yangilar": {
+      title: t.adminNewTitle,
+      filename: "new_students_7d.csv",
+      filter: (s, now) => now - new Date(s.created_at).getTime() <= 7 * 86400_000,
+    },
+  };
+
+  if (listKind[cmd]) {
+    const cfg = listKind[cmd];
+    const all = await loadStudentActivity(admin);
+    const now = Date.now();
+    const filtered = all.filter((s) => cfg.filter(s, now));
+    // Sort: most-stale-first for inactive lists; most-recent enrollment first for /yangilar
+    if (cmd === "/yangilar") {
+      filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    } else {
+      filtered.sort((a, b) => {
+        const da = lastActivityOf(a)?.getTime() ?? 0;
+        const db = lastActivityOf(b)?.getTime() ?? 0;
+        return da - db;
+      });
+    }
+
+    if (!filtered.length) {
+      await sendWithKeyboard(chatId, t.adminCsvEmpty(cfg.title), locale, true);
+      return true;
+    }
+
+    const preview = renderListPreview(filtered, 10);
+    const header = `<b>${csvEscapeHtml(cfg.title)}</b> — ${filtered.length}`;
+    await sendMessage(chatId, `${header}\n\n${preview}`);
+    const csv = buildStudentsCsv(filtered);
+    await sendDocument(chatId, cfg.filename, csv, t.adminCsvCaption(cfg.title, filtered.length));
+    await sendKeyboardHint(chatId, locale, true);
+    return true;
+  }
+
+  return false;
+}
+
 async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   const chatId = msg.chat.id;
   const tgId = msg.from.id as number;
