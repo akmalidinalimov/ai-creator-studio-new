@@ -742,8 +742,8 @@ export default function AdminUsers() {
                 </Button>
               </div>
               <div className="text-xs text-muted-foreground leading-relaxed">
-                <div>{t("admin.users.csvFormat")} <code className="text-[11px]">name,last_name,email,password,telegram_user_id,telegram_username,role</code></div>
-                <div className="mt-1">{t("admin.users.csvFormatHint")}</div>
+                <div>{t("admin.users.csvFormat")} <code className="text-[11px]">name,last_name,email,password,telegram_user_id,telegram_username,role,group_name</code></div>
+                <div className="mt-1">{t("admin.users.csvFormatHint")} <span className="text-[11px]">group_name is optional; unknown groups are auto-created.</span></div>
               </div>
             </div>
             <Textarea
