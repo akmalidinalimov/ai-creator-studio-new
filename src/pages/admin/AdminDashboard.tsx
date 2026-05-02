@@ -378,6 +378,11 @@ export default function AdminDashboard() {
           </Select>
         </div>
 
+        {noGroups && (
+          <Card className="p-6 border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-400">
+            Sizga hali biror guruh tayinlanmagan. Adminga murojaat qiling.
+          </Card>
+        )}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3">
           <StatCard icon={<UsersIcon className="h-4 w-4" />} label={t("admin.dashboard.stats.totalStudents")} value={stats.total} />
           <StatCard icon={<LogIn className="h-4 w-4" />} label={t("admin.dashboard.stats.logins30d")} value={stats.logins30d} />
