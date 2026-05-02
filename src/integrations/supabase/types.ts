@@ -603,6 +603,115 @@ export type Database = {
           },
         ]
       }
+      homework_assignments: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          description: string | null
+          due_days_after_module_unlock: number
+          id: string
+          max_score: number
+          module_id: string
+          prompt_en: string | null
+          prompt_ru: string | null
+          prompt_uz: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          due_days_after_module_unlock?: number
+          id?: string
+          max_score?: number
+          module_id: string
+          prompt_en?: string | null
+          prompt_ru?: string | null
+          prompt_uz?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          due_days_after_module_unlock?: number
+          id?: string
+          max_score?: number
+          module_id?: string
+          prompt_en?: string | null
+          prompt_ru?: string | null
+          prompt_uz?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "homework_assignments_module_id_fkey"
+            columns: ["module_id"]
+            isOneToOne: true
+            referencedRelation: "modules"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      homework_submissions: {
+        Row: {
+          assignment_id: string
+          created_at: string
+          id: string
+          is_late: boolean
+          score: number | null
+          score_feedback: string | null
+          scored_at: string | null
+          scored_by: string | null
+          submitted_at: string
+          submitted_image_url: string | null
+          submitted_text: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          assignment_id: string
+          created_at?: string
+          id?: string
+          is_late?: boolean
+          score?: number | null
+          score_feedback?: string | null
+          scored_at?: string | null
+          scored_by?: string | null
+          submitted_at?: string
+          submitted_image_url?: string | null
+          submitted_text?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          assignment_id?: string
+          created_at?: string
+          id?: string
+          is_late?: boolean
+          score?: number | null
+          score_feedback?: string | null
+          scored_at?: string | null
+          scored_by?: string | null
+          submitted_at?: string
+          submitted_image_url?: string | null
+          submitted_text?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "homework_submissions_assignment_id_fkey"
+            columns: ["assignment_id"]
+            isOneToOne: false
+            referencedRelation: "homework_assignments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       leaderboard_cache: {
         Row: {
           computed_at: string
@@ -1538,6 +1647,10 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      homework_pending_count_for_user: {
+        Args: { _uid: string }
+        Returns: number
       }
       leaderboard_my_rank: {
         Args: { uid: string }
