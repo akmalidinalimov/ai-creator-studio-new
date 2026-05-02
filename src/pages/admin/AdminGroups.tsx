@@ -66,6 +66,14 @@ export default function AdminGroups() {
       if (r.group_id) map[r.group_id] = (map[r.group_id] || 0) + 1;
     });
     setCounts(map);
+    // Health scores
+    const ids = ((g.data as any[]) || []).map((r) => r.id);
+    const health: Record<string, number> = {};
+    await Promise.all(ids.map(async (gid) => {
+      const { data } = await supabase.rpc("group_health_score" as any, { _group_id: gid });
+      health[gid] = Number(data) || 0;
+    }));
+    setHealth(health);
     setLoading(false);
   };
 
