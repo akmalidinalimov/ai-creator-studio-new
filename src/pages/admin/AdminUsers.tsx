@@ -360,12 +360,13 @@ export default function AdminUsers() {
 
   const importCsv = async () => {
     setImporting(true);
-    const valid = csvParsed.filter((r) => r.valid);
+    const toCreate = csvParsed.filter((r) => r.valid && !r.duplicate);
+    if (toCreate.length === 0) { setImporting(false); return; }
     const r = await fetch(`${FN_BASE}/admin-create-students`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
       body: JSON.stringify({
-        students: valid,
+        students: toCreate,
         send_invite: true,
         csv_import: true,
         redirectTo: `${window.location.origin}/reset-password`,
@@ -374,7 +375,7 @@ export default function AdminUsers() {
     const res = await r.json();
     setImporting(false);
     const created = (res?.results || []).filter((x: any) => x.status === "created").length;
-    toast.success(t("admin.users.toasts.imported", { n: created, total: valid.length }));
+    toast.success(t("admin.users.toasts.imported", { n: created, total: toCreate.length }));
     setOpenCsv(false); setCsvText(""); setCsvParsed([]); reload();
   };
 
