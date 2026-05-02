@@ -356,6 +356,51 @@ export type Database = {
         }
         Relationships: []
       }
+      badges: {
+        Row: {
+          code: string
+          created_at: string
+          criteria: Json
+          description_en: string | null
+          description_ru: string | null
+          description_uz: string | null
+          icon: string | null
+          id: string
+          name_en: string
+          name_ru: string
+          name_uz: string
+          position: number
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          criteria?: Json
+          description_en?: string | null
+          description_ru?: string | null
+          description_uz?: string | null
+          icon?: string | null
+          id?: string
+          name_en: string
+          name_ru: string
+          name_uz: string
+          position?: number
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          criteria?: Json
+          description_en?: string | null
+          description_ru?: string | null
+          description_uz?: string | null
+          icon?: string | null
+          id?: string
+          name_en?: string
+          name_ru?: string
+          name_uz?: string
+          position?: number
+        }
+        Relationships: []
+      }
       bot_broadcast_rate: {
         Row: {
           actor_user_id: string
@@ -557,6 +602,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      leaderboard_cache: {
+        Row: {
+          computed_at: string
+          current_streak: number
+          lessons_30d: number
+          minutes_30d: number
+          rank: number | null
+          score: number
+          user_id: string
+        }
+        Insert: {
+          computed_at?: string
+          current_streak?: number
+          lessons_30d?: number
+          minutes_30d?: number
+          rank?: number | null
+          score?: number
+          user_id: string
+        }
+        Update: {
+          computed_at?: string
+          current_streak?: number
+          lessons_30d?: number
+          minutes_30d?: number
+          rank?: number | null
+          score?: number
+          user_id?: string
+        }
+        Relationships: []
       }
       lesson_bookmarks: {
         Row: {
@@ -970,6 +1045,7 @@ export type Database = {
         Row: {
           avatar_url: string | null
           created_at: string
+          digest_opt_in: boolean
           email: string
           goals: string | null
           group_id: string | null
@@ -996,6 +1072,7 @@ export type Database = {
         Insert: {
           avatar_url?: string | null
           created_at?: string
+          digest_opt_in?: boolean
           email: string
           goals?: string | null
           group_id?: string | null
@@ -1022,6 +1099,7 @@ export type Database = {
         Update: {
           avatar_url?: string | null
           created_at?: string
+          digest_opt_in?: boolean
           email?: string
           goals?: string | null
           group_id?: string | null
@@ -1304,6 +1382,53 @@ export type Database = {
         }
         Relationships: []
       }
+      user_badges: {
+        Row: {
+          badge_id: string
+          earned_at: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          badge_id: string
+          earned_at?: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          badge_id?: string
+          earned_at?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_badges_badge_id_fkey"
+            columns: ["badge_id"]
+            isOneToOne: false
+            referencedRelation: "badges"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_daily_goal: {
+        Row: {
+          target: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          target?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          target?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string
@@ -1387,9 +1512,17 @@ export type Database = {
           telegram_username: string
         }[]
       }
+      award_badge: { Args: { _code: string; uid: string }; Returns: undefined }
       can_see_group: {
         Args: { _group_id: string; _uid: string }
         Returns: boolean
+      }
+      daily_goal_progress: {
+        Args: { uid: string }
+        Returns: {
+          done: number
+          target: number
+        }[]
       }
       get_public_setting: { Args: { _key: string }; Returns: Json }
       get_visible_student_ids: {
@@ -1405,6 +1538,26 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      leaderboard_my_rank: {
+        Args: { uid: string }
+        Returns: {
+          rank: number
+          score: number
+          total: number
+        }[]
+      }
+      leaderboard_top: {
+        Args: { _limit?: number }
+        Returns: {
+          current_streak: number
+          first_name: string
+          last_initial: string
+          lessons_30d: number
+          rank: number
+          score: number
+          user_id: string
+        }[]
       }
       match_ai_knowledge: {
         Args: { _course_id: string; _limit?: number; _query_embedding: string }
@@ -1438,6 +1591,7 @@ export type Database = {
           telegram_username: string
         }[]
       }
+      recalc_leaderboard: { Args: never; Returns: undefined }
       staff_group_members: {
         Args: { _group_id: string }
         Returns: {
@@ -1536,6 +1690,7 @@ export type Database = {
         }
         Returns: Json
       }
+      zero_broken_streaks: { Args: never; Returns: undefined }
     }
     Enums: {
       app_role: "admin" | "student" | "teacher" | "superadmin"
