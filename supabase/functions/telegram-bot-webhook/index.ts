@@ -724,8 +724,8 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
   }
 
   // Always introduce/refresh the persistent reply keyboard after login.
-  const adminAfterLogin = await isAdminUser(admin, profile.id);
-  await sendKeyboardHint(chatId, locale, adminAfterLogin);
+  const personaAfterLogin = await getPersona(admin, profile.id);
+  await sendKeyboardHint(chatId, locale, personaAfterLogin === "admin", personaAfterLogin);
 }
 
 // =================== ADMIN ANALYTICS HELPERS ===================
@@ -1444,7 +1444,8 @@ Deno.serve(async (req) => {
         ? normLocale(profileForLocale.preferred_locale)
         : normLocale(msg.from.language_code);
 
-      const adminFlag = profileForLocale ? await isAdminUser(admin, profileForLocale.id) : false;
+      const persona: Persona = profileForLocale ? await getPersona(admin, profileForLocale.id) : "student";
+      const adminFlag = persona === "admin";
 
       if (text.startsWith("/start ")) {
         const arg = text.slice(7).trim();
@@ -1452,7 +1453,7 @@ Deno.serve(async (req) => {
           const tok = arg.slice(6);
           await handleStartLogin(admin, msg, tok, locale);
         } else if (profileForLocale) {
-          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag);
+          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag, persona);
         } else {
           const enroll = await getEnrollmentSettings(admin, locale);
           await sendMessage(msg.chat.id, enroll.message, {
@@ -1461,7 +1462,7 @@ Deno.serve(async (req) => {
         }
       } else if (text === "/start") {
         if (profileForLocale) {
-          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag);
+          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag, persona);
         } else {
           const enroll = await getEnrollmentSettings(admin, locale);
           await sendMessage(msg.chat.id, enroll.message, {
@@ -1471,10 +1472,17 @@ Deno.serve(async (req) => {
       } else if (text.startsWith("/")) {
         await handleCommand(admin, msg, text.split(/\s+/)[0]);
       } else {
-        // Reply-keyboard button text router — match across all locales.
-        const mapped = buttonTextToCommand(text);
-        if (mapped) {
-          await handleCommand(admin, msg, mapped);
+        // Teacher broadcast session captures plain text first
+        if (persona === "teacher" && profileForLocale) {
+          const consumed = await handleTeacherSession(admin, msg, profileForLocale.id, locale);
+          if (consumed) { /* done */ }
+          else {
+            const mapped = buttonTextToCommand(text);
+            if (mapped) await handleCommand(admin, msg, mapped);
+          }
+        } else {
+          const mapped = buttonTextToCommand(text);
+          if (mapped) await handleCommand(admin, msg, mapped);
         }
       }
     } else if (update.callback_query) {
