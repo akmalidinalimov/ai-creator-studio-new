@@ -106,6 +106,31 @@ const T = {
     settingsTzSet: (tz: string) => `🌍 Vaqt zonasi: ${tz}`,
     settingsAllOff: "🔕 Barcha bildirishnomalar o'chirildi",
     back: "← Orqaga",
+    // Admin panel
+    adminKbAnalytics: "📊 Analitika",
+    adminKbInactive3: "😴 3 kun faolsiz",
+    adminKbInactive7: "💤 7 kun faolsiz",
+    adminKbNever: "🚫 Hech qachon kirmagan",
+    adminKbNew: "🆕 Yangi talabalar",
+    adminKbStudentMode: "👤 Talaba rejimi",
+    adminAnalyticsTitle: "📊 <b>Platforma analitikasi</b>",
+    adminLine: (label: string, val: string | number) => `${label}: <b>${val}</b>`,
+    adminTotalStudents: "Jami talabalar",
+    adminLoggedOnce: "Kamida bir marta kirgan",
+    adminNeverLogged: "Hech qachon kirmagan",
+    adminActive7d: "7 kunda faol",
+    adminInactive3d: "3+ kun faolsiz",
+    adminInactive7d: "7+ kun faolsiz",
+    adminNew7d: "Oxirgi 7 kunda qo'shilgan",
+    adminCompletions7d: "7 kunda tugatilgan darslar",
+    adminCsvCaption: (kind: string, n: number) => `📎 ${kind}: ${n} ta talaba`,
+    adminCsvEmpty: (kind: string) => `✅ ${kind}: hech kim yo'q`,
+    adminInactive3Title: "3+ kun faolsiz talabalar",
+    adminInactive7Title: "7+ kun faolsiz talabalar",
+    adminNeverTitle: "Hech qachon kirmagan talabalar",
+    adminNewTitle: "Oxirgi 7 kunda qo'shilgan talabalar",
+    adminStudentModeOn: "Talaba rejimi yoqildi. Admin paneli uchun /admin yozing.",
+    adminBackToAdmin: "Admin paneli",
   },
   ru: {
     expired: "Срок действия ссылки истёк. Вернитесь на сайт и попробуйте ещё раз.",
@@ -160,6 +185,30 @@ const T = {
     settingsTzSet: (tz: string) => `🌍 Часовой пояс: ${tz}`,
     settingsAllOff: "🔕 Все уведомления отключены",
     back: "← Назад",
+    adminKbAnalytics: "📊 Аналитика",
+    adminKbInactive3: "😴 Неактивны 3 дн",
+    adminKbInactive7: "💤 Неактивны 7 дн",
+    adminKbNever: "🚫 Ни разу не входили",
+    adminKbNew: "🆕 Новые студенты",
+    adminKbStudentMode: "👤 Режим студента",
+    adminAnalyticsTitle: "📊 <b>Аналитика платформы</b>",
+    adminLine: (label: string, val: string | number) => `${label}: <b>${val}</b>`,
+    adminTotalStudents: "Всего студентов",
+    adminLoggedOnce: "Входили хотя бы раз",
+    adminNeverLogged: "Ни разу не входили",
+    adminActive7d: "Активны за 7 дн",
+    adminInactive3d: "Неактивны 3+ дн",
+    adminInactive7d: "Неактивны 7+ дн",
+    adminNew7d: "Новых за 7 дн",
+    adminCompletions7d: "Уроков завершено за 7 дн",
+    adminCsvCaption: (kind: string, n: number) => `📎 ${kind}: ${n} студентов`,
+    adminCsvEmpty: (kind: string) => `✅ ${kind}: никого нет`,
+    adminInactive3Title: "Неактивны 3+ дней",
+    adminInactive7Title: "Неактивны 7+ дней",
+    adminNeverTitle: "Ни разу не входили",
+    adminNewTitle: "Добавлены за последние 7 дн",
+    adminStudentModeOn: "Режим студента включён. Для админ-панели — /admin.",
+    adminBackToAdmin: "Админ-панель",
   },
   en: {
     expired: "Login link expired. Return to the site and try again.",
@@ -214,6 +263,30 @@ const T = {
     settingsTzSet: (tz: string) => `🌍 Timezone: ${tz}`,
     settingsAllOff: "🔕 All notifications disabled",
     back: "← Back",
+    adminKbAnalytics: "📊 Analytics",
+    adminKbInactive3: "😴 Inactive 3d",
+    adminKbInactive7: "💤 Inactive 7d",
+    adminKbNever: "🚫 Never logged in",
+    adminKbNew: "🆕 New students",
+    adminKbStudentMode: "👤 Student mode",
+    adminAnalyticsTitle: "📊 <b>Platform analytics</b>",
+    adminLine: (label: string, val: string | number) => `${label}: <b>${val}</b>`,
+    adminTotalStudents: "Total students",
+    adminLoggedOnce: "Logged in at least once",
+    adminNeverLogged: "Never logged in",
+    adminActive7d: "Active in 7d",
+    adminInactive3d: "Inactive 3+ days",
+    adminInactive7d: "Inactive 7+ days",
+    adminNew7d: "Joined in last 7d",
+    adminCompletions7d: "Lessons completed (7d)",
+    adminCsvCaption: (kind: string, n: number) => `📎 ${kind}: ${n} students`,
+    adminCsvEmpty: (kind: string) => `✅ ${kind}: no one`,
+    adminInactive3Title: "Inactive 3+ days",
+    adminInactive7Title: "Inactive 7+ days",
+    adminNeverTitle: "Never logged in",
+    adminNewTitle: "Joined in last 7 days",
+    adminStudentModeOn: "Student mode on. Type /admin for admin panel.",
+    adminBackToAdmin: "Admin panel",
   },
 };
 
@@ -265,15 +338,54 @@ function getMainKeyboard(locale: Locale) {
   };
 }
 
+function getAdminKeyboard(locale: Locale) {
+  const t = T[locale] as any;
+  return {
+    keyboard: [
+      [{ text: t.adminKbAnalytics }],
+      [{ text: t.adminKbInactive3 }, { text: t.adminKbInactive7 }],
+      [{ text: t.adminKbNever }, { text: t.adminKbNew }],
+      [{ text: t.adminKbStudentMode }, { text: t.kbLang }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+  };
+}
+
 // Send a message that always carries the persistent reply keyboard.
-async function sendWithKeyboard(chatId: number, text: string, locale: Locale) {
-  return sendMessage(chatId, text, getMainKeyboard(locale));
+async function sendWithKeyboard(chatId: number, text: string, locale: Locale, isAdmin = false) {
+  return sendMessage(chatId, text, isAdmin ? getAdminKeyboard(locale) : getMainKeyboard(locale));
+}
+
+// Send a Telegram document (e.g., CSV) via multipart upload.
+async function sendDocument(chatId: number, filename: string, content: string, caption?: string) {
+  const form = new FormData();
+  form.append("chat_id", String(chatId));
+  if (caption) {
+    form.append("caption", caption);
+    form.append("parse_mode", "HTML");
+  }
+  form.append("document", new Blob([content], { type: "text/csv;charset=utf-8" }), filename);
+  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, {
+    method: "POST",
+    body: form,
+  });
+}
+
+async function isAdminUser(admin: any, userId: string): Promise<boolean> {
+  const { data } = await admin
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", userId)
+    .eq("role", "admin")
+    .maybeSingle();
+  return !!data;
 }
 
 // After sending an inline-keyboard message, follow up with a tiny hint that
 // re-applies the persistent reply keyboard (since you can't combine both).
-async function sendKeyboardHint(chatId: number, locale: Locale) {
-  return sendMessage(chatId, T[locale].kbHint, getMainKeyboard(locale));
+async function sendKeyboardHint(chatId: number, locale: Locale, isAdmin = false) {
+  return sendMessage(chatId, T[locale].kbHint, isAdmin ? getAdminKeyboard(locale) : getMainKeyboard(locale));
 }
 
 // Map ANY localized keyboard label to a canonical command, regardless of user's
@@ -283,14 +395,19 @@ function buttonTextToCommand(text: string): string | null {
   for (const loc of ["uz", "ru", "en"] as Locale[]) {
     const t = T[loc] as any;
     if (trimmed === t.kbDavom) return "/davom";
-    // New canonical g'alaba button + old "stats" labels as aliases.
     if (trimmed === t.kbStreak) return "/galaba";
     if (t.kbStreakOld && trimmed === t.kbStreakOld) return "/galaba";
-    // New "Course modules" button routes to /dars; old cert label as alias.
     if (trimmed === t.kbCert) return "/dars";
     if (t.kbCertOld && trimmed === t.kbCertOld) return "/sertifikat";
     if (trimmed === t.kbLang) return "/til";
     if (trimmed === t.kbHelp) return "/yordam";
+    // Admin keyboard buttons
+    if (trimmed === t.adminKbAnalytics) return "/analitika";
+    if (trimmed === t.adminKbInactive3) return "/inactive3";
+    if (trimmed === t.adminKbInactive7) return "/inactive7";
+    if (trimmed === t.adminKbNever) return "/nevr";
+    if (trimmed === t.adminKbNew) return "/yangilar";
+    if (trimmed === t.adminKbStudentMode) return "/talaba";
   }
   return null;
 }
@@ -514,7 +631,312 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
   }
 
   // Always introduce/refresh the persistent reply keyboard after login.
-  await sendKeyboardHint(chatId, locale);
+  const adminAfterLogin = await isAdminUser(admin, profile.id);
+  await sendKeyboardHint(chatId, locale, adminAfterLogin);
+}
+
+// =================== ADMIN ANALYTICS HELPERS ===================
+
+type StudentRow = {
+  id: string;
+  name: string | null;
+  last_name: string | null;
+  email: string | null;
+  telegram_username: string | null;
+  telegram_id: number | null;
+  created_at: string;
+  last_sign_in_at: string | null;
+  last_lesson_at: string | null;
+  last_auth_event_at: string | null;
+};
+
+// Build the master list of students with their latest activity timestamps.
+// "activity" = auth_events.created_at OR lesson_progress.updated_at (per spec).
+async function loadStudentActivity(admin: any): Promise<StudentRow[]> {
+  // 1) All students via admin_list_users RPC (gives last_sign_in_at + is_admin)
+  const { data: users, error: usersErr } = await admin.rpc("admin_list_users");
+  if (usersErr) {
+    console.error("admin_list_users failed", usersErr);
+    return [];
+  }
+  const students = (users || []).filter((u: any) => !u.is_admin);
+  if (!students.length) return [];
+
+  const ids = students.map((u: any) => u.id);
+
+  // 2) Batched: fetch per-user max(updated_at) from lesson_progress.
+  const lessonMap = new Map<string, string>();
+  // Chunk to avoid URL/IN limits
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const { data: lp } = await admin
+      .from("lesson_progress")
+      .select("user_id, updated_at")
+      .in("user_id", chunk)
+      .order("updated_at", { ascending: false });
+    for (const r of lp || []) {
+      if (!lessonMap.has(r.user_id)) lessonMap.set(r.user_id, r.updated_at);
+    }
+  }
+
+  // 3) Batched: fetch per-user max(created_at) from auth_events.
+  const authMap = new Map<string, string>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const { data: ae } = await admin
+      .from("auth_events")
+      .select("user_id, created_at")
+      .in("user_id", chunk)
+      .order("created_at", { ascending: false });
+    for (const r of ae || []) {
+      if (!authMap.has(r.user_id)) authMap.set(r.user_id, r.created_at);
+    }
+  }
+
+  // 4) Need full names — admin_list_users only returns single 'name' field.
+  // Pull last_name from profiles in the same chunked manner.
+  const lastNameMap = new Map<string, string | null>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const { data: profs } = await admin
+      .from("profiles")
+      .select("id, last_name")
+      .in("id", chunk);
+    for (const r of profs || []) {
+      lastNameMap.set(r.id, r.last_name ?? null);
+    }
+  }
+
+  return students.map((u: any) => ({
+    id: u.id,
+    name: u.name ?? null,
+    last_name: lastNameMap.get(u.id) ?? null,
+    email: u.email ?? null,
+    telegram_username: u.telegram_username ?? null,
+    telegram_id: u.telegram_id ?? null,
+    created_at: u.created_at,
+    last_sign_in_at: u.last_sign_in_at ?? null,
+    last_lesson_at: lessonMap.get(u.id) ?? null,
+    last_auth_event_at: authMap.get(u.id) ?? null,
+  }));
+}
+
+// Last activity = max(last_auth_event_at, last_lesson_at).
+function lastActivityOf(s: StudentRow): Date | null {
+  const candidates = [s.last_auth_event_at, s.last_lesson_at]
+    .filter(Boolean)
+    .map((d) => new Date(d as string).getTime());
+  if (!candidates.length) return null;
+  return new Date(Math.max(...candidates));
+}
+
+function daysSince(d: Date | null, now = Date.now()): number | null {
+  if (!d) return null;
+  return Math.floor((now - d.getTime()) / 86400_000);
+}
+
+function csvEscape(v: any): string {
+  if (v === null || v === undefined) return "";
+  const s = String(v);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function buildStudentsCsv(rows: StudentRow[]): string {
+  const header = [
+    "id",
+    "name",
+    "last_name",
+    "email",
+    "telegram_username",
+    "telegram_id",
+    "enrolled_at",
+    "last_sign_in_at",
+    "last_activity_at",
+    "days_since_activity",
+    "days_since_enrollment",
+  ];
+  const now = Date.now();
+  const lines = [header.join(",")];
+  for (const s of rows) {
+    const last = lastActivityOf(s);
+    lines.push(
+      [
+        s.id,
+        s.name,
+        s.last_name,
+        s.email,
+        s.telegram_username,
+        s.telegram_id,
+        s.created_at,
+        s.last_sign_in_at,
+        last ? last.toISOString() : "",
+        daysSince(last, now) ?? "",
+        daysSince(new Date(s.created_at), now) ?? "",
+      ]
+        .map(csvEscape)
+        .join(","),
+    );
+  }
+  return lines.join("\n");
+}
+
+function fullName(s: StudentRow): string {
+  return [s.name, s.last_name].filter(Boolean).join(" ") || "—";
+}
+
+// Render a short Telegram-friendly preview (top N) for a list.
+function renderListPreview(rows: StudentRow[], maxRows = 10): string {
+  if (!rows.length) return "";
+  const lines: string[] = [];
+  const top = rows.slice(0, maxRows);
+  for (const s of top) {
+    const handle = s.telegram_username ? `@${s.telegram_username}` : "—";
+    const last = lastActivityOf(s);
+    const ds = daysSince(last);
+    const dsTxt = ds === null ? "∞" : `${ds}d`;
+    lines.push(`• <b>${csvEscapeHtml(fullName(s))}</b> ${csvEscapeHtml(handle)} (${dsTxt})`);
+  }
+  if (rows.length > maxRows) {
+    lines.push(`… +${rows.length - maxRows}`);
+  }
+  return lines.join("\n");
+}
+
+function csvEscapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+async function handleAdminCommand(
+  admin: any,
+  chatId: number,
+  locale: Locale,
+  cmd: string,
+): Promise<boolean> {
+  const t = T[locale] as any;
+
+  if (cmd === "/admin") {
+    await sendWithKeyboard(chatId, t.adminBackToAdmin, locale, true);
+    return true;
+  }
+
+  if (cmd === "/talaba") {
+    await sendWithKeyboard(chatId, t.adminStudentModeOn, locale, false);
+    return true;
+  }
+
+  if (cmd === "/analitika") {
+    const rows = await loadStudentActivity(admin);
+    const now = Date.now();
+    const total = rows.length;
+    const loggedOnce = rows.filter((s) => !!s.last_sign_in_at).length;
+    const neverLogged = total - loggedOnce;
+    const sevenDayMs = 7 * 86400_000;
+    const threeDayMs = 3 * 86400_000;
+    const active7d = rows.filter((s) => {
+      const la = lastActivityOf(s);
+      return la && now - la.getTime() <= sevenDayMs;
+    }).length;
+    const inactive3d = rows.filter((s) => {
+      if (!s.last_sign_in_at) return false; // never-logged-in handled separately
+      const la = lastActivityOf(s);
+      return !la || now - la.getTime() > threeDayMs;
+    }).length;
+    const inactive7d = rows.filter((s) => {
+      if (!s.last_sign_in_at) return false;
+      const la = lastActivityOf(s);
+      return !la || now - la.getTime() > sevenDayMs;
+    }).length;
+    const new7d = rows.filter(
+      (s) => now - new Date(s.created_at).getTime() <= sevenDayMs,
+    ).length;
+
+    // Lessons completed in last 7d
+    const sevenAgoIso = new Date(now - sevenDayMs).toISOString();
+    const { count: completions7d } = await admin
+      .from("lesson_progress")
+      .select("user_id", { count: "exact", head: true })
+      .gte("completed_at", sevenAgoIso);
+
+    const lines = [
+      t.adminAnalyticsTitle,
+      "",
+      t.adminLine(t.adminTotalStudents, total),
+      t.adminLine(t.adminLoggedOnce, loggedOnce),
+      t.adminLine(t.adminNeverLogged, neverLogged),
+      t.adminLine(t.adminActive7d, active7d),
+      t.adminLine(t.adminInactive3d, inactive3d),
+      t.adminLine(t.adminInactive7d, inactive7d),
+      t.adminLine(t.adminNew7d, new7d),
+      t.adminLine(t.adminCompletions7d, completions7d ?? 0),
+    ];
+    await sendWithKeyboard(chatId, lines.join("\n"), locale, true);
+    return true;
+  }
+
+  // Drill-down list commands → preview + CSV upload
+  const listKind: Record<string, { title: string; filter: (s: StudentRow, now: number) => boolean; filename: string }> = {
+    "/inactive3": {
+      title: t.adminInactive3Title,
+      filename: "inactive_3d.csv",
+      filter: (s, now) => {
+        if (!s.last_sign_in_at) return false;
+        const la = lastActivityOf(s);
+        return !la || now - la.getTime() > 3 * 86400_000;
+      },
+    },
+    "/inactive7": {
+      title: t.adminInactive7Title,
+      filename: "inactive_7d.csv",
+      filter: (s, now) => {
+        if (!s.last_sign_in_at) return false;
+        const la = lastActivityOf(s);
+        return !la || now - la.getTime() > 7 * 86400_000;
+      },
+    },
+    "/nevr": {
+      title: t.adminNeverTitle,
+      filename: "never_logged_in.csv",
+      filter: (s) => !s.last_sign_in_at,
+    },
+    "/yangilar": {
+      title: t.adminNewTitle,
+      filename: "new_students_7d.csv",
+      filter: (s, now) => now - new Date(s.created_at).getTime() <= 7 * 86400_000,
+    },
+  };
+
+  if (listKind[cmd]) {
+    const cfg = listKind[cmd];
+    const all = await loadStudentActivity(admin);
+    const now = Date.now();
+    const filtered = all.filter((s) => cfg.filter(s, now));
+    // Sort: most-stale-first for inactive lists; most-recent enrollment first for /yangilar
+    if (cmd === "/yangilar") {
+      filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    } else {
+      filtered.sort((a, b) => {
+        const da = lastActivityOf(a)?.getTime() ?? 0;
+        const db = lastActivityOf(b)?.getTime() ?? 0;
+        return da - db;
+      });
+    }
+
+    if (!filtered.length) {
+      await sendWithKeyboard(chatId, t.adminCsvEmpty(cfg.title), locale, true);
+      return true;
+    }
+
+    const preview = renderListPreview(filtered, 10);
+    const header = `<b>${csvEscapeHtml(cfg.title)}</b> — ${filtered.length}`;
+    await sendMessage(chatId, `${header}\n\n${preview}`);
+    const csv = buildStudentsCsv(filtered);
+    await sendDocument(chatId, cfg.filename, csv, t.adminCsvCaption(cfg.title, filtered.length));
+    await sendKeyboardHint(chatId, locale, true);
+    return true;
+  }
+
+  return false;
 }
 
 async function handleCommand(admin: any, msg: any, cmdRaw: string) {
@@ -544,6 +966,13 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
       await sendMessage(chatId, t.noProfile);
     }
     return;
+  }
+
+  // Admin commands — only for users with role='admin'.
+  const isAdmin = await isAdminUser(admin, profile.id);
+  if (isAdmin) {
+    const handled = await handleAdminCommand(admin, chatId, locale, cmd);
+    if (handled) return;
   }
 
   if (cmd === "/davom") {
@@ -784,13 +1213,15 @@ Deno.serve(async (req) => {
         ? normLocale(profileForLocale.preferred_locale)
         : normLocale(msg.from.language_code);
 
+      const adminFlag = profileForLocale ? await isAdminUser(admin, profileForLocale.id) : false;
+
       if (text.startsWith("/start ")) {
         const arg = text.slice(7).trim();
         if (arg.startsWith("login_")) {
           const tok = arg.slice(6);
           await handleStartLogin(admin, msg, tok, locale);
         } else if (profileForLocale) {
-          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
+          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag);
         } else {
           const enroll = await getEnrollmentSettings(admin, locale);
           await sendMessage(msg.chat.id, enroll.message, {
@@ -799,7 +1230,7 @@ Deno.serve(async (req) => {
         }
       } else if (text === "/start") {
         if (profileForLocale) {
-          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale);
+          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag);
         } else {
           const enroll = await getEnrollmentSettings(admin, locale);
           await sendMessage(msg.chat.id, enroll.message, {
