@@ -56,7 +56,7 @@ const App = () => (
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/auth/magic" element={<AuthMagicLink />} />
-            <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
+            <Route path="/dashboard" element={<RequireAuth><StudentOrStaffRedirect><Dashboard /></StudentOrStaffRedirect></RequireAuth>} />
             <Route path="/course/:courseId" element={<RequireAuth><CoursePage /></RequireAuth>} />
             <Route path="/lesson/:courseId/:lessonId" element={<RequireAuth><LessonPage /></RequireAuth>} />
             <Route path="/quiz/:moduleId" element={<RequireAuth><QuizPage /></RequireAuth>} />
