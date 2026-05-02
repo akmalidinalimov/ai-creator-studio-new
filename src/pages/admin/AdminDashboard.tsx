@@ -95,13 +95,22 @@ export default function AdminDashboard() {
       const { data: prog7 } = await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", since7).limit(50000);
       const active7 = new Set((prog7 || []).map((p: any) => p.user_id)).size;
 
-      // Lifetime activated: distinct students who ever signed in (auth_events with sign_in-like events)
-      const { data: allEvents } = await supabase.from("auth_events").select("user_id").limit(100000);
-      const { data: adminRoles } = await supabase.from("user_roles").select("user_id").eq("role", "admin");
-      const adminSet = new Set((adminRoles || []).map((r: any) => r.user_id));
-      const activatedSet = new Set<string>();
-      (allEvents || []).forEach((e: any) => { if (e.user_id && !adminSet.has(e.user_id)) activatedSet.add(e.user_id); });
-      const activated = activatedSet.size;
+      // Lifetime activated + never logged in via admin_list_users RPC (includes last_sign_in_at + is_admin)
+      const { data: allUsers } = await supabase.rpc("admin_list_users");
+      const students = (allUsers || []).filter((u: any) => !u.is_admin);
+      const activated = students.filter((u: any) => u.last_sign_in_at).length;
+      const neverList = students
+        .filter((u: any) => !u.last_sign_in_at)
+        .map((u: any) => ({
+          id: u.id,
+          name: [u.name, u.last_name].filter(Boolean).join(" ") || "—",
+          telegram_username: u.telegram_username || null,
+          telegram_id: u.telegram_id || null,
+          email: u.email || "",
+          created_at: u.created_at,
+          days_since: Math.floor((Date.now() - new Date(u.created_at).getTime()) / 86400_000),
+        }));
+      setNeverList(neverList);
 
       // Module + lesson info for course
       const { data: mods } = await supabase
