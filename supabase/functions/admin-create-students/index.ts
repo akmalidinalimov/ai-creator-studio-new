@@ -179,6 +179,35 @@ Deno.serve(async (req) => {
       // Password is always optional; generate one if not provided. Magic link / Telegram bot are the real login paths.
       const passwordProvided = !!(s.password && s.password.length >= 6);
       const password = passwordProvided ? s.password! : genPassword();
+      // Resolve target group: explicit row group_name → target_group_id → default
+      let resolvedGroupId: string | null = null;
+      if (s.group_name && s.group_name.trim()) resolvedGroupId = await resolveGroupId(s.group_name);
+      if (!resolvedGroupId && targetGroupId) resolvedGroupId = targetGroupId;
+      if (!resolvedGroupId && defaultGroupId) resolvedGroupId = defaultGroupId;
+
+      // Smart dedupe: if a profile already exists by email, telegram_id, or telegram_username,
+      // update its group instead of creating a new auth user.
+      let existingId: string | null = null;
+      if (!email.endsWith("@telegram.local")) {
+        const { data: e1 } = await admin.from("profiles").select("id").eq("email", email).maybeSingle();
+        if (e1) existingId = (e1 as any).id;
+      }
+      if (!existingId && tgIdNum) {
+        const { data: e2 } = await admin.from("profiles").select("id").eq("telegram_id", tgIdNum).maybeSingle();
+        if (e2) existingId = (e2 as any).id;
+      }
+      if (!existingId && tgUserNorm) {
+        const { data: e3 } = await admin.from("profiles").select("id").eq("telegram_username", tgUserNorm as any).maybeSingle();
+        if (e3) existingId = (e3 as any).id;
+      }
+      if (existingId) {
+        const patch: Record<string, any> = {};
+        if (resolvedGroupId) patch.group_id = resolvedGroupId;
+        if (Object.keys(patch).length) await admin.from("profiles").update(patch).eq("id", existingId);
+        results.push({ email, status: "updated", userId: existingId });
+        continue;
+      }
+
       const { data: created, error } = await admin.auth.admin.createUser({
         email,
         password,
@@ -194,7 +223,6 @@ Deno.serve(async (req) => {
       if (s.last_name !== undefined) profilePatch.last_name = s.last_name || null;
       if (s.telegram_username) profilePatch.telegram_username = s.telegram_username.replace(/^@/, "");
       if (tgIdNum !== undefined) {
-        // Pre-check uniqueness to give a clean error
         const { data: dup } = await admin.from("profiles").select("id").eq("telegram_id", tgIdNum).neq("id", userId).maybeSingle();
         if (dup) {
           results.push({ email, status: "error", error: `telegram_id ${tgIdNum} already in use` });
@@ -203,11 +231,7 @@ Deno.serve(async (req) => {
         }
         profilePatch.telegram_id = tgIdNum;
       }
-      // Resolve group_name -> group_id (auto-create if needed)
-      if (s.group_name && s.group_name.trim()) {
-        const gid = await resolveGroupId(s.group_name);
-        if (gid) profilePatch.group_id = gid;
-      }
+      if (resolvedGroupId) profilePatch.group_id = resolvedGroupId;
       const { error: profErr } = await admin.from("profiles").update(profilePatch).eq("id", userId);
       if (profErr) {
         results.push({ email, status: "error", error: profErr.message });
