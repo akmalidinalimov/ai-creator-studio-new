@@ -119,10 +119,12 @@ export default function AdminDashboard() {
       // Top stats — total scoped students
       const totalUsers = isTeacher ? visibleIds.length : (await supabase.from("profiles").select("id", { count: "exact", head: true })).count || 0;
 
-      const events30Raw = (await supabase.from("auth_events").select("user_id, created_at").gte("created_at", since30).limit(50000)).data || [];
-      const events30 = isTeacher ? events30Raw.filter((e: any) => inScope(e.user_id)) : events30Raw;
-      const prog7Raw = (await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", since7).limit(50000)).data || [];
-      const prog7 = isTeacher ? prog7Raw.filter((p: any) => inScope(p.user_id)) : prog7Raw;
+      const events30 = isTeacher
+        ? ((await supabase.rpc("staff_recent_auth_events", { _since: since30 })).data || [])
+        : ((await supabase.from("auth_events").select("user_id, created_at").gte("created_at", since30).limit(50000)).data || []);
+      const prog7 = isTeacher
+        ? ((await supabase.rpc("staff_recent_lesson_progress", { _since: since7 })).data || []).map((p: any) => ({ user_id: p.user_id, updated_at: p.updated_at }))
+        : ((await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", since7).limit(50000)).data || []);
       const active7 = new Set((prog7 || []).map((p: any) => p.user_id)).size;
 
       // Lifetime activated + never logged in via staff_list_students RPC (scoped automatically)
