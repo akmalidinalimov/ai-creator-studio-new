@@ -3,7 +3,7 @@ import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import i18n from "@/i18n";
 
-type AppRole = "admin" | "student";
+type AppRole = "admin" | "teacher" | "student";
 
 interface AuthCtx {
   session: Session | null;
