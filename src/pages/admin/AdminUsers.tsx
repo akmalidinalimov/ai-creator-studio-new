@@ -522,8 +522,8 @@ export default function AdminUsers() {
                 <Mail className="h-4 w-4" /> {t("admin.users.resendWelcomeN", { n: selected.size })}
               </Button>
             )}
-            <Button variant="outline" size="sm" onClick={() => setOpenCsv(true)}><UploadIcon className="h-4 w-4" />{t("admin.users.importCsv")}</Button>
-            <Button size="sm" onClick={() => { setNewPassword(randPassword()); setOpenAdd(true); }}><Plus className="h-4 w-4" />{t("admin.users.addUser")}</Button>
+            {isAdmin && <Button variant="outline" size="sm" onClick={() => setOpenCsv(true)}><UploadIcon className="h-4 w-4" />{t("admin.users.importCsv")}</Button>}
+            {isAdmin && <Button size="sm" onClick={() => { setNewPassword(randPassword()); setOpenAdd(true); }}><Plus className="h-4 w-4" />{t("admin.users.addUser")}</Button>}
           </div>
         </div>
 
