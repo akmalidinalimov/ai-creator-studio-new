@@ -156,13 +156,10 @@ export default function AdminDashboard() {
         const cur = lastAuthByUser.get(e.user_id) || 0;
         if (t > cur) lastAuthByUser.set(e.user_id, t);
       });
-      // lesson_progress within 30d (we already have prog7; fetch a wider window)
-      const { data: prog30ActivityRaw } = await supabase
-        .from("lesson_progress")
-        .select("user_id, updated_at")
-        .gte("updated_at", new Date(Date.now() - 30 * 86400_000).toISOString())
-        .limit(100000);
-      const prog30Activity = isTeacher ? (prog30ActivityRaw || []).filter((p: any) => inScope(p.user_id)) : (prog30ActivityRaw || []);
+      const since30Iso = new Date(Date.now() - 30 * 86400_000).toISOString();
+      const prog30Activity = isTeacher
+        ? ((await supabase.rpc("staff_recent_lesson_progress", { _since: since30Iso })).data || []).map((p: any) => ({ user_id: p.user_id, updated_at: p.updated_at }))
+        : ((await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", since30Iso).limit(100000)).data || []);
       const lastLessonByUser = new Map<string, number>();
       (prog30Activity || []).forEach((p: any) => {
         const t = new Date(p.updated_at).getTime();
