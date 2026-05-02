@@ -132,10 +132,14 @@ Deno.serve(async (req) => {
         const n = typeof s.telegram_user_id === "string" ? Number(s.telegram_user_id) : s.telegram_user_id;
         if (Number.isFinite(n) && Number.isInteger(n) && (n as number) > 0) tgIdNum = n as number;
       }
-      // If no email but we have a telegram id, synthesize a placeholder so auth.admin.createUser accepts it.
-      // Login will happen via the Telegram bot which matches profiles by telegram_id.
+      // Normalize telegram_username early so we can use it as a placeholder identifier
+      const tgUserNorm = (s.telegram_username || "").trim().replace(/^@/, "").toLowerCase();
+      // If no email but we have a telegram id or username, synthesize a placeholder so auth.admin.createUser accepts it.
+      // Login will happen via the Telegram bot which matches profiles by telegram_id OR telegram_username.
       if (!email && tgIdNum) {
         email = `tg-${tgIdNum}@telegram.local`;
+      } else if (!email && tgUserNorm) {
+        email = `tg-${tgUserNorm}@telegram.local`;
       }
       if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
         results.push({ email: s.email || "", status: "invalid_email" });
