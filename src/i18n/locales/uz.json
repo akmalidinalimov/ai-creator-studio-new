@@ -473,7 +473,9 @@
         "totalStudents": "Jami talabalar",
         "logins30d": "Kirishlar (30k)",
         "active7d": "Faol (7k)",
-        "completions": "Kursni tugatganlar"
+        "completions": "Kursni tugatganlar",
+        "activated": "Bir marta kirgan",
+        "activatedTooltip": "Hech bo'lmaganda bir marta saytga kirgan o'quvchilar soni"
       },
       "charts": {
         "dailyLogins": "Kunlik kirishlar (30k)",
