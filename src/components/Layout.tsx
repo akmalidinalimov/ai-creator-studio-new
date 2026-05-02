@@ -53,10 +53,10 @@ export const TopNav = () => {
         <div className="flex items-center gap-6 min-w-0">
           <Logo />
           <nav className="hidden md:flex items-center gap-5">
-            {!isAdmin && (
+            {!isStaff && (
               <Link to="/dashboard" className={linkCls(loc.pathname === "/dashboard")}>{t("nav.dashboard")}</Link>
             )}
-            {isAdmin && adminLinks.map((l) => (
+            {isStaff && adminLinks.map((l) => (
               <Link key={l.to} to={l.to} className={linkCls(l.match(loc.pathname))}>{l.label}</Link>
             ))}
           </nav>
