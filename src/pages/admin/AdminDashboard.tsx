@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ResponsiveContainer, AreaChart, Area, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import { toast } from "sonner";
-import { Users as UsersIcon, LogIn, Activity, Trophy, Shield } from "lucide-react";
+import { Users as UsersIcon, LogIn, Activity, Trophy, Shield, UserCheck } from "lucide-react";
+import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Link } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
@@ -33,7 +34,7 @@ export default function AdminDashboard() {
   const [courseId, setCourseId] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
-  const [stats, setStats] = useState({ total: 0, logins30d: 0, active7d: 0, completions: 0 });
+  const [stats, setStats] = useState({ total: 0, logins30d: 0, active7d: 0, completions: 0, activated: 0 });
   const [dailyLogins, setDailyLogins] = useState<{ day: string; count: number }[]>([]);
   const [dau, setDau] = useState<{ day: string; count: number }[]>([]);
   const [lessonsPerDay, setLessonsPerDay] = useState<{ day: string; count: number }[]>([]);
@@ -90,6 +91,14 @@ export default function AdminDashboard() {
       const { data: prog7 } = await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", since7).limit(50000);
       const active7 = new Set((prog7 || []).map((p: any) => p.user_id)).size;
 
+      // Lifetime activated: distinct students who ever signed in (auth_events with sign_in-like events)
+      const { data: allEvents } = await supabase.from("auth_events").select("user_id").limit(100000);
+      const { data: adminRoles } = await supabase.from("user_roles").select("user_id").eq("role", "admin");
+      const adminSet = new Set((adminRoles || []).map((r: any) => r.user_id));
+      const activatedSet = new Set<string>();
+      (allEvents || []).forEach((e: any) => { if (e.user_id && !adminSet.has(e.user_id)) activatedSet.add(e.user_id); });
+      const activated = activatedSet.size;
+
       // Module + lesson info for course
       const { data: mods } = await supabase
         .from("modules")
@@ -123,6 +132,7 @@ export default function AdminDashboard() {
         logins30d: (events30 || []).length,
         active7d: active7,
         completions,
+        activated,
       });
 
       // Daily logins (30d)
@@ -262,11 +272,12 @@ export default function AdminDashboard() {
           </Select>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
           <StatCard icon={<UsersIcon className="h-4 w-4" />} label={t("admin.dashboard.stats.totalStudents")} value={stats.total} />
           <StatCard icon={<LogIn className="h-4 w-4" />} label={t("admin.dashboard.stats.logins30d")} value={stats.logins30d} />
           <StatCard icon={<Activity className="h-4 w-4" />} label={t("admin.dashboard.stats.active7d")} value={stats.active7d} />
           <StatCard icon={<Trophy className="h-4 w-4" />} label={t("admin.dashboard.stats.completions")} value={stats.completions} />
+          <StatCard icon={<UserCheck className="h-4 w-4" />} label={t("admin.dashboard.stats.activated")} value={stats.activated} tooltip={t("admin.dashboard.stats.activatedTooltip")} />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -420,12 +431,23 @@ export default function AdminDashboard() {
   );
 }
 
-const StatCard = ({ icon, label, value }: { icon: React.ReactNode; label: string; value: any }) => (
-  <Card className="p-5 shadow-soft">
-    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">{icon}{label}</div>
-    <div className="text-3xl font-semibold tracking-tight mt-1 tabular-nums">{value}</div>
-  </Card>
-);
+const StatCard = ({ icon, label, value, tooltip }: { icon: React.ReactNode; label: string; value: any; tooltip?: string }) => {
+  const card = (
+    <Card className="p-5 shadow-soft h-full">
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">{icon}{label}</div>
+      <div className="text-3xl font-semibold tracking-tight mt-1 tabular-nums">{value}</div>
+    </Card>
+  );
+  if (!tooltip) return card;
+  return (
+    <TooltipProvider delayDuration={150}>
+      <UITooltip>
+        <TooltipTrigger asChild><div className="cursor-help">{card}</div></TooltipTrigger>
+        <TooltipContent className="max-w-xs text-xs">{tooltip}</TooltipContent>
+      </UITooltip>
+    </TooltipProvider>
+  );
+};
 
 const ChartCard = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <Card className="p-5 shadow-soft">

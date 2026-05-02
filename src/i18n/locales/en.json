@@ -473,7 +473,9 @@
         "totalStudents": "Total students",
         "logins30d": "Logins (30d)",
         "active7d": "Active (7d)",
-        "completions": "Course completions"
+        "completions": "Course completions",
+        "activated": "Logged in at least once",
+        "activatedTooltip": "Number of students who have signed in to the platform at least once"
       },
       "charts": {
         "dailyLogins": "Daily logins (30d)",
