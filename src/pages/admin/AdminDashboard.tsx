@@ -689,3 +689,84 @@ function NeverLoggedInDialog({ open, onOpenChange, rows, sort, setSort, t }: {
     </Dialog>
   );
 }
+
+function InactiveDialog({ open, onOpenChange, rows, window: win, t }: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  rows: any[];
+  window: 3 | 7;
+  t: (k: string, opts?: any) => string;
+}) {
+  const exportCsv = () => {
+    const headers = ["name", "telegram_username", "telegram_id", "email", "last_activity_at", "days_since"];
+    const esc = (v: any) => {
+      const s = v == null ? "" : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [headers.join(",")].concat(
+      rows.map((r) => headers.map((h) => esc(r[h])).join(","))
+    );
+    const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `inactive-${win}d-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const titleKey = win === 7 ? "admin.dashboard.inactiveDialog.title7" : "admin.dashboard.inactiveDialog.title3";
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center justify-between gap-3 pr-6">
+            <span>{t(titleKey)} ({rows.length})</span>
+            <Button size="sm" variant="outline" onClick={exportCsv} disabled={rows.length === 0}>
+              <Download className="h-4 w-4" />{t("admin.dashboard.inactiveDialog.exportCsv")}
+            </Button>
+          </DialogTitle>
+        </DialogHeader>
+        <div className="max-h-[65vh] overflow-auto border rounded-md">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/40 text-xs sticky top-0">
+              <tr>
+                <th className="text-left p-3">{t("admin.dashboard.inactiveDialog.cols.name")}</th>
+                <th className="text-left p-3">{t("admin.dashboard.inactiveDialog.cols.tgUsername")}</th>
+                <th className="text-left p-3">{t("admin.dashboard.inactiveDialog.cols.email")}</th>
+                <th className="text-left p-3">{t("admin.dashboard.inactiveDialog.cols.lastActivity")}</th>
+                <th className="text-left p-3">{t("admin.dashboard.inactiveDialog.cols.daysSince")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">{t("admin.dashboard.inactiveDialog.empty")}</td></tr>
+              )}
+              {rows.map((r) => (
+                <tr key={r.id} className="border-t hover:bg-muted/20">
+                  <td className="p-3 font-medium">{r.name}</td>
+                  <td className="p-3">
+                    {r.telegram_username ? (
+                      <a
+                        href={`https://t.me/${r.telegram_username}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline"
+                      >@{r.telegram_username}</a>
+                    ) : "—"}
+                  </td>
+                  <td className="p-3 text-muted-foreground">{r.email || "—"}</td>
+                  <td className="p-3 text-muted-foreground whitespace-nowrap">
+                    {r.last_activity_at ? new Date(r.last_activity_at).toLocaleDateString() : "—"}
+                  </td>
+                  <td className="p-3 tabular-nums">{r.days_since ?? "∞"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
