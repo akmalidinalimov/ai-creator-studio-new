@@ -968,6 +968,13 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
     return;
   }
 
+  // Admin commands — only for users with role='admin'.
+  const isAdmin = await isAdminUser(admin, profile.id);
+  if (isAdmin) {
+    const handled = await handleAdminCommand(admin, chatId, locale, cmd);
+    if (handled) return;
+  }
+
   if (cmd === "/davom") {
     const courseId = await getDefaultCourseId(admin);
     if (!courseId) {
