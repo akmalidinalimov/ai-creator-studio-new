@@ -119,6 +119,14 @@ Deno.serve(async (req) => {
     const sendInvite: boolean = !!body.send_invite;
     const redirectTo: string = body.redirectTo || `${SUPABASE_URL}/reset-password`;
     const isCsvImport: boolean = !!body.csv_import;
+    const targetGroupId: string | null = body.target_group_id || null;
+
+    // Resolve fallback default group once (used when row has no group_name and no target_group_id)
+    let defaultGroupId: string | null = null;
+    {
+      const { data: dg } = await admin.from("groups").select("id").eq("is_default", true).maybeSingle();
+      defaultGroupId = (dg as any)?.id || null;
+    }
 
     if (!Array.isArray(students) || students.length === 0) {
       return new Response(JSON.stringify({ error: "students[] required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
