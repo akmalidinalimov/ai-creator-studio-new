@@ -125,10 +125,10 @@ export default function AdminDashboard() {
       const prog7 = isTeacher ? prog7Raw.filter((p: any) => inScope(p.user_id)) : prog7Raw;
       const active7 = new Set((prog7 || []).map((p: any) => p.user_id)).size;
 
-      // Lifetime activated + never logged in via admin_list_users RPC (includes last_sign_in_at + is_admin)
-      const { data: allUsers } = await supabase.rpc("admin_list_users");
-      const studentsAll = (allUsers || []).filter((u: any) => !u.is_admin);
-      const students = isTeacher ? studentsAll.filter((u: any) => visibleSet.has(u.id)) : studentsAll;
+      // Lifetime activated + never logged in via staff_list_students RPC (scoped automatically)
+      const { data: allUsers } = await supabase.rpc("staff_list_students");
+      const studentsAll = (allUsers || []);
+      const students = studentsAll; // already scoped by RPC
       const activated = students.filter((u: any) => u.last_sign_in_at).length;
       const neverList = students
         .filter((u: any) => !u.last_sign_in_at)
