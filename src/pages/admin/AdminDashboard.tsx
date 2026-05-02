@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ResponsiveContainer, AreaChart, Area, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import { toast } from "sonner";
-import { Users as UsersIcon, LogIn, Activity, Trophy, Shield, UserCheck } from "lucide-react";
+import { Users as UsersIcon, LogIn, Activity, Trophy, Shield, UserCheck, UserX, Download, ArrowUpDown } from "lucide-react";
 import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Link } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
@@ -34,7 +35,10 @@ export default function AdminDashboard() {
   const [courseId, setCourseId] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
-  const [stats, setStats] = useState({ total: 0, logins30d: 0, active7d: 0, completions: 0, activated: 0 });
+  const [stats, setStats] = useState({ total: 0, logins30d: 0, active7d: 0, completions: 0, activated: 0, neverLoggedIn: 0 });
+  const [neverList, setNeverList] = useState<any[]>([]);
+  const [neverOpen, setNeverOpen] = useState(false);
+  const [neverSort, setNeverSort] = useState<{ key: string; dir: "asc" | "desc" }>({ key: "created_at", dir: "desc" });
   const [dailyLogins, setDailyLogins] = useState<{ day: string; count: number }[]>([]);
   const [dau, setDau] = useState<{ day: string; count: number }[]>([]);
   const [lessonsPerDay, setLessonsPerDay] = useState<{ day: string; count: number }[]>([]);
@@ -91,13 +95,22 @@ export default function AdminDashboard() {
       const { data: prog7 } = await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", since7).limit(50000);
       const active7 = new Set((prog7 || []).map((p: any) => p.user_id)).size;
 
-      // Lifetime activated: distinct students who ever signed in (auth_events with sign_in-like events)
-      const { data: allEvents } = await supabase.from("auth_events").select("user_id").limit(100000);
-      const { data: adminRoles } = await supabase.from("user_roles").select("user_id").eq("role", "admin");
-      const adminSet = new Set((adminRoles || []).map((r: any) => r.user_id));
-      const activatedSet = new Set<string>();
-      (allEvents || []).forEach((e: any) => { if (e.user_id && !adminSet.has(e.user_id)) activatedSet.add(e.user_id); });
-      const activated = activatedSet.size;
+      // Lifetime activated + never logged in via admin_list_users RPC (includes last_sign_in_at + is_admin)
+      const { data: allUsers } = await supabase.rpc("admin_list_users");
+      const students = (allUsers || []).filter((u: any) => !u.is_admin);
+      const activated = students.filter((u: any) => u.last_sign_in_at).length;
+      const neverList = students
+        .filter((u: any) => !u.last_sign_in_at)
+        .map((u: any) => ({
+          id: u.id,
+          name: [u.name, u.last_name].filter(Boolean).join(" ") || "—",
+          telegram_username: u.telegram_username || null,
+          telegram_id: u.telegram_id || null,
+          email: u.email || "",
+          created_at: u.created_at,
+          days_since: Math.floor((Date.now() - new Date(u.created_at).getTime()) / 86400_000),
+        }));
+      setNeverList(neverList);
 
       // Module + lesson info for course
       const { data: mods } = await supabase
@@ -133,6 +146,7 @@ export default function AdminDashboard() {
         active7d: active7,
         completions,
         activated,
+        neverLoggedIn: neverList.length,
       });
 
       // Daily logins (30d)
@@ -272,12 +286,20 @@ export default function AdminDashboard() {
           </Select>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           <StatCard icon={<UsersIcon className="h-4 w-4" />} label={t("admin.dashboard.stats.totalStudents")} value={stats.total} />
           <StatCard icon={<LogIn className="h-4 w-4" />} label={t("admin.dashboard.stats.logins30d")} value={stats.logins30d} />
           <StatCard icon={<Activity className="h-4 w-4" />} label={t("admin.dashboard.stats.active7d")} value={stats.active7d} />
           <StatCard icon={<Trophy className="h-4 w-4" />} label={t("admin.dashboard.stats.completions")} value={stats.completions} />
           <StatCard icon={<UserCheck className="h-4 w-4" />} label={t("admin.dashboard.stats.activated")} value={stats.activated} tooltip={t("admin.dashboard.stats.activatedTooltip")} />
+          <StatCard
+            icon={<UserX className="h-4 w-4" />}
+            label={t("admin.dashboard.stats.neverLoggedIn")}
+            value={stats.neverLoggedIn}
+            tooltip={t("admin.dashboard.stats.neverLoggedInTooltip")}
+            variant="warning"
+            onClick={() => setNeverOpen(true)}
+          />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -426,23 +448,36 @@ export default function AdminDashboard() {
             </table>
           </div>
         </Card>
+
+        <NeverLoggedInDialog
+          open={neverOpen}
+          onOpenChange={setNeverOpen}
+          rows={neverList}
+          sort={neverSort}
+          setSort={setNeverSort}
+          t={t}
+        />
       </div>
     </PageShell>
   );
 }
 
-const StatCard = ({ icon, label, value, tooltip }: { icon: React.ReactNode; label: string; value: any; tooltip?: string }) => {
+const StatCard = ({ icon, label, value, tooltip, variant, onClick }: { icon: React.ReactNode; label: string; value: any; tooltip?: string; variant?: "warning"; onClick?: () => void }) => {
+  const isWarn = variant === "warning";
   const card = (
-    <Card className="p-5 shadow-soft h-full">
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">{icon}{label}</div>
-      <div className="text-3xl font-semibold tracking-tight mt-1 tabular-nums">{value}</div>
+    <Card
+      className={`p-5 shadow-soft h-full ${isWarn ? "border-amber-500/40 bg-amber-500/5" : ""} ${onClick ? "cursor-pointer hover:bg-muted/30 transition-colors" : ""}`}
+      onClick={onClick}
+    >
+      <div className={`flex items-center gap-1.5 text-xs ${isWarn ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}>{icon}{label}</div>
+      <div className={`text-3xl font-semibold tracking-tight mt-1 tabular-nums ${isWarn ? "text-amber-700 dark:text-amber-400" : ""}`}>{value}</div>
     </Card>
   );
   if (!tooltip) return card;
   return (
     <TooltipProvider delayDuration={150}>
       <UITooltip>
-        <TooltipTrigger asChild><div className="cursor-help">{card}</div></TooltipTrigger>
+        <TooltipTrigger asChild><div className={onClick ? "" : "cursor-help"}>{card}</div></TooltipTrigger>
         <TooltipContent className="max-w-xs text-xs">{tooltip}</TooltipContent>
       </UITooltip>
     </TooltipProvider>
@@ -455,3 +490,116 @@ const ChartCard = ({ title, children }: { title: string; children: React.ReactNo
     {children}
   </Card>
 );
+
+function NeverLoggedInDialog({ open, onOpenChange, rows, sort, setSort, t }: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  rows: any[];
+  sort: { key: string; dir: "asc" | "desc" };
+  setSort: (s: { key: string; dir: "asc" | "desc" }) => void;
+  t: (k: string, opts?: any) => string;
+}) {
+  const sorted = useMemo(() => {
+    const arr = [...rows];
+    arr.sort((a, b) => {
+      const av = a[sort.key];
+      const bv = b[sort.key];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (sort.key === "created_at") {
+        return (new Date(av).getTime() - new Date(bv).getTime()) * (sort.dir === "asc" ? 1 : -1);
+      }
+      if (typeof av === "number" && typeof bv === "number") {
+        return (av - bv) * (sort.dir === "asc" ? 1 : -1);
+      }
+      return String(av).localeCompare(String(bv)) * (sort.dir === "asc" ? 1 : -1);
+    });
+    return arr;
+  }, [rows, sort]);
+
+  const toggleSort = (key: string) => {
+    if (sort.key === key) setSort({ key, dir: sort.dir === "asc" ? "desc" : "asc" });
+    else setSort({ key, dir: key === "created_at" || key === "days_since" ? "desc" : "asc" });
+  };
+
+  const exportCsv = () => {
+    const headers = ["name", "telegram_username", "telegram_id", "email", "created_at", "days_since"];
+    const esc = (v: any) => {
+      const s = v == null ? "" : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [headers.join(",")].concat(
+      sorted.map((r) => headers.map((h) => esc(r[h])).join(","))
+    );
+    const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `hech-kirmagan-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const SortHead = ({ k, label }: { k: string; label: string }) => (
+    <th className="text-left p-3">
+      <button onClick={() => toggleSort(k)} className="inline-flex items-center gap-1 hover:text-foreground">
+        {label}
+        <ArrowUpDown className={`h-3 w-3 ${sort.key === k ? "opacity-100" : "opacity-30"}`} />
+      </button>
+    </th>
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center justify-between gap-3 pr-6">
+            <span>{t("admin.dashboard.neverLoggedIn.title")} ({rows.length})</span>
+            <Button size="sm" variant="outline" onClick={exportCsv} disabled={rows.length === 0}>
+              <Download className="h-4 w-4" />{t("admin.dashboard.neverLoggedIn.exportCsv")}
+            </Button>
+          </DialogTitle>
+        </DialogHeader>
+        <div className="max-h-[65vh] overflow-auto border rounded-md">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/40 text-xs sticky top-0">
+              <tr>
+                <SortHead k="name" label={t("admin.dashboard.neverLoggedIn.cols.name")} />
+                <SortHead k="telegram_username" label={t("admin.dashboard.neverLoggedIn.cols.tgUsername")} />
+                <SortHead k="telegram_id" label={t("admin.dashboard.neverLoggedIn.cols.tgId")} />
+                <SortHead k="email" label={t("admin.dashboard.neverLoggedIn.cols.email")} />
+                <SortHead k="created_at" label={t("admin.dashboard.neverLoggedIn.cols.enrolledAt")} />
+                <SortHead k="days_since" label={t("admin.dashboard.neverLoggedIn.cols.daysSince")} />
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.length === 0 && (
+                <tr><td colSpan={6} className="p-6 text-center text-muted-foreground">{t("admin.dashboard.neverLoggedIn.empty")}</td></tr>
+              )}
+              {sorted.map((r) => (
+                <tr key={r.id} className="border-t hover:bg-muted/20">
+                  <td className="p-3 font-medium">{r.name}</td>
+                  <td className="p-3">
+                    {r.telegram_username ? (
+                      <a
+                        href={`https://t.me/${r.telegram_username}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline"
+                      >@{r.telegram_username}</a>
+                    ) : "—"}
+                  </td>
+                  <td className="p-3 font-mono text-xs text-muted-foreground">{r.telegram_id ?? "—"}</td>
+                  <td className="p-3 text-muted-foreground">{r.email || "—"}</td>
+                  <td className="p-3 text-muted-foreground whitespace-nowrap">{new Date(r.created_at).toLocaleDateString()}</td>
+                  <td className="p-3 tabular-nums">{r.days_since}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
