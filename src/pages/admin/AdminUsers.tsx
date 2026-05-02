@@ -672,12 +672,30 @@ export default function AdminUsers() {
         setOpenCsv(o);
         if (o) {
           setShowErrors(false);
-          // Load existing telegram_ids from DB for cross-check
+          setShowDups(false);
+          // Load existing emails / telegram_ids / telegram_usernames from DB for cross-check.
+          // Paginate to bypass the 1000-row default limit.
           try {
-            const { data } = await supabase.from("profiles").select("email, telegram_id").not("telegram_id", "is", null);
-            const map = new Map<number, string>();
-            (data || []).forEach((p: any) => { if (p.telegram_id) map.set(Number(p.telegram_id), (p.email || "").toLowerCase()); });
-            setExistingTgIds(map);
+            const tgIdMap = new Map<number, string>();
+            const emails = new Set<string>();
+            const tgUsers = new Set<string>();
+            const PAGE = 1000;
+            for (let from = 0; ; from += PAGE) {
+              const { data, error } = await supabase
+                .from("profiles")
+                .select("email, telegram_id, telegram_username")
+                .range(from, from + PAGE - 1);
+              if (error || !data || data.length === 0) break;
+              for (const p of data as any[]) {
+                if (p.email) emails.add(String(p.email).toLowerCase());
+                if (p.telegram_id) tgIdMap.set(Number(p.telegram_id), String(p.email || "").toLowerCase());
+                if (p.telegram_username) tgUsers.add(String(p.telegram_username).toLowerCase().replace(/^@/, ""));
+              }
+              if (data.length < PAGE) break;
+            }
+            setExistingTgIds(tgIdMap);
+            setExistingEmails(emails);
+            setExistingTgUsers(tgUsers);
           } catch {}
           if (!csvText) {
             const sample = "Aida,Khan,aida@example.com,,123456789,@aidakhan,student\nDilorom Yusupovna 🦋,,,,555111222,@dilorom,student";
