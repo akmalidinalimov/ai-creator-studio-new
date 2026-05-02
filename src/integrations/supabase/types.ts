@@ -1223,6 +1223,23 @@ export type Database = {
           similarity: number
         }[]
       }
+      staff_list_students: {
+        Args: never
+        Returns: {
+          avatar_url: string
+          created_at: string
+          email: string
+          group_id: string
+          id: string
+          is_admin: boolean
+          last_name: string
+          last_sign_in_at: string
+          name: string
+          status: Database["public"]["Enums"]["user_status"]
+          telegram_id: number
+          telegram_username: string
+        }[]
+      }
       track_video_progress: {
         Args: {
           p_current_time: number
