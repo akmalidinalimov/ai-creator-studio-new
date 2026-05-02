@@ -31,10 +31,14 @@ const fmtDay = (d: Date) => d.toISOString().slice(5, 10);
 
 export default function AdminDashboard() {
   const { t, i18n } = useTranslation();
+  const { role } = useAuth();
+  const isTeacher = role === "teacher";
   const dateLocale = i18n.language === "ru" ? ru : i18n.language === "uz" ? uz : enUS;
   const [courses, setCourses] = useState<{ id: string; title: string; published: boolean }[]>([]);
   const [courseId, setCourseId] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [scopedIds, setScopedIds] = useState<string[] | null>(null);
+  const [noGroups, setNoGroups] = useState(false);
 
   const [stats, setStats] = useState({ total: 0, logins30d: 0, active7d: 0, completions: 0, activated: 0, neverLoggedIn: 0, inactive3d: 0, inactive7d: 0 });
   const [neverList, setNeverList] = useState<any[]>([]);
