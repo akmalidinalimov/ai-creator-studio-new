@@ -764,55 +764,116 @@ export default function AdminUsers() {
                     </tr>
                   </thead>
                   <tbody>
-                    {csvParsed.map((r, i) => (
-                      <tr key={i} className={`border-t ${!r.valid ? "bg-destructive/5" : ""}`}>
-                        <td className="p-2">{r.name}</td>
-                        <td className="p-2">{r.last_name || "—"}</td>
-                        <td className="p-2">{r.email}</td>
-                        <td className="p-2 text-xs font-mono">{r.telegram_user_id ?? "—"}</td>
-                        <td className="p-2 text-xs">{r.telegram_username ? `@${r.telegram_username}` : "—"}</td>
-                        <td className="p-2 text-xs">{r.role}</td>
-                        <td className={`p-2 text-xs ${r.valid ? "text-foreground" : "text-destructive font-medium"}`}>
-                          {r.valid ? t("admin.users.valid") : r.reason}
-                        </td>
-                      </tr>
-                    ))}
+                    {csvParsed.map((r, i) => {
+                      const rowBg = !r.valid ? "bg-destructive/5" : r.duplicate ? "bg-muted/40" : "";
+                      const statusCls = !r.valid
+                        ? "text-destructive font-medium"
+                        : r.duplicate
+                        ? "text-muted-foreground"
+                        : "text-foreground";
+                      const statusText = !r.valid
+                        ? r.reason
+                        : r.duplicate
+                        ? t("admin.users.duplicate", { defaultValue: "Already in DB" })
+                        : t("admin.users.valid");
+                      return (
+                        <tr key={i} className={`border-t ${rowBg}`}>
+                          <td className="p-2">{r.name}</td>
+                          <td className="p-2">{r.last_name || "—"}</td>
+                          <td className="p-2">{r.email}</td>
+                          <td className="p-2 text-xs font-mono">{r.telegram_user_id ?? "—"}</td>
+                          <td className="p-2 text-xs">{r.telegram_username ? `@${r.telegram_username}` : "—"}</td>
+                          <td className="p-2 text-xs">{r.role}</td>
+                          <td className={`p-2 text-xs ${statusCls}`}>{statusText}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             )}
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="text-xs text-muted-foreground">
-                {t("admin.users.validInvalid", { valid: csvParsed.filter(r => r.valid).length, invalid: csvParsed.filter(r => !r.valid).length })}
-              </div>
-              {csvParsed.some(r => !r.valid) && (
-                <Collapsible open={showErrors} onOpenChange={setShowErrors}>
-                  <CollapsibleTrigger asChild>
-                    <Button variant="ghost" size="sm" className="h-7 text-xs text-destructive">
-                      {showErrors ? <ChevronDown className="h-3 w-3 mr-1" /> : <ChevronRight className="h-3 w-3 mr-1" />}
-                      {t("admin.users.csvErr.showErrors", { defaultValue: "Show invalid rows" })} ({csvParsed.filter(r => !r.valid).length})
-                    </Button>
-                  </CollapsibleTrigger>
-                </Collapsible>
-              )}
-            </div>
-            {showErrors && csvParsed.some(r => !r.valid) && (
-              <div className="border border-destructive/30 rounded-md max-h-48 overflow-y-auto bg-destructive/5">
-                <ul className="text-xs divide-y divide-destructive/20">
-                  {csvParsed.filter(r => !r.valid).map((r, i) => (
-                    <li key={i} className="p-2">
-                      <span className="font-mono text-muted-foreground mr-2">Row {r.rowNum}:</span>
-                      <span className="text-destructive">{r.reason}</span>
-                      {r.name && <span className="text-muted-foreground ml-2">({r.name}{r.email ? ` · ${r.email}` : ""}{r.telegram_user_id ? ` · TG:${r.telegram_user_id}` : ""})</span>}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            {(() => {
+              const addedCount = csvParsed.filter(r => r.valid && !r.duplicate).length;
+              const dupCount = csvParsed.filter(r => r.valid && r.duplicate).length;
+              const invalidCount = csvParsed.filter(r => !r.valid).length;
+              return (
+                <>
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div className="text-xs text-muted-foreground">
+                      {csvParsed.length === 0
+                        ? t("admin.users.validInvalid", { valid: 0, invalid: 0 })
+                        : t("admin.users.csvSummary", {
+                            defaultValue: "{{added}} added · {{dup}} already in DB · {{invalid}} invalid",
+                            added: addedCount,
+                            dup: dupCount,
+                            invalid: invalidCount,
+                          })}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {dupCount > 0 && (
+                        <Collapsible open={showDups} onOpenChange={setShowDups}>
+                          <CollapsibleTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground">
+                              {showDups ? <ChevronDown className="h-3 w-3 mr-1" /> : <ChevronRight className="h-3 w-3 mr-1" />}
+                              {t("admin.users.showDuplicates", { defaultValue: "Show duplicates" })} ({dupCount})
+                            </Button>
+                          </CollapsibleTrigger>
+                        </Collapsible>
+                      )}
+                      {invalidCount > 0 && (
+                        <Collapsible open={showErrors} onOpenChange={setShowErrors}>
+                          <CollapsibleTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-7 text-xs text-destructive">
+                              {showErrors ? <ChevronDown className="h-3 w-3 mr-1" /> : <ChevronRight className="h-3 w-3 mr-1" />}
+                              {t("admin.users.csvErr.showErrors", { defaultValue: "Show invalid rows" })} ({invalidCount})
+                            </Button>
+                          </CollapsibleTrigger>
+                        </Collapsible>
+                      )}
+                    </div>
+                  </div>
+                  {showDups && dupCount > 0 && (
+                    <div className="border rounded-md max-h-48 overflow-y-auto bg-muted/30">
+                      <ul className="text-xs divide-y divide-border">
+                        {csvParsed.filter(r => r.valid && r.duplicate).map((r, i) => (
+                          <li key={i} className="p-2">
+                            <span className="font-mono text-muted-foreground mr-2">Row {r.rowNum}:</span>
+                            <span className="text-foreground">{r.name}{r.telegram_username ? ` (@${r.telegram_username})` : r.email ? ` (${r.email})` : ""}</span>
+                            <span className="text-muted-foreground ml-2">— {t("admin.users.dupMatched", { defaultValue: "matched existing {{field}}", field: r.duplicateField })}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {showErrors && invalidCount > 0 && (
+                    <div className="border border-destructive/30 rounded-md max-h-48 overflow-y-auto bg-destructive/5">
+                      <ul className="text-xs divide-y divide-destructive/20">
+                        {csvParsed.filter(r => !r.valid).map((r, i) => (
+                          <li key={i} className="p-2">
+                            <span className="font-mono text-muted-foreground mr-2">Row {r.rowNum}:</span>
+                            <span className="text-destructive">{r.reason}</span>
+                            {r.name && <span className="text-muted-foreground ml-2">({r.name}{r.email ? ` · ${r.email}` : ""}{r.telegram_user_id ? ` · TG:${r.telegram_user_id}` : ""}{r.telegram_username ? ` · @${r.telegram_username}` : ""})</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
           <DialogFooter>
-            <Button onClick={importCsv} disabled={importing || csvParsed.filter(r => r.valid).length === 0}>
-              {importing ? t("admin.users.importing") : t("admin.users.importN", { n: csvParsed.filter(r => r.valid).length })}
+            {(() => {
+              const addedCount = csvParsed.filter(r => r.valid && !r.duplicate).length;
+              const hasAnyValid = csvParsed.some(r => r.valid);
+              const allDup = hasAnyValid && addedCount === 0;
+              return (
+                <Button onClick={importCsv} disabled={importing || addedCount === 0}>
+                  {importing
+                    ? t("admin.users.importing")
+                    : allDup
+                    ? t("admin.users.allInDb", { defaultValue: "All already in DB" })
+                    : t("admin.users.addNewN", { defaultValue: "Add {{n}} new users", n: addedCount })}
             </Button>
           </DialogFooter>
         </DialogContent>
