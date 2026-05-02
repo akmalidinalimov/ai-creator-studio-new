@@ -33,12 +33,19 @@ export const TopNav = () => {
     `text-sm font-medium transition-colors ${active ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`;
 
   const isAdmin = role === "admin";
-  const adminLinks = [
-    { to: "/admin/dashboard", label: t("nav.dashboard"), match: (p: string) => p === "/admin/dashboard" || p === "/admin" },
-    { to: "/admin/courses", label: t("nav.courses"), match: (p: string) => p.startsWith("/admin/courses") },
-    { to: "/admin/users", label: t("nav.users"), match: (p: string) => p.startsWith("/admin/users") },
-    { to: "/admin/groups", label: "Groups", match: (p: string) => p.startsWith("/admin/groups") },
-  ];
+  const isTeacher = role === "teacher";
+  const isStaff = isAdmin || isTeacher;
+  const adminLinks = isAdmin
+    ? [
+        { to: "/admin/dashboard", label: t("nav.dashboard"), match: (p: string) => p === "/admin/dashboard" || p === "/admin" },
+        { to: "/admin/courses", label: t("nav.courses"), match: (p: string) => p.startsWith("/admin/courses") },
+        { to: "/admin/users", label: t("nav.users"), match: (p: string) => p.startsWith("/admin/users") },
+        { to: "/admin/groups", label: "Groups", match: (p: string) => p.startsWith("/admin/groups") },
+      ]
+    : [
+        { to: "/admin/dashboard", label: t("nav.dashboard"), match: (p: string) => p === "/admin/dashboard" || p === "/admin" },
+        { to: "/admin/users", label: "Mening talabalarim", match: (p: string) => p.startsWith("/admin/users") },
+      ];
 
   return (
     <header className="sticky top-0 z-30 w-full border-b border-border bg-background/80 backdrop-blur-md">
