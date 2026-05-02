@@ -6,7 +6,14 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { lazy, Suspense } from "react";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { RequireAuth } from "@/components/RequireAuth";
+import { useAuth } from "@/contexts/AuthContext";
 import { HtmlLangSync } from "@/components/HtmlLangSync";
+
+const StudentOrStaffRedirect = ({ children }: { children: JSX.Element }) => {
+  const { role } = useAuth();
+  if (role === "admin" || role === "teacher") return <Navigate to="/admin/dashboard" replace />;
+  return children;
+};
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import ForgotPassword from "./pages/ForgotPassword";
