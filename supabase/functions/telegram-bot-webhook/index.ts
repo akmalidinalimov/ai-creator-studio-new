@@ -631,7 +631,8 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
   }
 
   // Always introduce/refresh the persistent reply keyboard after login.
-  await sendKeyboardHint(chatId, locale);
+  const adminAfterLogin = await isAdminUser(admin, profile.id);
+  await sendKeyboardHint(chatId, locale, adminAfterLogin);
 }
 
 async function handleCommand(admin: any, msg: any, cmdRaw: string) {
