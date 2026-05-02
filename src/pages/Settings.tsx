@@ -189,8 +189,8 @@ export default function Settings() {
           />
         </Card>
 
-        <Card className="p-5 space-y-4 shadow-soft">
-          <h2 className="font-semibold">{t("settings.passwordSection")}</h2>
+        <NudgePreferencesCard userId={user?.id} />
+
           <div className="space-y-1.5"><Label>{t("settings.newPassword")}</Label><Input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder={t("settings.minChars")} /></div>
           <Button onClick={updatePassword}>{t("auth.updatePassword")}</Button>
         </Card>
