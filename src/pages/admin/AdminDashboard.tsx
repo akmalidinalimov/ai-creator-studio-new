@@ -448,6 +448,15 @@ export default function AdminDashboard() {
             </table>
           </div>
         </Card>
+
+        <NeverLoggedInDialog
+          open={neverOpen}
+          onOpenChange={setNeverOpen}
+          rows={neverList}
+          sort={neverSort}
+          setSort={setNeverSort}
+          t={t}
+        />
       </div>
     </PageShell>
   );
