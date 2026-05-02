@@ -1690,6 +1690,11 @@ export type Database = {
         }
         Returns: Json
       }
+      weekly_digest_set_enabled: {
+        Args: { _enabled: boolean }
+        Returns: boolean
+      }
+      weekly_digest_status: { Args: never; Returns: boolean }
       zero_broken_streaks: { Args: never; Returns: undefined }
     }
     Enums: {
