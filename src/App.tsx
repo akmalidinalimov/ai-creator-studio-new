@@ -45,6 +45,7 @@ const GroupDetail = lazy(() => import("./pages/admin/GroupDetail"));
 const AdminReengagement = lazy(() => import("./pages/admin/AdminReengagement"));
 const AdminHomework = lazy(() => import("./pages/admin/AdminHomework"));
 const TeacherHomework = lazy(() => import("./pages/TeacherHomework"));
+const AdminNudges = lazy(() => import("./pages/admin/AdminNudges"));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 60_000, refetchOnWindowFocus: false } },
