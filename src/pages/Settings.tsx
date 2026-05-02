@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { Monitor, LogOut } from "lucide-react";
 import { SUPPORTED_LANGUAGES, type LanguageCode } from "@/i18n";
+import { HomeworkProfileSection } from "@/components/HomeworkProfileSection";
 
 interface AuthEvent {
   id: string;
