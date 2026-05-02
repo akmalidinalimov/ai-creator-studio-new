@@ -57,6 +57,7 @@ export default function AdminDashboard() {
   const [recentActions, setRecentActions] = useState<any[]>([]);
 
   useEffect(() => {
+    if (isTeacher) return;
     (async () => {
       const { data } = await supabase
         .from("admin_actions")
