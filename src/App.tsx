@@ -94,6 +94,7 @@ const App = () => (
             <Route path="/admin/reengagement" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminReengagement /></Suspense></RequireAuth>} />
             <Route path="/admin/homework" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminHomework /></Suspense></RequireAuth>} />
             <Route path="/teacher/homework" element={<RequireAuth staffOnly><Suspense fallback={<AdminFallback />}><TeacherHomework /></Suspense></RequireAuth>} />
+            <Route path="/admin/nudges" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminNudges /></Suspense></RequireAuth>} />
 
             <Route path="*" element={<NotFound />} />
           </Routes>
