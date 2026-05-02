@@ -111,7 +111,7 @@ export const TopNav = () => {
                     <Link to="/admin/reengagement"><Bell className="mr-2 h-4 w-4" /> 🎯 Reaktivatsiya</Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
-                    <Link to="/admin/ai-analytics"><BarChart3 className="mr-2 h-4 w-4" /> {t("nav.aiAnalytics")}</Link>
+                    <Link to="/admin/settings"><Settings className="mr-2 h-4 w-4" /> {t("nav.settings")}</Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link to="/admin/audit"><FileText className="mr-2 h-4 w-4" /> {t("nav.auditLog")}</Link>
