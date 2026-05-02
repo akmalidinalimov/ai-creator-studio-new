@@ -212,10 +212,16 @@ export default function AdminDashboard() {
       const allLessonIds = modules.flatMap((m: any) => (m.lessons || []).filter((l: any) => l.published).map((l: any) => l.id));
 
       // Course progress (completed lessons across this course)
-      const { data: completedRowsRaw } = allLessonIds.length
-        ? await supabase.from("lesson_progress").select("user_id, lesson_id, updated_at").in("lesson_id", allLessonIds).not("completed_at", "is", null).limit(50000)
-        : { data: [] as any[] };
-      const completedRows = isTeacher ? (completedRowsRaw || []).filter((r: any) => inScope(r.user_id)) : (completedRowsRaw || []);
+      let completedRows: any[] = [];
+      if (allLessonIds.length) {
+        if (isTeacher) {
+          const { data } = await supabase.rpc("staff_recent_lesson_progress", { _since: "1970-01-01T00:00:00Z" });
+          completedRows = (data || []).filter((r: any) => r.completed_at && allLessonIds.includes(r.lesson_id));
+        } else {
+          const { data } = await supabase.from("lesson_progress").select("user_id, lesson_id, updated_at").in("lesson_id", allLessonIds).not("completed_at", "is", null).limit(50000);
+          completedRows = data || [];
+        }
+      }
 
       const completedSet = new Map<string, Set<string>>(); // user -> set of lesson ids
       (completedRows || []).forEach((r: any) => {
