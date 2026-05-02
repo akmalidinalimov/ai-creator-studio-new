@@ -71,7 +71,8 @@ async function computeMetrics(admin: any) {
   const since24h = new Date(now - day).toISOString();
   const since7d = new Date(now - 7 * day).toISOString();
 
-  const { data: users } = await admin.rpc("admin_list_users");
+  const { data: users, error: usersErr } = await admin.rpc("admin_list_users_internal");
+  if (usersErr) console.error("admin_list_users_internal failed", usersErr);
   const students = (users || []).filter((u: any) => !u.is_admin);
   const total = students.length;
   const studentIds = students.map((u: any) => u.id);

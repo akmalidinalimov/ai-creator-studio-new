@@ -1136,6 +1136,21 @@ export type Database = {
           telegram_username: string
         }[]
       }
+      admin_list_users_internal: {
+        Args: never
+        Returns: {
+          avatar_url: string
+          created_at: string
+          email: string
+          id: string
+          is_admin: boolean
+          last_sign_in_at: string
+          name: string
+          status: Database["public"]["Enums"]["user_status"]
+          telegram_id: number
+          telegram_username: string
+        }[]
+      }
       get_public_setting: { Args: { _key: string }; Returns: Json }
       has_role: {
         Args: {

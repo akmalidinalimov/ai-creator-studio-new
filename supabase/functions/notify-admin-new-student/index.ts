@@ -65,10 +65,9 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ ok: true, skipped: "admin user" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Total student count (all non-admin profiles)
-    const { count: total } = await admin
-      .from("profiles")
-      .select("id", { count: "exact", head: true });
+    // Total student count = profiles minus admins (matches dashboard definition)
+    const { data: allUsers } = await admin.rpc("admin_list_users_internal");
+    const total = ((allUsers || []) as any[]).filter((u) => !u.is_admin).length;
 
     // Load admin recipients
     const { data: roles } = await admin.from("user_roles").select("user_id").eq("role", "admin");

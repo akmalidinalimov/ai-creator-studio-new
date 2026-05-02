@@ -654,9 +654,9 @@ type StudentRow = {
 // "activity" = auth_events.created_at OR lesson_progress.updated_at (per spec).
 async function loadStudentActivity(admin: any): Promise<StudentRow[]> {
   // 1) All students via admin_list_users RPC (gives last_sign_in_at + is_admin)
-  const { data: users, error: usersErr } = await admin.rpc("admin_list_users");
+  const { data: users, error: usersErr } = await admin.rpc("admin_list_users_internal");
   if (usersErr) {
-    console.error("admin_list_users failed", usersErr);
+    console.error("admin_list_users_internal failed", usersErr);
     return [];
   }
   const students = (users || []).filter((u: any) => !u.is_admin);
