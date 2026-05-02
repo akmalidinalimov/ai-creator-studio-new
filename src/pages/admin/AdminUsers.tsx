@@ -42,6 +42,7 @@ interface CsvRow {
   telegram_user_id?: number;
   telegram_username?: string;
   role: "student" | "admin";
+  group_name?: string;
   valid: boolean;
   reason?: string;
   duplicate?: boolean;
@@ -51,12 +52,12 @@ interface CsvRow {
 const randPassword = () =>
   Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6).toUpperCase();
 
-const CSV_TEMPLATE = `name,last_name,email,password,telegram_user_id,telegram_username,role
-Aida,Khan,aida@example.com,,123456789,@aidakhan,student
-Bilol,Karimov,bilol@example.com,SecurePass123!,,,student
-Chen,Wei,chen@example.com,,987654321,,student
-Dilnoza,Yusupova,dilnoza@example.com,,,,student
-Elnur,Aliyev,elnur@example.com,AdminPass456!,555555555,@elnura,admin
+const CSV_TEMPLATE = `name,last_name,email,password,telegram_user_id,telegram_username,role,group_name
+Aida,Khan,aida@example.com,,123456789,@aidakhan,student,Group A
+Bilol,Karimov,bilol@example.com,SecurePass123!,,,student,Group A
+Chen,Wei,chen@example.com,,987654321,,student,
+Dilnoza,Yusupova,dilnoza@example.com,,,,student,Group B
+Elnur,Aliyev,elnur@example.com,AdminPass456!,555555555,@elnura,admin,
 `;
 
 const FN_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
@@ -264,6 +265,7 @@ export default function AdminUsers() {
       const tgIdRaw = get(row, "telegram_user_id", 4);
       let tgUser = get(row, "telegram_username", 5);
       const roleRaw = (get(row, "role", 6) || "student").toLowerCase();
+      const groupName = get(row, "group_name", 7);
 
       // Strip @ from telegram username, lowercase, drop if empty
       tgUser = tgUser.replace(/^@/, "").toLowerCase();
@@ -349,6 +351,7 @@ export default function AdminUsers() {
         telegram_user_id: tgId,
         telegram_username: tgUser || undefined,
         role,
+        group_name: groupName ? groupName.trim() : undefined,
         valid,
         reason,
         duplicate,
@@ -739,8 +742,8 @@ export default function AdminUsers() {
                 </Button>
               </div>
               <div className="text-xs text-muted-foreground leading-relaxed">
-                <div>{t("admin.users.csvFormat")} <code className="text-[11px]">name,last_name,email,password,telegram_user_id,telegram_username,role</code></div>
-                <div className="mt-1">{t("admin.users.csvFormatHint")}</div>
+                <div>{t("admin.users.csvFormat")} <code className="text-[11px]">name,last_name,email,password,telegram_user_id,telegram_username,role,group_name</code></div>
+                <div className="mt-1">{t("admin.users.csvFormatHint")} <span className="text-[11px]">group_name is optional; unknown groups are auto-created.</span></div>
               </div>
             </div>
             <Textarea

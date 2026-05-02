@@ -16,6 +16,7 @@ type Student = {
   telegram_username?: string;
   telegram_user_id?: number | string;
   role?: "student" | "admin";
+  group_name?: string;
 };
 
 function genPassword(): string {
@@ -123,6 +124,28 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: "students[] required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // Resolve / auto-create groups by name (case-insensitive). Cache to avoid duplicate work.
+    const groupCache = new Map<string, string>(); // lowerName -> id
+    let defaultCourseForGroup: string | null = null;
+    const resolveGroupId = async (rawName?: string): Promise<string | null> => {
+      const nm = (rawName || "").trim();
+      if (!nm) return null;
+      const key = nm.toLowerCase();
+      if (groupCache.has(key)) return groupCache.get(key)!;
+      const { data: existing } = await admin.from("groups").select("id,name").ilike("name", nm).maybeSingle();
+      if (existing?.id) { groupCache.set(key, existing.id); return existing.id; }
+      if (defaultCourseForGroup === null) {
+        const { data: cs } = await admin.from("courses").select("id").limit(2);
+        defaultCourseForGroup = (cs && cs.length === 1) ? cs[0].id : "";
+      }
+      const { data: ins, error: insErr } = await admin.from("groups")
+        .insert({ name: nm, course_id: defaultCourseForGroup || null, teacher_id: null })
+        .select("id").single();
+      if (insErr || !ins) { console.error("group create failed", nm, insErr); return null; }
+      groupCache.set(key, ins.id);
+      return ins.id;
+    };
+
     const results: Array<{ email: string; status: string; password?: string; userId?: string; error?: string; action_link?: string | null }> = [];
     for (const s of students) {
       let email = (s.email || "").trim().toLowerCase();
@@ -171,6 +194,11 @@ Deno.serve(async (req) => {
           continue;
         }
         profilePatch.telegram_id = tgIdNum;
+      }
+      // Resolve group_name -> group_id (auto-create if needed)
+      if (s.group_name && s.group_name.trim()) {
+        const gid = await resolveGroupId(s.group_name);
+        if (gid) profilePatch.group_id = gid;
       }
       const { error: profErr } = await admin.from("profiles").update(profilePatch).eq("id", userId);
       if (profErr) {

@@ -445,6 +445,41 @@ export type Database = {
           },
         ]
       }
+      groups: {
+        Row: {
+          course_id: string | null
+          created_at: string
+          id: string
+          name: string
+          teacher_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          course_id?: string | null
+          created_at?: string
+          id?: string
+          name: string
+          teacher_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          course_id?: string | null
+          created_at?: string
+          id?: string
+          name?: string
+          teacher_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "groups_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       lesson_bookmarks: {
         Row: {
           created_at: string
@@ -859,6 +894,7 @@ export type Database = {
           created_at: string
           email: string
           goals: string | null
+          group_id: string | null
           id: string
           last_daily_reminder_at: string | null
           last_inactive_warning_at: string | null
@@ -884,6 +920,7 @@ export type Database = {
           created_at?: string
           email: string
           goals?: string | null
+          group_id?: string | null
           id: string
           last_daily_reminder_at?: string | null
           last_inactive_warning_at?: string | null
@@ -909,6 +946,7 @@ export type Database = {
           created_at?: string
           email?: string
           goals?: string | null
+          group_id?: string | null
           id?: string
           last_daily_reminder_at?: string | null
           last_inactive_warning_at?: string | null
@@ -929,7 +967,15 @@ export type Database = {
           updated_at?: string
           weekly_goal_lessons?: number | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "profiles_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       quiz_attempts: {
         Row: {
@@ -1182,7 +1228,7 @@ export type Database = {
       }
     }
     Enums: {
-      app_role: "admin" | "student"
+      app_role: "admin" | "student" | "teacher"
       chat_role: "user" | "assistant"
       knowledge_scope: "platform" | "course"
       knowledge_status: "pending" | "processing" | "ready" | "failed"
@@ -1314,7 +1360,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["admin", "student"],
+      app_role: ["admin", "student", "teacher"],
       chat_role: ["user", "assistant"],
       knowledge_scope: ["platform", "course"],
       knowledge_status: ["pending", "processing", "ready", "failed"],
