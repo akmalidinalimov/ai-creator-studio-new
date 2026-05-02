@@ -132,6 +132,7 @@ export default function AdminDashboard() {
         logins30d: (events30 || []).length,
         active7d: active7,
         completions,
+        activated,
       });
 
       // Daily logins (30d)
