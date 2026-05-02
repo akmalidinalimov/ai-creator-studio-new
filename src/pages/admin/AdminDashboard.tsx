@@ -207,6 +207,8 @@ export default function AdminDashboard() {
         completions,
         activated,
         neverLoggedIn: neverList.length,
+        inactive3d: inactive3.length,
+        inactive7d: inactive7.length,
       });
 
       // Daily logins (30d)
