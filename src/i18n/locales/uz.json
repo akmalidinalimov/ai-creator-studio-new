@@ -477,7 +477,11 @@
         "activated": "Bir marta kirgan",
         "activatedTooltip": "Hech bo'lmaganda bir marta saytga kirgan o'quvchilar soni",
         "neverLoggedIn": "Hech qachon kirmagan",
-        "neverLoggedInTooltip": "Ro'yxatdan o'tgan, lekin hali biror marta saytga kirmagan o'quvchilar. Ro'yxatni ko'rish uchun bosing."
+        "neverLoggedInTooltip": "Ro'yxatdan o'tgan, lekin hali biror marta saytga kirmagan o'quvchilar. Ro'yxatni ko'rish uchun bosing.",
+        "inactive3d": "3+ kun faolsiz",
+        "inactive3dTooltip": "Kamida bir marta kirgan, lekin oxirgi 3 kun ichida hech qanday faollik (login yoki dars) bo'lmagan talabalar.",
+        "inactive7d": "7+ kun faolsiz",
+        "inactive7dTooltip": "Kamida bir marta kirgan, lekin oxirgi 7 kun ichida hech qanday faollik (login yoki dars) bo'lmagan talabalar."
       },
       "neverLoggedIn": {
         "title": "Hech qachon kirmagan o'quvchilar",
@@ -524,7 +528,20 @@
           "target": "Obyekt"
         }
       },
-      "loadFailed": "Analitikani yuklab bo'lmadi"
+      "loadFailed": "Analitikani yuklab bo'lmadi",
+      "inactiveDialog": {
+        "title3": "3+ kun faolsiz talabalar",
+        "title7": "7+ kun faolsiz talabalar",
+        "empty": "Faolsiz talaba yo'q.",
+        "exportCsv": "CSV yuklab olish",
+        "cols": {
+          "name": "Ism",
+          "tgUsername": "Telegram",
+          "email": "Email",
+          "lastActivity": "Oxirgi faollik",
+          "daysSince": "Faolsiz kunlar"
+        }
+      }
     },
     "courses": {
       "title": "Kurslar",
@@ -960,6 +977,17 @@
       "scaling": "📹 30 soatlik kurslar uchun video masshtablash",
       "scalingDesc": "To'g'ridan-to'g'ri yuklash <200 MB darslar uchun ishlaydi. Katta hajmda HD video uchun (500+ talaba) Bunny Stream (~$1/oy 100 GB ga, global CDN, avtomatik HLS) yoki Mux dan foydalaning. Dars muharririda video manbasini Embed → Bunny / Mux ga o'tkazing va video ID ni joylashtiring. Pleyer hls.js orqali avtomatik HLS adaptive bitrate ishlatadi.",
       "copied": "Nusxalandi"
+    },
+    "notifications": {
+      "sectionStudent": "Talabalar uchun bildirishnomalar",
+      "sectionAdmin": "Admin bildirishnomalari",
+      "labels": {
+        "admin_daily_brief": "Admin — Kunlik xulosa",
+        "admin_new_student": "Admin — Yangi talaba",
+        "admin_inactive_3d_digest": "Admin — 3 kun faolsiz xulosasi",
+        "admin_inactive_7d_digest": "Admin — 7 kun faolsiz xulosasi",
+        "admin_course_completion": "Admin — Kurs tugatildi"
+      }
     }
   },
   "weekly_study_time": {

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ResponsiveContainer, AreaChart, Area, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import { toast } from "sonner";
-import { Users as UsersIcon, LogIn, Activity, Trophy, Shield, UserCheck, UserX, Download, ArrowUpDown } from "lucide-react";
+import { Users as UsersIcon, LogIn, Activity, Trophy, Shield, UserCheck, UserX, Download, ArrowUpDown, Moon, MoonStar } from "lucide-react";
 import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Link } from "react-router-dom";
@@ -35,10 +35,13 @@ export default function AdminDashboard() {
   const [courseId, setCourseId] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
-  const [stats, setStats] = useState({ total: 0, logins30d: 0, active7d: 0, completions: 0, activated: 0, neverLoggedIn: 0 });
+  const [stats, setStats] = useState({ total: 0, logins30d: 0, active7d: 0, completions: 0, activated: 0, neverLoggedIn: 0, inactive3d: 0, inactive7d: 0 });
   const [neverList, setNeverList] = useState<any[]>([]);
   const [neverOpen, setNeverOpen] = useState(false);
   const [neverSort, setNeverSort] = useState<{ key: string; dir: "asc" | "desc" }>({ key: "created_at", dir: "desc" });
+  const [inactive3List, setInactive3List] = useState<any[]>([]);
+  const [inactive7List, setInactive7List] = useState<any[]>([]);
+  const [inactiveOpen, setInactiveOpen] = useState<null | 3 | 7>(null);
   const [dailyLogins, setDailyLogins] = useState<{ day: string; count: number }[]>([]);
   const [dau, setDau] = useState<{ day: string; count: number }[]>([]);
   const [lessonsPerDay, setLessonsPerDay] = useState<{ day: string; count: number }[]>([]);
@@ -112,6 +115,63 @@ export default function AdminDashboard() {
         }));
       setNeverList(neverList);
 
+      // Inactive 3d / 7d: students who logged in at least once but no auth_event
+      // OR lesson_progress activity in the window. Reuse events30 + we'll fetch
+      // lesson_progress within the 30-day window further below; here we need all-time
+      // last activity, so derive from events30 (30d window is sufficient — anything
+      // older than 30d already counts as ">30d inactive", which is also >7d inactive).
+      const lastAuthByUser = new Map<string, number>();
+      (events30 || []).forEach((e: any) => {
+        const t = new Date(e.created_at).getTime();
+        const cur = lastAuthByUser.get(e.user_id) || 0;
+        if (t > cur) lastAuthByUser.set(e.user_id, t);
+      });
+      // lesson_progress within 30d (we already have prog7; fetch a wider window)
+      const { data: prog30Activity } = await supabase
+        .from("lesson_progress")
+        .select("user_id, updated_at")
+        .gte("updated_at", new Date(Date.now() - 30 * 86400_000).toISOString())
+        .limit(100000);
+      const lastLessonByUser = new Map<string, number>();
+      (prog30Activity || []).forEach((p: any) => {
+        const t = new Date(p.updated_at).getTime();
+        const cur = lastLessonByUser.get(p.user_id) || 0;
+        if (t > cur) lastLessonByUser.set(p.user_id, t);
+      });
+
+      const now = Date.now();
+      const threshold3 = now - 3 * 86400_000;
+      const threshold7 = now - 7 * 86400_000;
+      const buildInactive = (thresholdMs: number) =>
+        students
+          .filter((u: any) => u.last_sign_in_at) // never-logged-in shown in own tile
+          .map((u: any) => {
+            const la = Math.max(lastAuthByUser.get(u.id) || 0, lastLessonByUser.get(u.id) || 0);
+            return { u, lastActivity: la };
+          })
+          .filter((x: any) => x.lastActivity < thresholdMs)
+          .map(({ u, lastActivity }: any) => ({
+            id: u.id,
+            name: [u.name, u.last_name].filter(Boolean).join(" ") || "—",
+            telegram_username: u.telegram_username || null,
+            telegram_id: u.telegram_id || null,
+            email: u.email || "",
+            last_activity_at: lastActivity > 0 ? new Date(lastActivity).toISOString() : null,
+            days_since: lastActivity > 0
+              ? Math.floor((now - lastActivity) / 86400_000)
+              : null,
+          }))
+          .sort((a: any, b: any) => {
+            const av = a.last_activity_at ? new Date(a.last_activity_at).getTime() : 0;
+            const bv = b.last_activity_at ? new Date(b.last_activity_at).getTime() : 0;
+            return av - bv; // most-stale first
+          });
+
+      const inactive3 = buildInactive(threshold3);
+      const inactive7 = buildInactive(threshold7);
+      setInactive3List(inactive3);
+      setInactive7List(inactive7);
+
       // Module + lesson info for course
       const { data: mods } = await supabase
         .from("modules")
@@ -147,6 +207,8 @@ export default function AdminDashboard() {
         completions,
         activated,
         neverLoggedIn: neverList.length,
+        inactive3d: inactive3.length,
+        inactive7d: inactive7.length,
       });
 
       // Daily logins (30d)
@@ -286,7 +348,7 @@ export default function AdminDashboard() {
           </Select>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3">
           <StatCard icon={<UsersIcon className="h-4 w-4" />} label={t("admin.dashboard.stats.totalStudents")} value={stats.total} />
           <StatCard icon={<LogIn className="h-4 w-4" />} label={t("admin.dashboard.stats.logins30d")} value={stats.logins30d} />
           <StatCard icon={<Activity className="h-4 w-4" />} label={t("admin.dashboard.stats.active7d")} value={stats.active7d} />
@@ -299,6 +361,22 @@ export default function AdminDashboard() {
             tooltip={t("admin.dashboard.stats.neverLoggedInTooltip")}
             variant="warning"
             onClick={() => setNeverOpen(true)}
+          />
+          <StatCard
+            icon={<Moon className="h-4 w-4" />}
+            label={t("admin.dashboard.stats.inactive3d")}
+            value={stats.inactive3d}
+            tooltip={t("admin.dashboard.stats.inactive3dTooltip")}
+            variant="warning"
+            onClick={() => setInactiveOpen(3)}
+          />
+          <StatCard
+            icon={<MoonStar className="h-4 w-4" />}
+            label={t("admin.dashboard.stats.inactive7d")}
+            value={stats.inactive7d}
+            tooltip={t("admin.dashboard.stats.inactive7dTooltip")}
+            variant="warning"
+            onClick={() => setInactiveOpen(7)}
           />
         </div>
 
@@ -457,6 +535,14 @@ export default function AdminDashboard() {
           setSort={setNeverSort}
           t={t}
         />
+
+        <InactiveDialog
+          open={inactiveOpen !== null}
+          window={inactiveOpen ?? 3}
+          onOpenChange={(v) => !v && setInactiveOpen(null)}
+          rows={inactiveOpen === 7 ? inactive7List : inactive3List}
+          t={t}
+        />
       </div>
     </PageShell>
   );
@@ -594,6 +680,87 @@ function NeverLoggedInDialog({ open, onOpenChange, rows, sort, setSort, t }: {
                   <td className="p-3 text-muted-foreground">{r.email || "—"}</td>
                   <td className="p-3 text-muted-foreground whitespace-nowrap">{new Date(r.created_at).toLocaleDateString()}</td>
                   <td className="p-3 tabular-nums">{r.days_since}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function InactiveDialog({ open, onOpenChange, rows, window: win, t }: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  rows: any[];
+  window: 3 | 7;
+  t: (k: string, opts?: any) => string;
+}) {
+  const exportCsv = () => {
+    const headers = ["name", "telegram_username", "telegram_id", "email", "last_activity_at", "days_since"];
+    const esc = (v: any) => {
+      const s = v == null ? "" : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [headers.join(",")].concat(
+      rows.map((r) => headers.map((h) => esc(r[h])).join(","))
+    );
+    const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `inactive-${win}d-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const titleKey = win === 7 ? "admin.dashboard.inactiveDialog.title7" : "admin.dashboard.inactiveDialog.title3";
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center justify-between gap-3 pr-6">
+            <span>{t(titleKey)} ({rows.length})</span>
+            <Button size="sm" variant="outline" onClick={exportCsv} disabled={rows.length === 0}>
+              <Download className="h-4 w-4" />{t("admin.dashboard.inactiveDialog.exportCsv")}
+            </Button>
+          </DialogTitle>
+        </DialogHeader>
+        <div className="max-h-[65vh] overflow-auto border rounded-md">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/40 text-xs sticky top-0">
+              <tr>
+                <th className="text-left p-3">{t("admin.dashboard.inactiveDialog.cols.name")}</th>
+                <th className="text-left p-3">{t("admin.dashboard.inactiveDialog.cols.tgUsername")}</th>
+                <th className="text-left p-3">{t("admin.dashboard.inactiveDialog.cols.email")}</th>
+                <th className="text-left p-3">{t("admin.dashboard.inactiveDialog.cols.lastActivity")}</th>
+                <th className="text-left p-3">{t("admin.dashboard.inactiveDialog.cols.daysSince")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">{t("admin.dashboard.inactiveDialog.empty")}</td></tr>
+              )}
+              {rows.map((r) => (
+                <tr key={r.id} className="border-t hover:bg-muted/20">
+                  <td className="p-3 font-medium">{r.name}</td>
+                  <td className="p-3">
+                    {r.telegram_username ? (
+                      <a
+                        href={`https://t.me/${r.telegram_username}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline"
+                      >@{r.telegram_username}</a>
+                    ) : "—"}
+                  </td>
+                  <td className="p-3 text-muted-foreground">{r.email || "—"}</td>
+                  <td className="p-3 text-muted-foreground whitespace-nowrap">
+                    {r.last_activity_at ? new Date(r.last_activity_at).toLocaleDateString() : "—"}
+                  </td>
+                  <td className="p-3 tabular-nums">{r.days_since ?? "∞"}</td>
                 </tr>
               ))}
             </tbody>

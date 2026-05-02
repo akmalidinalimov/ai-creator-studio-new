@@ -27,7 +27,7 @@ interface VariableRow {
   description: string | null;
 }
 
-const TEMPLATE_ORDER = [
+const STUDENT_ORDER = [
   "daily_reminder",
   "streak_warning",
   "lesson_complete",
@@ -39,6 +39,16 @@ const TEMPLATE_ORDER = [
   "settings_confirm",
 ];
 
+const ADMIN_ORDER = [
+  "admin_daily_brief",
+  "admin_new_student",
+  "admin_inactive_3d_digest",
+  "admin_inactive_7d_digest",
+  "admin_course_completion",
+];
+
+const TEMPLATE_ORDER = [...STUDENT_ORDER, ...ADMIN_ORDER];
+
 const TEMPLATE_LABEL: Record<string, string> = {
   daily_reminder: "Daily reminder",
   streak_warning: "Streak warning",
@@ -49,6 +59,11 @@ const TEMPLATE_LABEL: Record<string, string> = {
   inactive_7: "Inactive — day 7",
   inactive_14: "Inactive — day 14",
   settings_confirm: "Settings confirmation",
+  admin_daily_brief: "Admin — Daily brief",
+  admin_new_student: "Admin — New student enrolled",
+  admin_inactive_3d_digest: "Admin — 3-day inactive digest",
+  admin_inactive_7d_digest: "Admin — 7-day inactive digest",
+  admin_course_completion: "Admin — Course completion",
 };
 
 function interpolate(s: string, vars: Record<string, string | number>): string {
@@ -140,7 +155,76 @@ export default function AdminNotifications() {
     });
   };
 
-  const orderedKeys = TEMPLATE_ORDER.filter((k) => rows.some((r) => r.template_key === k));
+  const presentKeys = new Set(rows.map((r) => r.template_key));
+  const studentKeys = STUDENT_ORDER.filter((k) => presentKeys.has(k));
+  const adminKeys = ADMIN_ORDER.filter((k) => presentKeys.has(k));
+
+  const renderCard = (key: string) => {
+    const supportedVars = variablesByKey.get(key) || [];
+    const localizedLabel = t(`admin.notifications.labels.${key}`, { defaultValue: TEMPLATE_LABEL[key] || key });
+    return (
+      <Card key={key} className="p-5 space-y-4 shadow-soft">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <h2 className="font-semibold text-lg">{localizedLabel}</h2>
+            <p className="text-xs text-muted-foreground font-mono">{key}</p>
+          </div>
+          {supportedVars.length > 0 && (
+            <div className="text-xs text-muted-foreground max-w-xl text-right">
+              Variables:{" "}
+              {supportedVars.map((v) => (
+                <code key={v.variable_name} className="ml-1 px-1.5 py-0.5 bg-muted rounded">
+                  {`{{${v.variable_name}}}`}
+                </code>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {LOCALES.map((locale) => {
+            const id = `${key}:${locale}`;
+            const draft = drafts[id];
+            if (!draft) return (
+              <div key={locale} className="border rounded-md p-3 text-xs text-muted-foreground">
+                {locale.toUpperCase()} — missing
+              </div>
+            );
+            return (
+              <div key={locale} className="space-y-2 border rounded-md p-3">
+                <div className="flex items-center justify-between">
+                  <Label className="uppercase text-xs">{locale}</Label>
+                  <div className="flex gap-1">
+                    <Button size="sm" variant="ghost" onClick={() => handlePreview(key, locale)}>
+                      <Eye className="h-3.5 w-3.5" /> Preview
+                    </Button>
+                    <Button size="sm" onClick={() => handleSave(key, locale)} disabled={saving === id}>
+                      {saving === id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                      Save
+                    </Button>
+                  </div>
+                </div>
+                <Textarea
+                  rows={6}
+                  value={draft.body}
+                  onChange={(e) => setDrafts((d) => ({ ...d, [id]: { ...d[id], body: e.target.value } }))}
+                  className="font-mono text-xs"
+                />
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Button label</Label>
+                  <Input
+                    value={draft.button_label}
+                    onChange={(e) => setDrafts((d) => ({ ...d, [id]: { ...d[id], button_label: e.target.value } }))}
+                    placeholder="(optional)"
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+    );
+  };
 
   return (
     <PageShell>
@@ -153,72 +237,25 @@ export default function AdminNotifications() {
         {loading ? (
           <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
         ) : (
-          <div className="space-y-6">
-            {orderedKeys.map((key) => {
-              const supportedVars = variablesByKey.get(key) || [];
-              return (
-                <Card key={key} className="p-5 space-y-4 shadow-soft">
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <div>
-                      <h2 className="font-semibold text-lg">{TEMPLATE_LABEL[key] || key}</h2>
-                      <p className="text-xs text-muted-foreground font-mono">{key}</p>
-                    </div>
-                    {supportedVars.length > 0 && (
-                      <div className="text-xs text-muted-foreground max-w-xl text-right">
-                        Variables:{" "}
-                        {supportedVars.map((v) => (
-                          <code key={v.variable_name} className="ml-1 px-1.5 py-0.5 bg-muted rounded">
-                            {`{{${v.variable_name}}}`}
-                          </code>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+          <div className="space-y-8">
+            {studentKeys.length > 0 && (
+              <section className="space-y-4">
+                <h2 className="text-xl font-semibold">{t("admin.notifications.sectionStudent")}</h2>
+                <div className="space-y-6">{studentKeys.map(renderCard)}</div>
+              </section>
+            )}
 
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                    {LOCALES.map((locale) => {
-                      const id = `${key}:${locale}`;
-                      const draft = drafts[id];
-                      if (!draft) return (
-                        <div key={locale} className="border rounded-md p-3 text-xs text-muted-foreground">
-                          {locale.toUpperCase()} — missing
-                        </div>
-                      );
-                      return (
-                        <div key={locale} className="space-y-2 border rounded-md p-3">
-                          <div className="flex items-center justify-between">
-                            <Label className="uppercase text-xs">{locale}</Label>
-                            <div className="flex gap-1">
-                              <Button size="sm" variant="ghost" onClick={() => handlePreview(key, locale)}>
-                                <Eye className="h-3.5 w-3.5" /> Preview
-                              </Button>
-                              <Button size="sm" onClick={() => handleSave(key, locale)} disabled={saving === id}>
-                                {saving === id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                                Save
-                              </Button>
-                            </div>
-                          </div>
-                          <Textarea
-                            rows={6}
-                            value={draft.body}
-                            onChange={(e) => setDrafts((d) => ({ ...d, [id]: { ...d[id], body: e.target.value } }))}
-                            className="font-mono text-xs"
-                          />
-                          <div className="space-y-1">
-                            <Label className="text-xs text-muted-foreground">Button label</Label>
-                            <Input
-                              value={draft.button_label}
-                              onChange={(e) => setDrafts((d) => ({ ...d, [id]: { ...d[id], button_label: e.target.value } }))}
-                              placeholder="(optional)"
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </Card>
-              );
-            })}
+            {adminKeys.length > 0 && (
+              <section className="space-y-4">
+                <div className="border-t pt-6">
+                  <h2 className="text-xl font-semibold">{t("admin.notifications.sectionAdmin")}</h2>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Sent to admins (role=admin) via Telegram. Same variable syntax as student templates.
+                  </p>
+                </div>
+                <div className="space-y-6">{adminKeys.map(renderCard)}</div>
+              </section>
+            )}
           </div>
         )}
 
