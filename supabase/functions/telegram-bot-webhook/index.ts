@@ -433,8 +433,9 @@ function getMainKeyboard(locale: Locale) {
   return {
     keyboard: [
       [{ text: t.kbDavom }],
-      [{ text: t.kbStreak }, { text: t.kbCert }],
-      [{ text: t.kbLang }],
+      [{ text: t.kbStreak }, { text: t.kbHomework }],
+      [{ text: t.kbCert }, { text: t.kbLang }],
+      [{ text: t.kbHelp }],
     ],
     resize_keyboard: true,
     is_persistent: true,
