@@ -1,88 +1,124 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ChevronDown, ChevronRight } from "lucide-react";
 
-interface Row {
-  id: string; assignment_id: string; submitted_at: string;
-  score: number | null; is_late: boolean;
-  module_id: string; assignment_title: string; max_score: number;
-  course_id: string; lesson_id: string | null;
+interface ModuleAgg {
+  module_id: string;
+  module_title: string;
+  course_title?: string;
+  scored_tasks: number;
+  total_active_tasks: number;
+  avg_norm: number | null;
+  tasks: { id: string; task_number: number; title: string; max_score: number; score: number | null; feedback: string | null }[];
 }
 
 export function HomeworkProfileSection() {
   const { user } = useAuth();
-  const [rows, setRows] = useState<Row[]>([]);
+  const [mods, setMods] = useState<ModuleAgg[]>([]);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [overall, setOverall] = useState<number | null>(null);
 
   useEffect(() => {
     if (!user) return;
     (async () => {
       const { data: subs } = await supabase
         .from("homework_submissions")
-        .select("id, assignment_id, submitted_at, score, is_late")
+        .select("id, assignment_id, score, score_feedback")
         .eq("user_id", user.id);
-      if (!subs || !subs.length) { setRows([]); return; }
-      const aIds = subs.map((s: any) => s.assignment_id);
+      const subMap = new Map((subs || []).map((s: any) => [s.assignment_id, s]));
+
       const { data: assigns } = await supabase
         .from("homework_assignments")
-        .select("id, title, max_score, module_id, modules(course_id, lessons(id, position))")
-        .in("id", aIds);
-      const aMap = new Map((assigns || []).map((a: any) => {
-        const lastLesson = (a.modules?.lessons || []).sort((x: any, y: any) => y.position - x.position)[0];
-        return [a.id, { ...a, course_id: a.modules?.course_id, lesson_id: lastLesson?.id }];
-      }));
-      setRows(subs.map((s: any) => {
-        const a: any = aMap.get(s.assignment_id) || {};
-        return { ...s, assignment_title: a.title || "", max_score: a.max_score || 10, module_id: a.module_id, course_id: a.course_id, lesson_id: a.lesson_id };
-      }));
+        .select("id, title, max_score, task_number, is_active, module_id, modules(id, title, course_id, courses(title))")
+        .eq("is_active", true)
+        .order("task_number");
+
+      const byMod = new Map<string, ModuleAgg>();
+      (assigns as any[] || []).forEach((a) => {
+        const mid = a.module_id;
+        if (!byMod.has(mid)) {
+          byMod.set(mid, {
+            module_id: mid,
+            module_title: a.modules?.title || "—",
+            course_title: a.modules?.courses?.title,
+            scored_tasks: 0,
+            total_active_tasks: 0,
+            avg_norm: null,
+            tasks: [],
+          });
+        }
+        const agg = byMod.get(mid)!;
+        agg.total_active_tasks++;
+        const s = subMap.get(a.id) as any;
+        agg.tasks.push({
+          id: a.id, task_number: a.task_number, title: a.title, max_score: a.max_score,
+          score: s?.score ?? null, feedback: s?.score_feedback ?? null,
+        });
+        if (s?.score != null) agg.scored_tasks++;
+      });
+
+      const list = Array.from(byMod.values()).map((m) => {
+        const scored = m.tasks.filter((t) => t.score != null);
+        m.avg_norm = scored.length
+          ? +((scored.reduce((acc, t) => acc + Number(t.score) / t.max_score, 0) / scored.length) * 10).toFixed(1)
+          : null;
+        m.tasks.sort((a, b) => a.task_number - b.task_number);
+        return m;
+      });
+      setMods(list);
+
+      const withScores = list.filter((m) => m.avg_norm != null);
+      setOverall(withScores.length ? +(withScores.reduce((a, m) => a + (m.avg_norm || 0), 0) / withScores.length).toFixed(1) : null);
     })();
   }, [user]);
-
-  const scored = rows.filter(r => r.score != null);
-  const avg = scored.length ? scored.reduce((s, r) => s + (r.score || 0), 0) / scored.length : null;
 
   return (
     <Card className="p-5 space-y-3 shadow-soft">
       <div className="flex items-center justify-between">
         <h2 className="font-semibold">📝 Uy vazifalari</h2>
-        {avg != null && <div className="text-sm">O'rtacha baho: <span className="font-semibold">{avg.toFixed(1)} / 10</span></div>}
+        {overall != null && <div className="text-sm">Umumiy o'rtacha: <span className="font-semibold">{overall}/10</span></div>}
       </div>
-      {rows.length === 0 && <p className="text-sm text-muted-foreground">Hali topshiriqlar yo'q.</p>}
-      {rows.length > 0 && (
-        <div className="overflow-x-auto -mx-5">
-          <table className="w-full text-sm">
-            <thead className="text-xs text-muted-foreground">
-              <tr>
-                <th className="text-left px-5 py-2 font-medium">Vazifa</th>
-                <th className="text-left px-5 py-2 font-medium">Topshirilgan</th>
-                <th className="text-right px-5 py-2 font-medium">Baho</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className="border-t">
-                  <td className="px-5 py-2.5">{r.assignment_title}</td>
-                  <td className="px-5 py-2.5 text-xs">
-                    {new Date(r.submitted_at).toLocaleDateString()}
-                    {r.is_late && <Badge variant="destructive" className="ml-2">Kech</Badge>}
-                  </td>
-                  <td className="px-5 py-2.5 text-right tabular-nums">
-                    {r.score != null ? <span className="font-semibold">{r.score}/{r.max_score}</span> : <span className="text-muted-foreground">—</span>}
-                  </td>
-                  <td className="px-5 py-2.5 text-right">
-                    {r.course_id && r.lesson_id && (
-                      <Link to={`/lesson/${r.course_id}/${r.lesson_id}`} className="text-primary text-xs hover:underline">Ko'rish</Link>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {mods.length === 0 && <p className="text-sm text-muted-foreground">Hali topshiriqlar yo'q.</p>}
+      <div className="space-y-2">
+        {mods.map((m) => {
+          const isOpen = !!open[m.module_id];
+          return (
+            <div key={m.module_id} className="border rounded-lg">
+              <button type="button" onClick={() => setOpen((o) => ({ ...o, [m.module_id]: !o[m.module_id] }))}
+                className="w-full flex items-center justify-between p-3 hover:bg-muted/30 text-left">
+                <div className="min-w-0">
+                  {m.course_title && <div className="text-xs text-muted-foreground">{m.course_title}</div>}
+                  <div className="font-medium truncate">{m.module_title}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {m.scored_tasks}/{m.total_active_tasks} baholangan
+                    {m.avg_norm != null && ` · O'rtacha: ${m.avg_norm}/10`}
+                  </div>
+                </div>
+                {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </button>
+              {isOpen && (
+                <div className="p-3 border-t space-y-2">
+                  {m.tasks.map((t) => (
+                    <div key={t.id} className="flex items-start gap-3 text-sm">
+                      <Badge variant="outline">V{t.task_number}</Badge>
+                      <div className="flex-1 min-w-0">
+                        <div className="truncate">{t.title}</div>
+                        {t.feedback && <div className="text-xs text-muted-foreground italic mt-0.5">"{t.feedback}"</div>}
+                      </div>
+                      <div className="text-xs tabular-nums">
+                        {t.score != null ? <span className="font-semibold">{t.score}/{t.max_score}</span> : <span className="text-muted-foreground">—</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </Card>
   );
 }
