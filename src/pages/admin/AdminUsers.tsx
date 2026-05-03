@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { getSiteUrl } from "@/lib/siteUrl";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -175,7 +176,7 @@ export default function AdminUsers() {
         students: rows,
         courseIds: Array.from(newCourses),
         send_invite: sendInvite,
-        redirectTo: `${window.location.origin}/reset-password`,
+        redirectTo: `${getSiteUrl()}/reset-password`,
         ...extra,
       }),
     });
@@ -374,7 +375,7 @@ export default function AdminUsers() {
         students: toCreate,
         send_invite: true,
         csv_import: true,
-        redirectTo: `${window.location.origin}/reset-password`,
+        redirectTo: `${getSiteUrl()}/reset-password`,
       }),
     });
     const res = await r.json();
@@ -393,7 +394,7 @@ export default function AdminUsers() {
         body: JSON.stringify({
           action: "resend_welcome",
           email,
-          redirectTo: `${window.location.origin}/reset-password`,
+          redirectTo: `${getSiteUrl()}/reset-password`,
         }),
       });
       const j = await r.json();
@@ -473,7 +474,7 @@ export default function AdminUsers() {
 
   const resetPassword = async (user: UserRow) => {
     const { error } = await supabase.auth.resetPasswordForEmail(user.email, {
-      redirectTo: `${window.location.origin}/reset-password`,
+      redirectTo: `${getSiteUrl()}/reset-password`,
     });
     if (error) return toast.error(error.message);
     toast.success(t("admin.users.toasts.passwordReset", { email: user.email }));

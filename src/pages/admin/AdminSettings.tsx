@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { getSiteUrl } from "@/lib/siteUrl";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -184,7 +185,7 @@ export default function AdminSettings() {
           </div>
           {savedUsername ? (
             <div className="rounded-lg border bg-muted/30 p-6 flex justify-center">
-              <TelegramDeeplinkButton onSuccess={() => { toast.success("✓"); window.location.href = `${window.location.origin}/dashboard`; }} />
+              <TelegramDeeplinkButton onSuccess={() => { toast.success("✓"); window.location.href = `${getSiteUrl()}/dashboard`; }} />
             </div>
           ) : (
             <p className="text-sm text-muted-foreground italic">{t("admin.settings.saveBotFirst")}</p>

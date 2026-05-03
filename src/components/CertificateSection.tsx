@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getSiteUrl } from "@/lib/siteUrl";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card } from "@/components/ui/card";
@@ -87,7 +88,7 @@ export function CertificateSection() {
     );
   }
 
-  const verifyUrl = `${window.location.origin}/verify/${cert.verification_token}`;
+  const verifyUrl = `${getSiteUrl()}/verify/${cert.verification_token}`;
   const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(verifyUrl)}&text=${encodeURIComponent("AI Creators kursini tugatdim! 🎉")}`;
 
   return (
