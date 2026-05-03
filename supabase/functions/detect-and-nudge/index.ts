@@ -12,7 +12,7 @@ const corsHeaders = {
 };
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
-const SITE_URL = (Deno.env.get("SITE_URL") || "https://www.aicreator.academy").replace(/\/$/, "");
+const SITE_URL = (Deno.env.get("SITE_URL") || "https://aicreator.academy").replace(/\/$/, "");
 
 type NudgeType = "inactive_3d" | "inactive_7d" | "stuck_lesson" | "module_complete";
 

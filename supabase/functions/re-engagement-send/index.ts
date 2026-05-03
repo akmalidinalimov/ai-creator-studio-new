@@ -11,7 +11,7 @@ const corsHeaders = {
 };
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
-const SITE_URL = (Deno.env.get("SITE_URL") || "https://www.aicreator.academy").replace(/\/$/, "");
+const SITE_URL = (Deno.env.get("SITE_URL") || "https://aicreator.academy").replace(/\/$/, "");
 
 async function tgSend(chatId: number, text: string, buttonText: string, url: string) {
   const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
