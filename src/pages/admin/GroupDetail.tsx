@@ -20,6 +20,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ChevronLeft, Pencil, Plus, Upload as UploadIcon, X, UserMinus } from "lucide-react";
 import { toast } from "sonner";
+import { GroupTopicsSection } from "@/components/admin/GroupTopicsSection";
 
 type Overview = {
   group_id: string;
@@ -356,6 +357,9 @@ export default function GroupDetail() {
               <Card className="p-4"><div className="text-xs text-muted-foreground">Avg score</div><div className="text-2xl font-semibold">{overview.avg_score_pct}%</div></Card>
               <Card className="p-4"><div className="text-xs text-muted-foreground">Health</div><div className="text-2xl font-semibold">{overview.health}</div></Card>
             </div>
+
+            {/* Telegram topics */}
+            <GroupTopicsSection groupId={id!} />
 
             {/* Add students actions */}
             <div className="flex flex-col sm:flex-row gap-2">
