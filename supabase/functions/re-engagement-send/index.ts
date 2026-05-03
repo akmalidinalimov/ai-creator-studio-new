@@ -118,6 +118,7 @@ Deno.serve(async (req) => {
       if (sent + failed > 0 && (sent + failed) % 25 === 0) await sleep(1000);
 
       try {
+        if (!r.telegram_id) throw new Error(`profile ${r.id} has no telegram_id`);
         // Generate magic-link token (uses existing telegram_magic_links table)
         const token = crypto.randomUUID();
         const { error: tErr } = await admin.from("telegram_magic_links").insert({
@@ -127,12 +128,12 @@ Deno.serve(async (req) => {
           target_path: "/dashboard",
           expires_at: expiresAt,
         });
-        if (tErr) throw tErr;
+        if (tErr) throw new Error(`magic_link insert failed: ${tErr.message || JSON.stringify(tErr)}`);
 
         const url = `${SITE_URL}/auth/magic?t=${token}`;
         const { body: tplBody, btn } = pickTpl(campaign, r.preferred_locale);
         const text = render(tplBody, r);
-        const send = await tgSend(r.telegram_id, text, btn, url);
+        const send = await tgSend(Number(r.telegram_id), text, btn, url);
         const messageId = send.ok ? String(send.data?.result?.message_id ?? "") : null;
 
         await admin.from("re_engagement_deliveries").insert({
@@ -146,10 +147,19 @@ Deno.serve(async (req) => {
         });
 
         if (send.ok) sent++;
-        else { failed++; errors.push({ profile_id: r.id, err: send.data }); }
+        else {
+          failed++;
+          const detail = `tg ${send.status}: ${JSON.stringify(send.data)}`.slice(0, 500);
+          console.error("re_engagement_send tg failure", { profile_id: r.id, detail });
+          errors.push({ profile_id: r.id, err: detail });
+        }
       } catch (e) {
         failed++;
-        errors.push({ profile_id: r.id, err: String(e) });
+        const detail = e instanceof Error
+          ? e.message + (e.stack ? "\n" + e.stack : "")
+          : (typeof e === "object" ? JSON.stringify(e) : String(e));
+        console.error("re_engagement_send caught", { profile_id: r.id, detail });
+        errors.push({ profile_id: r.id, err: detail.slice(0, 500) });
       }
     }
 
