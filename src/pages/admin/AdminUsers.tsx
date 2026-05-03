@@ -550,7 +550,49 @@ export default function AdminUsers() {
           </Select>
         </div>
 
-        <Card className="overflow-hidden shadow-soft">
+        {/* Mobile: card list */}
+        <div className="md:hidden space-y-2">
+          {loading && <p className="text-center text-sm text-muted-foreground py-6">{t("admin.users.loading")}</p>}
+          {!loading && filtered.length === 0 && <p className="text-center text-sm text-muted-foreground py-6">{t("admin.users.empty")}</p>}
+          {filtered.map((u) => (
+            <Card key={u.id} className="p-3">
+              <div className="flex items-start gap-3">
+                <Checkbox className="mt-1" checked={selected.has(u.id)} onCheckedChange={() => toggleSelect(u.id)} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-medium truncate">{[u.name, u.last_name].filter(Boolean).join(" ") || "—"}</div>
+                    {u.is_admin
+                      ? <Badge className="shrink-0">{t("admin.users.admin").toLowerCase()}</Badge>
+                      : <Badge variant="secondary" className="shrink-0">{t("admin.users.student").toLowerCase()}</Badge>}
+                  </div>
+                  <div className="text-xs text-muted-foreground truncate mt-0.5">
+                    {u.email}
+                    {isLocked(u.email) && <Badge variant="destructive" className="ml-2 text-[10px]">{t("admin.users.locked")}</Badge>}
+                  </div>
+                  {(u.telegram_id || u.telegram_username) && (
+                    <div className="text-xs mt-1">
+                      <span className="font-mono">{u.telegram_id ?? "—"}</span>
+                      {u.telegram_username && <span className="text-muted-foreground ml-2">@{u.telegram_username}</span>}
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between mt-2 gap-2">
+                    <div className="flex items-center gap-2 text-[11px]">
+                      <span className={`px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : "bg-destructive/10 text-destructive"}`}>
+                        {u.status === "active" ? t("admin.users.active") : t("admin.users.inactive")}
+                      </span>
+                      <span className="text-muted-foreground">{(enrollMap[u.id]?.size) || 0} {t("admin.users.headers.courses").toLowerCase()}</span>
+                      <span className="text-muted-foreground">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}</span>
+                    </div>
+                    {isAdmin && <Button variant="ghost" size="sm" className="h-7" onClick={() => setManageUser(u)}>{t("admin.users.manage")}</Button>}
+                  </div>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+
+        {/* Desktop: table */}
+        <Card className="hidden md:block overflow-hidden shadow-soft">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-muted/40 text-xs">
