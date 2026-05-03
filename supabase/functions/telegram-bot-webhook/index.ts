@@ -1492,23 +1492,7 @@ async function handleGradingCommand(
   const t = T[locale] as any;
 
   if (cmd === "/baholash" || cmd === "/grade") {
-    const items = await loadGradingSubmissions(admin, graderId, isAdmin, { scored: false, limit: 10 });
-    if (!items.length) {
-      await sendWithKeyboard(chatId, `${t.gradePending}\n\n${t.gradeNoneP}`, locale, isAdmin, isAdmin ? "admin" : "teacher");
-      return true;
-    }
-    const lines = [t.gradePending, ""];
-    const buttons: any[][] = [];
-    items.forEach((s: any, i: number) => {
-      const name = [s.profile?.name, s.profile?.last_name].filter(Boolean).join(" ") || "—";
-      const tn = s.assignment?.task_number ? ` #${s.assignment.task_number}` : "";
-      const title = `${s.assignment?.title || "—"}${tn}`;
-      const when = new Date(s.submitted_at).toLocaleDateString();
-      lines.push(t.gradeListItem(i + 1, csvEscapeHtml(name), csvEscapeHtml(title), when));
-      buttons.push([{ text: `${i + 1}. ${t.gradeOpenBtn}`, callback_data: `grade:open:${s.id}` }]);
-    });
-    await sendMessage(chatId, lines.join("\n"), { inline_keyboard: buttons });
-    await sendKeyboardHint(chatId, locale, isAdmin, isAdmin ? "admin" : "teacher");
+    await renderStudentPicker(admin, chatId, graderId, locale, isAdmin, 0);
     return true;
   }
 
