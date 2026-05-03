@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Pencil, Trash2, Users as UsersIcon } from "lucide-react";
+import { Plus, Pencil, Trash2, Users as UsersIcon, Upload } from "lucide-react";
 import { toast } from "sonner";
 
 type Group = {
@@ -421,6 +421,9 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
   const [search, setSearch] = useState("");
   const [adding, setAdding] = useState("");
   const [loading, setLoading] = useState(true);
+  const [importing, setImporting] = useState(false);
+  const [importReport, setImportReport] = useState<{ added: number; skipped: number; notFound: string[] } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const reload = async () => {
     setLoading(true);
@@ -438,18 +441,58 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
     if (error) toast.error(error.message); else { toast.success("Removed"); reload(); }
   };
 
-  const add = async () => {
-    const v = adding.trim().replace(/^@/, "");
-    if (!v) return;
+  const findProfileId = async (rawValue: string): Promise<string | null> => {
+    const v = rawValue.trim().replace(/^@/, "");
+    if (!v) return null;
     let q = supabase.from("profiles").select("id").limit(1);
     if (/^\d+$/.test(v)) q = q.eq("telegram_id", Number(v));
     else if (v.includes("@")) q = q.eq("email", v.toLowerCase());
     else q = q.eq("telegram_username", v as any);
-    const { data, error } = await q.maybeSingle();
-    if (error || !data) { toast.error("Student not found"); return; }
-    const { error: e2 } = await supabase.from("profiles").update({ group_id: group.id }).eq("id", (data as any).id);
-    if (e2) { toast.error(e2.message); return; }
+    const { data } = await q.maybeSingle();
+    return (data as any)?.id ?? null;
+  };
+
+  const add = async () => {
+    const id = await findProfileId(adding);
+    if (!id) { toast.error("Student not found"); return; }
+    const { error } = await supabase.from("profiles").update({ group_id: group.id }).eq("id", id);
+    if (error) { toast.error(error.message); return; }
     setAdding(""); toast.success("Added"); reload();
+  };
+
+  const handleCsv = async (file: File) => {
+    setImporting(true);
+    setImportReport(null);
+    try {
+      const text = await file.text();
+      // Parse CSV: split rows, take first column (or whole row if single column)
+      const rows = text.split(/\r?\n/).map(r => r.trim()).filter(Boolean);
+      // Detect header
+      const first = rows[0]?.toLowerCase() || "";
+      const hasHeader = /email|telegram|username|identifier/.test(first);
+      const dataRows = hasHeader ? rows.slice(1) : rows;
+      const identifiers = dataRows
+        .map(r => r.split(",")[0]?.trim().replace(/^["']|["']$/g, ""))
+        .filter(Boolean);
+
+      let added = 0, skipped = 0;
+      const notFound: string[] = [];
+      for (const ident of identifiers) {
+        const id = await findProfileId(ident);
+        if (!id) { notFound.push(ident); continue; }
+        const { error } = await supabase.from("profiles").update({ group_id: group.id }).eq("id", id);
+        if (error) skipped++; else added++;
+      }
+      setImportReport({ added, skipped, notFound });
+      if (added) toast.success(`${added} ta talaba qo'shildi`);
+      if (notFound.length) toast.error(`${notFound.length} ta topilmadi`);
+      reload();
+    } catch (e: any) {
+      toast.error(e.message || "CSV o'qishda xato");
+    } finally {
+      setImporting(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
   };
 
   const filtered = useMemo(() => {
@@ -470,6 +513,29 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
           <Input value={adding} onChange={(e) => setAdding(e.target.value)} placeholder="Telegram id, @username, or email" />
           <Button onClick={add}><Plus className="mr-1 h-4 w-4" />Add</Button>
         </div>
+        <div className="flex flex-wrap items-center gap-2 rounded border bg-muted/30 p-2">
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleCsv(f); }}
+          />
+          <Button variant="outline" size="sm" disabled={importing} onClick={() => fileRef.current?.click()}>
+            <Upload className="mr-1 h-4 w-4" />{importing ? "Yuklanmoqda…" : "CSV yuklash"}
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            Bitta ustun: email, @username yoki telegram_id (sarlavha ixtiyoriy)
+          </span>
+        </div>
+        {importReport && (
+          <div className="text-xs rounded border p-2 space-y-1">
+            <div>✅ Qo'shildi: <b>{importReport.added}</b> · ⏭ O'tkazildi: <b>{importReport.skipped}</b> · ❌ Topilmadi: <b>{importReport.notFound.length}</b></div>
+            {importReport.notFound.length > 0 && (
+              <div className="text-rose-600 break-all">Topilmadi: {importReport.notFound.slice(0, 20).join(", ")}{importReport.notFound.length > 20 ? "…" : ""}</div>
+            )}
+          </div>
+        )}
         <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search…" />
         <div className="max-h-80 overflow-auto border rounded">
           <Table>
