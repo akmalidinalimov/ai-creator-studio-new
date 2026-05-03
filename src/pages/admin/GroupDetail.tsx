@@ -73,7 +73,30 @@ export default function GroupDetail() {
               <Card className="p-4"><div className="text-xs text-muted-foreground">Health</div><div className="text-2xl font-semibold">{overview.health}</div></Card>
             </div>
 
-            <Card className="p-0 overflow-hidden">
+            {/* Mobile: card list */}
+            <div className="md:hidden space-y-2">
+              {members.length === 0 ? (
+                <p className="text-center text-muted-foreground py-6 text-sm">No members.</p>
+              ) : members.map((m) => (
+                <Card key={m.user_id} className="p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="font-medium truncate">{m.name || "—"}</div>
+                    {m.last_active_at
+                      ? <span className="text-[11px] text-muted-foreground shrink-0">{new Date(m.last_active_at).toLocaleDateString()}</span>
+                      : <Badge variant="secondary" className="shrink-0 text-[10px]">never</Badge>}
+                  </div>
+                  <div className="text-xs text-muted-foreground truncate mt-0.5">{m.email}</div>
+                  {m.telegram_username && <div className="text-xs text-muted-foreground">@{m.telegram_username}</div>}
+                  <div className="flex items-center gap-3 text-xs mt-2">
+                    <span><span className="text-muted-foreground">Completion:</span> <span className="font-medium">{m.completion_pct}%</span></span>
+                    <span><span className="text-muted-foreground">Avg:</span> <span className="font-medium">{m.avg_score_pct ?? "—"}{m.avg_score_pct != null ? "%" : ""}</span></span>
+                  </div>
+                </Card>
+              ))}
+            </div>
+
+            {/* Desktop: table */}
+            <Card className="hidden md:block p-0 overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-muted/40">
                   <tr>
