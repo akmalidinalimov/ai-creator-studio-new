@@ -216,6 +216,8 @@ export default function AdminGroups() {
   );
 }
 
+const TG_URL_RE = /^https:\/\/t\.me\/(c\/\d+\/\d+|\+[\w-]+)/;
+
 function GroupFormDialog({
   group, courses, teachers, onClose, onSaved,
 }: {
@@ -231,35 +233,115 @@ function GroupFormDialog({
   const [teacherPick, setTeacherPick] = useState<string>(group?.teacher_id || "");
   const [busy, setBusy] = useState(false);
 
+  const [tgGroupUrl, setTgGroupUrl] = useState<string>("");
+  const [modules, setModules] = useState<{ id: string; title: string; position: number }[]>([]);
+  const [topicByMod, setTopicByMod] = useState<Record<string, string>>({});
+  const [errByMod, setErrByMod] = useState<Record<string, string>>({});
+  const [tgGroupErr, setTgGroupErr] = useState<string>("");
+
+  // Load existing group telegram_group_url + topics on edit; load modules whenever course changes
+  useEffect(() => {
+    (async () => {
+      if (group) {
+        const { data: g } = await supabase.from("groups").select("telegram_group_url").eq("id", group.id).maybeSingle();
+        setTgGroupUrl(((g as any)?.telegram_group_url) || "");
+        const { data: gmt } = await supabase
+          .from("group_module_topics" as any)
+          .select("module_id, telegram_topic_url")
+          .eq("group_id", group.id);
+        const m: Record<string, string> = {};
+        ((gmt as any[]) || []).forEach((r) => { m[r.module_id] = r.telegram_topic_url; });
+        setTopicByMod(m);
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [group?.id]);
+
+  useEffect(() => {
+    (async () => {
+      if (!courseId) { setModules([]); return; }
+      const { data } = await supabase.from("modules").select("id, title, position").eq("course_id", courseId).order("position");
+      setModules(((data as any[]) || []) as any);
+    })();
+  }, [courseId]);
+
   const submit = async () => {
     if (!name.trim()) { toast.error("Name required"); return; }
-    setBusy(true);
-    let teacher_id: string | null = teacherPick || null;
-    const tIn = teacherInput.trim().replace(/^@/, "");
-    if (tIn) {
-      // resolve by telegram id or username
-      let q = supabase.from("profiles").select("id").limit(1);
-      if (/^\d+$/.test(tIn)) q = q.eq("telegram_id", Number(tIn));
-      else q = q.eq("telegram_username", tIn as any);
-      const { data, error } = await q.maybeSingle();
-      if (error || !data) { toast.error("Teacher not found by Telegram id/username"); setBusy(false); return; }
-      teacher_id = (data as any).id;
-      // ensure teacher role
-      await supabase.from("user_roles").insert({ user_id: teacher_id!, role: "teacher" as any }).then(() => {}, () => {});
+
+    // Validate Telegram URLs
+    const newErrs: Record<string, string> = {};
+    let groupErr = "";
+    if (tgGroupUrl.trim() && !TG_URL_RE.test(tgGroupUrl.trim())) {
+      groupErr = "URL noto'g'ri (https://t.me/...)";
     }
-    const payload = { name: name.trim(), course_id: courseId || null, teacher_id };
-    const { error } = group
-      ? await supabase.from("groups").update(payload).eq("id", group.id)
-      : await supabase.from("groups").insert(payload);
-    setBusy(false);
-    if (error) { toast.error(error.message); return; }
-    toast.success(group ? "Group updated" : "Group created");
-    onSaved();
+    for (const m of modules) {
+      const v = (topicByMod[m.id] || "").trim();
+      if (v && !TG_URL_RE.test(v)) newErrs[m.id] = "URL noto'g'ri";
+    }
+    setTgGroupErr(groupErr);
+    setErrByMod(newErrs);
+    if (groupErr || Object.keys(newErrs).length) { toast.error("URL formatlarini tekshiring"); return; }
+
+    setBusy(true);
+    try {
+      let teacher_id: string | null = teacherPick || null;
+      const tIn = teacherInput.trim().replace(/^@/, "");
+      if (tIn) {
+        let q = supabase.from("profiles").select("id").limit(1);
+        if (/^\d+$/.test(tIn)) q = q.eq("telegram_id", Number(tIn));
+        else q = q.eq("telegram_username", tIn as any);
+        const { data, error } = await q.maybeSingle();
+        if (error || !data) { toast.error("Teacher not found by Telegram id/username"); setBusy(false); return; }
+        teacher_id = (data as any).id;
+        await supabase.from("user_roles").insert({ user_id: teacher_id!, role: "teacher" as any }).then(() => {}, () => {});
+      }
+      const payload: any = {
+        name: name.trim(),
+        course_id: courseId || null,
+        teacher_id,
+        telegram_group_url: tgGroupUrl.trim() || null,
+      };
+      let groupId = group?.id;
+      if (group) {
+        const { error } = await supabase.from("groups").update(payload).eq("id", group.id);
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase.from("groups").insert(payload).select("id").maybeSingle();
+        if (error) throw error;
+        groupId = (data as any)?.id;
+      }
+
+      let topicsSaved = 0;
+      if (groupId) {
+        const upserts: any[] = [];
+        const deletes: string[] = [];
+        modules.forEach((m) => {
+          const v = (topicByMod[m.id] || "").trim();
+          if (v) upserts.push({ group_id: groupId, module_id: m.id, telegram_topic_url: v });
+          else deletes.push(m.id);
+        });
+        if (upserts.length) {
+          const { error } = await supabase.from("group_module_topics" as any).upsert(upserts, { onConflict: "group_id,module_id" });
+          if (error) throw error;
+          topicsSaved = upserts.length;
+        }
+        if (deletes.length) {
+          await supabase.from("group_module_topics" as any).delete().eq("group_id", groupId).in("module_id", deletes);
+        }
+      }
+
+      toast.success(`Guruh saqlandi · ${topicsSaved} ta topik`);
+      onSaved();
+    } catch (e: any) {
+      toast.error(e?.message || "Saqlashda xatolik");
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader><DialogTitle>{group ? "Edit group" : "Create group"}</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div>
@@ -289,6 +371,41 @@ function GroupFormDialog({
             <Input value={teacherInput} onChange={(e) => setTeacherInput(e.target.value)} placeholder="123456789 or @username" />
             <p className="text-xs text-muted-foreground mt-1">Will grant teacher role if not already assigned.</p>
           </div>
+
+          <div className="border-t pt-3 mt-3 space-y-3">
+            <div className="font-semibold text-sm">📲 Telegram (ixtiyoriy)</div>
+            <div>
+              <Label className="text-xs">Telegram guruh URL</Label>
+              <Input
+                value={tgGroupUrl}
+                onChange={(e) => { setTgGroupUrl(e.target.value); setTgGroupErr(""); }}
+                placeholder="https://t.me/+abc123"
+              />
+              {tgGroupErr && <p className="text-xs text-rose-600 mt-1">{tgGroupErr}</p>}
+            </div>
+            {!courseId ? (
+              <p className="text-xs text-muted-foreground italic">Modul topiklari uchun avval kurs tanlang.</p>
+            ) : modules.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic">Bu kursda modul yo'q.</p>
+            ) : (
+              <div className="space-y-2">
+                {modules.map((m, i) => (
+                  <div key={m.id}>
+                    <Label className="text-xs">Modul {i + 1} — {m.title} topiki</Label>
+                    <Input
+                      value={topicByMod[m.id] || ""}
+                      onChange={(e) => {
+                        setTopicByMod({ ...topicByMod, [m.id]: e.target.value });
+                        setErrByMod((prev) => { const n = { ...prev }; delete n[m.id]; return n; });
+                      }}
+                      placeholder="https://t.me/c/2123456789/15"
+                    />
+                    {errByMod[m.id] && <p className="text-xs text-rose-600 mt-1">{errByMod[m.id]}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
@@ -298,8 +415,6 @@ function GroupFormDialog({
     </Dialog>
   );
 }
-
-function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => void }) {
   const [students, setStudents] = useState<ProfileLite[]>([]);
   const [search, setSearch] = useState("");
   const [adding, setAdding] = useState("");
