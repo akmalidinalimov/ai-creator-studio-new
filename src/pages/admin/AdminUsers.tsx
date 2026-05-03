@@ -1147,6 +1147,30 @@ export default function AdminUsers() {
         </SheetContent>
       </Sheet>
 
+      <AlertDialog open={!!bulkRole} onOpenChange={(o) => !o && setBulkRole(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("admin.users.changeRoleTitle", { defaultValue: "Change role?" })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {bulkRole && t("admin.users.changeRoleDesc", {
+                defaultValue: "Change {{name}}'s role from {{old}} to {{new}}?",
+                name: [bulkRole.user.name, bulkRole.user.last_name].filter(Boolean).join(" ") || bulkRole.user.email,
+                old: bulkRole.user.role_name || "student",
+                new: bulkRole.newRole,
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("admin.users.cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => bulkRole && changeUserRole(bulkRole.user, bulkRole.newRole)}>
+              {t("admin.users.confirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog open={!!confirmRole} onOpenChange={(o) => !o && setConfirmRole(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
