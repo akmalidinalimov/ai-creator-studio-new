@@ -11,6 +11,7 @@ import { Flame, PlayCircle, BookOpen, ArrowRight } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StudentAnalytics } from "@/components/dashboard/StudentAnalytics";
 import { EngagementTiles } from "@/components/dashboard/EngagementTiles";
+import { CertificateCelebrationModal } from "@/components/CertificateCelebrationModal";
 
 interface CourseRow {
   id: string; title: string; tagline: string | null; cover_url: string | null; duration_hours: number | null;
@@ -70,6 +71,7 @@ export default function Dashboard() {
 
   return (
     <PageShell>
+      <CertificateCelebrationModal />
       <div className="space-y-8">
         <div className="flex items-end justify-between flex-wrap gap-4">
           <div>
