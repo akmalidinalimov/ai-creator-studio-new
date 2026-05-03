@@ -498,6 +498,7 @@ function getAdminKeyboard(locale: Locale) {
   return {
     keyboard: [
       [{ text: t.adminKbAnalytics }],
+      [{ text: t.tKbGrade }, { text: t.tKbGraded }],
       [{ text: t.adminKbInactive3 }, { text: t.adminKbInactive7 }],
       [{ text: t.adminKbNever }, { text: t.adminKbNew }],
       [{ text: t.adminKbStudentMode }, { text: t.kbLang }],
