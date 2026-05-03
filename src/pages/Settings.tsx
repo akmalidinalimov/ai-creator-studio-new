@@ -11,7 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Monitor, LogOut } from "lucide-react";
+import { Monitor, LogOut, ShieldOff } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { SUPPORTED_LANGUAGES, type LanguageCode } from "@/i18n";
 import { HomeworkProfileSection } from "@/components/HomeworkProfileSection";
 import { NudgePreferencesCard } from "@/components/NudgePreferencesCard";
@@ -137,6 +138,20 @@ export default function Settings() {
     if (error) toast.error(error.message); else toast.success(t("settings.signedOutOthers"));
   };
 
+  const signOutEverywhere = async () => {
+    if (user) {
+      // Audit log (best-effort, fire-and-forget)
+      supabase.from("audit_log" as any).insert({
+        actor_id: user.id,
+        action: "signout_global",
+        entity_type: "auth",
+        entity_id: user.id,
+      } as any).then(() => {});
+    }
+    const { error } = await supabase.auth.signOut({ scope: "global" });
+    if (error) toast.error(error.message);
+  };
+
   const mostRecentId = useMemo(() => events[0]?.id, [events]);
 
   return (
@@ -253,7 +268,28 @@ export default function Settings() {
         <Card className="p-5 space-y-3 border-destructive/30 shadow-soft">
           <h2 className="font-semibold text-destructive">{t("settings.dangerZone")}</h2>
           <p className="text-sm text-muted-foreground">{t("settings.signOutDevice")}</p>
-          <Button variant="destructive" onClick={signOut}>{t("settings.signOut")}</Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="destructive" onClick={signOut}>{t("settings.signOut")}</Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/10">
+                  <ShieldOff className="h-4 w-4" /> {t("settings.signOutGlobal")}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{t("settings.signOutGlobal")}</AlertDialogTitle>
+                  <AlertDialogDescription>{t("settings.signOutGlobalConfirm")}</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+                  <AlertDialogAction onClick={signOutEverywhere} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                    {t("settings.signOutGlobal")}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
         </Card>
       </div>
     </PageShell>

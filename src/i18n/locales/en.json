@@ -73,7 +73,10 @@
     "taglineSub": "A production-grade curriculum for the new generation of AI-native creators. 5 modules. 20 lessons. Built to compound.",
     "statLessons": "lessons",
     "statHours": "of lessons",
-    "statTutor": "AI tutor"
+    "statTutor": "AI tutor",
+    "rememberMe": "Remember me (30 days)",
+    "telegramQuickTitle": "Quick login with Telegram",
+    "telegramQuickSub": "Open the bot and tap Start"
   },
   "dashboard": {
     "welcome": "Welcome back, {{name}}",
@@ -222,6 +225,8 @@
     "dangerZone": "Danger zone",
     "signOutDevice": "Sign out of this device.",
     "signOut": "Sign out",
+    "signOutGlobal": "Sign out everywhere",
+    "signOutGlobalConfirm": "This will sign you out of all devices. Continue?",
     "justNow": "just now",
     "minAgo": "{{n}}m ago",
     "hourAgo": "{{n}}h ago",
