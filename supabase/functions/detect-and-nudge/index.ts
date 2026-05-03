@@ -249,13 +249,15 @@ Deno.serve(async (req) => {
       if (!roleRow) return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
       const type: NudgeType = body?.nudge_type || "inactive_3d";
+      const { data: setting } = await admin.rpc("get_setting", { _key: "bot.test_recipient_username" });
+      const testUsername = (typeof setting === "string" ? setting : (setting as any)) || "alikhanova_admin";
       const { data: me } = await admin
         .from("profiles")
         .select("id, name, telegram_id, preferred_locale, preferred_language, tashkent_offset_minutes")
-        .eq("telegram_username", "alikhanova_admin")
+        .eq("telegram_username", testUsername)
         .maybeSingle();
       if (!me?.telegram_id) {
-        return new Response(JSON.stringify({ error: "test recipient @alikhanova_admin not found or has no telegram_id" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ error: `test recipient @${testUsername} not found or has no telegram_id` }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
       const extra: Record<string, string> = {};
       let path = "/dashboard";
