@@ -73,6 +73,9 @@ export default function AdminUsers() {
   const isTeacher = role === "teacher";
   const isAdmin = role === "admin";
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [groups, setGroups] = useState<{ id: string; name: string }[]>([]);
+  const [bulkGroupId, setBulkGroupId] = useState<string>("");
+  const [bulkRole, setBulkRole] = useState<{ user: UserRow; newRole: RoleName } | null>(null);
   const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
   const [enrollMap, setEnrollMap] = useState<Record<string, Set<string>>>({});
   const [search, setSearch] = useState("");
