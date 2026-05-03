@@ -104,7 +104,8 @@ export default function AdminSettings() {
         <AppSettingsSection />
 
         <Card className="p-6 shadow-soft space-y-5">
-
+          <div>
+            <h2 className="text-lg font-semibold">{t("admin.settings.telegramTitle")}</h2>
             <p className="text-sm text-muted-foreground mt-1">{t("admin.settings.telegramSub")}</p>
           </div>
 
