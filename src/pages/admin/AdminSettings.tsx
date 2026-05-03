@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { Eye, EyeOff, CheckCircle2, Circle, ExternalLink, Copy } from "lucide-react";
 import { TelegramDeeplinkButton } from "@/components/TelegramDeeplinkButton";
 import { KnowledgeManager } from "@/components/admin/KnowledgeManager";
+import { AppSettingsSection } from "@/components/admin/AppSettingsSection";
 
 export default function AdminSettings() {
   const { t } = useTranslation();
