@@ -73,7 +73,10 @@
     "taglineSub": "AI bilan ishlovchi yangi avlod ijodkorlari uchun professional kurs. 5 modul. 20 ta dars. O'sish uchun yaratilgan.",
     "statLessons": "darslar",
     "statHours": "darslar",
-    "statTutor": "AI ustoz"
+    "statTutor": "AI ustoz",
+    "rememberMe": "Eslab qol (30 kun)",
+    "telegramQuickTitle": "Telegram orqali tezda kirish",
+    "telegramQuickSub": "Botga o'ting va Start tugmasini bosing"
   },
   "dashboard": {
     "welcome": "Xush kelibsiz, {{name}}",
@@ -222,6 +225,8 @@
     "dangerZone": "Xavfli zona",
     "signOutDevice": "Ushbu qurilmadan chiqish.",
     "signOut": "Chiqish",
+    "signOutGlobal": "Hamma qurilmalardan chiqish",
+    "signOutGlobalConfirm": "Bu sizni hamma qurilmalardan chiqaradi. Davom etilsinmi?",
     "justNow": "hozirgina",
     "minAgo": "{{n}} daqiqa oldin",
     "hourAgo": "{{n}} soat oldin",
