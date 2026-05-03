@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { getSiteUrl } from "@/lib/siteUrl";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
@@ -15,7 +16,7 @@ export default function ForgotPassword() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/reset-password` });
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${getSiteUrl()}/reset-password` });
     setLoading(false);
     if (error) toast.error(error.message);
     else toast.success(t("auth.resetSent"));

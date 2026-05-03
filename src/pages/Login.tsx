@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getSiteUrl } from "@/lib/siteUrl";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
@@ -126,7 +127,7 @@ export default function Login() {
     setLoading(true);
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${window.location.origin}/dashboard` },
+      options: { emailRedirectTo: `${getSiteUrl()}/dashboard` },
     });
     setLoading(false);
     if (error) toast.error(error.message);

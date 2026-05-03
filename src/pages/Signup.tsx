@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { getSiteUrl } from "@/lib/siteUrl";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
@@ -21,7 +22,7 @@ export default function Signup() {
   const [loading, setLoading] = useState(false);
 
   const onGoogle = async () => {
-    const r = await lovable.auth.signInWithOAuth("google", { redirect_uri: window.location.origin });
+    const r = await lovable.auth.signInWithOAuth("google", { redirect_uri: getSiteUrl() });
     if (r.error) toast.error(t("auth.googleFailed"));
   };
 
@@ -32,7 +33,7 @@ export default function Signup() {
     const { data, error } = await supabase.auth.signUp({
       email, password,
       options: {
-        emailRedirectTo: window.location.origin,
+        emailRedirectTo: getSiteUrl(),
         data: { name, last_name: lastName || null },
       },
     });
