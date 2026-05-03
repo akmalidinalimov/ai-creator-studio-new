@@ -94,6 +94,23 @@ const T = {
     kbHint: "👇 Quyidagi tugmalardan foydalaning",
     kbStreakOld: "📊 Statistikam",
     kbCertOld: "🎓 Sertifikat",
+    statsTitle: "📊 <b>Statistikam</b>",
+    statsLessons: (d: number, tot: number) => `📚 Darslar: <b>${d}/${tot}</b> ko'rilgan`,
+    statsStreak: (c: number, b: number) => `🔥 Streak: <b>${c} kun</b> (eng yaxshisi: ${b})`,
+    statsStreakNone: "🔥 Streak: hali boshlanmadi",
+    statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Bugungi maqsad: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
+    statsHomework: (s: number, tot: number, avg: string) => `📝 Uy vazifalari: <b>${s}/${tot}</b> (o'rtacha ${avg}/10)`,
+    statsHomeworkNone: "📝 Uy vazifalari: hali topshirilmadi",
+    statsRanking: (r: number, tot: number, sc: number) => `🏆 Reyting: <b>${r}-o'rin</b> / ${tot} talaba (${sc}/100)`,
+    statsRankingNone: "🏆 Reyting: hali sanalmadi",
+    statsBadges: (e: number, tot: number) => `🏅 Nishonlar: <b>${e}/${tot}</b>`,
+    btnSiteOpen: "📖 Saytda batafsil",
+    hwTitle: "📝 <b>Mening vazifalarim</b>",
+    hwEmpty: "Hozircha vazifalar yo'q.",
+    hwStatusNotStarted: "📝 boshlanmadi",
+    hwStatusSubmitted: "📤 topshirilgan, baholashni kuting",
+    hwStatusScored: (s: number, m: number) => `✅ baholandi: ${s}/${m}`,
+    btnHwSite: "📝 Saytda topshirish",
     settingsTitle: "⚙️ Bildirishnoma sozlamalari",
     settingsBell: (on: boolean) => `🔔 Kunlik eslatma: ${on ? "YOQILGAN" : "O'CHIRILGAN"}`,
     settingsTime: (t: string) => `⏰ Eslatma vaqti: ${t}`,
@@ -191,6 +208,23 @@ const T = {
     kbHint: "👇 Используйте кнопки ниже",
     kbStreakOld: "📊 Моя статистика",
     kbCertOld: "🎓 Сертификат",
+    statsTitle: "📊 <b>Моя статистика</b>",
+    statsLessons: (d: number, tot: number) => `📚 Уроки: <b>${d}/${tot}</b> просмотрено`,
+    statsStreak: (c: number, b: number) => `🔥 Стрик: <b>${c} дн.</b> (рекорд: ${b})`,
+    statsStreakNone: "🔥 Стрик: ещё не начат",
+    statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Цель на сегодня: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
+    statsHomework: (s: number, tot: number, avg: string) => `📝 Домашка: <b>${s}/${tot}</b> (средняя ${avg}/10)`,
+    statsHomeworkNone: "📝 Домашка: ещё не сдавали",
+    statsRanking: (r: number, tot: number, sc: number) => `🏆 Рейтинг: <b>${r} место</b> / ${tot} студентов (${sc}/100)`,
+    statsRankingNone: "🏆 Рейтинг: пока не учтён",
+    statsBadges: (e: number, tot: number) => `🏅 Значки: <b>${e}/${tot}</b>`,
+    btnSiteOpen: "📖 Подробнее на сайте",
+    hwTitle: "📝 <b>Мои задания</b>",
+    hwEmpty: "Пока заданий нет.",
+    hwStatusNotStarted: "📝 не начато",
+    hwStatusSubmitted: "📤 сдано, ждёт оценки",
+    hwStatusScored: (s: number, m: number) => `✅ оценено: ${s}/${m}`,
+    btnHwSite: "📝 Сдать на сайте",
     settingsTitle: "⚙️ Настройки уведомлений",
     settingsBell: (on: boolean) => `🔔 Ежедневное напоминание: ${on ? "ВКЛ" : "ВЫКЛ"}`,
     settingsTime: (t: string) => `⏰ Время напоминания: ${t}`,
@@ -286,6 +320,23 @@ const T = {
     kbHint: "👇 Use the buttons below",
     kbStreakOld: "📊 My stats",
     kbCertOld: "🎓 Certificate",
+    statsTitle: "📊 <b>My stats</b>",
+    statsLessons: (d: number, tot: number) => `📚 Lessons: <b>${d}/${tot}</b> watched`,
+    statsStreak: (c: number, b: number) => `🔥 Streak: <b>${c} days</b> (best: ${b})`,
+    statsStreakNone: "🔥 Streak: not started yet",
+    statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Today's goal: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
+    statsHomework: (s: number, tot: number, avg: string) => `📝 Homework: <b>${s}/${tot}</b> (avg ${avg}/10)`,
+    statsHomeworkNone: "📝 Homework: nothing submitted yet",
+    statsRanking: (r: number, tot: number, sc: number) => `🏆 Ranking: <b>#${r}</b> of ${tot} students (${sc}/100)`,
+    statsRankingNone: "🏆 Ranking: not ranked yet",
+    statsBadges: (e: number, tot: number) => `🏅 Badges: <b>${e}/${tot}</b>`,
+    btnSiteOpen: "📖 More on site",
+    hwTitle: "📝 <b>My homework</b>",
+    hwEmpty: "No homework yet.",
+    hwStatusNotStarted: "📝 not started",
+    hwStatusSubmitted: "📤 submitted, awaiting score",
+    hwStatusScored: (s: number, m: number) => `✅ scored: ${s}/${m}`,
+    btnHwSite: "📝 Submit on site",
     settingsTitle: "⚙️ Notification settings",
     settingsBell: (on: boolean) => `🔔 Daily reminder: ${on ? "ON" : "OFF"}`,
     settingsTime: (t: string) => `⏰ Reminder time: ${t}`,
@@ -382,8 +433,9 @@ function getMainKeyboard(locale: Locale) {
   return {
     keyboard: [
       [{ text: t.kbDavom }],
-      [{ text: t.kbStreak }, { text: t.kbCert }],
-      [{ text: t.kbLang }],
+      [{ text: t.kbStreak }, { text: t.kbHomework }],
+      [{ text: t.kbCert }, { text: t.kbLang }],
+      [{ text: t.kbHelp }],
     ],
     resize_keyboard: true,
     is_persistent: true,
@@ -489,6 +541,7 @@ function buttonTextToCommand(text: string): string | null {
     if (trimmed === t.kbDavom) return "/davom";
     if (trimmed === t.kbStreak) return "/galaba";
     if (t.kbStreakOld && trimmed === t.kbStreakOld) return "/galaba";
+    if (t.kbHomework && trimmed === t.kbHomework) return "/vazifalar";
     if (trimmed === t.kbCert) return "/dars";
     if (t.kbCertOld && trimmed === t.kbCertOld) return "/sertifikat";
     if (trimmed === t.kbLang) return "/til";
@@ -652,6 +705,113 @@ async function computeStats(admin: any, userId: string) {
     weekMin: Math.round(weekSec / 60),
     pct,
   };
+}
+
+async function buildStatsMessage(admin: any, userId: string, locale: Locale): Promise<string> {
+  const t = T[locale] as any;
+  const lines: string[] = [t.statsTitle, ""];
+  try {
+    const courseId = await getDefaultCourseId(admin);
+
+    // Lessons total + completed
+    let lessonIds: string[] = [];
+    if (courseId) {
+      const { data: ms } = await admin.from("modules").select("id").eq("course_id", courseId);
+      const mids = (ms || []).map((m: any) => m.id);
+      if (mids.length) {
+        const { data: ls } = await admin
+          .from("lessons").select("id").in("module_id", mids).eq("published", true);
+        lessonIds = (ls || []).map((l: any) => l.id);
+      }
+    }
+    const totalLessons = lessonIds.length;
+
+    const [
+      progressRes, streakRes, todayRes, hwSubRes, hwTotalRes,
+      lbRes, totalStudentsRes, badgesEarnedRes, badgesTotalRes, prefRes,
+    ] = await Promise.all([
+      lessonIds.length
+        ? admin.from("lesson_progress").select("lesson_id, completed_at").eq("user_id", userId).in("lesson_id", lessonIds).not("completed_at", "is", null)
+        : Promise.resolve({ data: [] as any[] }),
+      admin.from("streaks").select("current_streak, longest_streak").eq("user_id", userId).maybeSingle(),
+      admin.from("lesson_progress").select("completed_at").eq("user_id", userId).gte("completed_at", new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z").toISOString()).not("completed_at", "is", null),
+      admin.from("homework_submissions").select("score").eq("user_id", userId),
+      admin.from("homework_assignments").select("id", { count: "exact", head: true }),
+      admin.from("leaderboard_cache").select("rank, score").eq("user_id", userId).maybeSingle(),
+      admin.from("user_roles").select("user_id", { count: "exact", head: true }).eq("role", "student"),
+      admin.from("user_badges").select("badge_id", { count: "exact", head: true }).eq("user_id", userId),
+      admin.from("badges").select("id", { count: "exact", head: true }),
+      admin.from("profiles").select("weekly_goal_lessons").eq("id", userId).maybeSingle(),
+    ]);
+
+    const completedLessons = (progressRes.data || []).length;
+    lines.push(t.statsLessons(completedLessons, totalLessons));
+
+    const sk = streakRes.data;
+    if (sk && (sk.current_streak || sk.longest_streak)) {
+      lines.push(t.statsStreak(sk.current_streak || 0, sk.longest_streak || 0));
+    } else {
+      lines.push(t.statsStreakNone);
+    }
+
+    const todayDone = (todayRes.data || []).length;
+    const weeklyGoal = prefRes.data?.weekly_goal_lessons || 5;
+    const dailyTarget = Math.max(1, Math.round(weeklyGoal / 7));
+    lines.push(t.statsDailyGoal(todayDone, dailyTarget, todayDone >= dailyTarget));
+
+    const subs = hwSubRes.data || [];
+    const scored = subs.filter((s: any) => s.score != null);
+    const hwTotal = hwTotalRes.count || 0;
+    if (subs.length === 0) {
+      lines.push(t.statsHomeworkNone);
+    } else {
+      const avg = scored.length ? (scored.reduce((a: number, s: any) => a + Number(s.score || 0), 0) / scored.length).toFixed(1) : "—";
+      lines.push(t.statsHomework(subs.length, hwTotal, avg));
+    }
+
+    const lb = lbRes.data;
+    if (lb && lb.rank) {
+      lines.push(t.statsRanking(lb.rank, totalStudentsRes.count || 0, lb.score || 0));
+    } else {
+      lines.push(t.statsRankingNone);
+    }
+
+    lines.push(t.statsBadges(badgesEarnedRes.count || 0, badgesTotalRes.count || 0));
+  } catch (e) {
+    console.error("buildStatsMessage error", e);
+  }
+  return lines.join("\n");
+}
+
+async function buildHomeworkMessage(admin: any, userId: string, locale: Locale): Promise<string> {
+  const t = T[locale] as any;
+  const lines: string[] = [t.hwTitle, ""];
+  try {
+    const { data: assigns } = await admin
+      .from("homework_assignments")
+      .select("id, title, max_score, module_id, modules(position, course_id)")
+      .order("created_at", { ascending: true });
+    const list = (assigns || []) as any[];
+    if (!list.length) { lines.push(t.hwEmpty); return lines.join("\n"); }
+    list.sort((a, b) => (a.modules?.position ?? 0) - (b.modules?.position ?? 0));
+    const aIds = list.map((a) => a.id);
+    const { data: subs } = await admin
+      .from("homework_submissions")
+      .select("assignment_id, score")
+      .eq("user_id", userId)
+      .in("assignment_id", aIds);
+    const subMap = new Map((subs || []).map((s: any) => [s.assignment_id, s]));
+    list.forEach((a, i) => {
+      const s: any = subMap.get(a.id);
+      let status = t.hwStatusNotStarted;
+      if (s) status = s.score != null ? t.hwStatusScored(s.score, a.max_score || 10) : t.hwStatusSubmitted;
+      lines.push(`${i + 1}. <b>${csvEscapeHtml(a.title || "—")}</b>\n   ${status}`);
+    });
+  } catch (e) {
+    console.error("buildHomeworkMessage error", e);
+    lines.push(t.hwEmpty);
+  }
+  return lines.join("\n");
 }
 
 async function handleStartLogin(admin: any, msg: any, token: string, locale: Locale) {
@@ -1242,8 +1402,18 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   }
 
   if (cmd === "/galaba" || cmd === "/streak") {
-    const s = await computeStats(admin, profile.id);
-    await sendWithKeyboard(chatId, t.streakReply(s.streak, s.weekMin, s.pct), locale);
+    const text = await buildStatsMessage(admin, profile.id, locale);
+    const url = await createMagicLink(admin, profile.id, "login", "/dashboard");
+    await sendMessage(chatId, text, { inline_keyboard: [[{ text: t.btnSiteOpen, url }]] });
+    await sendKeyboardHint(chatId, locale);
+    return;
+  }
+
+  if (cmd === "/vazifalar" || cmd === "/homework") {
+    const text = await buildHomeworkMessage(admin, profile.id, locale);
+    const url = await createMagicLink(admin, profile.id, "login", "/dashboard");
+    await sendMessage(chatId, text, { inline_keyboard: [[{ text: t.btnHwSite, url }]] });
+    await sendKeyboardHint(chatId, locale);
     return;
   }
 
