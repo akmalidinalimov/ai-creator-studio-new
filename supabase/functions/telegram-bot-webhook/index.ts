@@ -612,6 +612,8 @@ function buttonTextToCommand(text: string): string | null {
     if (t.tKbTop && trimmed === t.tKbTop) return "/ttop";
     if (t.tKbBroadcast && trimmed === t.tKbBroadcast) return "/tbroadcast";
     if (t.tKbSettings && trimmed === t.tKbSettings) return "/sozlamalar";
+    if (t.tKbGrade && trimmed === t.tKbGrade) return "/baholash";
+    if (t.tKbGraded && trimmed === t.tKbGraded) return "/baholar";
   }
   return null;
 }
