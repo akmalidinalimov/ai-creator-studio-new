@@ -1,15 +1,34 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
+import Papa from "papaparse";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
+import { getSiteUrl } from "@/lib/siteUrl";
 import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ChevronLeft, Pencil, Plus, Upload as UploadIcon, X, UserMinus } from "lucide-react";
+import { toast } from "sonner";
 
 type Overview = {
   group_id: string;
   group_name: string;
+  teacher_id: string | null;
+  teacher_name: string | null;
+  course_id: string | null;
+  course_name: string | null;
+  created_at: string;
   total_students: number;
   active_7d: number;
   avg_completion_pct: number;
@@ -18,35 +37,281 @@ type Overview = {
 };
 
 type Member = {
-  user_id: string;
+  id: string;
   name: string | null;
+  last_name: string | null;
   email: string;
   telegram_username: string | null;
-  last_active_at: string | null;
-  completion_pct: number;
-  avg_score_pct: number | null;
+  telegram_id: number | null;
+  last_sign_in_at: string | null;
+  last_activity_at: string | null;
+  completed_lessons: number;
+  avg_score: number | null;
 };
+
+const FN_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
 
 export default function GroupDetail() {
   const { id } = useParams<{ id: string }>();
+  const { session } = useAuth();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  // edit teacher / course
+  const [teachers, setTeachers] = useState<{ id: string; label: string }[]>([]);
+  const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
+  const [editTeacher, setEditTeacher] = useState(false);
+  const [editCourse, setEditCourse] = useState(false);
+  const [pendingTeacher, setPendingTeacher] = useState<string>("");
+  const [pendingCourse, setPendingCourse] = useState<string>("");
+
+  // add by username/id
+  const [openAdd, setOpenAdd] = useState(false);
+  const [addQuery, setAddQuery] = useState("");
+  const [addBusy, setAddBusy] = useState(false);
+
+  // CSV upload
+  const [openCsv, setOpenCsv] = useState(false);
+  const [csvText, setCsvText] = useState("");
+  const [csvRows, setCsvRows] = useState<any[]>([]);
+  const [existing, setExisting] = useState<{
+    emails: Set<string>; tgIds: Set<number>; tgUsers: Set<string>;
+    inGroup: Set<string>; // profile ids already in this group
+  }>({ emails: new Set(), tgIds: new Set(), tgUsers: new Set(), inGroup: new Set() });
+  const [importing, setImporting] = useState(false);
+
+  // remove
+  const [removeMember, setRemoveMember] = useState<Member | null>(null);
+
+  const reload = async () => {
     if (!id) return;
+    setLoading(true);
+    const [ov, mem] = await Promise.all([
+      supabase.rpc("staff_group_overview" as any, { _group_id: id }),
+      supabase.rpc("staff_group_members" as any, { _group_id: id }),
+    ]);
+    const ovRow = Array.isArray(ov.data) ? ov.data[0] : ov.data;
+    setOverview((ovRow as Overview) || null);
+    setMembers(((mem.data as any[]) || []) as Member[]);
+    setLoading(false);
+  };
+
+  useEffect(() => { reload(); /* eslint-disable-next-line */ }, [id]);
+
+  // load editable lists once
+  useEffect(() => {
     (async () => {
-      setLoading(true);
-      const [ov, mem] = await Promise.all([
-        supabase.rpc("staff_group_overview" as any, { _group_id: id }),
-        supabase.rpc("staff_group_members" as any, { _group_id: id }),
-      ]);
-      const ovRow = Array.isArray(ov.data) ? ov.data[0] : ov.data;
-      setOverview((ovRow as Overview) || null);
-      setMembers(((mem.data as any[]) || []) as Member[]);
-      setLoading(false);
+      let teacherList: { id: string; label: string }[] = [];
+      const { data: roles } = await supabase.from("user_roles").select("user_id").eq("role", "teacher" as any);
+      const ids = (roles || []).map((r: any) => r.user_id);
+      if (ids.length) {
+        const { data: profs } = await supabase.from("profiles").select("id, name, last_name, email").in("id", ids);
+        teacherList = (profs || []).map((p: any) => ({
+          id: p.id,
+          label: [p.name, p.last_name].filter(Boolean).join(" ") || p.email,
+        }));
+      }
+      setTeachers(teacherList);
+      const { data: cs } = await supabase.from("courses").select("id, title").order("title");
+      setCourses((cs || []) as any);
     })();
-  }, [id]);
+  }, []);
+
+  const saveTeacher = async () => {
+    if (!id) return;
+    const newId = pendingTeacher === "__none__" ? null : pendingTeacher || null;
+    const { error } = await supabase.from("groups").update({ teacher_id: newId }).eq("id", id);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Teacher updated");
+    setEditTeacher(false);
+    reload();
+  };
+
+  const saveCourse = async () => {
+    if (!id) return;
+    const newId = pendingCourse === "__none__" ? null : pendingCourse || null;
+    const { error } = await supabase.from("groups").update({ course_id: newId }).eq("id", id);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Course updated");
+    setEditCourse(false);
+    reload();
+  };
+
+  // ---- Add by username/ID ----
+  const handleAddByLookup = async () => {
+    if (!id) return;
+    const q = addQuery.trim();
+    if (!q) return;
+    setAddBusy(true);
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(q);
+      const tgId = /^\d+$/.test(q) ? Number(q) : null;
+      const tgUser = q.replace(/^@/, "").toLowerCase();
+
+      let found: any = null;
+      if (isUuid) {
+        const { data } = await supabase.from("profiles").select("id, group_id").eq("id", q).maybeSingle();
+        found = data;
+      }
+      if (!found && tgId) {
+        const { data } = await supabase.from("profiles").select("id, group_id").eq("telegram_id", tgId).maybeSingle();
+        found = data;
+      }
+      if (!found && tgUser) {
+        const { data } = await supabase.from("profiles").select("id, group_id").eq("telegram_username", tgUser as any).maybeSingle();
+        found = data;
+      }
+      if (!found) { toast.error("Profil topilmadi"); return; }
+
+      const { error } = await supabase.from("profiles").update({ group_id: id }).eq("id", found.id);
+      if (error) { toast.error(error.message); return; }
+      toast.success("Talaba guruhga qo'shildi");
+      setAddQuery("");
+      setOpenAdd(false);
+      reload();
+    } finally {
+      setAddBusy(false);
+    }
+  };
+
+  // ---- CSV ----
+  const loadExistingForDedup = async () => {
+    const emails = new Set<string>();
+    const tgIds = new Set<number>();
+    const tgUsers = new Set<string>();
+    const inGroup = new Set<string>();
+    const PAGE = 1000;
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, email, telegram_id, telegram_username, group_id")
+        .range(from, from + PAGE - 1);
+      if (error || !data || data.length === 0) break;
+      for (const p of data as any[]) {
+        if (p.email) emails.add(String(p.email).toLowerCase());
+        if (p.telegram_id) tgIds.add(Number(p.telegram_id));
+        if (p.telegram_username) tgUsers.add(String(p.telegram_username).toLowerCase().replace(/^@/, ""));
+        if (p.group_id === id) inGroup.add(p.id);
+      }
+      if (data.length < PAGE) break;
+    }
+    setExisting({ emails, tgIds, tgUsers, inGroup });
+  };
+
+  const parseCsv = (txt: string) => {
+    if (!txt.trim()) { setCsvRows([]); return; }
+    const cleaned = txt.replace(/^\uFEFF/, "");
+    const parsed = Papa.parse<string[]>(cleaned, { skipEmptyLines: "greedy", delimiter: "," });
+    const all = (parsed.data || []) as string[][];
+    if (!all.length) { setCsvRows([]); return; }
+    const first = all[0].map((c) => (c || "").trim().toLowerCase());
+    const hasHeader = first.includes("email") || first.includes("name") || first.includes("telegram_user_id") || first.includes("telegram_username");
+    let headerMap: Record<string, number> | null = null;
+    let dataRows: { row: string[]; n: number }[];
+    if (hasHeader) {
+      headerMap = {};
+      first.forEach((h, i) => { if (h) headerMap![h] = i; });
+      dataRows = all.slice(1).map((r, i) => ({ row: r, n: i + 2 }));
+    } else {
+      dataRows = all.map((r, i) => ({ row: r, n: i + 1 }));
+    }
+    const get = (row: string[], key: string, fb: number) =>
+      headerMap && headerMap[key] !== undefined ? (row[headerMap[key]] || "").trim() : (row[fb] || "").trim();
+
+    const seenEmail = new Set<string>(), seenTgId = new Set<number>(), seenTgUser = new Set<string>();
+    const out = dataRows.map(({ row, n }) => {
+      const name = get(row, "name", 0);
+      const last_name = get(row, "last_name", 1);
+      const email = get(row, "email", 2).toLowerCase();
+      const tgIdRaw = get(row, "telegram_user_id", 4);
+      let tgUser = get(row, "telegram_username", 5).replace(/^@/, "").toLowerCase();
+      const tgId = tgIdRaw && /^\d+$/.test(tgIdRaw.replace(/[^\d]/g, "")) ? Number(tgIdRaw.replace(/[^\d]/g, "")) : undefined;
+      const hasEmail = !!email && /^\S+@\S+\.\S+$/.test(email);
+
+      let status: "new" | "moved" | "in_group" | "dup_in_file" | "invalid" = "new";
+      let reason = "";
+
+      if (!name) { status = "invalid"; reason = "name required"; }
+      else if (!hasEmail && tgId === undefined && !tgUser) { status = "invalid"; reason = "need email/tg id/username"; }
+      else if (email && seenEmail.has(email)) { status = "dup_in_file"; }
+      else if (tgId !== undefined && seenTgId.has(tgId)) { status = "dup_in_file"; }
+      else if (tgUser && seenTgUser.has(tgUser)) { status = "dup_in_file"; }
+      else {
+        if (email) seenEmail.add(email);
+        if (tgId !== undefined) seenTgId.add(tgId);
+        if (tgUser) seenTgUser.add(tgUser);
+        const exists =
+          (email && existing.emails.has(email)) ||
+          (tgId !== undefined && existing.tgIds.has(tgId)) ||
+          (tgUser && existing.tgUsers.has(tgUser));
+        status = exists ? "moved" : "new";
+      }
+
+      return { rowNum: n, name, last_name, email, telegram_user_id: tgId, telegram_username: tgUser || undefined, status, reason };
+    });
+    setCsvRows(out);
+  };
+
+  const counts = useMemo(() => {
+    const c = { new: 0, moved: 0, dup: 0, invalid: 0 };
+    for (const r of csvRows) {
+      if (r.status === "new") c.new++;
+      else if (r.status === "moved") c.moved++;
+      else if (r.status === "dup_in_file") c.dup++;
+      else if (r.status === "invalid") c.invalid++;
+    }
+    return c;
+  }, [csvRows]);
+
+  const importCsv = async () => {
+    if (!id) return;
+    const toSend = csvRows.filter((r) => r.status === "new" || r.status === "moved").map((r) => ({
+      name: r.name,
+      last_name: r.last_name || undefined,
+      email: r.email || "",
+      telegram_user_id: r.telegram_user_id,
+      telegram_username: r.telegram_username,
+      role: "student" as const,
+    }));
+    if (!toSend.length) return;
+    setImporting(true);
+    try {
+      const r = await fetch(`${FN_BASE}/admin-create-students`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({
+          students: toSend,
+          target_group_id: id,
+          send_invite: true,
+          csv_import: true,
+          redirectTo: `${getSiteUrl()}/reset-password`,
+        }),
+      });
+      const res = await r.json();
+      if (!r.ok) throw new Error(res?.error || "Import failed");
+      const created = (res?.results || []).filter((x: any) => x.status === "created").length;
+      const updated = (res?.results || []).filter((x: any) => x.status === "updated").length;
+      toast.success(`${created} yangi qo'shildi · ${updated} mavjud foydalanuvchi guruhga ko'chirildi`);
+      setOpenCsv(false); setCsvText(""); setCsvRows([]);
+      reload();
+    } catch (e: any) {
+      toast.error(e?.message || "Import failed");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleRemove = async () => {
+    if (!removeMember) return;
+    const { error } = await supabase.from("profiles").update({ group_id: null }).eq("id", removeMember.id);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Talaba guruhdan chiqarildi");
+    setRemoveMember(null);
+    reload();
+  };
+
+  const localeDate = (s?: string | null) => (s ? new Date(s).toLocaleDateString() : "—");
 
   return (
     <PageShell>
@@ -54,10 +319,6 @@ export default function GroupDetail() {
         <Link to="/admin/groups" className="inline-flex items-center text-sm text-muted-foreground hover:underline">
           <ChevronLeft className="h-4 w-4 mr-1" /> Back to groups
         </Link>
-        <div>
-          <h1 className="text-2xl font-semibold">{overview?.group_name || "Group"}</h1>
-          <p className="text-sm text-muted-foreground">Group analytics and members</p>
-        </div>
 
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
@@ -65,6 +326,29 @@ export default function GroupDetail() {
           <p className="text-sm text-muted-foreground">Group not found or no analytics yet.</p>
         ) : (
           <>
+            {/* Rich header */}
+            <div className="space-y-2">
+              <h1 className="text-2xl sm:text-3xl font-semibold">{overview.group_name}</h1>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
+                <span className="inline-flex items-center gap-1">
+                  Teacher: <span className="text-foreground font-medium">{overview.teacher_name || "—"}</span>
+                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setPendingTeacher(overview.teacher_id || "__none__"); setEditTeacher(true); }}>
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                </span>
+                <span>·</span>
+                <span className="inline-flex items-center gap-1">
+                  Course: <span className="text-foreground font-medium">{overview.course_name || "—"}</span>
+                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setPendingCourse(overview.course_id || "__none__"); setEditCourse(true); }}>
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                </span>
+                <span>·</span>
+                <span>Created: {localeDate(overview.created_at)}</span>
+              </div>
+            </div>
+
+            {/* Stats tiles */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
               <Card className="p-4"><div className="text-xs text-muted-foreground">Students</div><div className="text-2xl font-semibold">{overview.total_students}</div></Card>
               <Card className="p-4"><div className="text-xs text-muted-foreground">Active 7d</div><div className="text-2xl font-semibold">{overview.active_7d}</div></Card>
@@ -73,23 +357,40 @@ export default function GroupDetail() {
               <Card className="p-4"><div className="text-xs text-muted-foreground">Health</div><div className="text-2xl font-semibold">{overview.health}</div></Card>
             </div>
 
+            {/* Add students actions */}
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Button onClick={() => setOpenAdd(true)} className="w-full sm:w-auto">
+                <Plus className="h-4 w-4 mr-1" /> Talaba qo'shish (username/ID)
+              </Button>
+              <Button variant="outline" onClick={async () => { await loadExistingForDedup(); setOpenCsv(true); }} className="w-full sm:w-auto">
+                <UploadIcon className="h-4 w-4 mr-1" /> CSV yuklash
+              </Button>
+            </div>
+
+            <div className="text-sm text-muted-foreground">{members.length} talaba</div>
+
             {/* Mobile: card list */}
             <div className="md:hidden space-y-2">
               {members.length === 0 ? (
                 <p className="text-center text-muted-foreground py-6 text-sm">No members.</p>
               ) : members.map((m) => (
-                <Card key={m.user_id} className="p-3">
+                <Card key={m.id} className="p-3">
                   <div className="flex items-start justify-between gap-2">
-                    <div className="font-medium truncate">{m.name || "—"}</div>
-                    {m.last_active_at
-                      ? <span className="text-[11px] text-muted-foreground shrink-0">{new Date(m.last_active_at).toLocaleDateString()}</span>
-                      : <Badge variant="secondary" className="shrink-0 text-[10px]">never</Badge>}
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{[m.name, m.last_name].filter(Boolean).join(" ") || "—"}</div>
+                      <div className="text-xs text-muted-foreground truncate">{m.email}</div>
+                      {m.telegram_username && <div className="text-xs text-muted-foreground">@{m.telegram_username}</div>}
+                    </div>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => setRemoveMember(m)}>
+                      <X className="h-4 w-4" />
+                    </Button>
                   </div>
-                  <div className="text-xs text-muted-foreground truncate mt-0.5">{m.email}</div>
-                  {m.telegram_username && <div className="text-xs text-muted-foreground">@{m.telegram_username}</div>}
                   <div className="flex items-center gap-3 text-xs mt-2">
-                    <span><span className="text-muted-foreground">Completion:</span> <span className="font-medium">{m.completion_pct}%</span></span>
-                    <span><span className="text-muted-foreground">Avg:</span> <span className="font-medium">{m.avg_score_pct ?? "—"}{m.avg_score_pct != null ? "%" : ""}</span></span>
+                    <span><span className="text-muted-foreground">Done:</span> <span className="font-medium">{m.completed_lessons}</span></span>
+                    <span><span className="text-muted-foreground">Avg:</span> <span className="font-medium">{m.avg_score ?? "—"}{m.avg_score != null ? "%" : ""}</span></span>
+                    {m.last_activity_at
+                      ? <span className="text-muted-foreground ml-auto">{new Date(m.last_activity_at).toLocaleDateString()}</span>
+                      : <Badge variant="secondary" className="ml-auto text-[10px]">never</Badge>}
                   </div>
                 </Card>
               ))}
@@ -104,32 +405,196 @@ export default function GroupDetail() {
                     <th className="text-left p-3">Email</th>
                     <th className="text-left p-3">Telegram</th>
                     <th className="text-left p-3">Last active</th>
-                    <th className="text-left p-3">Completion</th>
+                    <th className="text-left p-3">Done</th>
                     <th className="text-left p-3">Avg score</th>
+                    <th className="p-3"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {members.length === 0 ? (
-                    <tr><td colSpan={6} className="text-center text-muted-foreground py-6">No members.</td></tr>
+                    <tr><td colSpan={7} className="text-center text-muted-foreground py-6">No members.</td></tr>
                   ) : members.map((m) => (
-                    <tr key={m.user_id} className="border-t">
-                      <td className="p-3">{m.name || "—"}</td>
+                    <tr key={m.id} className="border-t">
+                      <td className="p-3">{[m.name, m.last_name].filter(Boolean).join(" ") || "—"}</td>
                       <td className="p-3 text-xs">{m.email}</td>
                       <td className="p-3 text-xs">{m.telegram_username ? `@${m.telegram_username}` : "—"}</td>
-                      <td className="p-3 text-xs">{m.last_active_at ? new Date(m.last_active_at).toLocaleDateString() : <Badge variant="secondary">never</Badge>}</td>
-                      <td className="p-3">{m.completion_pct}%</td>
-                      <td className="p-3">{m.avg_score_pct ?? "—"}{m.avg_score_pct != null ? "%" : ""}</td>
+                      <td className="p-3 text-xs">{m.last_activity_at ? new Date(m.last_activity_at).toLocaleDateString() : <Badge variant="secondary">never</Badge>}</td>
+                      <td className="p-3">{m.completed_lessons}</td>
+                      <td className="p-3">{m.avg_score ?? "—"}{m.avg_score != null ? "%" : ""}</td>
+                      <td className="p-3 text-right">
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setRemoveMember(m)} title="Remove from group">
+                          <UserMinus className="h-4 w-4" />
+                        </Button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </Card>
 
-            <Button asChild variant="outline" size="sm">
+            <Button asChild variant="link" size="sm" className="px-0">
               <Link to="/admin/users">Manage members in Users page →</Link>
             </Button>
           </>
         )}
+
+        {/* Edit teacher dialog */}
+        <Dialog open={editTeacher} onOpenChange={setEditTeacher}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Change teacher</DialogTitle></DialogHeader>
+            <Select value={pendingTeacher} onValueChange={setPendingTeacher}>
+              <SelectTrigger><SelectValue placeholder="Select teacher" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">— None —</SelectItem>
+                {teachers.map((t) => <SelectItem key={t.id} value={t.id}>{t.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setEditTeacher(false)}>Cancel</Button>
+              <Button onClick={saveTeacher}>Save</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit course dialog */}
+        <Dialog open={editCourse} onOpenChange={setEditCourse}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Change course</DialogTitle></DialogHeader>
+            <Select value={pendingCourse} onValueChange={setPendingCourse}>
+              <SelectTrigger><SelectValue placeholder="Select course" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">— None —</SelectItem>
+                {courses.map((c) => <SelectItem key={c.id} value={c.id}>{c.title}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setEditCourse(false)}>Cancel</Button>
+              <Button onClick={saveCourse}>Save</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Add by username/ID dialog */}
+        <Dialog open={openAdd} onOpenChange={setOpenAdd}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Talaba qo'shish</DialogTitle>
+              <DialogDescription>telegram username (@user), telegram user id, yoki profil UUID kiriting</DialogDescription>
+            </DialogHeader>
+            <Input
+              autoFocus
+              placeholder="@username yoki 123456789 yoki uuid"
+              value={addQuery}
+              onChange={(e) => setAddQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleAddByLookup(); }}
+            />
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setOpenAdd(false)}>Cancel</Button>
+              <Button onClick={handleAddByLookup} disabled={addBusy || !addQuery.trim()}>Qo'shish</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* CSV upload dialog */}
+        <Dialog open={openCsv} onOpenChange={(o) => { setOpenCsv(o); if (!o) { setCsvText(""); setCsvRows([]); } }}>
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>CSV yuklash — {overview?.group_name}</DialogTitle>
+              <DialogDescription>
+                Format: <code className="text-[11px]">name,last_name,email,password,telegram_user_id,telegram_username</code>.
+                Mavjud foydalanuvchilar guruhga ko'chiriladi, yangi foydalanuvchilar yaratiladi.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <input
+                  id="grp-csv-input"
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      const t = String(reader.result || "");
+                      setCsvText(t); parseCsv(t);
+                    };
+                    reader.readAsText(f);
+                    e.target.value = "";
+                  }}
+                />
+                <Button variant="outline" size="sm" onClick={() => document.getElementById("grp-csv-input")?.click()}>
+                  <UploadIcon className="h-4 w-4 mr-1" /> Choose CSV file
+                </Button>
+              </div>
+              <Textarea
+                rows={6}
+                value={csvText}
+                onChange={(e) => { setCsvText(e.target.value); parseCsv(e.target.value); }}
+                placeholder="Aida,Khan,aida@example.com,,123456789,@aidakhan"
+              />
+              {csvRows.length > 0 && (
+                <>
+                  <div className="border rounded-md max-h-60 overflow-y-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/40 text-xs sticky top-0">
+                        <tr>
+                          <th className="text-left p-2">#</th>
+                          <th className="text-left p-2">Name</th>
+                          <th className="text-left p-2">Email</th>
+                          <th className="text-left p-2">Telegram</th>
+                          <th className="text-left p-2">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {csvRows.slice(0, 50).map((r, i) => (
+                          <tr key={i} className={`border-t ${r.status === "invalid" ? "bg-destructive/5" : r.status === "dup_in_file" ? "bg-muted/40" : ""}`}>
+                            <td className="p-2 text-xs">{r.rowNum}</td>
+                            <td className="p-2">{[r.name, r.last_name].filter(Boolean).join(" ")}</td>
+                            <td className="p-2 text-xs">{r.email || "—"}</td>
+                            <td className="p-2 text-xs">{r.telegram_username ? `@${r.telegram_username}` : (r.telegram_user_id || "—")}</td>
+                            <td className="p-2 text-xs">
+                              {r.status === "new" && <Badge>new</Badge>}
+                              {r.status === "moved" && <Badge variant="secondary">moved</Badge>}
+                              {r.status === "dup_in_file" && <Badge variant="outline">dup in file</Badge>}
+                              {r.status === "invalid" && <Badge variant="destructive">{r.reason || "invalid"}</Badge>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {counts.new} yangi · {counts.moved} mavjud guruhga ko'chiriladi · {counts.dup} dub fayl ichida · {counts.invalid} noto'g'ri
+                  </div>
+                </>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setOpenCsv(false)}>Cancel</Button>
+              <Button onClick={importCsv} disabled={importing || (counts.new + counts.moved) === 0}>
+                {importing ? "Yuklanmoqda…" : `Add ${counts.new + counts.moved} students`}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Remove confirm */}
+        <AlertDialog open={!!removeMember} onOpenChange={(o) => !o && setRemoveMember(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Remove from group?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {removeMember ? `${[removeMember.name, removeMember.last_name].filter(Boolean).join(" ") || removeMember.email} guruhdan chiqariladi. Hisob o'chirilmaydi.` : ""}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={handleRemove}>Remove</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </PageShell>
   );
