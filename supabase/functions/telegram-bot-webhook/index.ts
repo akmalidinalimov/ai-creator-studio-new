@@ -707,7 +707,112 @@ async function computeStats(admin: any, userId: string) {
   };
 }
 
-async function handleStartLogin(admin: any, msg: any, token: string, locale: Locale) {
+async function buildStatsMessage(admin: any, userId: string, locale: Locale): Promise<string> {
+  const t = T[locale] as any;
+  const lines: string[] = [t.statsTitle, ""];
+  try {
+    const courseId = await getDefaultCourseId(admin);
+
+    // Lessons total + completed
+    let lessonIds: string[] = [];
+    if (courseId) {
+      const { data: ms } = await admin.from("modules").select("id").eq("course_id", courseId);
+      const mids = (ms || []).map((m: any) => m.id);
+      if (mids.length) {
+        const { data: ls } = await admin
+          .from("lessons").select("id").in("module_id", mids).eq("published", true);
+        lessonIds = (ls || []).map((l: any) => l.id);
+      }
+    }
+    const totalLessons = lessonIds.length;
+
+    const [
+      progressRes, streakRes, todayRes, hwSubRes, hwTotalRes,
+      lbRes, totalStudentsRes, badgesEarnedRes, badgesTotalRes, prefRes,
+    ] = await Promise.all([
+      lessonIds.length
+        ? admin.from("lesson_progress").select("lesson_id, completed_at").eq("user_id", userId).in("lesson_id", lessonIds).not("completed_at", "is", null)
+        : Promise.resolve({ data: [] as any[] }),
+      admin.from("streaks").select("current_streak, longest_streak").eq("user_id", userId).maybeSingle(),
+      admin.from("lesson_progress").select("completed_at").eq("user_id", userId).gte("completed_at", new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z").toISOString()).not("completed_at", "is", null),
+      admin.from("homework_submissions").select("score").eq("user_id", userId),
+      admin.from("homework_assignments").select("id", { count: "exact", head: true }),
+      admin.from("leaderboard_cache").select("rank, score").eq("user_id", userId).maybeSingle(),
+      admin.from("user_roles").select("user_id", { count: "exact", head: true }).eq("role", "student"),
+      admin.from("user_badges").select("badge_id", { count: "exact", head: true }).eq("user_id", userId),
+      admin.from("badges").select("id", { count: "exact", head: true }),
+      admin.from("profiles").select("weekly_goal_lessons").eq("id", userId).maybeSingle(),
+    ]);
+
+    const completedLessons = (progressRes.data || []).length;
+    lines.push(t.statsLessons(completedLessons, totalLessons));
+
+    const sk = streakRes.data;
+    if (sk && (sk.current_streak || sk.longest_streak)) {
+      lines.push(t.statsStreak(sk.current_streak || 0, sk.longest_streak || 0));
+    } else {
+      lines.push(t.statsStreakNone);
+    }
+
+    const todayDone = (todayRes.data || []).length;
+    const weeklyGoal = prefRes.data?.weekly_goal_lessons || 5;
+    const dailyTarget = Math.max(1, Math.round(weeklyGoal / 7));
+    lines.push(t.statsDailyGoal(todayDone, dailyTarget, todayDone >= dailyTarget));
+
+    const subs = hwSubRes.data || [];
+    const scored = subs.filter((s: any) => s.score != null);
+    const hwTotal = hwTotalRes.count || 0;
+    if (subs.length === 0) {
+      lines.push(t.statsHomeworkNone);
+    } else {
+      const avg = scored.length ? (scored.reduce((a: number, s: any) => a + Number(s.score || 0), 0) / scored.length).toFixed(1) : "—";
+      lines.push(t.statsHomework(subs.length, hwTotal, avg));
+    }
+
+    const lb = lbRes.data;
+    if (lb && lb.rank) {
+      lines.push(t.statsRanking(lb.rank, totalStudentsRes.count || 0, lb.score || 0));
+    } else {
+      lines.push(t.statsRankingNone);
+    }
+
+    lines.push(t.statsBadges(badgesEarnedRes.count || 0, badgesTotalRes.count || 0));
+  } catch (e) {
+    console.error("buildStatsMessage error", e);
+  }
+  return lines.join("\n");
+}
+
+async function buildHomeworkMessage(admin: any, userId: string, locale: Locale): Promise<string> {
+  const t = T[locale] as any;
+  const lines: string[] = [t.hwTitle, ""];
+  try {
+    const { data: assigns } = await admin
+      .from("homework_assignments")
+      .select("id, title, max_score, module_id, modules(position, course_id)")
+      .order("created_at", { ascending: true });
+    const list = (assigns || []) as any[];
+    if (!list.length) { lines.push(t.hwEmpty); return lines.join("\n"); }
+    list.sort((a, b) => (a.modules?.position ?? 0) - (b.modules?.position ?? 0));
+    const aIds = list.map((a) => a.id);
+    const { data: subs } = await admin
+      .from("homework_submissions")
+      .select("assignment_id, score")
+      .eq("user_id", userId)
+      .in("assignment_id", aIds);
+    const subMap = new Map((subs || []).map((s: any) => [s.assignment_id, s]));
+    list.forEach((a, i) => {
+      const s: any = subMap.get(a.id);
+      let status = t.hwStatusNotStarted;
+      if (s) status = s.score != null ? t.hwStatusScored(s.score, a.max_score || 10) : t.hwStatusSubmitted;
+      lines.push(`${i + 1}. <b>${csvEscapeHtml(a.title || "—")}</b>\n   ${status}`);
+    });
+  } catch (e) {
+    console.error("buildHomeworkMessage error", e);
+    lines.push(t.hwEmpty);
+  }
+  return lines.join("\n");
+}
   const t = T[locale];
   const chatId = msg.chat.id;
   const tgId = msg.from.id as number;
