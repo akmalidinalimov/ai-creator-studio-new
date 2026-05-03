@@ -511,8 +511,9 @@ function getTeacherKeyboard(locale: Locale) {
   const t = T[locale] as any;
   return {
     keyboard: [
-      [{ text: t.tKbStats }, { text: t.tKbStudents }],
-      [{ text: t.tKbInactive }, { text: t.tKbTop }],
+      [{ text: t.tKbGrade }, { text: t.tKbGraded }],
+      [{ text: t.tKbStats }, { text: t.tKbTop }],
+      [{ text: t.tKbStudents }, { text: t.tKbInactive }],
       [{ text: t.tKbBroadcast }, { text: t.tKbSettings }],
       [{ text: t.kbLang }],
     ],
