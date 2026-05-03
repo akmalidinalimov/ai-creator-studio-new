@@ -2069,10 +2069,17 @@ export type Database = {
         Args: { _group_id: string }
         Returns: {
           active_7d: number
-          avg_score: number
-          completion_pct: number
+          avg_completion_pct: number
+          avg_score_pct: number
+          course_id: string
+          course_name: string
+          created_at: string
+          group_id: string
+          group_name: string
           health: number
-          total: number
+          teacher_id: string
+          teacher_name: string
+          total_students: number
         }[]
       }
       staff_group_recent_activity: {
