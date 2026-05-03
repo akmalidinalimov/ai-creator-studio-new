@@ -136,7 +136,7 @@ export default function AdminHomework() {
                     <div className="font-semibold">{m.title}</div>
                     {stat && (
                       <div className="text-xs text-muted-foreground mt-1">
-                        Topshirgan: {stat.submitted_students} talaba
+                        Baholangan: {stat.submitted_students} talaba
                         {stat.avg_norm != null && ` · O'rtacha: ${stat.avg_norm}/10`}
                       </div>
                     )}

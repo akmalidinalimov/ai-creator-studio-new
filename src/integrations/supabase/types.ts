@@ -662,6 +662,61 @@ export type Database = {
           },
         ]
       }
+      group_module_topics: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          group_id: string
+          id: string
+          module_id: string
+          telegram_topic_id: number | null
+          telegram_topic_url: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          group_id: string
+          id?: string
+          module_id: string
+          telegram_topic_id?: number | null
+          telegram_topic_url: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          group_id?: string
+          id?: string
+          module_id?: string
+          telegram_topic_id?: number | null
+          telegram_topic_url?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_module_topics_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_module_topics_module_id_fkey"
+            columns: ["module_id"]
+            isOneToOne: false
+            referencedRelation: "modules"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_module_topics_module_id_fkey"
+            columns: ["module_id"]
+            isOneToOne: false
+            referencedRelation: "mv_lesson_dropoff"
+            referencedColumns: ["module_id"]
+          },
+        ]
+      }
       groups: {
         Row: {
           course_id: string | null
@@ -670,6 +725,7 @@ export type Database = {
           is_default: boolean
           name: string
           teacher_id: string | null
+          telegram_group_url: string | null
           updated_at: string
         }
         Insert: {
@@ -679,6 +735,7 @@ export type Database = {
           is_default?: boolean
           name: string
           teacher_id?: string | null
+          telegram_group_url?: string | null
           updated_at?: string
         }
         Update: {
@@ -688,6 +745,7 @@ export type Database = {
           is_default?: boolean
           name?: string
           teacher_id?: string | null
+          telegram_group_url?: string | null
           updated_at?: string
         }
         Relationships: [

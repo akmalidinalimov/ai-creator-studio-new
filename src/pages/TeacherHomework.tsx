@@ -119,7 +119,7 @@ export default function TeacherHomework() {
 }
 
 function Table({ rows, onOpen, scored }: { rows: Row[]; onOpen: (r: Row) => void; scored?: boolean }) {
-  if (!rows.length) return <Card className="p-8 text-center text-muted-foreground">Hech narsa yo'q</Card>;
+  if (!rows.length) return <Card className="p-8 text-center text-muted-foreground">Baholash uchun vazifa yo'q. Bot orqali talabalarni baholang.</Card>;
   return (
     <Card className="overflow-x-auto">
       <table className="w-full text-sm">
