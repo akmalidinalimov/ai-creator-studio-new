@@ -1801,6 +1801,10 @@ export type Database = {
         Args: { _group_id: string; _user_ids: string[] }
         Returns: number
       }
+      admin_change_role: {
+        Args: { _new_role: string; _target: string }
+        Returns: undefined
+      }
       admin_course_progress: {
         Args: { _course_id: string }
         Returns: {

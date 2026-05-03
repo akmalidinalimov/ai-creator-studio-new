@@ -231,10 +231,15 @@ export default function AdminDashboard() {
         completedSet.get(r.user_id)!.add(r.lesson_id);
       });
 
-      // course completions = users who completed ALL lessons
+      // course completions = count of issued (non-revoked) certificates.
+      // Source of truth = certificates table (auto-issued only when all lessons complete).
+      // Keeps /admin/dashboard tile in sync with /admin/certificates count.
       let completions = 0;
-      if (allLessonIds.length > 0) {
-        completedSet.forEach((s) => { if (s.size >= allLessonIds.length) completions++; });
+      {
+        let q = supabase.from("certificates").select("profile_id", { count: "exact", head: true }).is("revoked_at", null);
+        if (isTeacher && visibleIds.length) q = q.in("profile_id", visibleIds);
+        const { count } = await q;
+        completions = count || 0;
       }
 
       setStats({

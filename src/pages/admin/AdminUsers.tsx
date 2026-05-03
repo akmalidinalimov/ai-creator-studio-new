@@ -20,6 +20,8 @@ import { toast } from "sonner";
 import Papa from "papaparse";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
+type RoleName = "student" | "teacher" | "admin" | "superadmin";
+
 interface UserRow {
   id: string;
   email: string;
@@ -32,6 +34,8 @@ interface UserRow {
   created_at: string;
   last_sign_in_at: string | null;
   is_admin: boolean;
+  role_name?: RoleName;
+  group_id?: string | null;
 }
 
 interface CsvRow {
@@ -69,6 +73,9 @@ export default function AdminUsers() {
   const isTeacher = role === "teacher";
   const isAdmin = role === "admin";
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [groups, setGroups] = useState<{ id: string; name: string }[]>([]);
+  const [bulkGroupId, setBulkGroupId] = useState<string>("");
+  const [bulkRole, setBulkRole] = useState<{ user: UserRow; newRole: RoleName } | null>(null);
   const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
   const [enrollMap, setEnrollMap] = useState<Record<string, Set<string>>>({});
   const [search, setSearch] = useState("");
@@ -110,17 +117,34 @@ export default function AdminUsers() {
     const { data, error } = await supabase.rpc(isTeacher ? "staff_list_students" as any : "admin_list_users");
     if (error) toast.error(error.message);
     const rows = (data || []) as any[];
-    // Hydrate last_name from profiles (RPC doesn't return it)
+    // Hydrate last_name + group_id from profiles, and roles from user_roles
     if (rows.length) {
       const ids = rows.map((u) => u.id);
-      const { data: profs } = await supabase.from("profiles").select("id, last_name").in("id", ids);
+      const [{ data: profs }, { data: rolesData }] = await Promise.all([
+        supabase.from("profiles").select("id, last_name, group_id").in("id", ids),
+        supabase.from("user_roles").select("user_id, role").in("user_id", ids),
+      ]);
       const lnMap: Record<string, string | null> = {};
-      (profs || []).forEach((p: any) => { lnMap[p.id] = p.last_name; });
-      rows.forEach((u) => { u.last_name = lnMap[u.id] || null; });
+      const grpMap: Record<string, string | null> = {};
+      (profs || []).forEach((p: any) => { lnMap[p.id] = p.last_name; grpMap[p.id] = p.group_id; });
+      const rolesMap: Record<string, string[]> = {};
+      (rolesData || []).forEach((r: any) => { (rolesMap[r.user_id] ||= []).push(r.role); });
+      const rank: Record<string, number> = { superadmin: 1, admin: 2, teacher: 3, student: 4 };
+      rows.forEach((u) => {
+        u.last_name = lnMap[u.id] || null;
+        u.group_id = grpMap[u.id] || null;
+        const list = rolesMap[u.id] || [];
+        const top = list.sort((a, b) => (rank[a] || 99) - (rank[b] || 99))[0] as RoleName | undefined;
+        u.role_name = (top || "student") as RoleName;
+      });
     }
     setUsers(rows as UserRow[]);
-    const { data: cs } = await supabase.from("courses").select("id, title").order("title");
+    const [{ data: cs }, { data: gs }] = await Promise.all([
+      supabase.from("courses").select("id, title").order("title"),
+      supabase.from("groups").select("id, name").order("name"),
+    ]);
     setCourses(cs || []);
+    setGroups(gs || []);
     const { data: enrolls } = await supabase.from("enrollments").select("user_id, course_id");
     const m: Record<string, Set<string>> = {};
     (enrolls || []).forEach((e: any) => {
@@ -456,6 +480,33 @@ export default function AdminUsers() {
     reload();
   };
 
+  const changeUserRole = async (user: UserRow, newRole: RoleName) => {
+    try {
+      const { data, error } = await supabase.functions.invoke("admin-change-role", {
+        body: { target_user_id: user.id, new_role: newRole },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      toast.success(t("admin.users.toasts.roleUpdated", { defaultValue: "Role updated" }));
+      setBulkRole(null);
+      reload();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to change role");
+      setBulkRole(null);
+    }
+  };
+
+  const bulkAssignGroup = async (groupId: string) => {
+    if (selected.size === 0) return;
+    const ids = Array.from(selected);
+    const { data, error } = await supabase.rpc("admin_assign_group", { _user_ids: ids, _group_id: groupId });
+    if (error) return toast.error(error.message);
+    toast.success(t("admin.users.toasts.bulkMoved", { defaultValue: "{{n}} users moved", n: data || ids.length }));
+    setSelected(new Set());
+    setBulkGroupId("");
+    reload();
+  };
+
   const setStatus = async (user: UserRow, status: "active" | "inactive") => {
     const { error } = await supabase.from("profiles").update({ status }).eq("id", user.id);
     if (error) return toast.error(error.message);
@@ -514,7 +565,19 @@ export default function AdminUsers() {
             <h1 className="text-3xl font-semibold tracking-tight">{t("admin.users.title")}</h1>
             <p className="text-muted-foreground mt-1">{t("admin.users.subtitle", { total: users.length, admins: users.filter(u => u.is_admin).length })}</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
+            {isAdmin && selected.size > 0 && (
+              <Select value={bulkGroupId} onValueChange={(v) => { setBulkGroupId(v); bulkAssignGroup(v); }}>
+                <SelectTrigger className="w-[200px] h-9 text-xs">
+                  <SelectValue placeholder={t("admin.users.bulkMoveTo", { defaultValue: "Move {{n}} to group…", n: selected.size })} />
+                </SelectTrigger>
+                <SelectContent>
+                  {groups.map((g) => (
+                    <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             {selected.size > 0 && (
               <Button variant="outline" size="sm" onClick={() => {
                 const emails = users.filter((u) => selected.has(u.id)).map((u) => u.email);
@@ -562,9 +625,9 @@ export default function AdminUsers() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
                     <div className="font-medium truncate">{[u.name, u.last_name].filter(Boolean).join(" ") || "—"}</div>
-                    {u.is_admin
-                      ? <Badge className="shrink-0">{t("admin.users.admin").toLowerCase()}</Badge>
-                      : <Badge variant="secondary" className="shrink-0">{t("admin.users.student").toLowerCase()}</Badge>}
+                    <Badge variant={u.role_name && u.role_name !== "student" ? "default" : "secondary"} className="shrink-0">
+                      {u.role_name || "student"}
+                    </Badge>
                   </div>
                   <div className="text-xs text-muted-foreground truncate mt-0.5">
                     {u.email}
@@ -631,7 +694,28 @@ export default function AdminUsers() {
                       <div className="font-mono text-foreground">{u.telegram_id ?? "—"}</div>
                       {u.telegram_username && <div className="text-muted-foreground">@{u.telegram_username}</div>}
                     </td>
-                    <td className="p-3">{u.is_admin ? <Badge>{t("admin.users.admin").toLowerCase()}</Badge> : <Badge variant="secondary">{t("admin.users.student").toLowerCase()}</Badge>}</td>
+                    <td className="p-3">
+                      {isAdmin ? (
+                        <Select
+                          value={u.role_name || "student"}
+                          disabled={u.id === session?.user?.id}
+                          onValueChange={(v) => {
+                            const next = v as RoleName;
+                            if (next !== (u.role_name || "student")) setBulkRole({ user: u, newRole: next });
+                          }}
+                        >
+                          <SelectTrigger className="h-8 w-[130px] text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="student">Student</SelectItem>
+                            <SelectItem value="teacher">Teacher</SelectItem>
+                            <SelectItem value="admin">Admin</SelectItem>
+                            <SelectItem value="superadmin">Superadmin</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Badge variant="secondary">{u.role_name || "student"}</Badge>
+                      )}
+                    </td>
                     <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : "bg-destructive/10 text-destructive"}`}>{u.status === "active" ? t("admin.users.active") : t("admin.users.inactive")}</span></td>
                     <td className="p-3 text-xs text-muted-foreground">{(enrollMap[u.id]?.size) || 0}</td>
                     <td className="p-3 text-xs text-muted-foreground">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}</td>
@@ -1062,6 +1146,30 @@ export default function AdminUsers() {
           )}
         </SheetContent>
       </Sheet>
+
+      <AlertDialog open={!!bulkRole} onOpenChange={(o) => !o && setBulkRole(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("admin.users.changeRoleTitle", { defaultValue: "Change role?" })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {bulkRole && t("admin.users.changeRoleDesc", {
+                defaultValue: "Change {{name}}'s role from {{old}} to {{new}}?",
+                name: [bulkRole.user.name, bulkRole.user.last_name].filter(Boolean).join(" ") || bulkRole.user.email,
+                old: bulkRole.user.role_name || "student",
+                new: bulkRole.newRole,
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("admin.users.cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => bulkRole && changeUserRole(bulkRole.user, bulkRole.newRole)}>
+              {t("admin.users.confirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={!!confirmRole} onOpenChange={(o) => !o && setConfirmRole(null)}>
         <AlertDialogContent>
