@@ -41,27 +41,25 @@ export default function AnalyticsHeatmap() {
               {Array.from({ length: 24 }, (_, h) => (
                 <div key={h} className="text-[10px] text-muted-foreground text-center">{h}</div>
               ))}
-              {DAYS.map((d, di) => (
-                <>
-                  <div key={`d${di}`} className="text-xs text-muted-foreground py-0.5">{d}</div>
-                  {Array.from({ length: 24 }, (_, h) => {
-                    const v = grid[di][h];
-                    const intensity = v / max;
-                    return (
-                      <div
-                        key={`${di}-${h}`}
-                        className="aspect-square rounded-sm m-px"
-                        style={{
-                          backgroundColor: v > 0
-                            ? `hsl(var(--primary) / ${0.15 + intensity * 0.85})`
-                            : "hsl(var(--muted))",
-                        }}
-                        title={`${d} ${h}:00 — ${Math.round(v)} daqiqa`}
-                      />
-                    );
-                  })}
-                </>
-              ))}
+              {DAYS.flatMap((d, di) => [
+                <div key={`d${di}`} className="text-xs text-muted-foreground py-0.5">{d}</div>,
+                ...Array.from({ length: 24 }, (_, h) => {
+                  const v = grid[di][h];
+                  const intensity = v / max;
+                  return (
+                    <div
+                      key={`${di}-${h}`}
+                      className="aspect-square rounded-sm m-px"
+                      style={{
+                        backgroundColor: v > 0
+                          ? `hsl(var(--primary) / ${0.15 + intensity * 0.85})`
+                          : "hsl(var(--muted))",
+                      }}
+                      title={`${d} ${h}:00 — ${Math.round(v)} daqiqa`}
+                    />
+                  );
+                }),
+              ])}
             </div>
           </div>
         )}
