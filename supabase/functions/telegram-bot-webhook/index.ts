@@ -1354,10 +1354,227 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
     return true;
   }
 
+  // Grading commands shared with admin
+  const g = await handleGradingCommand(admin, chatId, teacherId, locale, cmd, false);
+  if (g) return true;
+
   return false;
 }
 
-// Handle teacher broadcast text follow-up. Returns true if consumed.
+// =================== GRADING (teacher + admin) ===================
+
+// Returns submissions in scope for grader. teacher=group students, admin=all.
+async function gradingScopeIds(admin: any, graderId: string, isAdmin: boolean): Promise<string[] | null> {
+  if (isAdmin) return null; // null = no scope filter
+  const groups = await teacherGroups(admin, graderId);
+  if (!groups.length) return [];
+  const { data } = await admin.from("profiles").select("id").in("group_id", groups.map((g) => g.id));
+  return ((data || []) as any[]).map((r) => r.id);
+}
+
+async function loadGradingSubmissions(admin: any, graderId: string, isAdmin: boolean, opts: { scored: boolean; limit?: number }) {
+  const ids = await gradingScopeIds(admin, graderId, isAdmin);
+  if (ids && ids.length === 0) return [];
+  let q = admin.from("homework_submissions").select("id, assignment_id, user_id, submitted_at, score, score_feedback, scored_at, is_late");
+  if (ids) q = q.in("user_id", ids);
+  q = opts.scored ? q.not("score", "is", null).order("scored_at", { ascending: false }) : q.is("score", null).order("submitted_at", { ascending: true });
+  if (opts.limit) q = q.limit(opts.limit);
+  const { data: subs } = await q;
+  const list = (subs || []) as any[];
+  if (!list.length) return [];
+  const aIds = Array.from(new Set(list.map((s) => s.assignment_id)));
+  const uIds = Array.from(new Set(list.map((s) => s.user_id)));
+  const [{ data: assigns }, { data: profs }] = await Promise.all([
+    admin.from("homework_assignments").select("id, title, max_score, task_number").in("id", aIds),
+    admin.from("profiles").select("id, name, last_name, telegram_id, preferred_locale").in("id", uIds),
+  ]);
+  const aMap = new Map((assigns || []).map((a: any) => [a.id, a]));
+  const pMap = new Map((profs || []).map((p: any) => [p.id, p]));
+  return list.map((s) => ({ ...s, assignment: aMap.get(s.assignment_id) || {}, profile: pMap.get(s.user_id) || {} }));
+}
+
+async function handleGradingCommand(
+  admin: any, chatId: number, graderId: string, locale: Locale, cmd: string, isAdmin: boolean,
+): Promise<boolean> {
+  const t = T[locale] as any;
+
+  if (cmd === "/cancel" || cmd === "/skip") {
+    // /skip handled in session; /cancel clears bot_conversation_state too
+    if (cmd === "/cancel") {
+      await admin.from("bot_conversation_state").delete().eq("telegram_id", await tgIdFromUserId(admin, graderId));
+      await sendWithKeyboard(chatId, t.gradeCancelled, locale, isAdmin, isAdmin ? "admin" : "teacher");
+    }
+    return cmd === "/cancel";
+  }
+
+  if (cmd === "/baholash" || cmd === "/grade") {
+    const items = await loadGradingSubmissions(admin, graderId, isAdmin, { scored: false, limit: 10 });
+    if (!items.length) {
+      await sendWithKeyboard(chatId, `${t.gradePending}\n\n${t.gradeNoneP}`, locale, isAdmin, isAdmin ? "admin" : "teacher");
+      return true;
+    }
+    const lines = [t.gradePending, ""];
+    const buttons: any[][] = [];
+    items.forEach((s: any, i: number) => {
+      const name = [s.profile?.name, s.profile?.last_name].filter(Boolean).join(" ") || "—";
+      const tn = s.assignment?.task_number ? ` #${s.assignment.task_number}` : "";
+      const title = `${s.assignment?.title || "—"}${tn}`;
+      const when = new Date(s.submitted_at).toLocaleDateString();
+      lines.push(t.gradeListItem(i + 1, csvEscapeHtml(name), csvEscapeHtml(title), when));
+      buttons.push([{ text: `${i + 1}. ${t.gradeOpenBtn}`, callback_data: `grade:open:${s.id}` }]);
+    });
+    await sendMessage(chatId, lines.join("\n"), { inline_keyboard: buttons });
+    await sendKeyboardHint(chatId, locale, isAdmin, isAdmin ? "admin" : "teacher");
+    return true;
+  }
+
+  if (cmd === "/baholar" || cmd === "/grades") {
+    const items = await loadGradingSubmissions(admin, graderId, isAdmin, { scored: true, limit: 10 });
+    if (!items.length) {
+      await sendWithKeyboard(chatId, `${t.gradedRecent}\n\n${t.gradedNone}`, locale, isAdmin, isAdmin ? "admin" : "teacher");
+      return true;
+    }
+    const lines = [t.gradedRecent, ""];
+    items.forEach((s: any, i: number) => {
+      const name = [s.profile?.name, s.profile?.last_name].filter(Boolean).join(" ") || "—";
+      const tn = s.assignment?.task_number ? ` #${s.assignment.task_number}` : "";
+      const title = `${s.assignment?.title || "—"}${tn}`;
+      const mx = s.assignment?.max_score || 10;
+      lines.push(t.gradedItem(i + 1, csvEscapeHtml(name), csvEscapeHtml(title), s.score, mx));
+    });
+    await sendWithKeyboard(chatId, lines.join("\n"), locale, isAdmin, isAdmin ? "admin" : "teacher");
+    return true;
+  }
+
+  return false;
+}
+
+async function tgIdFromUserId(admin: any, userId: string): Promise<number | null> {
+  const { data } = await admin.from("profiles").select("telegram_id").eq("id", userId).maybeSingle();
+  return data?.telegram_id ?? null;
+}
+
+// Open a submission for grading: store conversation state and prompt for score.
+async function startGradingFlow(admin: any, chatId: number, graderTgId: number, graderId: string, submissionId: string, locale: Locale, isAdmin: boolean) {
+  const t = T[locale] as any;
+  const { data: sub } = await admin
+    .from("homework_submissions")
+    .select("id, assignment_id, user_id, submitted_text, submitted_image_url, submitted_at, is_late, score")
+    .eq("id", submissionId)
+    .maybeSingle();
+  if (!sub) {
+    await sendMessage(chatId, t.gradeNotFound);
+    return;
+  }
+  const { data: a } = await admin.from("homework_assignments").select("id, title, max_score, task_number").eq("id", sub.assignment_id).maybeSingle();
+  const { data: p } = await admin.from("profiles").select("id, name, last_name").eq("id", sub.user_id).maybeSingle();
+  const name = [p?.name, p?.last_name].filter(Boolean).join(" ") || "—";
+  const tn = a?.task_number ? ` #${a.task_number}` : "";
+  const header = `<b>${csvEscapeHtml(name)}</b> — ${csvEscapeHtml(a?.title || "")}${tn}`;
+  const body = sub.submitted_text ? csvEscapeHtml(sub.submitted_text) : "<i>(no text)</i>";
+  await sendMessage(chatId, `${header}\n\n${body}`);
+  if (sub.submitted_image_url) {
+    try {
+      const { data: signed } = await admin.storage.from("homework_images").createSignedUrl(sub.submitted_image_url, 600);
+      if (signed?.signedUrl) await sendMessage(chatId, `🖼 ${signed.signedUrl}`);
+    } catch (_e) { /* ignore */ }
+  }
+  await admin.from("bot_conversation_state").upsert({
+    telegram_id: graderTgId,
+    state: "grade_score",
+    context: { submission_id: submissionId, max_score: a?.max_score || 10, grader_id: graderId, is_admin: isAdmin },
+    updated_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+  });
+  await sendMessage(chatId, t.gradeAskScore(a?.max_score || 10));
+}
+
+// Handle text replies for an in-progress grading conversation. Returns true if consumed.
+async function handleGradingSession(admin: any, msg: any, profileId: string, locale: Locale, isAdmin: boolean): Promise<boolean> {
+  const t = T[locale] as any;
+  const tgId = msg.from.id as number;
+  const { data: state } = await admin
+    .from("bot_conversation_state")
+    .select("state, context, expires_at")
+    .eq("telegram_id", tgId)
+    .maybeSingle();
+  if (!state) return false;
+  if (new Date(state.expires_at).getTime() < Date.now()) {
+    await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+    return false;
+  }
+
+  const text: string = (msg.text || "").trim();
+  const ctx = (state.context || {}) as any;
+
+  if (state.state === "grade_score") {
+    if (text === "/cancel") {
+      await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+      await sendWithKeyboard(msg.chat.id, t.gradeCancelled, locale, isAdmin, isAdmin ? "admin" : "teacher");
+      return true;
+    }
+    const max = Number(ctx.max_score || 10);
+    const score = parseInt(text, 10);
+    if (!Number.isFinite(score) || score < 0 || score > max) {
+      await sendMessage(msg.chat.id, t.gradeBadScore(max));
+      return true;
+    }
+    ctx.score = score;
+    await admin.from("bot_conversation_state").update({
+      state: "grade_comment", context: ctx, updated_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+    }).eq("telegram_id", tgId);
+    await sendMessage(msg.chat.id, t.gradeAskComment);
+    return true;
+  }
+
+  if (state.state === "grade_comment") {
+    if (text === "/cancel") {
+      await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+      await sendWithKeyboard(msg.chat.id, t.gradeCancelled, locale, isAdmin, isAdmin ? "admin" : "teacher");
+      return true;
+    }
+    const feedback = text === "/skip" ? null : text;
+    const submissionId = ctx.submission_id as string;
+    const score = Number(ctx.score);
+
+    const { data: sub } = await admin.from("homework_submissions")
+      .select("user_id, assignment_id").eq("id", submissionId).maybeSingle();
+    const { error: upErr } = await admin.from("homework_submissions").update({
+      score, score_feedback: feedback, scored_by: profileId, scored_at: new Date().toISOString(),
+    }).eq("id", submissionId);
+    if (upErr) {
+      await sendMessage(msg.chat.id, `❌ ${upErr.message}`);
+      return true;
+    }
+    await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+
+    // Auto-DM the student (always)
+    if (sub) {
+      const { data: a } = await admin.from("homework_assignments").select("title, max_score, task_number").eq("id", sub.assignment_id).maybeSingle();
+      const { data: stu } = await admin.from("profiles").select("telegram_id, preferred_locale, name").eq("id", sub.user_id).maybeSingle();
+      const max = a?.max_score || 10;
+      if (stu?.telegram_id) {
+        const stuLocale: Locale = normLocale(stu.preferred_locale);
+        const tt = T[stuLocale] as any;
+        const tn = a?.task_number ? ` #${a.task_number}` : "";
+        const title = `${a?.title || ""}${tn}`;
+        try {
+          const url = await createMagicLink(admin, sub.user_id, "login", "/profile");
+          await sendMessage(stu.telegram_id, tt.gradeStudentDM(csvEscapeHtml(title), score, max, csvEscapeHtml(feedback || "")), {
+            inline_keyboard: [[{ text: tt.btnSiteOpen, url }]],
+          });
+        } catch (e) {
+          console.error("auto-DM student failed", e);
+        }
+      }
+      await sendWithKeyboard(msg.chat.id, t.gradeSaved(score, max), locale, isAdmin, isAdmin ? "admin" : "teacher");
+    }
+    return true;
+  }
+
+  return false;
+}
 async function handleTeacherSession(admin: any, msg: any, profileId: string, locale: Locale): Promise<boolean> {
   const t = T[locale] as any;
   const { data: sess } = await admin.from("bot_sessions").select("state, data").eq("user_id", profileId).maybeSingle();
