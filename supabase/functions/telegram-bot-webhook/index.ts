@@ -1930,17 +1930,29 @@ Deno.serve(async (req) => {
           });
         }
       } else if (text.startsWith("/")) {
-        await handleCommand(admin, msg, text.split(/\s+/)[0]);
-      } else {
-        // Teacher broadcast session captures plain text first
-        if (persona === "teacher" && profileForLocale) {
-          const consumed = await handleTeacherSession(admin, msg, profileForLocale.id, locale);
-          if (consumed) { /* done */ }
-          else {
-            const mapped = buttonTextToCommand(text);
-            if (mapped) await handleCommand(admin, msg, mapped);
+        // Grading session intercepts /skip and /cancel for the in-progress flow
+        if ((persona === "teacher" || persona === "admin") && profileForLocale) {
+          const cmd0 = text.split(/\s+/)[0].toLowerCase();
+          if (cmd0 === "/skip" || cmd0 === "/cancel") {
+            const consumed = await handleGradingSession(admin, msg, profileForLocale.id, locale, persona === "admin");
+            if (consumed) { /* done */ }
+            else { await handleCommand(admin, msg, cmd0); }
+          } else {
+            await handleCommand(admin, msg, cmd0);
           }
         } else {
+          await handleCommand(admin, msg, text.split(/\s+/)[0]);
+        }
+      } else {
+        // Grading conversation captures plain text replies first
+        let consumed = false;
+        if ((persona === "teacher" || persona === "admin") && profileForLocale) {
+          consumed = await handleGradingSession(admin, msg, profileForLocale.id, locale, persona === "admin");
+        }
+        if (!consumed && persona === "teacher" && profileForLocale) {
+          consumed = await handleTeacherSession(admin, msg, profileForLocale.id, locale);
+        }
+        if (!consumed) {
           const mapped = buttonTextToCommand(text);
           if (mapped) await handleCommand(admin, msg, mapped);
         }
