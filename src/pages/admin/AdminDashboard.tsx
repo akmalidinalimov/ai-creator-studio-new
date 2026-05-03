@@ -15,6 +15,7 @@ import { useTranslation } from "react-i18next";
 import { enUS, ru, uz } from "date-fns/locale";
 import { useAuth } from "@/contexts/AuthContext";
 import { WeeklyDigestTile } from "@/components/admin/WeeklyDigestTile";
+import { AnalyticsTiles } from "@/components/admin/AnalyticsTiles";
 
 const PALETTE = [
   "hsl(var(--primary))",
@@ -391,6 +392,7 @@ export default function AdminDashboard() {
             Sizga hali biror guruh tayinlanmagan. Adminga murojaat qiling.
           </Card>
         )}
+        {!isTeacher && <AnalyticsTiles />}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3">
           <StatCard icon={<UsersIcon className="h-4 w-4" />} label={t("admin.dashboard.stats.totalStudents")} value={stats.total} />
           <StatCard icon={<LogIn className="h-4 w-4" />} label={t("admin.dashboard.stats.logins30d")} value={stats.logins30d} />

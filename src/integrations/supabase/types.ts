@@ -149,6 +149,13 @@ export type Database = {
             referencedRelation: "lessons"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "ai_chat_messages_lesson_id_fkey"
+            columns: ["lesson_id"]
+            isOneToOne: false
+            referencedRelation: "mv_lesson_dropoff"
+            referencedColumns: ["lesson_id"]
+          },
         ]
       }
       ai_chat_metrics: {
@@ -696,6 +703,13 @@ export type Database = {
             referencedRelation: "modules"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "homework_assignments_module_id_fkey"
+            columns: ["module_id"]
+            isOneToOne: true
+            referencedRelation: "mv_lesson_dropoff"
+            referencedColumns: ["module_id"]
+          },
         ]
       }
       homework_submissions: {
@@ -817,6 +831,13 @@ export type Database = {
             referencedRelation: "lessons"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "lesson_bookmarks_lesson_id_fkey"
+            columns: ["lesson_id"]
+            isOneToOne: false
+            referencedRelation: "mv_lesson_dropoff"
+            referencedColumns: ["lesson_id"]
+          },
         ]
       }
       lesson_comments: {
@@ -856,6 +877,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "lesson_comments_lesson_id_fkey"
+            columns: ["lesson_id"]
+            isOneToOne: false
+            referencedRelation: "mv_lesson_dropoff"
+            referencedColumns: ["lesson_id"]
+          },
+          {
             foreignKeyName: "lesson_comments_parent_id_fkey"
             columns: ["parent_id"]
             isOneToOne: false
@@ -893,6 +921,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "lessons"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lesson_notes_lesson_id_fkey"
+            columns: ["lesson_id"]
+            isOneToOne: false
+            referencedRelation: "mv_lesson_dropoff"
+            referencedColumns: ["lesson_id"]
           },
         ]
       }
@@ -941,6 +976,13 @@ export type Database = {
             referencedRelation: "lessons"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "lesson_progress_lesson_id_fkey"
+            columns: ["lesson_id"]
+            isOneToOne: false
+            referencedRelation: "mv_lesson_dropoff"
+            referencedColumns: ["lesson_id"]
+          },
         ]
       }
       lesson_ratings: {
@@ -975,6 +1017,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "lessons"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lesson_ratings_lesson_id_fkey"
+            columns: ["lesson_id"]
+            isOneToOne: false
+            referencedRelation: "mv_lesson_dropoff"
+            referencedColumns: ["lesson_id"]
           },
         ]
       }
@@ -1037,6 +1086,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "modules"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lessons_module_id_fkey"
+            columns: ["module_id"]
+            isOneToOne: false
+            referencedRelation: "mv_lesson_dropoff"
+            referencedColumns: ["module_id"]
           },
         ]
       }
@@ -1398,6 +1454,13 @@ export type Database = {
             referencedRelation: "modules"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "quiz_attempts_module_id_fkey"
+            columns: ["module_id"]
+            isOneToOne: false
+            referencedRelation: "mv_lesson_dropoff"
+            referencedColumns: ["module_id"]
+          },
         ]
       }
       quiz_questions: {
@@ -1438,6 +1501,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "modules"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quiz_questions_module_id_fkey"
+            columns: ["module_id"]
+            isOneToOne: false
+            referencedRelation: "mv_lesson_dropoff"
+            referencedColumns: ["module_id"]
           },
         ]
       }
@@ -1684,7 +1754,47 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      mv_cohort_retention: {
+        Row: {
+          active_users: number | null
+          cohort_size: number | null
+          cohort_week: string | null
+          retention_pct: number | null
+          week_offset: number | null
+        }
+        Relationships: []
+      }
+      mv_funnel_stages: {
+        Row: {
+          stage_key: string | null
+          stage_order: number | null
+          users: number | null
+        }
+        Relationships: []
+      }
+      mv_lesson_dropoff: {
+        Row: {
+          completes: number | null
+          completion_rate: number | null
+          histogram: Json | null
+          lesson_id: string | null
+          lesson_pos: number | null
+          lesson_title: string | null
+          module_id: string | null
+          module_pos: number | null
+          module_title: string | null
+          starts: number | null
+        }
+        Relationships: []
+      }
+      mv_study_heatmap_30d: {
+        Row: {
+          dow: number | null
+          hour: number | null
+          minutes: number | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       admin_assign_group: {
@@ -1742,6 +1852,61 @@ export type Database = {
           name: string
           telegram_id: number
           telegram_username: string
+        }[]
+      }
+      analytics_cohorts: {
+        Args: never
+        Returns: {
+          active_users: number
+          cohort_size: number
+          cohort_week: string
+          retention_pct: number
+          week_offset: number
+        }[]
+      }
+      analytics_funnel: {
+        Args: never
+        Returns: {
+          stage_key: string
+          stage_order: number
+          users: number
+        }[]
+      }
+      analytics_heatmap: {
+        Args: never
+        Returns: {
+          dow: number
+          hour: number
+          minutes: number
+        }[]
+      }
+      analytics_lesson_dropoff: {
+        Args: never
+        Returns: {
+          completes: number
+          completion_rate: number
+          histogram: Json
+          lesson_id: string
+          lesson_pos: number
+          lesson_title: string
+          module_id: string
+          module_pos: number
+          module_title: string
+          starts: number
+        }[]
+      }
+      analytics_teacher_quality: {
+        Args: { _min_students?: number }
+        Returns: {
+          active_7d_pct: number
+          avg_completion_pct: number
+          avg_homework_score: number
+          finished_course: number
+          quality_score: number
+          students_count: number
+          teacher_email: string
+          teacher_id: string
+          teacher_name: string
         }[]
       }
       award_badge: { Args: { _code: string; uid: string }; Returns: undefined }
@@ -1849,6 +2014,7 @@ export type Database = {
           schedule: string
         }[]
       }
+      online_now_count: { Args: never; Returns: number }
       re_engagement_eligible_count: {
         Args: never
         Returns: {
@@ -1870,6 +2036,7 @@ export type Database = {
         }[]
       }
       recalc_leaderboard: { Args: never; Returns: undefined }
+      refresh_all_analytics: { Args: never; Returns: undefined }
       staff_group_members: {
         Args: { _group_id: string }
         Returns: {

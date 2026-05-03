@@ -48,6 +48,12 @@ const AdminHomework = lazy(() => import("./pages/admin/AdminHomework"));
 const TeacherHomework = lazy(() => import("./pages/TeacherHomework"));
 const AdminNudges = lazy(() => import("./pages/admin/AdminNudges"));
 const AdminCertificates = lazy(() => import("./pages/admin/AdminCertificates"));
+const AdminAnalytics = lazy(() => import("./pages/admin/AdminAnalytics"));
+const AnalyticsFunnel = lazy(() => import("./pages/admin/AnalyticsFunnel"));
+const AnalyticsCohorts = lazy(() => import("./pages/admin/AnalyticsCohorts"));
+const AnalyticsLessons = lazy(() => import("./pages/admin/AnalyticsLessons"));
+const AnalyticsHeatmap = lazy(() => import("./pages/admin/AnalyticsHeatmap"));
+const AnalyticsTeachers = lazy(() => import("./pages/admin/AnalyticsTeachers"));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 60_000, refetchOnWindowFocus: false } },
@@ -99,6 +105,12 @@ const App = () => (
             <Route path="/teacher/homework" element={<RequireAuth staffOnly><Suspense fallback={<AdminFallback />}><TeacherHomework /></Suspense></RequireAuth>} />
             <Route path="/admin/nudges" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminNudges /></Suspense></RequireAuth>} />
             <Route path="/admin/certificates" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminCertificates /></Suspense></RequireAuth>} />
+            <Route path="/admin/analytics" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminAnalytics /></Suspense></RequireAuth>} />
+            <Route path="/admin/analytics/funnel" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AnalyticsFunnel /></Suspense></RequireAuth>} />
+            <Route path="/admin/analytics/cohorts" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AnalyticsCohorts /></Suspense></RequireAuth>} />
+            <Route path="/admin/analytics/lessons" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AnalyticsLessons /></Suspense></RequireAuth>} />
+            <Route path="/admin/analytics/heatmap" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AnalyticsHeatmap /></Suspense></RequireAuth>} />
+            <Route path="/admin/analytics/teachers" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AnalyticsTeachers /></Suspense></RequireAuth>} />
 
             <Route path="*" element={<NotFound />} />
           </Routes>
