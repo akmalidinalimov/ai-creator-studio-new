@@ -73,7 +73,10 @@
     "taglineSub": "Профессиональная программа для нового поколения AI-креаторов. 5 модулей. 20 уроков. Создано для роста.",
     "statLessons": "уроков",
     "statHours": "уроков",
-    "statTutor": "AI наставник"
+    "statTutor": "AI наставник",
+    "rememberMe": "Запомнить меня (30 дней)",
+    "telegramQuickTitle": "Быстрый вход через Telegram",
+    "telegramQuickSub": "Откройте бот и нажмите Start"
   },
   "dashboard": {
     "welcome": "С возвращением, {{name}}",
@@ -222,6 +225,8 @@
     "dangerZone": "Опасная зона",
     "signOutDevice": "Выйти с этого устройства.",
     "signOut": "Выйти",
+    "signOutGlobal": "Выйти на всех устройствах",
+    "signOutGlobalConfirm": "Это завершит сессии на всех устройствах. Продолжить?",
     "justNow": "только что",
     "minAgo": "{{n}} мин назад",
     "hourAgo": "{{n}} ч назад",
