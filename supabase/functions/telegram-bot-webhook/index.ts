@@ -1761,6 +1761,18 @@ async function handleCallback(admin: any, cq: any) {
     return;
   }
 
+  if (data.startsWith("grade:open:") && chatId) {
+    const submissionId = data.slice("grade:open:".length);
+    const profile = await findProfileByTelegramId(admin, tgId);
+    if (!profile) { await answerCallback(cq.id); return; }
+    const persona = await getPersona(admin, profile.id);
+    if (persona !== "admin" && persona !== "teacher") { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(profile.preferred_locale);
+    await answerCallback(cq.id);
+    await startGradingFlow(admin, chatId, tgId, profile.id, submissionId, locale, persona === "admin");
+    return;
+  }
+
   if (data.startsWith("setlang:") && chatId) {
     const lang = data.split(":")[1] as Locale;
     if (["uz", "ru", "en"].includes(lang)) {
