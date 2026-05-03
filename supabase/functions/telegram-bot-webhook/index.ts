@@ -813,6 +813,8 @@ async function buildHomeworkMessage(admin: any, userId: string, locale: Locale):
   }
   return lines.join("\n");
 }
+
+async function handleStartLogin(admin: any, msg: any, token: string, locale: Locale) {
   const t = T[locale];
   const chatId = msg.chat.id;
   const tgId = msg.from.id as number;
