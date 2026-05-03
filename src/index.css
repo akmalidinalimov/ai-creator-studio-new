@@ -114,13 +114,19 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PT Sans", sans-serif;
     font-feature-settings: "cv11", "ss01";
+    -webkit-tap-highlight-color: transparent;
+    overflow-x: hidden;
   }
   h1, h2, h3, h4, h5, h6 {
     @apply tracking-tight;
     font-family: 'Inter', system-ui, sans-serif;
     letter-spacing: -0.02em;
+  }
+  /* Mobile: prevent iOS auto-zoom by enforcing 16px input font, expand tap area */
+  @media (max-width: 640px) {
+    input, textarea, select { font-size: 16px !important; }
   }
 }
 
