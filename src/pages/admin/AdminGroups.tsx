@@ -39,6 +39,7 @@ export default function AdminGroups() {
   const [teachers, setTeachers] = useState<ProfileLite[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [health, setHealth] = useState<Record<string, number>>({});
+  const [topics, setTopics] = useState<Record<string, { configured: number; total: number }>>({});
   const [loading, setLoading] = useState(true);
 
   const [openCreate, setOpenCreate] = useState(false);
@@ -75,6 +76,23 @@ export default function AdminGroups() {
       health[gid] = Number(data) || 0;
     }));
     setHealth(health);
+
+    // Topics configured per group
+    const groupRows = ((g.data as any[]) || []) as Group[];
+    const courseIds = Array.from(new Set(groupRows.map((gg) => gg.course_id).filter(Boolean) as string[]));
+    const { data: allMods } = courseIds.length
+      ? await supabase.from("modules").select("id, course_id").in("course_id", courseIds)
+      : { data: [] };
+    const modsByCourse: Record<string, number> = {};
+    ((allMods as any[]) || []).forEach((m) => { modsByCourse[m.course_id] = (modsByCourse[m.course_id] || 0) + 1; });
+    const { data: gmt } = await supabase.from("group_module_topics" as any).select("group_id");
+    const cfgByGroup: Record<string, number> = {};
+    ((gmt as any[]) || []).forEach((r) => { cfgByGroup[r.group_id] = (cfgByGroup[r.group_id] || 0) + 1; });
+    const tmap: Record<string, { configured: number; total: number }> = {};
+    groupRows.forEach((gg) => {
+      tmap[gg.id] = { configured: cfgByGroup[gg.id] || 0, total: gg.course_id ? (modsByCourse[gg.course_id] || 0) : 0 };
+    });
+    setTopics(tmap);
     setLoading(false);
   };
 
@@ -107,6 +125,7 @@ export default function AdminGroups() {
                 <TableHead>Course</TableHead>
                 <TableHead>Students</TableHead>
                 <TableHead>Health</TableHead>
+                <TableHead>Topiklar</TableHead>
                 <TableHead>Default</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -128,6 +147,11 @@ export default function AdminGroups() {
                   <TableCell>{courseTitle(g.course_id)}</TableCell>
                   <TableCell><Badge variant="secondary">{counts[g.id] || 0}</Badge></TableCell>
                   <TableCell><span className={`inline-block px-2 py-0.5 rounded text-white text-xs ${hColor}`}>{h}</span></TableCell>
+                  <TableCell>{(() => {
+                    const tt = topics[g.id] || { configured: 0, total: 0 };
+                    const cls = tt.total === 0 ? "bg-muted text-muted-foreground" : tt.configured === 0 ? "bg-rose-500 text-white" : tt.configured < tt.total ? "bg-amber-500 text-white" : "bg-emerald-500 text-white";
+                    return <span className={`inline-block px-2 py-0.5 rounded text-xs ${cls}`}>{tt.configured}/{tt.total}</span>;
+                  })()}</TableCell>
                   <TableCell>
                     <Button
                       variant={g.is_default ? "default" : "outline"}
