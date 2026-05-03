@@ -1255,10 +1255,12 @@ async function handleAdminCommand(
     return true;
   }
 
+  // Grading commands work for admins too
+  const g = await handleGradingCommand(admin, chatId, /*graderId*/ "", locale, cmd, true);
+  if (g) return true;
+
   return false;
 }
-
-// =================== TEACHER COMMANDS ===================
 
 async function teacherGroups(admin: any, teacherId: string): Promise<{ id: string; name: string }[]> {
   const { data } = await admin.from("groups").select("id, name").eq("teacher_id", teacherId);
