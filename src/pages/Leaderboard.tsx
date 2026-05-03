@@ -15,6 +15,7 @@ export default function Leaderboard() {
   const [rows, setRows] = useState<Row[]>([]);
   const [my, setMy] = useState<{ rank: number | null; total: number; score: number | null } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [certified, setCertified] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     (async () => {
@@ -22,7 +23,13 @@ export default function Leaderboard() {
         supabase.rpc("leaderboard_top", { _limit: 10 }),
         user ? supabase.rpc("leaderboard_my_rank", { uid: user.id }) : Promise.resolve({ data: null } as any),
       ]);
-      setRows((top as any) || []);
+      const tops = (top as any) || [];
+      setRows(tops);
+      const ids = tops.map((r: any) => r.user_id);
+      if (ids.length) {
+        const { data: certs } = await supabase.from("certificates").select("profile_id").in("profile_id", ids).is("revoked_at", null);
+        setCertified(new Set((certs || []).map((c: any) => c.profile_id)));
+      }
       const m: any = Array.isArray(mine) ? mine[0] : (mine as any)?.[0];
       if (m) setMy({ rank: m.rank, total: m.total, score: m.score });
       setLoading(false);
@@ -61,7 +68,7 @@ export default function Leaderboard() {
                 return (
                   <tr key={r.user_id} className={`border-t ${mine ? "bg-primary/5 font-semibold" : ""}`}>
                     <td className="px-4 py-2.5 tabular-nums">{r.rank}</td>
-                    <td className="px-4 py-2.5">Talaba {r.first_name} {r.last_initial ? r.last_initial + "." : ""}{mine && " (Siz)"}</td>
+                    <td className="px-4 py-2.5">Talaba {r.first_name} {r.last_initial ? r.last_initial + "." : ""}{certified.has(r.user_id) && <span title="Sertifikatli" className="ml-1">🏆</span>}{mine && " (Siz)"}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums">{r.score}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums">{r.current_streak}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums">{r.lessons_30d}</td>
