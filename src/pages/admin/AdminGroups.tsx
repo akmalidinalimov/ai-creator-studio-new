@@ -141,7 +141,7 @@ export default function AdminGroups() {
                 return (
                 <TableRow key={g.id}>
                   <TableCell className="font-medium">
-                    <a className="hover:underline" href={`/admin/groups/${g.id}`}>{g.name}</a>
+                    <button className="hover:underline text-left" onClick={() => setEditGroup(g)}>{g.name}</button>
                   </TableCell>
                   <TableCell>{teacherLabel(g.teacher_id)}</TableCell>
                   <TableCell>{courseTitle(g.course_id)}</TableCell>
