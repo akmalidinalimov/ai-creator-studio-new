@@ -415,6 +415,8 @@ function GroupFormDialog({
     </Dialog>
   );
 }
+
+function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => void }) {
   const [students, setStudents] = useState<ProfileLite[]>([]);
   const [search, setSearch] = useState("");
   const [adding, setAdding] = useState("");
