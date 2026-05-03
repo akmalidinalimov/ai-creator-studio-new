@@ -1400,15 +1400,6 @@ async function handleGradingCommand(
 ): Promise<boolean> {
   const t = T[locale] as any;
 
-  if (cmd === "/cancel" || cmd === "/skip") {
-    // /skip handled in session; /cancel clears bot_conversation_state too
-    if (cmd === "/cancel") {
-      await admin.from("bot_conversation_state").delete().eq("telegram_id", await tgIdFromUserId(admin, graderId));
-      await sendWithKeyboard(chatId, t.gradeCancelled, locale, isAdmin, isAdmin ? "admin" : "teacher");
-    }
-    return cmd === "/cancel";
-  }
-
   if (cmd === "/baholash" || cmd === "/grade") {
     const items = await loadGradingSubmissions(admin, graderId, isAdmin, { scored: false, limit: 10 });
     if (!items.length) {
