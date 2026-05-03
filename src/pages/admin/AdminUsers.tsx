@@ -565,7 +565,19 @@ export default function AdminUsers() {
             <h1 className="text-3xl font-semibold tracking-tight">{t("admin.users.title")}</h1>
             <p className="text-muted-foreground mt-1">{t("admin.users.subtitle", { total: users.length, admins: users.filter(u => u.is_admin).length })}</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
+            {isAdmin && selected.size > 0 && (
+              <Select value={bulkGroupId} onValueChange={(v) => { setBulkGroupId(v); bulkAssignGroup(v); }}>
+                <SelectTrigger className="w-[200px] h-9 text-xs">
+                  <SelectValue placeholder={t("admin.users.bulkMoveTo", { defaultValue: "Move {{n}} to group…", n: selected.size })} />
+                </SelectTrigger>
+                <SelectContent>
+                  {groups.map((g) => (
+                    <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             {selected.size > 0 && (
               <Button variant="outline" size="sm" onClick={() => {
                 const emails = users.filter((u) => selected.has(u.id)).map((u) => u.email);
