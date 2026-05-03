@@ -1950,6 +1950,27 @@ async function handleCallback(admin: any, cq: any) {
     return;
   }
 
+  if ((data.startsWith("gs:list:") || data.startsWith("gs:pick:") || data.startsWith("gs:open:")) && chatId) {
+    const profile = await findProfileByTelegramId(admin, tgId);
+    if (!profile) { await answerCallback(cq.id); return; }
+    const persona = await getPersona(admin, profile.id);
+    if (persona !== "admin" && persona !== "teacher") { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(profile.preferred_locale);
+    const isAdmin = persona === "admin";
+    await answerCallback(cq.id);
+    if (data.startsWith("gs:list:")) {
+      const page = parseInt(data.slice("gs:list:".length), 10) || 0;
+      await renderStudentPicker(admin, chatId, profile.id, locale, isAdmin, page);
+    } else if (data.startsWith("gs:pick:")) {
+      const sid = data.slice("gs:pick:".length);
+      await renderStudentBreakdown(admin, chatId, profile.id, sid, locale, isAdmin);
+    } else if (data.startsWith("gs:open:")) {
+      const subId = data.slice("gs:open:".length);
+      await startGradingFlow(admin, chatId, tgId, profile.id, subId, locale, isAdmin);
+    }
+    return;
+  }
+
   if (data.startsWith("setlang:") && chatId) {
     const lang = data.split(":")[1] as Locale;
     if (["uz", "ru", "en"].includes(lang)) {
