@@ -422,7 +422,7 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
   const [adding, setAdding] = useState("");
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
-  const [importReport, setImportReport] = useState<{ added: number; skipped: number; notFound: string[] } | null>(null);
+  const [importReport, setImportReport] = useState<{ created: number; moved: number; alreadyInGroup: number; errors: string[] } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const reload = async () => {
@@ -465,9 +465,7 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
     setImportReport(null);
     try {
       const text = await file.text();
-      // Parse CSV: split rows, take first column (or whole row if single column)
       const rows = text.split(/\r?\n/).map(r => r.trim()).filter(Boolean);
-      // Detect header
       const first = rows[0]?.toLowerCase() || "";
       const hasHeader = /email|telegram|username|identifier/.test(first);
       const dataRows = hasHeader ? rows.slice(1) : rows;
@@ -475,17 +473,48 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
         .map(r => r.split(",")[0]?.trim().replace(/^["']|["']$/g, ""))
         .filter(Boolean);
 
-      let added = 0, skipped = 0;
-      const notFound: string[] = [];
+      let created = 0, moved = 0, alreadyInGroup = 0;
+      const errors: string[] = [];
+      const toCreate: { email?: string; telegram_username?: string; telegram_user_id?: number }[] = [];
+
       for (const ident of identifiers) {
-        const id = await findProfileId(ident);
-        if (!id) { notFound.push(ident); continue; }
-        const { error } = await supabase.from("profiles").update({ group_id: group.id }).eq("id", id);
-        if (error) skipped++; else added++;
+        const v = ident.replace(/^@/, "");
+        // Try existing match first
+        const existingId = await findProfileId(ident);
+        if (existingId) {
+          // Check if already in this group
+          const { data: prof } = await supabase.from("profiles").select("group_id").eq("id", existingId).maybeSingle();
+          if ((prof as any)?.group_id === group.id) { alreadyInGroup++; continue; }
+          const { error } = await supabase.from("profiles").update({ group_id: group.id }).eq("id", existingId);
+          if (error) errors.push(`${ident}: ${error.message}`); else moved++;
+        } else {
+          // Queue for creation
+          if (/^\d+$/.test(v)) toCreate.push({ telegram_user_id: Number(v) });
+          else if (v.includes("@")) toCreate.push({ email: v.toLowerCase() });
+          else toCreate.push({ telegram_username: v });
+        }
       }
-      setImportReport({ added, skipped, notFound });
-      if (added) toast.success(`${added} ta talaba qo'shildi`);
-      if (notFound.length) toast.error(`${notFound.length} ta topilmadi`);
+
+      if (toCreate.length > 0) {
+        const { data, error } = await supabase.functions.invoke("admin-create-students", {
+          body: { students: toCreate, target_group_id: group.id, csv_import: true },
+        });
+        if (error) {
+          errors.push(`create: ${error.message}`);
+        } else {
+          const results: any[] = (data as any)?.results || [];
+          for (const r of results) {
+            if (r.status === "created") created++;
+            else if (r.status === "updated") moved++;
+            else if (r.status === "error" || r.status === "invalid_email") errors.push(`${r.email}: ${r.error || r.status}`);
+          }
+        }
+      }
+
+      setImportReport({ created, moved, alreadyInGroup, errors });
+      const total = created + moved + alreadyInGroup;
+      toast.success(`${total} ta talaba qo'shildi · ${created} yangi · ${moved} mavjud · ${alreadyInGroup} allaqachon guruhda`);
+      if (errors.length) toast.error(`${errors.length} ta xato`);
       reload();
     } catch (e: any) {
       toast.error(e.message || "CSV o'qishda xato");
@@ -530,9 +559,9 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
         </div>
         {importReport && (
           <div className="text-xs rounded border p-2 space-y-1">
-            <div>✅ Qo'shildi: <b>{importReport.added}</b> · ⏭ O'tkazildi: <b>{importReport.skipped}</b> · ❌ Topilmadi: <b>{importReport.notFound.length}</b></div>
-            {importReport.notFound.length > 0 && (
-              <div className="text-rose-600 break-all">Topilmadi: {importReport.notFound.slice(0, 20).join(", ")}{importReport.notFound.length > 20 ? "…" : ""}</div>
+            <div>✨ Yangi: <b>{importReport.created}</b> · 🔄 Mavjud (ko'chirildi): <b>{importReport.moved}</b> · ✅ Allaqachon: <b>{importReport.alreadyInGroup}</b> · ❌ Xato: <b>{importReport.errors.length}</b></div>
+            {importReport.errors.length > 0 && (
+              <div className="text-rose-600 break-all">{importReport.errors.slice(0, 10).join(" · ")}{importReport.errors.length > 10 ? "…" : ""}</div>
             )}
           </div>
         )}
