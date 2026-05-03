@@ -28,6 +28,7 @@ import Landing from "./pages/Landing";
 import AuthMagicLink from "./pages/AuthMagicLink";
 import Leaderboard from "./pages/Leaderboard";
 import Badges from "./pages/Badges";
+import VerifyCertificate from "./pages/VerifyCertificate";
 
 // Lazy-load admin pages (code-split)
 const AdminDashboard = lazy(() => import("./pages/admin/AdminDashboard"));
@@ -46,6 +47,7 @@ const AdminReengagement = lazy(() => import("./pages/admin/AdminReengagement"));
 const AdminHomework = lazy(() => import("./pages/admin/AdminHomework"));
 const TeacherHomework = lazy(() => import("./pages/TeacherHomework"));
 const AdminNudges = lazy(() => import("./pages/admin/AdminNudges"));
+const AdminCertificates = lazy(() => import("./pages/admin/AdminCertificates"));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 60_000, refetchOnWindowFocus: false } },
@@ -70,6 +72,7 @@ const App = () => (
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/auth/magic" element={<AuthMagicLink />} />
+            <Route path="/verify/:token" element={<VerifyCertificate />} />
             <Route path="/dashboard" element={<RequireAuth><StudentOrStaffRedirect><Dashboard /></StudentOrStaffRedirect></RequireAuth>} />
             <Route path="/course/:courseId" element={<RequireAuth><CoursePage /></RequireAuth>} />
             <Route path="/lesson/:courseId/:lessonId" element={<RequireAuth><LessonPage /></RequireAuth>} />
@@ -95,6 +98,7 @@ const App = () => (
             <Route path="/admin/homework" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminHomework /></Suspense></RequireAuth>} />
             <Route path="/teacher/homework" element={<RequireAuth staffOnly><Suspense fallback={<AdminFallback />}><TeacherHomework /></Suspense></RequireAuth>} />
             <Route path="/admin/nudges" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminNudges /></Suspense></RequireAuth>} />
+            <Route path="/admin/certificates" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminCertificates /></Suspense></RequireAuth>} />
 
             <Route path="*" element={<NotFound />} />
           </Routes>

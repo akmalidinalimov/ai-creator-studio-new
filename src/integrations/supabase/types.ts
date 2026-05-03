@@ -446,6 +446,48 @@ export type Database = {
         }
         Relationships: []
       }
+      certificates: {
+        Row: {
+          course_name: string
+          created_at: string
+          id: string
+          issued_at: string
+          pdf_url: string | null
+          profile_id: string
+          revoked_at: string | null
+          revoked_by: string | null
+          serial_no: string
+          student_full_name: string
+          verification_token: string
+        }
+        Insert: {
+          course_name?: string
+          created_at?: string
+          id?: string
+          issued_at?: string
+          pdf_url?: string | null
+          profile_id: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          serial_no: string
+          student_full_name: string
+          verification_token?: string
+        }
+        Update: {
+          course_name?: string
+          created_at?: string
+          id?: string
+          issued_at?: string
+          pdf_url?: string | null
+          profile_id?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          serial_no?: string
+          student_full_name?: string
+          verification_token?: string
+        }
+        Relationships: []
+      }
       courses: {
         Row: {
           ai_knowledge_paths: string[] | null
@@ -1714,6 +1756,7 @@ export type Database = {
           target: number
         }[]
       }
+      generate_certificate_serial: { Args: never; Returns: string }
       get_public_setting: { Args: { _key: string }; Returns: Json }
       get_visible_student_ids: {
         Args: { _scope_user_id?: string }
@@ -1732,6 +1775,10 @@ export type Database = {
       homework_pending_count_for_user: {
         Args: { _uid: string }
         Returns: number
+      }
+      issue_certificate_if_eligible: {
+        Args: { _profile_id: string }
+        Returns: string
       }
       leaderboard_my_rank: {
         Args: { uid: string }

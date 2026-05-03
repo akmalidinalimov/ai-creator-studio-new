@@ -118,6 +118,9 @@ export const TopNav = () => {
                     <Link to="/admin/nudges"><Bell className="mr-2 h-4 w-4" /> 🔔 Smart eslatmalar</Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
+                    <Link to="/admin/certificates"><Shield className="mr-2 h-4 w-4" /> 🏆 Sertifikatlar</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
                     <Link to="/admin/settings"><Settings className="mr-2 h-4 w-4" /> {t("nav.settings")}</Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
