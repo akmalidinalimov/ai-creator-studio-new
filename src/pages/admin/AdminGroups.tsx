@@ -422,7 +422,7 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
   const [adding, setAdding] = useState("");
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
-  const [importReport, setImportReport] = useState<{ added: number; skipped: number; notFound: string[] } | null>(null);
+  const [importReport, setImportReport] = useState<{ created: number; moved: number; alreadyInGroup: number; errors: string[] } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const reload = async () => {
