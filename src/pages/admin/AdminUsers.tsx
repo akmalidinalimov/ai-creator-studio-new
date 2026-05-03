@@ -682,7 +682,28 @@ export default function AdminUsers() {
                       <div className="font-mono text-foreground">{u.telegram_id ?? "—"}</div>
                       {u.telegram_username && <div className="text-muted-foreground">@{u.telegram_username}</div>}
                     </td>
-                    <td className="p-3">{u.is_admin ? <Badge>{t("admin.users.admin").toLowerCase()}</Badge> : <Badge variant="secondary">{t("admin.users.student").toLowerCase()}</Badge>}</td>
+                    <td className="p-3">
+                      {isAdmin ? (
+                        <Select
+                          value={u.role_name || "student"}
+                          disabled={u.id === session?.user?.id}
+                          onValueChange={(v) => {
+                            const next = v as RoleName;
+                            if (next !== (u.role_name || "student")) setBulkRole({ user: u, newRole: next });
+                          }}
+                        >
+                          <SelectTrigger className="h-8 w-[130px] text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="student">Student</SelectItem>
+                            <SelectItem value="teacher">Teacher</SelectItem>
+                            <SelectItem value="admin">Admin</SelectItem>
+                            <SelectItem value="superadmin">Superadmin</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Badge variant="secondary">{u.role_name || "student"}</Badge>
+                      )}
+                    </td>
                     <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : "bg-destructive/10 text-destructive"}`}>{u.status === "active" ? t("admin.users.active") : t("admin.users.inactive")}</span></td>
                     <td className="p-3 text-xs text-muted-foreground">{(enrollMap[u.id]?.size) || 0}</td>
                     <td className="p-3 text-xs text-muted-foreground">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}</td>
