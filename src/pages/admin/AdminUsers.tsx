@@ -117,17 +117,34 @@ export default function AdminUsers() {
     const { data, error } = await supabase.rpc(isTeacher ? "staff_list_students" as any : "admin_list_users");
     if (error) toast.error(error.message);
     const rows = (data || []) as any[];
-    // Hydrate last_name from profiles (RPC doesn't return it)
+    // Hydrate last_name + group_id from profiles, and roles from user_roles
     if (rows.length) {
       const ids = rows.map((u) => u.id);
-      const { data: profs } = await supabase.from("profiles").select("id, last_name").in("id", ids);
+      const [{ data: profs }, { data: rolesData }] = await Promise.all([
+        supabase.from("profiles").select("id, last_name, group_id").in("id", ids),
+        supabase.from("user_roles").select("user_id, role").in("user_id", ids),
+      ]);
       const lnMap: Record<string, string | null> = {};
-      (profs || []).forEach((p: any) => { lnMap[p.id] = p.last_name; });
-      rows.forEach((u) => { u.last_name = lnMap[u.id] || null; });
+      const grpMap: Record<string, string | null> = {};
+      (profs || []).forEach((p: any) => { lnMap[p.id] = p.last_name; grpMap[p.id] = p.group_id; });
+      const rolesMap: Record<string, string[]> = {};
+      (rolesData || []).forEach((r: any) => { (rolesMap[r.user_id] ||= []).push(r.role); });
+      const rank: Record<string, number> = { superadmin: 1, admin: 2, teacher: 3, student: 4 };
+      rows.forEach((u) => {
+        u.last_name = lnMap[u.id] || null;
+        u.group_id = grpMap[u.id] || null;
+        const list = rolesMap[u.id] || [];
+        const top = list.sort((a, b) => (rank[a] || 99) - (rank[b] || 99))[0] as RoleName | undefined;
+        u.role_name = (top || "student") as RoleName;
+      });
     }
     setUsers(rows as UserRow[]);
-    const { data: cs } = await supabase.from("courses").select("id, title").order("title");
+    const [{ data: cs }, { data: gs }] = await Promise.all([
+      supabase.from("courses").select("id, title").order("title"),
+      supabase.from("groups").select("id, name").order("name"),
+    ]);
     setCourses(cs || []);
+    setGroups(gs || []);
     const { data: enrolls } = await supabase.from("enrollments").select("user_id, course_id");
     const m: Record<string, Set<string>> = {};
     (enrolls || []).forEach((e: any) => {
