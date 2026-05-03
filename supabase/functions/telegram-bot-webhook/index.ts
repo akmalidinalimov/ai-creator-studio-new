@@ -541,6 +541,7 @@ function buttonTextToCommand(text: string): string | null {
     if (trimmed === t.kbDavom) return "/davom";
     if (trimmed === t.kbStreak) return "/galaba";
     if (t.kbStreakOld && trimmed === t.kbStreakOld) return "/galaba";
+    if (t.kbHomework && trimmed === t.kbHomework) return "/vazifalar";
     if (trimmed === t.kbCert) return "/dars";
     if (t.kbCertOld && trimmed === t.kbCertOld) return "/sertifikat";
     if (trimmed === t.kbLang) return "/til";
