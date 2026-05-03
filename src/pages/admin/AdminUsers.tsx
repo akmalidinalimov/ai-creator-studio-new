@@ -20,6 +20,8 @@ import { toast } from "sonner";
 import Papa from "papaparse";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
+type RoleName = "student" | "teacher" | "admin" | "superadmin";
+
 interface UserRow {
   id: string;
   email: string;
@@ -32,6 +34,8 @@ interface UserRow {
   created_at: string;
   last_sign_in_at: string | null;
   is_admin: boolean;
+  role_name?: RoleName;
+  group_id?: string | null;
 }
 
 interface CsvRow {
