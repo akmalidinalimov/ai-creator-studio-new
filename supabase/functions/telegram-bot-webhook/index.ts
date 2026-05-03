@@ -871,26 +871,61 @@ async function buildHomeworkMessage(admin: any, userId: string, locale: Locale):
   const t = T[locale] as any;
   const lines: string[] = [t.hwTitle, ""];
   try {
+    // Get student's group
+    const { data: prof } = await admin
+      .from("profiles")
+      .select("group_id")
+      .eq("id", userId)
+      .maybeSingle();
+    const groupId = prof?.group_id || null;
+
     const { data: assigns } = await admin
       .from("homework_assignments")
-      .select("id, title, max_score, module_id, modules(position, course_id)")
-      .order("created_at", { ascending: true });
+      .select("id, title, max_score, task_number, module_id, is_active, modules(id, title, position, course_id)")
+      .eq("is_active", true)
+      .order("task_number", { ascending: true });
     const list = (assigns || []) as any[];
     if (!list.length) { lines.push(t.hwEmpty); return lines.join("\n"); }
-    list.sort((a, b) => (a.modules?.position ?? 0) - (b.modules?.position ?? 0));
+    list.sort((a, b) => (a.modules?.position ?? 0) - (b.modules?.position ?? 0) || (a.task_number ?? 1) - (b.task_number ?? 1));
+
     const aIds = list.map((a) => a.id);
-    const { data: subs } = await admin
-      .from("homework_submissions")
-      .select("assignment_id, score")
-      .eq("user_id", userId)
-      .in("assignment_id", aIds);
+    const moduleIds = Array.from(new Set(list.map((a) => a.module_id)));
+    const [{ data: subs }, { data: topics }] = await Promise.all([
+      admin.from("homework_submissions").select("assignment_id, score, score_feedback").eq("user_id", userId).in("assignment_id", aIds),
+      groupId
+        ? admin.from("group_module_topics").select("module_id, telegram_topic_url").eq("group_id", groupId).in("module_id", moduleIds)
+        : Promise.resolve({ data: [] }),
+    ]);
     const subMap = new Map((subs || []).map((s: any) => [s.assignment_id, s]));
-    list.forEach((a, i) => {
-      const s: any = subMap.get(a.id);
-      let status = t.hwStatusNotStarted;
-      if (s) status = s.score != null ? t.hwStatusScored(s.score, a.max_score || 10) : t.hwStatusSubmitted;
-      lines.push(`${i + 1}. <b>${csvEscapeHtml(a.title || "—")}</b>\n   ${status}`);
-    });
+    const topicMap = new Map((topics || []).map((tp: any) => [tp.module_id, tp.telegram_topic_url]));
+
+    // Group by module
+    const byModule = new Map<string, any[]>();
+    for (const a of list) {
+      const arr = byModule.get(a.module_id) || [];
+      arr.push(a);
+      byModule.set(a.module_id, arr);
+    }
+
+    const modulesOrdered = Array.from(byModule.entries())
+      .map(([mid, arr]) => ({ mid, arr, position: arr[0]?.modules?.position ?? 0, title: arr[0]?.modules?.title || "—" }))
+      .sort((a, b) => a.position - b.position);
+
+    for (const m of modulesOrdered) {
+      lines.push(t.hwModuleHeader(m.position + 1, m.title, m.arr.length));
+      for (const a of m.arr) {
+        const s: any = subMap.get(a.id);
+        const tn = a.task_number || 1;
+        if (s && s.score != null) {
+          lines.push(t.hwTaskScored(tn, s.score, a.max_score || 10, s.score_feedback || ""));
+        } else {
+          lines.push(t.hwTaskUnscored(tn));
+        }
+      }
+      const topic = topicMap.get(m.mid);
+      lines.push(topic ? t.hwTopicLine(topic) : t.hwTopicMissing);
+      lines.push("");
+    }
   } catch (e) {
     console.error("buildHomeworkMessage error", e);
     lines.push(t.hwEmpty);
