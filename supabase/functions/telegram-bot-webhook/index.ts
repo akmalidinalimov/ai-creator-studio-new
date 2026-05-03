@@ -814,12 +814,17 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     lines.push(t.statsDailyGoal(todayDone, dailyTarget, todayDone >= dailyTarget));
 
     const subs = hwSubRes.data || [];
-    const scored = subs.filter((s: any) => s.score != null);
     const hwTotal = hwTotalRes.count || 0;
     if (subs.length === 0) {
       lines.push(t.statsHomeworkNone);
     } else {
-      const avg = scored.length ? (scored.reduce((a: number, s: any) => a + Number(s.score || 0), 0) / scored.length).toFixed(1) : "—";
+      // Use normalized per-module average (0–10) from vw_module_homework_score
+      const { data: vw } = await admin
+        .from("vw_module_homework_score" as any)
+        .select("avg_score_normalized")
+        .eq("profile_id", userId);
+      const vals = (vw || []).map((r: any) => Number(r.avg_score_normalized)).filter((n: number) => Number.isFinite(n));
+      const avg = vals.length ? (vals.reduce((a: number, b: number) => a + b, 0) / vals.length).toFixed(1) : "—";
       lines.push(t.statsHomework(subs.length, hwTotal, avg));
     }
 
