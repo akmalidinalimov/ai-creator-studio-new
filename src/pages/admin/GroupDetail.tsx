@@ -102,21 +102,15 @@ export default function GroupDetail() {
   // load editable lists once
   useEffect(() => {
     (async () => {
-      const { data: t } = await supabase.rpc("admin_list_teachers" as any).maybeSingle?.() ?? { data: null } as any;
-      // fallback: query user_roles + profiles
       let teacherList: { id: string; label: string }[] = [];
-      if (Array.isArray(t)) {
-        teacherList = (t as any[]).map((x) => ({ id: x.id, label: x.name || x.email }));
-      } else {
-        const { data: roles } = await supabase.from("user_roles").select("user_id").eq("role", "teacher");
-        const ids = (roles || []).map((r: any) => r.user_id);
-        if (ids.length) {
-          const { data: profs } = await supabase.from("profiles").select("id, name, last_name, email").in("id", ids);
-          teacherList = (profs || []).map((p: any) => ({
-            id: p.id,
-            label: [p.name, p.last_name].filter(Boolean).join(" ") || p.email,
-          }));
-        }
+      const { data: roles } = await supabase.from("user_roles").select("user_id").eq("role", "teacher" as any);
+      const ids = (roles || []).map((r: any) => r.user_id);
+      if (ids.length) {
+        const { data: profs } = await supabase.from("profiles").select("id, name, last_name, email").in("id", ids);
+        teacherList = (profs || []).map((p: any) => ({
+          id: p.id,
+          label: [p.name, p.last_name].filter(Boolean).join(" ") || p.email,
+        }));
       }
       setTeachers(teacherList);
       const { data: cs } = await supabase.from("courses").select("id, title").order("title");
