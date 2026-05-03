@@ -1517,6 +1517,108 @@ async function handleGradingCommand(
   return false;
 }
 
+// =================== STUDENT-FIRST PICKER ===================
+
+const PICKER_PAGE_SIZE = 10;
+
+async function renderStudentPicker(admin: any, chatId: number, graderId: string, locale: Locale, isAdmin: boolean, page: number) {
+  const t = T[locale] as any;
+  const ids = await gradingScopeIds(admin, graderId, isAdmin);
+  let q = admin.from("homework_submissions").select("user_id").is("score", null);
+  if (ids) {
+    if (ids.length === 0) {
+      await sendWithKeyboard(chatId, `${t.gradePending}\n\n${t.gradeNoneP}`, locale, isAdmin, isAdmin ? "admin" : "teacher");
+      return;
+    }
+    q = q.in("user_id", ids);
+  }
+  const { data: subs } = await q;
+  const counts = new Map<string, number>();
+  for (const s of (subs || []) as any[]) counts.set(s.user_id, (counts.get(s.user_id) || 0) + 1);
+  if (counts.size === 0) {
+    await sendWithKeyboard(chatId, `${t.gradePending}\n\n${t.gradeNoneP}`, locale, isAdmin, isAdmin ? "admin" : "teacher");
+    return;
+  }
+  const userIds = Array.from(counts.keys());
+  const { data: profs } = await admin.from("profiles").select("id, name, last_name").in("id", userIds);
+  const rows = ((profs || []) as any[]).map((p: any) => ({
+    id: p.id,
+    name: [p.name, p.last_name].filter(Boolean).join(" ") || "—",
+    n: counts.get(p.id) || 0,
+  })).sort((a: any, b: any) => b.n - a.n);
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / PICKER_PAGE_SIZE));
+  const pageIdx = Math.min(Math.max(0, page), totalPages - 1);
+  const slice = rows.slice(pageIdx * PICKER_PAGE_SIZE, (pageIdx + 1) * PICKER_PAGE_SIZE);
+
+  const buttons: any[][] = slice.map((r) => [{
+    text: `${r.name} (${r.n})`.slice(0, 60),
+    callback_data: `gs:pick:${r.id}`,
+  }]);
+  const nav: any[] = [];
+  if (pageIdx > 0) nav.push({ text: t.gradePrevPage, callback_data: `gs:list:${pageIdx - 1}` });
+  if (pageIdx < totalPages - 1) nav.push({ text: t.gradeNextPage, callback_data: `gs:list:${pageIdx + 1}` });
+  if (nav.length) buttons.push(nav);
+
+  await sendMessage(chatId, t.gradePickStudent, { inline_keyboard: buttons });
+  await sendKeyboardHint(chatId, locale, isAdmin, isAdmin ? "admin" : "teacher");
+}
+
+async function renderStudentBreakdown(admin: any, chatId: number, graderId: string, studentId: string, locale: Locale, isAdmin: boolean) {
+  const t = T[locale] as any;
+  const ids = await gradingScopeIds(admin, graderId, isAdmin);
+  if (ids && !ids.includes(studentId)) {
+    await sendMessage(chatId, t.gradeNotFound);
+    return;
+  }
+  const [{ data: prof }, { data: subs }] = await Promise.all([
+    admin.from("profiles").select("name, last_name, group_id").eq("id", studentId).maybeSingle(),
+    admin.from("homework_submissions").select("id, assignment_id, submitted_at").eq("user_id", studentId).is("score", null).order("submitted_at", { ascending: true }),
+  ]);
+  const list = (subs || []) as any[];
+  const name = [prof?.name, prof?.last_name].filter(Boolean).join(" ") || "—";
+  if (!list.length) {
+    await sendMessage(chatId, `${t.gradeStudentBreakdown(name)}\n\n${t.gradeNoneP}`, {
+      inline_keyboard: [[{ text: t.gradeBackList, callback_data: "gs:list:0" }]],
+    });
+    return;
+  }
+  const aIds = Array.from(new Set(list.map((s) => s.assignment_id)));
+  const { data: assigns } = await admin.from("homework_assignments").select("id, title, max_score, task_number, module_id, modules(position, title)").in("id", aIds);
+  const aMap = new Map(((assigns || []) as any[]).map((a: any) => [a.id, a]));
+  const moduleIds = Array.from(new Set(((assigns || []) as any[]).map((a: any) => a.module_id)));
+  const topicsRes = prof?.group_id && moduleIds.length
+    ? await admin.from("group_module_topics").select("module_id, telegram_topic_url").eq("group_id", prof.group_id).in("module_id", moduleIds)
+    : { data: [] as any[] };
+  const topicMap = new Map(((topicsRes.data || []) as any[]).map((tp: any) => [tp.module_id, tp.telegram_topic_url]));
+
+  const byModule = new Map<string, { mPos: number; mTitle: string; mid: string; items: any[] }>();
+  for (const s of list) {
+    const a: any = aMap.get(s.assignment_id);
+    if (!a) continue;
+    const key = a.module_id;
+    if (!byModule.has(key)) byModule.set(key, { mPos: a.modules?.position ?? 0, mTitle: a.modules?.title || "—", mid: key, items: [] });
+    byModule.get(key)!.items.push({ sub: s, a });
+  }
+  const modules = Array.from(byModule.values()).sort((x, y) => x.mPos - y.mPos);
+
+  const lines = [t.gradeStudentBreakdown(name), ""];
+  const buttons: any[][] = [];
+  for (const m of modules) {
+    lines.push(`📚 <b>Modul ${m.mPos + 1} — ${csvEscapeHtml(m.mTitle)}</b>`);
+    for (const it of m.items) {
+      const tn = it.a.task_number || 1;
+      lines.push(`   ⏳ V${tn}: ${csvEscapeHtml(it.a.title || "")}`);
+      buttons.push([{ text: `M${m.mPos + 1}·V${tn} — ${it.a.title || ""}`.slice(0, 60), callback_data: `gs:open:${it.sub.id}` }]);
+    }
+    const url = topicMap.get(m.mid);
+    if (url) buttons.push([{ text: t.gradeOpenTopicBtn(m.mPos + 1), url }]);
+    lines.push("");
+  }
+  buttons.push([{ text: t.gradeBackList, callback_data: "gs:list:0" }]);
+  await sendMessage(chatId, lines.join("\n"), { inline_keyboard: buttons });
+}
+
 async function tgIdFromUserId(admin: any, userId: string): Promise<number | null> {
   const { data } = await admin.from("profiles").select("telegram_id").eq("id", userId).maybeSingle();
   return data?.telegram_id ?? null;
