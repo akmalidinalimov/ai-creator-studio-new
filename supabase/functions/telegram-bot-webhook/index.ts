@@ -1295,8 +1295,18 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   }
 
   if (cmd === "/galaba" || cmd === "/streak") {
-    const s = await computeStats(admin, profile.id);
-    await sendWithKeyboard(chatId, t.streakReply(s.streak, s.weekMin, s.pct), locale);
+    const text = await buildStatsMessage(admin, profile.id, locale);
+    const url = await createMagicLink(admin, profile.id, "login", "/dashboard");
+    await sendMessage(chatId, text, { inline_keyboard: [[{ text: t.btnSiteOpen, url }]] });
+    await sendKeyboardHint(chatId, locale);
+    return;
+  }
+
+  if (cmd === "/vazifalar" || cmd === "/homework") {
+    const text = await buildHomeworkMessage(admin, profile.id, locale);
+    const url = await createMagicLink(admin, profile.id, "login", "/dashboard");
+    await sendMessage(chatId, text, { inline_keyboard: [[{ text: t.btnHwSite, url }]] });
+    await sendKeyboardHint(chatId, locale);
     return;
   }
 
