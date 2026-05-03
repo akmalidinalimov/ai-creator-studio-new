@@ -480,6 +480,33 @@ export default function AdminUsers() {
     reload();
   };
 
+  const changeUserRole = async (user: UserRow, newRole: RoleName) => {
+    try {
+      const { data, error } = await supabase.functions.invoke("admin-change-role", {
+        body: { target_user_id: user.id, new_role: newRole },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      toast.success(t("admin.users.toasts.roleUpdated", { defaultValue: "Role updated" }));
+      setBulkRole(null);
+      reload();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to change role");
+      setBulkRole(null);
+    }
+  };
+
+  const bulkAssignGroup = async (groupId: string) => {
+    if (selected.size === 0) return;
+    const ids = Array.from(selected);
+    const { data, error } = await supabase.rpc("admin_assign_group", { _user_ids: ids, _group_id: groupId });
+    if (error) return toast.error(error.message);
+    toast.success(t("admin.users.toasts.bulkMoved", { defaultValue: "{{n}} users moved", n: data || ids.length }));
+    setSelected(new Set());
+    setBulkGroupId("");
+    reload();
+  };
+
   const setStatus = async (user: UserRow, status: "active" | "inactive") => {
     const { error } = await supabase.from("profiles").update({ status }).eq("id", user.id);
     if (error) return toast.error(error.message);
