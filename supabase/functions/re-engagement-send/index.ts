@@ -73,13 +73,15 @@ Deno.serve(async (req) => {
     // Build recipients
     let recipients: any[] = [];
     if (mode === "test") {
+      const { data: setting } = await admin.rpc("get_setting", { _key: "bot.test_recipient_username" });
+      const testUsername = (typeof setting === "string" ? setting : (setting as any)) || "alikhanova_admin";
       const { data: me } = await admin
         .from("profiles")
         .select("id, name, last_name, telegram_id, telegram_username, preferred_locale")
-        .eq("telegram_username", "alikhanova_admin")
+        .eq("telegram_username", testUsername)
         .maybeSingle();
       if (!me?.telegram_id) {
-        return new Response(JSON.stringify({ error: "test recipient @alikhanova_admin not found or has no telegram_id" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ error: `test recipient @${testUsername} not found or has no telegram_id` }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
       recipients = [me];
     } else {

@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { Eye, EyeOff, CheckCircle2, Circle, ExternalLink, Copy } from "lucide-react";
 import { TelegramDeeplinkButton } from "@/components/TelegramDeeplinkButton";
 import { KnowledgeManager } from "@/components/admin/KnowledgeManager";
+import { AppSettingsSection } from "@/components/admin/AppSettingsSection";
 
 export default function AdminSettings() {
   const { t } = useTranslation();
@@ -99,6 +100,8 @@ export default function AdminSettings() {
           <h1 className="text-3xl font-semibold tracking-tight">{t("admin.settings.title")}</h1>
           <p className="text-muted-foreground mt-1">{t("admin.settings.subtitle")}</p>
         </div>
+
+        <AppSettingsSection />
 
         <Card className="p-6 shadow-soft space-y-5">
           <div>

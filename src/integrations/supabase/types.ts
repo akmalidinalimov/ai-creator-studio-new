@@ -306,6 +306,30 @@ export type Database = {
           },
         ]
       }
+      app_settings: {
+        Row: {
+          description: string | null
+          key: string
+          updated_at: string
+          updated_by: string | null
+          value: Json
+        }
+        Insert: {
+          description?: string | null
+          key: string
+          updated_at?: string
+          updated_by?: string | null
+          value: Json
+        }
+        Update: {
+          description?: string | null
+          key?: string
+          updated_at?: string
+          updated_by?: string | null
+          value?: Json
+        }
+        Relationships: []
+      }
       audit_log: {
         Row: {
           action: string
@@ -429,6 +453,30 @@ export type Database = {
           id?: string
           recipient_user_id?: string | null
           scope?: string
+        }
+        Relationships: []
+      }
+      bot_conversation_state: {
+        Row: {
+          context: Json
+          expires_at: string
+          state: string
+          telegram_id: number
+          updated_at: string
+        }
+        Insert: {
+          context?: Json
+          expires_at?: string
+          state: string
+          telegram_id: number
+          updated_at?: string
+        }
+        Update: {
+          context?: Json
+          expires_at?: string
+          state?: string
+          telegram_id?: number
+          updated_at?: string
         }
         Relationships: []
       }
@@ -659,11 +707,13 @@ export type Database = {
           description: string | null
           due_days_after_module_unlock: number
           id: string
+          is_active: boolean
           max_score: number
           module_id: string
           prompt_en: string | null
           prompt_ru: string | null
           prompt_uz: string | null
+          task_number: number
           title: string
           updated_at: string
         }
@@ -673,11 +723,13 @@ export type Database = {
           description?: string | null
           due_days_after_module_unlock?: number
           id?: string
+          is_active?: boolean
           max_score?: number
           module_id: string
           prompt_en?: string | null
           prompt_ru?: string | null
           prompt_uz?: string | null
+          task_number?: number
           title: string
           updated_at?: string
         }
@@ -687,11 +739,13 @@ export type Database = {
           description?: string | null
           due_days_after_module_unlock?: number
           id?: string
+          is_active?: boolean
           max_score?: number
           module_id?: string
           prompt_en?: string | null
           prompt_ru?: string | null
           prompt_uz?: string | null
+          task_number?: number
           title?: string
           updated_at?: string
         }
@@ -699,14 +753,14 @@ export type Database = {
           {
             foreignKeyName: "homework_assignments_module_id_fkey"
             columns: ["module_id"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "modules"
             referencedColumns: ["id"]
           },
           {
             foreignKeyName: "homework_assignments_module_id_fkey"
             columns: ["module_id"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "mv_lesson_dropoff"
             referencedColumns: ["module_id"]
           },
@@ -1795,6 +1849,32 @@ export type Database = {
         }
         Relationships: []
       }
+      vw_module_homework_score: {
+        Row: {
+          avg_score_normalized: number | null
+          module_id: string | null
+          profile_id: string | null
+          scored_tasks: number | null
+          total_active_tasks_in_module: number | null
+          total_submitted_tasks: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "homework_assignments_module_id_fkey"
+            columns: ["module_id"]
+            isOneToOne: false
+            referencedRelation: "modules"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "homework_assignments_module_id_fkey"
+            columns: ["module_id"]
+            isOneToOne: false
+            referencedRelation: "mv_lesson_dropoff"
+            referencedColumns: ["module_id"]
+          },
+        ]
+      }
     }
     Functions: {
       admin_assign_group: {
@@ -1927,6 +2007,14 @@ export type Database = {
       }
       generate_certificate_serial: { Args: never; Returns: string }
       get_public_setting: { Args: { _key: string }; Returns: Json }
+      get_setting: { Args: { _key: string }; Returns: Json }
+      get_settings: {
+        Args: { _keys: string[] }
+        Returns: {
+          key: string
+          value: Json
+        }[]
+      }
       get_visible_student_ids: {
         Args: { _scope_user_id?: string }
         Returns: {
