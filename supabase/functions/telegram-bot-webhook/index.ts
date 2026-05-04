@@ -970,9 +970,14 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
   return lines.join("\n");
 }
 
-async function buildHomeworkMessage(admin: any, userId: string, locale: Locale): Promise<string> {
+async function buildHomeworkMessage(
+  admin: any,
+  userId: string,
+  locale: Locale,
+): Promise<{ text: string; keyboard: { inline_keyboard: any[][] } | null }> {
   const t = T[locale] as any;
   const lines: string[] = [t.hwTitle, ""];
+  const buttons: any[][] = [];
   try {
     // Parallel: profile (group_id) + active assignments
     const [profRes, assignsRes] = await Promise.all([
@@ -983,7 +988,7 @@ async function buildHomeworkMessage(admin: any, userId: string, locale: Locale):
     ]);
     const groupId = (profRes as any).data?.group_id || null;
     const list = ((assignsRes as any).data || []) as any[];
-    if (!list.length) { lines.push(t.hwEmpty); return lines.join("\n"); }
+    if (!list.length) { lines.push(t.hwEmpty); return { text: lines.join("\n"), keyboard: null }; }
     list.sort((a, b) => (a.modules?.position ?? 0) - (b.modules?.position ?? 0) || (a.task_number ?? 1) - (b.task_number ?? 1));
 
     const aIds = list.map((a) => a.id);
@@ -1018,6 +1023,10 @@ async function buildHomeworkMessage(admin: any, userId: string, locale: Locale):
           lines.push(t.hwTaskScored(tn, s.score, a.max_score || 10, s.score_feedback || ""));
         } else {
           lines.push(t.hwTaskUnscored(tn));
+          // Add a submit button for unscored assignments (only if topic + group exist)
+          if (groupId && topicMap.get(m.mid)) {
+            buttons.push([{ text: t.hwSubmitBtn(m.position + 1, tn), callback_data: `hw:start:${a.id}` }]);
+          }
         }
       }
       const topic = topicMap.get(m.mid);
@@ -1028,7 +1037,7 @@ async function buildHomeworkMessage(admin: any, userId: string, locale: Locale):
     console.error("buildHomeworkMessage error", e);
     lines.push(t.hwEmpty);
   }
-  return lines.join("\n");
+  return { text: lines.join("\n"), keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
 async function handleStartLogin(admin: any, msg: any, token: string, locale: Locale) {
