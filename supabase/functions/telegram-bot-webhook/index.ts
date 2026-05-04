@@ -523,6 +523,19 @@ const T = {
     hwTaskUnscored: (tn: number) => `   ⏳ T${tn}: not graded yet`,
     hwTopicLine: (url: string) => `   📌 Submit in topic: ${url}`,
     hwTopicMissing: "   📌 Topic not configured",
+    hwSubmitBtn: (mn: number, tn: number) => `📤 Submit — M${mn}·T${tn}`,
+    hwIntentReady: (mn: number, tn: number) =>
+      `📤 <b>Module ${mn} · Task ${tn}</b>\n\nTap the button below to open the topic and post your photo or video. The bot will accept it automatically (within 10 minutes).`,
+    hwIntentNoTopic: "Topic not configured for this module. Please contact your teacher.",
+    hwIntentNoGroup: "You are not assigned to a group. Please contact your teacher.",
+    hwIntentBtnGoTopic: "📌 Open topic",
+    hwIntentAlreadyScored: "This task has already been graded ✅",
+    hwReceived: (mn: number, tn: number) =>
+      `✅ Submission received · Module ${mn} · T${tn}\nYou'll get the result once your teacher grades it.`,
+    hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
+      `🆕 <b>New submission</b>\n👤 ${csvEscapeHtml(name)}\n📚 Module ${mn} · T${tn} — ${csvEscapeHtml(title)}`,
+    hwTeacherBtnFile: "📂 Open file",
+    hwTeacherBtnGrade: "🎯 Grade now",
   },
 };
 
