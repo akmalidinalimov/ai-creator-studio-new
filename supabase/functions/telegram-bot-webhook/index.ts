@@ -2445,15 +2445,37 @@ Deno.serve(async (req) => {
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
+  // Diagnostic: log every incoming update shape (top-level keys + chat type/thread)
   try {
-    if (update.message) {
-      const msg = update.message;
+    const topKeys = Object.keys(update).filter((k) => k !== "update_id");
+    const m = update.message || update.channel_post || update.edited_message;
+    console.log("tg:update", JSON.stringify({
+      keys: topKeys,
+      chat_type: m?.chat?.type,
+      chat_id: m?.chat?.id,
+      thread_id: m?.message_thread_id,
+      from_id: m?.from?.id,
+      has_photo: !!m?.photo,
+      has_doc: !!m?.document,
+      has_video: !!m?.video,
+      text_preview: (m?.text || m?.caption || "").slice(0, 40),
+    }));
+  } catch (_e) { /* noop */ }
+
+  try {
+    // Treat both message and channel_post as inbound for group topics (forum supergroups can deliver either)
+    const inbound = update.message || update.channel_post;
+    if (inbound) {
+      const msg = inbound;
       // Group/supergroup posts (e.g. inside a forum topic) → homework intake only
       const chatType = msg.chat?.type;
-      if (chatType === "supergroup" || chatType === "group") {
+      if (chatType === "supergroup" || chatType === "group" || chatType === "channel") {
         await handleGroupTopicMessage(admin, msg);
         return new Response("ok", { status: 200, headers: corsHeaders });
       }
+    }
+    if (update.message) {
+      const msg = update.message;
       const text: string = msg.text || "";
       const profileForLocale = await findProfileByTelegramId(admin, msg.from.id);
       const locale: Locale = profileForLocale?.preferred_locale
