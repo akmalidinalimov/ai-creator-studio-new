@@ -207,6 +207,19 @@ const T = {
     hwTaskUnscored: (tn: number) => `   ⏳ V${tn}: hali baholanmagan`,
     hwTopicLine: (url: string) => `   📌 Topshirish topiki: ${url}`,
     hwTopicMissing: "   📌 Topik sozlanmagan",
+    hwSubmitBtn: (mn: number, tn: number) => `📤 Topshirish — M${mn}·V${tn}`,
+    hwIntentReady: (mn: number, tn: number) =>
+      `📤 <b>Modul ${mn} · Vazifa ${tn}</b>\n\nQuyidagi tugmani bosib topikga o'ting va rasm yoki video yuboring. Bot avtomatik qabul qiladi (10 daqiqa ichida).`,
+    hwIntentNoTopic: "Bu modul uchun topik sozlanmagan. Iltimos, ustozingizga murojaat qiling.",
+    hwIntentNoGroup: "Sizga guruh biriktirilmagan. Ustozingiz bilan bog'laning.",
+    hwIntentBtnGoTopic: "📌 Topikga o'tish",
+    hwIntentAlreadyScored: "Bu vazifa allaqachon baholangan ✅",
+    hwReceived: (mn: number, tn: number) =>
+      `✅ Vazifangiz qabul qilindi · Modul ${mn} · V${tn}\nUstoz baholaganidan keyin natija keladi.`,
+    hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
+      `🆕 <b>Yangi topshiriq</b>\n👤 ${csvEscapeHtml(name)}\n📚 Modul ${mn} · V${tn} — ${csvEscapeHtml(title)}`,
+    hwTeacherBtnFile: "📂 Faylni ko'rish",
+    hwTeacherBtnGrade: "🎯 Hozir baholash",
   },
   ru: {
     expired: "Срок действия ссылки истёк. Вернитесь на сайт и попробуйте ещё раз.",
