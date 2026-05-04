@@ -480,6 +480,42 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_homework_intents: {
+        Row: {
+          assignment_id: string
+          created_at: string
+          expires_at: string
+          group_id: string | null
+          id: string
+          module_id: string
+          telegram_chat_id: number
+          telegram_thread_id: number
+          user_id: string
+        }
+        Insert: {
+          assignment_id: string
+          created_at?: string
+          expires_at?: string
+          group_id?: string | null
+          id?: string
+          module_id: string
+          telegram_chat_id: number
+          telegram_thread_id: number
+          user_id: string
+        }
+        Update: {
+          assignment_id?: string
+          created_at?: string
+          expires_at?: string
+          group_id?: string | null
+          id?: string
+          module_id?: string
+          telegram_chat_id?: number
+          telegram_thread_id?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
       bot_sessions: {
         Row: {
           data: Json
@@ -834,9 +870,16 @@ export type Database = {
           score_feedback: string | null
           scored_at: string | null
           scored_by: string | null
+          source: string
           submitted_at: string
           submitted_image_url: string | null
           submitted_text: string
+          telegram_chat_id: number | null
+          telegram_file_id: string | null
+          telegram_file_kind: string | null
+          telegram_message_id: number | null
+          telegram_message_url: string | null
+          telegram_thread_id: number | null
           updated_at: string
           user_id: string
         }
@@ -849,9 +892,16 @@ export type Database = {
           score_feedback?: string | null
           scored_at?: string | null
           scored_by?: string | null
+          source?: string
           submitted_at?: string
           submitted_image_url?: string | null
           submitted_text?: string
+          telegram_chat_id?: number | null
+          telegram_file_id?: string | null
+          telegram_file_kind?: string | null
+          telegram_message_id?: number | null
+          telegram_message_url?: string | null
+          telegram_thread_id?: number | null
           updated_at?: string
           user_id: string
         }
@@ -864,9 +914,16 @@ export type Database = {
           score_feedback?: string | null
           scored_at?: string | null
           scored_by?: string | null
+          source?: string
           submitted_at?: string
           submitted_image_url?: string | null
           submitted_text?: string
+          telegram_chat_id?: number | null
+          telegram_file_id?: string | null
+          telegram_file_kind?: string | null
+          telegram_message_id?: number | null
+          telegram_message_url?: string | null
+          telegram_thread_id?: number | null
           updated_at?: string
           user_id?: string
         }

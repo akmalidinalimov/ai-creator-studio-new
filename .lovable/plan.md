@@ -1,131 +1,147 @@
-# v3.0.2 — Role UI + Teacher Bot + Per-group CSV + Group Detail
+## Problem
 
-Additive release. Student dashboard, video player, watch tracking, student bot keyboard, and admin v2.x flows are not modified.
+Today, when a student opens the bot → "📝 Mening vazifalarim" → taps the topic link and posts an image in the Telegram group topic, **nothing happens server-side**:
 
-## A. Database migration
+- The bot only renders module headers + topic URLs. It never tells the student "I'm waiting for your file" and never records intent.
+- The bot webhook only handles `update.message` from **private chats** (it assumes `msg.from` is the user). It does NOT process `message_thread_id` posts inside the supergroup, so files dropped in topics are invisible to us.
+- `homework_submissions` rows are only created when a student submits via the **website** (`HomeworkSection.tsx`).
+- Result: teacher's "📝 Vazifalar" picker (`renderStudentPicker`) finds 0 ungraded rows, and the student gets no notification, no link to their file.
 
-New SQL migration adds:
+## Goal (v3.15 — Bot-first homework submission)
 
-1. `superadmin` value to `app_role` enum.
-2. `audit_log` table:
-   - `id uuid pk`, `actor_user_id uuid`, `target_user_id uuid`, `action text`, `old_value jsonb`, `new_value jsonb`, `created_at timestamptz`
-   - RLS: admin/superadmin SELECT only; INSERT only via security-definer function.
-3. `groups.is_default boolean default false` + partial unique index ensuring at most one default group.
-4. `profiles.group_id` already exists (v3.0).
-5. New security-definer functions (callable by service role + admin/teacher as appropriate):
-   - `admin_change_role(target uuid, new_role app_role)` — enforces:
-     - actor must be admin or superadmin
-     - only superadmin may grant/revoke `admin` or `superadmin`
-     - actor cannot change own role
-     - writes audit_log row
-   - `staff_group_overview(group_id uuid)` → totals, active_7d, completion %, avg score, health score (admins: any group; teachers: only their groups).
-   - `staff_group_members(group_id uuid)` → per-member rows for detail page (scoped same way).
-   - `staff_group_module_completion(group_id uuid)` → per-module completion %.
-   - `staff_group_recent_activity(group_id uuid, lim int)` → recent lessons/auth events for the group.
-   - `staff_top_students(uid uuid, lim int)` → top-N for teacher's groups.
-   - `admin_assign_group(user_ids uuid[], group_id uuid)` — bulk reassign; admin only; logs to audit_log.
-   - `group_health_score(group_id uuid)` — pure function used by overview & list.
-6. View / RPC `admin_ungrouped_students()` returning students with `group_id IS NULL` and no `admin` role.
+Make the bot the **only path** for homework. After the student goes through the bot's submission flow, drops media in the topic, the bot must:
 
-Health formula: `0.4*active_7d_pct + 0.4*avg_completion_pct + 0.2*avg_score_pct`, rounded to int.
+1. Detect that media post in the group topic, link it to the right student + assignment.
+2. Create a `homework_submissions` row containing a re-openable Telegram link to the original message (e.g. `https://t.me/c/<chat>/<thread>/<msg>`).
+3. DM the teacher(s) of that student's group: "🆕 New submission from X · Modul Y · Vazifa Z" with an inline button "📂 Open file" (deep-links to the message) and "🎯 Grade now".
+4. Show the submission in the teacher's existing `📝 Vazifalar` picker, with the file link appearing inside `startGradingFlow`.
 
-## B. Role management UI (`/admin/users`)
+## Implementation Plan
 
-Edit `src/pages/admin/AdminUsers.tsx`:
+### 1. DB migration — add submission intake state + media link columns
 
-- Add a `Role` column (Student / Teacher / Admin / Superadmin) using a `Select` per row.
-- Disabled when `row.id === currentUser.id` (self) or when current user lacks privilege for the target role.
-- On change → AlertDialog "Are you sure you want to change {{name}} to {{role}}?" → calls new edge function `admin-change-role` (which calls the SQL function above).
-- Bulk reassign: checkbox column + sticky action bar with "Move N to group ▾" (admin only). Calls `admin_assign_group`.
-- All mutations refresh the list and toast results.
+- **New columns on `homework_submissions`** (nullable, additive — keeps website flow working):
+  - `telegram_chat_id bigint` — supergroup chat id (e.g. `-100...`)
+  - `telegram_thread_id integer` — topic id
+  - `telegram_message_id integer` — the post containing the file
+  - `telegram_message_url text` — pre-built `https://t.me/c/<chat-without-100>/<thread>/<msg>` link
+  - `telegram_file_id text` — Telegram `file_id` for largest photo / document / video (so we can re-fetch later)
+  - `telegram_file_kind text` — `photo` | `document` | `video` | `voice` | `text`
+  - `source text default 'web'` — `'web'` (legacy) or `'telegram_topic'`
+- **New table `bot_homework_intents`** — short-lived (10 min) "I'm about to post" markers so we can attribute the next file the student posts in a topic to the right assignment:
+  - `id uuid pk`, `user_id uuid`, `assignment_id uuid`, `module_id uuid`, `group_id uuid`, `telegram_chat_id bigint`, `telegram_thread_id int`, `expires_at timestamptz`, `created_at timestamptz`
+  - Unique on `(user_id, assignment_id)` where not expired (we just upsert).
+- **Index** on `homework_submissions(telegram_chat_id, telegram_message_id)` to dedupe.
+- **RLS**: admin-all on `bot_homework_intents`; existing `homework_submissions` policies already cover the new columns.
 
-## C. Bot teacher keyboard
+### 2. Bot — student "Submit Homework" flow (per-assignment, not per-module)
 
-Edit `supabase/functions/telegram-bot-webhook/index.ts`:
+In `buildHomeworkMessage` (today just text), change the student `/vazifalar` view to **interactive**:
 
-- Detect `role === 'teacher'` for the matched profile (already loaded in handlers).
-- New `getTeacherKeyboard(locale)` with the 6 buttons (uz/ru/en variants):
-  - 📊 Guruh statistikasi
-  - 👥 Mening talabalarim
-  - ⚠️ Faol bo'lmaganlar
-  - 🏆 TOP talabalar
-  - 💬 Guruhga xabar
-  - ⚙️ Sozlamalar / ❓ Yordam
-- Replace the two `isAdmin ? adminKb : mainKb` sites with a 3-way: admin → admin kb, teacher → teacher kb, else student kb.
-- Add a locale-tolerant text router: a normalized lookup table of teacher button strings (all 3 locales) → handler.
-- Handlers (each scoped via the v3.0.1 + new RPCs):
-  - **Stats**: call `staff_group_overview` for each group teacher owns; reply with totals + inline buttons `[📥 CSV · 📈 Modullar · 🏥 Sog'lik]`.
-  - **My students**: list from `staff_list_students`, status emoji from `last_sign_in_at` (🟢 ≤3d, 🟡 ≤7d, 🔴 older / never).
-  - **Inactive**: filter by ≥3d; `[📥 CSV · ⏰ 7+ kun]` toggles threshold.
-  - **Top students**: `staff_top_students(uid, 10)`.
-  - **Broadcast (Guruhga xabar)**: stateful flow using a small `bot_states` row (or reuse existing state mechanism in the file) — prompt → preview with inline `[✅ Ha · ❌ Yo'q]` → on confirm, iterate group members and send via Telegram API. Rate-limit table `bot_broadcast_rate` keyed by `teacher_id` (1/h) and `student_id` (1/min) — both upserted on send.
-  - **Settings**: route to existing `/sozlamalar` flow.
-  - **Help**: existing help text.
-- Student keyboard and admin keyboard are not modified.
+- Group by module. For each **unscored** assignment that has a `topicMap` URL, render an inline button:
+  ```
+  📤 Topshirish — Modul N · V{task_number}
+  ```
+  `callback_data: hw:start:<assignment_id>`
+- Already-graded assignments stay as text (`✅ scored`).
 
-## D. Per-group CSV import
+New callback `hw:start:<assignment_id>`:
+1. Fetch assignment + module + student's group → resolve `group_module_topics.telegram_topic_url` and parse out `chat_id` + `thread_id`.
+2. Upsert a row into `bot_homework_intents` with `expires_at = now() + 10 min`.
+3. Reply with: "📤 Modul N · Vazifa Z uchun rasm/video tayyorlang. Quyidagi tugmani bosib topikga o'ting va faylni shu yerga yuboring. Yuborgach, bot avtomatik qabul qiladi." + inline button `📌 Topikga o'tish` (the topic URL).
 
-1. Edit `supabase/functions/admin-create-students/index.ts`:
-   - Accept new optional body field `target_group_id: uuid`.
-   - When set: ignore CSV's `group_name` column; for each row do dedup by (email | telegram_user_id | lower(telegram_username)). 
-     - If matched profile exists → `UPDATE profiles SET group_id=target` only (no auth user creation), result status `moved`.
-     - If matched profile already has `group_id = target` → status `already_in_group`.
-     - Else → existing create flow + `group_id=target`, status `created`.
-   - Return summary `{ created, moved, already_in_group, duplicates_in_file, invalid }`.
+If no topic URL configured → reply "Ustozingiz topikni sozlamagan. Iltimos, ustozga murojaat qiling." and do not create intent.
 
-2. UI: dialog on Group Detail page mirrors `AdminUsers` CSV dialog but without group_name column; shows the summary line and only counts `created+moved` in the action button.
+### 3. Bot — handle messages posted **inside the group topic**
 
-## E. Group detail page
+Today the webhook ignores group messages. Add a branch at the top of `Deno.serve` message handling:
 
-New file `src/pages/admin/GroupDetail.tsx`, route `/admin/groups/:id` (added to `App.tsx`, with `staffOnly` guard — RPCs already scope teacher access).
+```
+if (msg.chat.type === 'supergroup' || msg.chat.type === 'group') {
+  await handleGroupTopicMessage(admin, msg);
+  return ack();
+}
+```
 
-Sections:
-1. **Header card**: editable name, teacher (Combobox of users with role teacher/admin), course (Select), created date.
-2. **Stat tiles**: total / active 7d / completion % / avg score / health score badge.
-3. **Members table**: name, @username (link `https://t.me/<username>`), telegram_user_id, last activity, status emoji, score, Remove button (sets `group_id = null`).
-4. **Add students**: `[➕ Add by username/ID]` (small inline form using existing profile lookup) and `[📥 Upload CSV to group]` (dialog from D).
-5. **Per-module completion**: bar chart from `staff_group_module_completion` (recharts, already in project).
-6. **Recent activity**: list from `staff_group_recent_activity`.
+`handleGroupTopicMessage(msg)`:
+1. Need `msg.message_thread_id` and `msg.from.id`. Skip if either missing.
+2. Look up profile by `telegram_id = msg.from.id`. Skip if unknown.
+3. Look up the most recent **non-expired** intent for that user where `telegram_chat_id = msg.chat.id` AND `telegram_thread_id = msg.message_thread_id`. If none → silent no-op (don't spam the group).
+4. Extract media:
+   - `photo` → take largest `photo[photo.length-1].file_id`, kind=`photo`
+   - `document` → `document.file_id`, kind=`document`
+   - `video` → `video.file_id`, kind=`video`
+   - `voice` → `voice.file_id`, kind=`voice`
+   - else → if intent allows text-only, fall back to `kind='text'`; if media required, ignore.
+5. Build `telegram_message_url`:
+   - For supergroups, `chat.id` is `-100xxxxxxxxxx`. Strip the `-100` prefix → `xxxxxxxxxx`.
+   - URL: `https://t.me/c/<stripped>/<thread_id>/<message_id>`
+6. **Upsert** into `homework_submissions` (unique key `(user_id, assignment_id)` already implied via existing schema; if not, use `telegram_chat_id+telegram_message_id` to dedupe). Set:
+   - `submitted_text = msg.caption || msg.text || ''`
+   - `telegram_*` cols + `source='telegram_topic'`
+   - `score = NULL`, `submitted_at = now()`
+7. Delete the consumed intent.
+8. **React in-thread** with a ✅ reaction (`setMessageReaction` via Bot API) so student knows it was captured. Cheap, no extra message.
+9. **DM the student** privately: "✅ Vazifangiz qabul qilindi · Modul N · V{n}. Ustoz baholaganidan keyin natija keladi."
+10. **Notify teachers** of the student's group:
+    - Resolve `groups.teacher_id` for the student's `group_id`. Also include all admins (optional toggle, default off to avoid spam).
+    - Look up teacher's `profiles.telegram_id`.
+    - DM each teacher: `🆕 Yangi topshiriq\n👤 {Student}\n📚 Modul {N} · V{n} — {assignment.title}` with inline buttons:
+      - `📂 Faylni ko'rish` → url = `telegram_message_url`
+      - `🎯 Hozir baholash` → callback_data = `gs:open:<submission_id>` (reuses existing grading flow)
 
-`AdminGroups.tsx` updated so each row links to the detail page and shows the colored health badge + a star toggle for "default group" (admin only).
+### 4. Bot — teacher "Vazifalar" picker shows submissions with file link
 
-## F. Dashboard improvements
+`startGradingFlow` already fetches `submitted_image_url` (legacy storage path). Extend it:
 
-Edit `src/pages/admin/AdminDashboard.tsx`:
+- If `submission.telegram_message_url` present → send "🔗 Fayl: <url>" message (or include as inline button alongside the score prompt).
+- Keep the existing `homework_images` storage signed-URL path for legacy web submissions.
+- Existing `renderStudentPicker` and `renderStudentBreakdown` work as-is — once rows exist, they appear automatically.
 
-- Add **Ungrouped** tile (admin only, hidden when count = 0 OR shown with green ✓ — choosing: hidden when 0).
-- Click → drawer/modal listing ungrouped students with checkboxes and a "Move to group ▾" action calling `admin_assign_group`.
+### 5. Telegram setup — webhook must receive group messages
 
-## G. i18n
+The bot is already set as a webhook (uses `WEBHOOK_SECRET`). For it to receive supergroup posts:
 
-Add new keys under `admin.users.role`, `admin.groups.detail.*`, `admin.dashboard.ungrouped`, `bot.teacher.*` to `uz.json`, `ru.json`, `en.json`. (No Spanish.)
+- The bot must be an **admin** (or at least a member with "read all group messages" — easiest: admin) of each group whose topics are used.
+- The webhook's `allowed_updates` must include `"message"` (default). No code change needed if the webhook was registered with default updates; if it was registered with `allowed_updates=["message","callback_query"]` we're fine.
+- **Action item for user**: confirm the bot is added as admin to the supergroup. We'll surface a one-time admin diagnostic banner in `/admin/groups` if `telegram_group_url` is set but we've never received a message from that chat (nice-to-have, not blocking).
 
-## Files to create / edit
+### 6. Edge cases & guards
 
-Create:
-- `supabase/migrations/<ts>_v302_role_groups_audit.sql`
-- `supabase/functions/admin-change-role/index.ts`
-- `src/pages/admin/GroupDetail.tsx`
-- `mem://features/v3-groups-roles` summarizing role rules + health formula
+- **Duplicate submissions**: if student posts 3 photos as an album, Telegram sends 3 separate `message` updates. We dedupe by upserting on `(user_id, assignment_id)` — last file wins. (Acceptable per current product behavior; album handling can come later.)
+- **Wrong topic**: if intent's `thread_id` ≠ message's `message_thread_id`, ignore. Student can simply tap the button again from the bot.
+- **Intent expiry (10 min)**: if expired, the file in the topic is silently ignored (no DB write, no notify) — matches the rule "must go through the bot".
+- **No teacher assigned**: skip teacher DM, still record submission so admins see it.
+- **Already graded**: if `score IS NOT NULL`, allow re-submission only if assignment policy permits — for v1 we **block** with a private DM "Bu vazifa allaqachon baholangan". (Matches existing UX.)
+- **Privacy**: never echo the student's media into private chats; teacher gets a link only.
 
-Edit:
-- `src/App.tsx` (route)
-- `src/pages/admin/AdminUsers.tsx` (role column, bulk reassign, modals)
-- `src/pages/admin/AdminGroups.tsx` (link to detail, health badge, default-star)
-- `src/pages/admin/AdminDashboard.tsx` (ungrouped tile + drill-down)
-- `supabase/functions/admin-create-students/index.ts` (target_group_id + dedup)
-- `supabase/functions/telegram-bot-webhook/index.ts` (teacher keyboard + handlers + broadcast)
-- `src/i18n/locales/{uz,ru,en}.json`
-- `src/integrations/supabase/types.ts` (auto-regen after migration)
+### 7. Smoke test additions to `docs/smoke-test-v3.14.md` → bump to v3.15
 
-## Verification (after build)
+- Bot: "📝 Mening vazifalarim" shows per-assignment submit buttons.
+- Tapping `📤 Topshirish` creates a row in `bot_homework_intents`.
+- Posting a photo in the matching topic within 10 min creates a `homework_submissions` row with `source='telegram_topic'` and a non-null `telegram_message_url`.
+- The teacher of that student's group receives a DM with the file link button.
+- Teacher's "📝 Vazifalar" picker shows the new student; opening it shows the file link.
+- Posting in the topic without first tapping the bot button: nothing happens (silent ignore).
 
-Run through the 12-step checklist in the request. Specifically I'll:
-1. Curl `admin-change-role` to confirm self-change blocked + audit row written.
-2. Trigger bot webhook for a teacher chat_id and assert teacher keyboard returned.
-3. Upload a CSV to a group twice and confirm idempotent counts.
-4. Query `audit_log` and `groups.is_default` post-migration.
+### Files touched
 
-## Out of scope (unchanged)
+- `supabase/migrations/<new>.sql` — new columns + `bot_homework_intents` + indexes + RLS.
+- `supabase/functions/telegram-bot-webhook/index.ts`:
+  - `buildHomeworkMessage` → returns `{ text, keyboard }` (or new sibling that builds keyboard).
+  - New `handleGroupTopicMessage`, `notifyTeachersOfSubmission`, helpers `parseTopicUrl`, `buildMessageLink`, `setMessageReaction`.
+  - New callback prefix `hw:start:`.
+  - Webhook handler: route group/supergroup updates to `handleGroupTopicMessage`.
+  - `startGradingFlow`: include `telegram_message_url` if present.
+- `docs/smoke-test-v3.15.md` — new file (or append section).
 
-Student dashboard, video player, watch tracking, student bot keyboard, global `/admin/users` CSV behavior, v2.x cron jobs, RLS policies on existing tables.
+## Out of scope (future)
+
+- Album / multi-file submission (collect all photos in 30s window).
+- Resubmission after grading.
+- File mirroring to Supabase Storage (we keep the Telegram link only — saves storage and is sufficient for grading).
+- Auto-detection of the bot's admin status in the group.
+
+## Commit message
+
+`v3.15 — Bot-first homework submission (intent + group topic capture + teacher notify with file link)`

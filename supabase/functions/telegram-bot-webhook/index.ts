@@ -207,6 +207,19 @@ const T = {
     hwTaskUnscored: (tn: number) => `   ⏳ V${tn}: hali baholanmagan`,
     hwTopicLine: (url: string) => `   📌 Topshirish topiki: ${url}`,
     hwTopicMissing: "   📌 Topik sozlanmagan",
+    hwSubmitBtn: (mn: number, tn: number) => `📤 Topshirish — M${mn}·V${tn}`,
+    hwIntentReady: (mn: number, tn: number) =>
+      `📤 <b>Modul ${mn} · Vazifa ${tn}</b>\n\nQuyidagi tugmani bosib topikga o'ting va rasm yoki video yuboring. Bot avtomatik qabul qiladi (10 daqiqa ichida).`,
+    hwIntentNoTopic: "Bu modul uchun topik sozlanmagan. Iltimos, ustozingizga murojaat qiling.",
+    hwIntentNoGroup: "Sizga guruh biriktirilmagan. Ustozingiz bilan bog'laning.",
+    hwIntentBtnGoTopic: "📌 Topikga o'tish",
+    hwIntentAlreadyScored: "Bu vazifa allaqachon baholangan ✅",
+    hwReceived: (mn: number, tn: number) =>
+      `✅ Vazifangiz qabul qilindi · Modul ${mn} · V${tn}\nUstoz baholaganidan keyin natija keladi.`,
+    hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
+      `🆕 <b>Yangi topshiriq</b>\n👤 ${csvEscapeHtml(name)}\n📚 Modul ${mn} · V${tn} — ${csvEscapeHtml(title)}`,
+    hwTeacherBtnFile: "📂 Faylni ko'rish",
+    hwTeacherBtnGrade: "🎯 Hozir baholash",
   },
   ru: {
     expired: "Срок действия ссылки истёк. Вернитесь на сайт и попробуйте ещё раз.",
@@ -352,6 +365,19 @@ const T = {
     hwTaskUnscored: (tn: number) => `   ⏳ З${tn}: ещё не оценено`,
     hwTopicLine: (url: string) => `   📌 Топик для сдачи: ${url}`,
     hwTopicMissing: "   📌 Топик не настроен",
+    hwSubmitBtn: (mn: number, tn: number) => `📤 Сдать — М${mn}·З${tn}`,
+    hwIntentReady: (mn: number, tn: number) =>
+      `📤 <b>Модуль ${mn} · Задание ${tn}</b>\n\nНажмите кнопку ниже, перейдите в топик и отправьте фото или видео. Бот примет автоматически (в течение 10 минут).`,
+    hwIntentNoTopic: "Топик для этого модуля не настроен. Свяжитесь с преподавателем.",
+    hwIntentNoGroup: "Вам не назначена группа. Свяжитесь с преподавателем.",
+    hwIntentBtnGoTopic: "📌 Перейти в топик",
+    hwIntentAlreadyScored: "Это задание уже оценено ✅",
+    hwReceived: (mn: number, tn: number) =>
+      `✅ Задание принято · Модуль ${mn} · З${tn}\nКак только преподаватель оценит — пришлю результат.`,
+    hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
+      `🆕 <b>Новая сдача</b>\n👤 ${csvEscapeHtml(name)}\n📚 Модуль ${mn} · З${tn} — ${csvEscapeHtml(title)}`,
+    hwTeacherBtnFile: "📂 Открыть файл",
+    hwTeacherBtnGrade: "🎯 Оценить сейчас",
   },
   en: {
     expired: "Login link expired. Return to the site and try again.",
@@ -497,6 +523,19 @@ const T = {
     hwTaskUnscored: (tn: number) => `   ⏳ T${tn}: not graded yet`,
     hwTopicLine: (url: string) => `   📌 Submit in topic: ${url}`,
     hwTopicMissing: "   📌 Topic not configured",
+    hwSubmitBtn: (mn: number, tn: number) => `📤 Submit — M${mn}·T${tn}`,
+    hwIntentReady: (mn: number, tn: number) =>
+      `📤 <b>Module ${mn} · Task ${tn}</b>\n\nTap the button below to open the topic and post your photo or video. The bot will accept it automatically (within 10 minutes).`,
+    hwIntentNoTopic: "Topic not configured for this module. Please contact your teacher.",
+    hwIntentNoGroup: "You are not assigned to a group. Please contact your teacher.",
+    hwIntentBtnGoTopic: "📌 Open topic",
+    hwIntentAlreadyScored: "This task has already been graded ✅",
+    hwReceived: (mn: number, tn: number) =>
+      `✅ Submission received · Module ${mn} · T${tn}\nYou'll get the result once your teacher grades it.`,
+    hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
+      `🆕 <b>New submission</b>\n👤 ${csvEscapeHtml(name)}\n📚 Module ${mn} · T${tn} — ${csvEscapeHtml(title)}`,
+    hwTeacherBtnFile: "📂 Open file",
+    hwTeacherBtnGrade: "🎯 Grade now",
   },
 };
 
@@ -734,7 +773,7 @@ function cacheInvalidateUser(userId: string) {
 async function findProfileByTelegramId(admin: any, tgId: number) {
   const { data } = await admin
     .from("profiles")
-    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale")
+    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id")
     .eq("telegram_id", tgId)
     .maybeSingle();
   return data;
@@ -931,9 +970,14 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
   return lines.join("\n");
 }
 
-async function buildHomeworkMessage(admin: any, userId: string, locale: Locale): Promise<string> {
+async function buildHomeworkMessage(
+  admin: any,
+  userId: string,
+  locale: Locale,
+): Promise<{ text: string; keyboard: { inline_keyboard: any[][] } | null }> {
   const t = T[locale] as any;
   const lines: string[] = [t.hwTitle, ""];
+  const buttons: any[][] = [];
   try {
     // Parallel: profile (group_id) + active assignments
     const [profRes, assignsRes] = await Promise.all([
@@ -944,7 +988,7 @@ async function buildHomeworkMessage(admin: any, userId: string, locale: Locale):
     ]);
     const groupId = (profRes as any).data?.group_id || null;
     const list = ((assignsRes as any).data || []) as any[];
-    if (!list.length) { lines.push(t.hwEmpty); return lines.join("\n"); }
+    if (!list.length) { lines.push(t.hwEmpty); return { text: lines.join("\n"), keyboard: null }; }
     list.sort((a, b) => (a.modules?.position ?? 0) - (b.modules?.position ?? 0) || (a.task_number ?? 1) - (b.task_number ?? 1));
 
     const aIds = list.map((a) => a.id);
@@ -979,6 +1023,10 @@ async function buildHomeworkMessage(admin: any, userId: string, locale: Locale):
           lines.push(t.hwTaskScored(tn, s.score, a.max_score || 10, s.score_feedback || ""));
         } else {
           lines.push(t.hwTaskUnscored(tn));
+          // Add a submit button for unscored assignments (only if topic + group exist)
+          if (groupId && topicMap.get(m.mid)) {
+            buttons.push([{ text: t.hwSubmitBtn(m.position + 1, tn), callback_data: `hw:start:${a.id}` }]);
+          }
         }
       }
       const topic = topicMap.get(m.mid);
@@ -989,7 +1037,7 @@ async function buildHomeworkMessage(admin: any, userId: string, locale: Locale):
     console.error("buildHomeworkMessage error", e);
     lines.push(t.hwEmpty);
   }
-  return lines.join("\n");
+  return { text: lines.join("\n"), keyboard: buttons.length ? { inline_keyboard: buttons } : null };
 }
 
 async function handleStartLogin(admin: any, msg: any, token: string, locale: Locale) {
@@ -1656,7 +1704,7 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
   const t = T[locale] as any;
   const { data: sub } = await admin
     .from("homework_submissions")
-    .select("id, assignment_id, user_id, submitted_text, submitted_image_url, submitted_at, is_late, score")
+    .select("id, assignment_id, user_id, submitted_text, submitted_image_url, submitted_at, is_late, score, telegram_message_url, telegram_file_kind")
     .eq("id", submissionId)
     .maybeSingle();
   if (!sub) {
@@ -1670,6 +1718,14 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
   const header = `<b>${csvEscapeHtml(name)}</b> — ${csvEscapeHtml(a?.title || "")}${tn}`;
   const body = sub.submitted_text ? csvEscapeHtml(sub.submitted_text) : "<i>(no text)</i>";
   await sendMessage(chatId, `${header}\n\n${body}`);
+  // Telegram-source submission: surface the original message link
+  if (sub.telegram_message_url) {
+    const tt = T[locale] as any;
+    await sendMessage(chatId, `📂 ${sub.telegram_file_kind || "file"}`, {
+      inline_keyboard: [[{ text: tt.hwTeacherBtnFile, url: sub.telegram_message_url }]],
+    });
+  }
+  // Legacy web-source submission: show signed image URL
   if (sub.submitted_image_url) {
     try {
       const { data: signed } = await admin.storage.from("homework_images").createSignedUrl(sub.submitted_image_url, 600);
@@ -1890,12 +1946,12 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
 
   if (cmd === "/vazifalar" || cmd === "/homework") {
     console.time(`bot:hw:${profile.id}`);
-    const cacheKey = `hw:${profile.id}:${locale}`;
-    let text = cacheGet(cacheKey);
-    if (!text) { text = await buildHomeworkMessage(admin, profile.id, locale); cacheSet(cacheKey, text); }
+    // No cache: message contains personalized inline submit buttons.
+    const { text, keyboard } = await buildHomeworkMessage(admin, profile.id, locale);
     const url = await createMagicLink(admin, profile.id, "login", "/dashboard");
-    await sendMessage(chatId, text, { inline_keyboard: [[{ text: t.btnHwSite, url }]] });
-    await sendKeyboardHint(chatId, locale);
+    const submitRows = keyboard?.inline_keyboard || [];
+    const inline_keyboard = [...submitRows, [{ text: t.btnHwSite, url }]];
+    await sendMessage(chatId, text, { inline_keyboard });
     console.timeEnd(`bot:hw:${profile.id}`);
     return;
   }
@@ -1964,6 +2020,251 @@ async function renderSettings(admin: any, chatId: number, userId: string, locale
   await sendMessage(chatId, t.settingsTitle, settingsKeyboard(locale, prefs || { notifications_enabled: true, reminder_time: "20:00:00", timezone: "Asia/Tashkent" }));
 }
 
+// =================== HOMEWORK SUBMISSION (BOT-FIRST) ===================
+
+// Parse a Telegram topic URL like:
+//   https://t.me/c/2123456789/15           → { chatId: -1002123456789, threadId: 15 }
+//   https://t.me/c/2123456789/15/42        → same (extra is message id, ignored)
+// Returns null if it can't parse a private (c/) supergroup topic URL.
+function parseTopicUrl(url: string): { chatId: number; threadId: number } | null {
+  try {
+    const m = (url || "").match(/^https:\/\/t\.me\/c\/(\d+)\/(\d+)(?:\/\d+)?/);
+    if (!m) return null;
+    const stripped = m[1];
+    const threadId = parseInt(m[2], 10);
+    if (!Number.isFinite(threadId)) return null;
+    // Telegram supergroup chat ids are -100 + the public id
+    const chatId = -1 * Number("100" + stripped);
+    return { chatId, threadId };
+  } catch {
+    return null;
+  }
+}
+
+// Build a re-openable link to a specific message inside a private supergroup topic.
+function buildMessageLink(chatId: number, threadId: number, messageId: number): string {
+  // chatId is -100xxxxxxxxxx → strip -100 → xxxxxxxxxx
+  const s = String(chatId).replace(/^-100/, "");
+  return `https://t.me/c/${s}/${threadId}/${messageId}`;
+}
+
+async function setMessageReaction(chatId: number, messageId: number, emoji = "✅") {
+  try {
+    await tgApi("setMessageReaction", {
+      chat_id: chatId,
+      message_id: messageId,
+      reaction: [{ type: "emoji", emoji }],
+      is_big: false,
+    });
+  } catch (_e) { /* best-effort */ }
+}
+
+// Student tapped "📤 Topshirish" in /vazifalar — open intent and point to topic.
+async function startHomeworkIntent(
+  admin: any, chatId: number, profile: any, locale: Locale, assignmentId: string,
+) {
+  const t = T[locale] as any;
+
+  // 1. Load assignment + module
+  const { data: a } = await admin
+    .from("homework_assignments")
+    .select("id, title, max_score, task_number, module_id, modules(id, title, position)")
+    .eq("id", assignmentId)
+    .maybeSingle();
+  if (!a) { await sendMessage(chatId, t.gradeNotFound); return; }
+
+  // 2. Already graded? Block.
+  const { data: existing } = await admin
+    .from("homework_submissions")
+    .select("id, score")
+    .eq("user_id", profile.id).eq("assignment_id", assignmentId)
+    .maybeSingle();
+  if (existing && existing.score != null) {
+    await sendMessage(chatId, t.hwIntentAlreadyScored);
+    return;
+  }
+
+  // 3. Resolve student group + topic
+  if (!profile.group_id) { await sendMessage(chatId, t.hwIntentNoGroup); return; }
+  const { data: gmt } = await admin
+    .from("group_module_topics")
+    .select("telegram_topic_url")
+    .eq("group_id", profile.group_id).eq("module_id", a.module_id)
+    .maybeSingle();
+  const topicUrl = gmt?.telegram_topic_url;
+  if (!topicUrl) { await sendMessage(chatId, t.hwIntentNoTopic); return; }
+
+  const parsed = parseTopicUrl(topicUrl);
+  if (!parsed) { await sendMessage(chatId, t.hwIntentNoTopic); return; }
+
+  // 4. Upsert intent (10 min TTL)
+  const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+  await admin.from("bot_homework_intents").upsert({
+    user_id: profile.id,
+    assignment_id: assignmentId,
+    module_id: a.module_id,
+    group_id: profile.group_id,
+    telegram_chat_id: parsed.chatId,
+    telegram_thread_id: parsed.threadId,
+    expires_at: expiresAt,
+    created_at: new Date().toISOString(),
+  }, { onConflict: "user_id,assignment_id" });
+
+  const mn = (a.modules?.position ?? 0) + 1;
+  const tn = a.task_number || 1;
+  await sendMessage(chatId, t.hwIntentReady(mn, tn), {
+    inline_keyboard: [[{ text: t.hwIntentBtnGoTopic, url: topicUrl }]],
+  });
+}
+
+// Group/supergroup post inside a topic — try to attach it to a pending intent.
+async function handleGroupTopicMessage(admin: any, msg: any) {
+  try {
+    const chatId = msg.chat?.id;
+    const threadId = msg.message_thread_id;
+    const fromId = msg.from?.id;
+    const messageId = msg.message_id;
+    if (!chatId || !threadId || !fromId || !messageId) return;
+
+    // Identify the student
+    const profile = await findProfileByTelegramId(admin, fromId);
+    if (!profile) return;
+
+    // Find a non-expired matching intent
+    const nowIso = new Date().toISOString();
+    const { data: intents } = await admin
+      .from("bot_homework_intents")
+      .select("id, assignment_id, module_id, group_id")
+      .eq("user_id", profile.id)
+      .eq("telegram_chat_id", chatId)
+      .eq("telegram_thread_id", threadId)
+      .gt("expires_at", nowIso)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const intent = (intents && intents[0]) as any;
+    if (!intent) return; // silent — student didn't go through bot
+
+    // Extract media
+    let fileId: string | null = null;
+    let kind = "text";
+    if (Array.isArray(msg.photo) && msg.photo.length) {
+      fileId = msg.photo[msg.photo.length - 1].file_id;
+      kind = "photo";
+    } else if (msg.document) {
+      fileId = msg.document.file_id;
+      kind = "document";
+    } else if (msg.video) {
+      fileId = msg.video.file_id;
+      kind = "video";
+    } else if (msg.voice) {
+      fileId = msg.voice.file_id;
+      kind = "voice";
+    } else if (msg.video_note) {
+      fileId = msg.video_note.file_id;
+      kind = "video_note";
+    } else if (!msg.text && !msg.caption) {
+      return; // unsupported message type, no media, no text
+    }
+
+    const messageUrl = buildMessageLink(chatId, threadId, messageId);
+    const submittedText = (msg.caption || msg.text || "").slice(0, 4000);
+
+    // Upsert submission. Unique key (user_id, assignment_id) — idempotent.
+    const { data: upserted, error: upErr } = await admin
+      .from("homework_submissions")
+      .upsert({
+        user_id: profile.id,
+        assignment_id: intent.assignment_id,
+        submitted_text: submittedText,
+        submitted_at: new Date().toISOString(),
+        score: null,
+        score_feedback: null,
+        scored_by: null,
+        scored_at: null,
+        is_late: false,
+        telegram_chat_id: chatId,
+        telegram_thread_id: threadId,
+        telegram_message_id: messageId,
+        telegram_message_url: messageUrl,
+        telegram_file_id: fileId,
+        telegram_file_kind: kind,
+        source: "telegram_topic",
+      }, { onConflict: "user_id,assignment_id" })
+      .select("id")
+      .maybeSingle();
+    if (upErr) {
+      console.error("hw upsert error", upErr);
+      return;
+    }
+
+    // Consume intent
+    await admin.from("bot_homework_intents").delete().eq("id", intent.id);
+
+    // ✅ React to confirm in-thread
+    await setMessageReaction(chatId, messageId, "✅");
+
+    // Locale + assignment meta for messages
+    const locale: Locale = normLocale(profile.preferred_locale);
+    const t = T[locale] as any;
+    const { data: a } = await admin
+      .from("homework_assignments")
+      .select("title, task_number, modules(position)")
+      .eq("id", intent.assignment_id)
+      .maybeSingle();
+    const mn = ((a?.modules?.position ?? 0) as number) + 1;
+    const tn = (a?.task_number ?? 1) as number;
+    const aTitle = a?.title || "";
+
+    // Private DM to student
+    if (profile.telegram_id) {
+      try { await sendMessage(profile.telegram_id, t.hwReceived(mn, tn)); } catch (_e) {}
+    }
+
+    // Notify the teacher of the student's group
+    const subId = upserted?.id;
+    await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId);
+
+    // Invalidate any cached "stats" for the student so next /galaba is fresh
+    cacheInvalidateUser(profile.id);
+  } catch (e) {
+    console.error("handleGroupTopicMessage error", e);
+  }
+}
+
+async function notifyTeachersOfSubmission(
+  admin: any,
+  studentProfile: any,
+  groupId: string | null,
+  mn: number, tn: number, aTitle: string,
+  messageUrl: string,
+  submissionId: string | undefined,
+) {
+  try {
+    if (!groupId) return;
+    const { data: g } = await admin.from("groups").select("teacher_id").eq("id", groupId).maybeSingle();
+    const teacherId = g?.teacher_id;
+    if (!teacherId) return;
+    const { data: tProf } = await admin
+      .from("profiles")
+      .select("telegram_id, preferred_locale")
+      .eq("id", teacherId)
+      .maybeSingle();
+    if (!tProf?.telegram_id) return;
+
+    const tLocale: Locale = normLocale(tProf.preferred_locale);
+    const tt = T[tLocale] as any;
+    const studentName = [studentProfile.name, studentProfile.last_name].filter(Boolean).join(" ") || "—";
+    const text = tt.hwTeacherNotify(studentName, mn, tn, aTitle);
+    const buttons: any[] = [{ text: tt.hwTeacherBtnFile, url: messageUrl }];
+    if (submissionId) {
+      buttons.push({ text: tt.hwTeacherBtnGrade, callback_data: `gs:open:${submissionId}` });
+    }
+    await sendMessage(tProf.telegram_id, text, { inline_keyboard: [buttons] });
+  } catch (e) {
+    console.error("notifyTeachersOfSubmission error", e);
+  }
+}
+
 async function handleCallback(admin: any, cq: any) {
   const data: string = cq.data || "";
   const tgId = cq.from.id as number;
@@ -1971,6 +2272,17 @@ async function handleCallback(admin: any, cq: any) {
 
   if (data === "ack:not_today") {
     await answerCallback(cq.id, "OK 👍");
+    return;
+  }
+
+  // Student tapped "📤 Topshirish" in /vazifalar
+  if (data.startsWith("hw:start:") && chatId) {
+    const assignmentId = data.slice("hw:start:".length);
+    const profile = await findProfileByTelegramId(admin, tgId);
+    if (!profile) { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(profile.preferred_locale);
+    await answerCallback(cq.id);
+    await startHomeworkIntent(admin, chatId, profile, locale, assignmentId);
     return;
   }
 
@@ -2136,6 +2448,12 @@ Deno.serve(async (req) => {
   try {
     if (update.message) {
       const msg = update.message;
+      // Group/supergroup posts (e.g. inside a forum topic) → homework intake only
+      const chatType = msg.chat?.type;
+      if (chatType === "supergroup" || chatType === "group") {
+        await handleGroupTopicMessage(admin, msg);
+        return new Response("ok", { status: 200, headers: corsHeaders });
+      }
       const text: string = msg.text || "";
       const profileForLocale = await findProfileByTelegramId(admin, msg.from.id);
       const locale: Locale = profileForLocale?.preferred_locale
