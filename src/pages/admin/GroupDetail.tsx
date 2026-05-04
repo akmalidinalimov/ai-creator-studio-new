@@ -291,9 +291,52 @@ export default function GroupDetail() {
       });
       const res = await r.json();
       if (!r.ok) throw new Error(res?.error || "Import failed");
-      const created = (res?.results || []).filter((x: any) => x.status === "created").length;
-      const updated = (res?.results || []).filter((x: any) => x.status === "updated").length;
-      toast.success(`${created} yangi qo'shildi · ${updated} mavjud foydalanuvchi guruhga ko'chirildi`);
+      const resultsArr: any[] = res?.results || [];
+      const created = resultsArr.filter((x) => x.status === "created").length;
+      const updated = resultsArr.filter((x) => x.status === "updated").length;
+      const skipped = resultsArr.filter((x) => x.status === "skipped_already_in_group").length;
+      const failed = resultsArr.filter((x) => x.status === "error" || x.status === "invalid_email");
+      const okCount = created + updated + skipped;
+      const csvRowsCount = res?.csv_rows ?? toSend.length;
+      const groupCountAfter = res?.group_count_after;
+      const delta = res?.delta ?? 0;
+
+      if (failed.length === 0 && delta === 0) {
+        toast.success(`${created} yangi qo'shildi · ${updated} mavjud foydalanuvchi guruhga ko'chirildi${skipped ? ` · ${skipped} avval guruhda` : ""}`);
+      } else {
+        // Build expandable details
+        const failLines = failed.map((f) => {
+          const id = f.identifier_used || f.email || "(unknown)";
+          const rn = f.row_index ?? "?";
+          return `Qator ${rn}: ${id} — ${f.error || f.status}`;
+        });
+        const reconcileMsg = delta !== 0 && groupCountAfter != null
+          ? `\n⚠️ CSV: ${csvRowsCount} satr, guruhda hozir ${groupCountAfter} talaba (delta: ${delta}). Iltimos, qayta yuklang yoki Tafsilotlarni ko'ring.`
+          : "";
+        const headline = `⚠️ ${okCount} talaba qo'shildi, ${failed.length} xato`;
+
+        toast.error(headline, {
+          duration: 12000,
+          description: reconcileMsg ? reconcileMsg.trim() : undefined,
+          action: failLines.length > 0 ? {
+            label: "Tafsilotlar",
+            onClick: () => {
+              // Render details in a long-lived toast
+              toast.message("Import xatoliklari", {
+                duration: 60000,
+                description: (
+                  <div className="text-xs whitespace-pre-wrap max-h-64 overflow-y-auto font-mono leading-relaxed">
+                    {failLines.join("\n")}
+                    {reconcileMsg}
+                  </div>
+                ) as any,
+              });
+              // Also log to console for copy/paste
+              console.log("[CSV import failures]", { request_id: res?.request_id, failed, csv_rows: csvRowsCount, group_count_after: groupCountAfter, delta });
+            },
+          } : undefined,
+        });
+      }
       setOpenCsv(false); setCsvText(""); setCsvRows([]);
       reload();
     } catch (e: any) {

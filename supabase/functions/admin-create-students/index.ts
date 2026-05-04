@@ -154,7 +154,11 @@ Deno.serve(async (req) => {
       return ins.id;
     };
 
-    const results: Array<{ email: string; status: string; password?: string; userId?: string; error?: string; action_link?: string | null }> = [];
+    const results: Array<{ email: string; status: string; password?: string; userId?: string; error?: string; action_link?: string | null; row_index?: number; identifier_used?: string }> = [];
+    const requestId = (crypto as any).randomUUID ? (crypto as any).randomUUID() : `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const auditLog = (row_index: number, identifier_used: string, action: string, error?: string) => {
+      console.log(JSON.stringify({ scope: "admin-create-students", request_id: requestId, row_index, identifier_used, action, ...(error ? { error } : {}) }));
+    };
     // Sanitize an arbitrary string into an Auth-safe email local part: lowercase ASCII alphanumerics, dot, underscore, hyphen.
     const sanitizeForEmailLocal = (raw: string): string => {
       return (raw || "")
@@ -173,7 +177,9 @@ Deno.serve(async (req) => {
       return bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
     };
 
-    for (const s of students) {
+    for (let __i = 0; __i < students.length; __i++) {
+      const s = students[__i];
+      const row_index = __i + 1;
       let email = (s.email || "").trim().toLowerCase();
       // Normalize telegram_user_id early so we can synthesize an email if needed.
       // Tolerate quoted/whitespace/decorated values like " 12345 ", "'12345'", or "id:12345".
@@ -206,8 +212,17 @@ Deno.serve(async (req) => {
           }
         }
       }
+      // Compute the identifier_used label early for audit logs
+      const identifier_used = (s.email || "").trim()
+        || (tgIdNum ? `tg_id:${tgIdNum}` : "")
+        || (tgUserNorm ? `@${tgUserNorm}` : "")
+        || (s.name ? `name:${s.name}` : "")
+        || "(empty)";
+
       if (!email || !/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email)) {
-        results.push({ email: s.email || "", status: "invalid_email", error: "could not synthesize a valid email (need email, telegram_user_id, or ASCII telegram_username)" });
+        const err = "could not synthesize a valid email (need email, telegram_user_id, or ASCII telegram_username)";
+        results.push({ email: s.email || "", status: "invalid_email", error: err, row_index, identifier_used });
+        auditLog(row_index, identifier_used, "failed", err);
         continue;
       }
       // Password is always optional; generate one if not provided. Magic link / Telegram bot are the real login paths.
@@ -222,23 +237,27 @@ Deno.serve(async (req) => {
       // Smart dedupe: if a profile already exists by email, telegram_id, or telegram_username,
       // update its group instead of creating a new auth user.
       let existingId: string | null = null;
+      let existingGroupId: string | null = null;
       if (!email.endsWith("@telegram.local")) {
-        const { data: e1 } = await admin.from("profiles").select("id").eq("email", email).maybeSingle();
-        if (e1) existingId = (e1 as any).id;
+        const { data: e1 } = await admin.from("profiles").select("id, group_id").eq("email", email).maybeSingle();
+        if (e1) { existingId = (e1 as any).id; existingGroupId = (e1 as any).group_id || null; }
       }
       if (!existingId && tgIdNum) {
-        const { data: e2 } = await admin.from("profiles").select("id").eq("telegram_id", tgIdNum).maybeSingle();
-        if (e2) existingId = (e2 as any).id;
+        const { data: e2 } = await admin.from("profiles").select("id, group_id").eq("telegram_id", tgIdNum).maybeSingle();
+        if (e2) { existingId = (e2 as any).id; existingGroupId = (e2 as any).group_id || null; }
       }
       if (!existingId && tgUserNorm) {
-        const { data: e3 } = await admin.from("profiles").select("id").eq("telegram_username", tgUserNorm as any).maybeSingle();
-        if (e3) existingId = (e3 as any).id;
+        const { data: e3 } = await admin.from("profiles").select("id, group_id").eq("telegram_username", tgUserNorm as any).maybeSingle();
+        if (e3) { existingId = (e3 as any).id; existingGroupId = (e3 as any).group_id || null; }
       }
       if (existingId) {
+        const alreadyInTargetGroup = !!resolvedGroupId && existingGroupId === resolvedGroupId;
         const patch: Record<string, any> = {};
-        if (resolvedGroupId) patch.group_id = resolvedGroupId;
+        if (resolvedGroupId && !alreadyInTargetGroup) patch.group_id = resolvedGroupId;
         if (Object.keys(patch).length) await admin.from("profiles").update(patch).eq("id", existingId);
-        results.push({ email, status: "updated", userId: existingId });
+        const status = alreadyInTargetGroup ? "skipped_already_in_group" : "updated";
+        results.push({ email, status, userId: existingId, row_index, identifier_used });
+        auditLog(row_index, identifier_used, alreadyInTargetGroup ? "skipped_already_in_group" : "matched");
         continue;
       }
 
@@ -252,7 +271,8 @@ Deno.serve(async (req) => {
         const friendly = /validate email|invalid format/i.test(error.message)
           ? `invalid_placeholder_email (${email}) — auth rejected synthesized email`
           : error.message;
-        results.push({ email, status: "error", error: friendly });
+        results.push({ email, status: "error", error: friendly, row_index, identifier_used });
+        auditLog(row_index, identifier_used, "failed", friendly);
         continue;
       }
       const userId = created.user!.id;
@@ -262,7 +282,9 @@ Deno.serve(async (req) => {
       if (tgIdNum !== undefined) {
         const { data: dup } = await admin.from("profiles").select("id").eq("telegram_id", tgIdNum).neq("id", userId).maybeSingle();
         if (dup) {
-          results.push({ email, status: "error", error: `telegram_id ${tgIdNum} already in use` });
+          const err = `telegram_id ${tgIdNum} already in use`;
+          results.push({ email, status: "error", error: err, row_index, identifier_used });
+          auditLog(row_index, identifier_used, "failed", err);
           await admin.auth.admin.deleteUser(userId).catch(() => {});
           continue;
         }
@@ -271,7 +293,8 @@ Deno.serve(async (req) => {
       if (resolvedGroupId) profilePatch.group_id = resolvedGroupId;
       const { error: profErr } = await admin.from("profiles").update(profilePatch).eq("id", userId);
       if (profErr) {
-        results.push({ email, status: "error", error: profErr.message });
+        results.push({ email, status: "error", error: profErr.message, row_index, identifier_used });
+        auditLog(row_index, identifier_used, "failed", profErr.message);
         await admin.auth.admin.deleteUser(userId).catch(() => {});
         continue;
       }
@@ -310,7 +333,10 @@ Deno.serve(async (req) => {
         userId,
         password: passwordProvided ? password : undefined,
         action_link,
+        row_index,
+        identifier_used,
       });
+      auditLog(row_index, identifier_used, "created");
     }
 
     if (isCsvImport) {
@@ -328,7 +354,19 @@ Deno.serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ ok: true, results }), {
+    // Reconciliation: compare csv input rows vs DB state for the target group
+    const csv_rows = students.length;
+    let group_count_after: number | null = null;
+    let delta = 0;
+    if (targetGroupId) {
+      const { count } = await admin.from("profiles").select("id", { count: "exact", head: true }).eq("group_id", targetGroupId);
+      group_count_after = count ?? 0;
+    }
+    const successful = results.filter(r => r.status === "created" || r.status === "updated" || r.status === "skipped_already_in_group").length;
+    delta = csv_rows - successful;
+    console.log(JSON.stringify({ scope: "admin-create-students", request_id: requestId, action: "summary", csv_rows, group_count_after, results_total: results.length, created: results.filter(r => r.status === "created").length, updated: results.filter(r => r.status === "updated").length, skipped: results.filter(r => r.status === "skipped_already_in_group").length, errors: results.filter(r => r.status === "error" || r.status === "invalid_email").length }));
+
+    return new Response(JSON.stringify({ ok: true, results, request_id: requestId, csv_rows, group_count_after, delta }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
