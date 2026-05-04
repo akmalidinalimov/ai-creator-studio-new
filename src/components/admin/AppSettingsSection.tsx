@@ -59,16 +59,25 @@ export function AppSettingsSection() {
     return m;
   }, [rows]);
 
-  const saveOne = async (key: string) => {
-    setBusy(key);
-    const value = drafts[key];
-    const { error } = await supabase.from("app_settings" as any).update({
-      value, updated_by: user?.id, updated_at: new Date().toISOString(),
-    }).eq("key", key);
+  const dirtyKeys = useMemo(() => {
+    return rows.filter((r) => JSON.stringify(drafts[r.key]) !== JSON.stringify(r.value)).map((r) => r.key);
+  }, [rows, drafts]);
+
+  const saveAll = async () => {
+    if (dirtyKeys.length === 0) { toast.info("O'zgarishlar yo'q"); return; }
+    setBusy("__all__");
+    const now = new Date().toISOString();
+    const errors: string[] = [];
+    for (const key of dirtyKeys) {
+      const { error } = await supabase.from("app_settings" as any).update({
+        value: drafts[key], updated_by: user?.id, updated_at: now,
+      }).eq("key", key);
+      if (error) errors.push(`${key}: ${error.message}`);
+      else clearSettingCache(key);
+    }
     setBusy(null);
-    if (error) { toast.error(error.message); return; }
-    clearSettingCache(key);
-    toast.success(`✅ ${key} saqlandi`);
+    if (errors.length) toast.error(`Xato: ${errors.length} ta`);
+    else toast.success(`✅ ${dirtyKeys.length} ta sozlama saqlandi`);
     load();
   };
 
