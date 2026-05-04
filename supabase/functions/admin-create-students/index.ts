@@ -212,8 +212,17 @@ Deno.serve(async (req) => {
           }
         }
       }
+      // Compute the identifier_used label early for audit logs
+      const identifier_used = (s.email || "").trim()
+        || (tgIdNum ? `tg_id:${tgIdNum}` : "")
+        || (tgUserNorm ? `@${tgUserNorm}` : "")
+        || (s.name ? `name:${s.name}` : "")
+        || "(empty)";
+
       if (!email || !/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email)) {
-        results.push({ email: s.email || "", status: "invalid_email", error: "could not synthesize a valid email (need email, telegram_user_id, or ASCII telegram_username)" });
+        const err = "could not synthesize a valid email (need email, telegram_user_id, or ASCII telegram_username)";
+        results.push({ email: s.email || "", status: "invalid_email", error: err, row_index, identifier_used });
+        auditLog(row_index, identifier_used, "failed", err);
         continue;
       }
       // Password is always optional; generate one if not provided. Magic link / Telegram bot are the real login paths.
@@ -228,23 +237,27 @@ Deno.serve(async (req) => {
       // Smart dedupe: if a profile already exists by email, telegram_id, or telegram_username,
       // update its group instead of creating a new auth user.
       let existingId: string | null = null;
+      let existingGroupId: string | null = null;
       if (!email.endsWith("@telegram.local")) {
-        const { data: e1 } = await admin.from("profiles").select("id").eq("email", email).maybeSingle();
-        if (e1) existingId = (e1 as any).id;
+        const { data: e1 } = await admin.from("profiles").select("id, group_id").eq("email", email).maybeSingle();
+        if (e1) { existingId = (e1 as any).id; existingGroupId = (e1 as any).group_id || null; }
       }
       if (!existingId && tgIdNum) {
-        const { data: e2 } = await admin.from("profiles").select("id").eq("telegram_id", tgIdNum).maybeSingle();
-        if (e2) existingId = (e2 as any).id;
+        const { data: e2 } = await admin.from("profiles").select("id, group_id").eq("telegram_id", tgIdNum).maybeSingle();
+        if (e2) { existingId = (e2 as any).id; existingGroupId = (e2 as any).group_id || null; }
       }
       if (!existingId && tgUserNorm) {
-        const { data: e3 } = await admin.from("profiles").select("id").eq("telegram_username", tgUserNorm as any).maybeSingle();
-        if (e3) existingId = (e3 as any).id;
+        const { data: e3 } = await admin.from("profiles").select("id, group_id").eq("telegram_username", tgUserNorm as any).maybeSingle();
+        if (e3) { existingId = (e3 as any).id; existingGroupId = (e3 as any).group_id || null; }
       }
       if (existingId) {
+        const alreadyInTargetGroup = !!resolvedGroupId && existingGroupId === resolvedGroupId;
         const patch: Record<string, any> = {};
-        if (resolvedGroupId) patch.group_id = resolvedGroupId;
+        if (resolvedGroupId && !alreadyInTargetGroup) patch.group_id = resolvedGroupId;
         if (Object.keys(patch).length) await admin.from("profiles").update(patch).eq("id", existingId);
-        results.push({ email, status: "updated", userId: existingId });
+        const status = alreadyInTargetGroup ? "skipped_already_in_group" : "updated";
+        results.push({ email, status, userId: existingId, row_index, identifier_used });
+        auditLog(row_index, identifier_used, alreadyInTargetGroup ? "skipped_already_in_group" : "matched");
         continue;
       }
 
@@ -258,7 +271,8 @@ Deno.serve(async (req) => {
         const friendly = /validate email|invalid format/i.test(error.message)
           ? `invalid_placeholder_email (${email}) — auth rejected synthesized email`
           : error.message;
-        results.push({ email, status: "error", error: friendly });
+        results.push({ email, status: "error", error: friendly, row_index, identifier_used });
+        auditLog(row_index, identifier_used, "failed", friendly);
         continue;
       }
       const userId = created.user!.id;
@@ -268,7 +282,9 @@ Deno.serve(async (req) => {
       if (tgIdNum !== undefined) {
         const { data: dup } = await admin.from("profiles").select("id").eq("telegram_id", tgIdNum).neq("id", userId).maybeSingle();
         if (dup) {
-          results.push({ email, status: "error", error: `telegram_id ${tgIdNum} already in use` });
+          const err = `telegram_id ${tgIdNum} already in use`;
+          results.push({ email, status: "error", error: err, row_index, identifier_used });
+          auditLog(row_index, identifier_used, "failed", err);
           await admin.auth.admin.deleteUser(userId).catch(() => {});
           continue;
         }
@@ -277,7 +293,8 @@ Deno.serve(async (req) => {
       if (resolvedGroupId) profilePatch.group_id = resolvedGroupId;
       const { error: profErr } = await admin.from("profiles").update(profilePatch).eq("id", userId);
       if (profErr) {
-        results.push({ email, status: "error", error: profErr.message });
+        results.push({ email, status: "error", error: profErr.message, row_index, identifier_used });
+        auditLog(row_index, identifier_used, "failed", profErr.message);
         await admin.auth.admin.deleteUser(userId).catch(() => {});
         continue;
       }
@@ -316,7 +333,10 @@ Deno.serve(async (req) => {
         userId,
         password: passwordProvided ? password : undefined,
         action_link,
+        row_index,
+        identifier_used,
       });
+      auditLog(row_index, identifier_used, "created");
     }
 
     if (isCsvImport) {
