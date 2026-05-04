@@ -364,8 +364,9 @@ const T = {
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Модуль ${n} — ${csvEscapeHtml(title)}</b> (${taskCount})`,
     hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ З${tn}: ${sc}/${mx}${fb ? ` — "${csvEscapeHtml(fb).slice(0, 40)}"` : ""}`,
     hwTaskUnscored: (tn: number) => `   ⏳ З${tn}: ещё не оценено`,
-    hwTopicLine: (url: string) => `   📌 Топик для сдачи: ${url}`,
-    hwTopicMissing: "   📌 Топик не настроен",
+    hwSubmitHint: (mn: number, tn: number) => `   👇 Нажмите кнопку ниже "📤 Сдать — М${mn}·З${tn}".`,
+    hwModuleAllDone: "   ✅ Задания этого модуля сданы.",
+    hwTopicMissing: "   ⚠️ Топик не настроен — обратитесь к преподавателю.",
     hwSubmitBtn: (mn: number, tn: number) => `📤 Сдать — М${mn}·З${tn}`,
     hwIntentReady: (mn: number, tn: number) =>
       `📤 <b>Модуль ${mn} · Задание ${tn}</b>\n\nНажмите кнопку ниже, перейдите в топик и отправьте фото или видео. Бот примет автоматически (в течение 10 минут).`,
