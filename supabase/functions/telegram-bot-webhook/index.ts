@@ -365,6 +365,19 @@ const T = {
     hwTaskUnscored: (tn: number) => `   ⏳ З${tn}: ещё не оценено`,
     hwTopicLine: (url: string) => `   📌 Топик для сдачи: ${url}`,
     hwTopicMissing: "   📌 Топик не настроен",
+    hwSubmitBtn: (mn: number, tn: number) => `📤 Сдать — М${mn}·З${tn}`,
+    hwIntentReady: (mn: number, tn: number) =>
+      `📤 <b>Модуль ${mn} · Задание ${tn}</b>\n\nНажмите кнопку ниже, перейдите в топик и отправьте фото или видео. Бот примет автоматически (в течение 10 минут).`,
+    hwIntentNoTopic: "Топик для этого модуля не настроен. Свяжитесь с преподавателем.",
+    hwIntentNoGroup: "Вам не назначена группа. Свяжитесь с преподавателем.",
+    hwIntentBtnGoTopic: "📌 Перейти в топик",
+    hwIntentAlreadyScored: "Это задание уже оценено ✅",
+    hwReceived: (mn: number, tn: number) =>
+      `✅ Задание принято · Модуль ${mn} · З${tn}\nКак только преподаватель оценит — пришлю результат.`,
+    hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
+      `🆕 <b>Новая сдача</b>\n👤 ${csvEscapeHtml(name)}\n📚 Модуль ${mn} · З${tn} — ${csvEscapeHtml(title)}`,
+    hwTeacherBtnFile: "📂 Открыть файл",
+    hwTeacherBtnGrade: "🎯 Оценить сейчас",
   },
   en: {
     expired: "Login link expired. Return to the site and try again.",
