@@ -650,6 +650,16 @@ export default function AdminUsers() {
               <SelectItem value="student">{t("admin.users.students")}</SelectItem>
             </SelectContent>
           </Select>
+          <Select value={groupFilter} onValueChange={setGroupFilter}>
+            <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("admin.users.allGroups", { defaultValue: "All groups" })}</SelectItem>
+              <SelectItem value="none">{t("admin.users.noGroup", { defaultValue: "No group" })}</SelectItem>
+              {groups.map((g) => (
+                <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         {/* Mobile: card list */}
