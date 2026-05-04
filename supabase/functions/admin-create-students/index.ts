@@ -155,25 +155,59 @@ Deno.serve(async (req) => {
     };
 
     const results: Array<{ email: string; status: string; password?: string; userId?: string; error?: string; action_link?: string | null }> = [];
+    // Sanitize an arbitrary string into an Auth-safe email local part: lowercase ASCII alphanumerics, dot, underscore, hyphen.
+    const sanitizeForEmailLocal = (raw: string): string => {
+      return (raw || "")
+        .toLowerCase()
+        .normalize("NFKD")
+        .replace(/[^\x00-\x7F]/g, "") // strip non-ASCII (Cyrillic, emoji, etc.)
+        .replace(/[^a-z0-9._-]/g, "") // keep only safe local-part chars
+        .replace(/^[._-]+|[._-]+$/g, "") // trim leading/trailing punctuation
+        .slice(0, 32);
+    };
+    // Deterministic short hash for anonymous fallback placeholders.
+    const shortHash = async (s: string): Promise<string> => {
+      const buf = new TextEncoder().encode(s);
+      const digest = await crypto.subtle.digest("SHA-256", buf);
+      const bytes = Array.from(new Uint8Array(digest)).slice(0, 6);
+      return bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
+    };
+
     for (const s of students) {
       let email = (s.email || "").trim().toLowerCase();
-      // Normalize telegram_user_id early so we can synthesize an email if needed
+      // Normalize telegram_user_id early so we can synthesize an email if needed.
+      // Tolerate quoted/whitespace/decorated values like " 12345 ", "'12345'", or "id:12345".
       let tgIdNum: number | undefined;
       if (s.telegram_user_id !== undefined && s.telegram_user_id !== null && String(s.telegram_user_id) !== "") {
-        const n = typeof s.telegram_user_id === "string" ? Number(s.telegram_user_id) : s.telegram_user_id;
-        if (Number.isFinite(n) && Number.isInteger(n) && (n as number) > 0) tgIdNum = n as number;
+        const raw = String(s.telegram_user_id).trim().replace(/^["']|["']$/g, "");
+        const digits = raw.replace(/[^\d]/g, "");
+        if (digits.length > 0 && digits.length <= 18) {
+          const n = Number(digits);
+          if (Number.isFinite(n) && Number.isInteger(n) && n > 0) tgIdNum = n;
+        }
       }
       // Normalize telegram_username early so we can use it as a placeholder identifier
       const tgUserNorm = (s.telegram_username || "").trim().replace(/^@/, "").toLowerCase();
+      const tgUserSafe = sanitizeForEmailLocal(tgUserNorm);
       // If no email but we have a telegram id or username, synthesize a placeholder so auth.admin.createUser accepts it.
       // Login will happen via the Telegram bot which matches profiles by telegram_id OR telegram_username.
-      if (!email && tgIdNum) {
-        email = `tg-${tgIdNum}@telegram.local`;
-      } else if (!email && tgUserNorm) {
-        email = `tg-${tgUserNorm}@telegram.local`;
+      if (!email) {
+        if (tgIdNum) {
+          email = `tg-${tgIdNum}@telegram.local`;
+        } else if (tgUserSafe) {
+          email = `tg-${tgUserSafe}@telegram.local`;
+        } else {
+          // Last-resort deterministic placeholder so rows with only a non-ASCII name still import.
+          // Use whatever identifying info we have (name, raw username) so re-imports collide with the same hash.
+          const seed = `${(s.name || "").trim()}|${(s.last_name || "").trim()}|${tgUserNorm}|${s.telegram_user_id ?? ""}`;
+          if (seed.replace(/\|/g, "").length > 0) {
+            const h = await shortHash(seed);
+            email = `tg-anon-${h}@telegram.local`;
+          }
+        }
       }
-      if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
-        results.push({ email: s.email || "", status: "invalid_email" });
+      if (!email || !/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email)) {
+        results.push({ email: s.email || "", status: "invalid_email", error: "could not synthesize a valid email (need email, telegram_user_id, or ASCII telegram_username)" });
         continue;
       }
       // Password is always optional; generate one if not provided. Magic link / Telegram bot are the real login paths.
