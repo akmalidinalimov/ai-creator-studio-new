@@ -2267,6 +2267,17 @@ async function handleCallback(admin: any, cq: any) {
     return;
   }
 
+  // Student tapped "📤 Topshirish" in /vazifalar
+  if (data.startsWith("hw:start:") && chatId) {
+    const assignmentId = data.slice("hw:start:".length);
+    const profile = await findProfileByTelegramId(admin, tgId);
+    if (!profile) { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(profile.preferred_locale);
+    await answerCallback(cq.id);
+    await startHomeworkIntent(admin, chatId, profile, locale, assignmentId);
+    return;
+  }
+
   if (data.startsWith("grade:open:") && chatId) {
     const submissionId = data.slice("grade:open:".length);
     const profile = await findProfileByTelegramId(admin, tgId);
