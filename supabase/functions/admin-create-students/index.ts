@@ -177,7 +177,9 @@ Deno.serve(async (req) => {
       return bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
     };
 
-    for (const s of students) {
+    for (let __i = 0; __i < students.length; __i++) {
+      const s = students[__i];
+      const row_index = __i + 1;
       let email = (s.email || "").trim().toLowerCase();
       // Normalize telegram_user_id early so we can synthesize an email if needed.
       // Tolerate quoted/whitespace/decorated values like " 12345 ", "'12345'", or "id:12345".
