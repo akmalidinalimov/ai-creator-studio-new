@@ -687,6 +687,9 @@ export default function AdminUsers() {
                       {u.telegram_username && <span className="text-muted-foreground ml-2">@{u.telegram_username}</span>}
                     </div>
                   )}
+                  {u.group_id && (
+                    <div className="text-xs mt-1"><Badge variant="secondary">{groupNameById.get(u.group_id) || "—"}</Badge></div>
+                  )}
                   <div className="flex items-center justify-between mt-2 gap-2">
                     <div className="flex items-center gap-2 text-[11px]">
                       <span className={`px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : "bg-destructive/10 text-destructive"}`}>
