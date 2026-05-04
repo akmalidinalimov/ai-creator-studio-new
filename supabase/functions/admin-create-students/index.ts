@@ -237,7 +237,7 @@ Deno.serve(async (req) => {
       // update its group instead of creating a new auth user.
       let existingId: string | null = null;
       let existingGroupId: string | null = null;
-      if (email) {
+      if (inputEmail) {
         const { data: e1 } = await admin.from("profiles").select("id, group_id").eq("email", email).maybeSingle();
         if (e1) { existingId = (e1 as any).id; existingGroupId = (e1 as any).group_id || null; }
       }
@@ -248,6 +248,10 @@ Deno.serve(async (req) => {
       if (!existingId && tgIdNum) {
         const { data: e3 } = await admin.from("profiles").select("id, group_id").eq("telegram_id", tgIdNum).maybeSingle();
         if (e3) { existingId = (e3 as any).id; existingGroupId = (e3 as any).group_id || null; }
+      }
+      if (!existingId && synthesizedEmail) {
+        const { data: e4 } = await admin.from("profiles").select("id, group_id").eq("email", synthesizedEmail).maybeSingle();
+        if (e4) { existingId = (e4 as any).id; existingGroupId = (e4 as any).group_id || null; }
       }
       if (existingId) {
         const alreadyInTargetGroup = !!resolvedGroupId && existingGroupId === resolvedGroupId;
