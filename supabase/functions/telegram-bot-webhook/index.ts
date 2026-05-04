@@ -691,12 +691,43 @@ async function createMagicLink(
   purpose: string,
   target_path?: string,
 ): Promise<string> {
+  // Reuse non-expired link created within last 5 minutes for same (user, purpose, target_path)
+  try {
+    const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString();
+    let q = admin.from("telegram_magic_links")
+      .select("token, expires_at, target_path")
+      .eq("user_id", user_id).eq("purpose", purpose)
+      .gte("created_at", fiveMinAgo).is("used_at", null)
+      .order("created_at", { ascending: false }).limit(1);
+    const { data: existing } = await q;
+    const row = existing?.[0];
+    if (row && new Date(row.expires_at).getTime() > Date.now() + 60_000 && (row.target_path || null) === (target_path || null)) {
+      return `${SITE_URL}/auth/magic?t=${row.token}`;
+    }
+  } catch (_e) { /* fall through to insert */ }
   const token = randomToken(32);
   const { error } = await admin
     .from("telegram_magic_links")
     .insert({ token, user_id, purpose, target_path });
   if (error) throw error;
   return `${SITE_URL}/auth/magic?t=${token}`;
+}
+
+// ===== In-memory response cache for hot bot replies (per Edge Function instance) =====
+type CacheEntry = { text: string; expiresAt: number };
+const REPLY_CACHE = new Map<string, CacheEntry>();
+const REPLY_CACHE_TTL_MS = 30_000;
+function cacheGet(key: string): string | null {
+  const e = REPLY_CACHE.get(key);
+  if (!e) return null;
+  if (e.expiresAt < Date.now()) { REPLY_CACHE.delete(key); return null; }
+  return e.text;
+}
+function cacheSet(key: string, text: string) {
+  REPLY_CACHE.set(key, { text, expiresAt: Date.now() + REPLY_CACHE_TTL_MS });
+}
+function cacheInvalidateUser(userId: string) {
+  for (const k of REPLY_CACHE.keys()) if (k.includes(`:${userId}:`)) REPLY_CACHE.delete(k);
 }
 
 async function findProfileByTelegramId(admin: any, tgId: number) {
