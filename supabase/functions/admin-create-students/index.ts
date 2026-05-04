@@ -154,7 +154,11 @@ Deno.serve(async (req) => {
       return ins.id;
     };
 
-    const results: Array<{ email: string; status: string; password?: string; userId?: string; error?: string; action_link?: string | null }> = [];
+    const results: Array<{ email: string; status: string; password?: string; userId?: string; error?: string; action_link?: string | null; row_index?: number; identifier_used?: string }> = [];
+    const requestId = (crypto as any).randomUUID ? (crypto as any).randomUUID() : `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const auditLog = (row_index: number, identifier_used: string, action: string, error?: string) => {
+      console.log(JSON.stringify({ scope: "admin-create-students", request_id: requestId, row_index, identifier_used, action, ...(error ? { error } : {}) }));
+    };
     // Sanitize an arbitrary string into an Auth-safe email local part: lowercase ASCII alphanumerics, dot, underscore, hyphen.
     const sanitizeForEmailLocal = (raw: string): string => {
       return (raw || "")
