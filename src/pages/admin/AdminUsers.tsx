@@ -81,6 +81,7 @@ export default function AdminUsers() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [roleFilter, setRoleFilter] = useState<string>("all");
+  const [groupFilter, setGroupFilter] = useState<string>("all");
   const [loading, setLoading] = useState(true);
   // Selection (for bulk actions)
   const [selected, setSelected] = useState<Set<string>>(new Set());
