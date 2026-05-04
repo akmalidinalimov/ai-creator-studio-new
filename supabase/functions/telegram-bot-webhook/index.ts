@@ -691,12 +691,43 @@ async function createMagicLink(
   purpose: string,
   target_path?: string,
 ): Promise<string> {
+  // Reuse non-expired link created within last 5 minutes for same (user, purpose, target_path)
+  try {
+    const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString();
+    let q = admin.from("telegram_magic_links")
+      .select("token, expires_at, target_path")
+      .eq("user_id", user_id).eq("purpose", purpose)
+      .gte("created_at", fiveMinAgo).is("used_at", null)
+      .order("created_at", { ascending: false }).limit(1);
+    const { data: existing } = await q;
+    const row = existing?.[0];
+    if (row && new Date(row.expires_at).getTime() > Date.now() + 60_000 && (row.target_path || null) === (target_path || null)) {
+      return `${SITE_URL}/auth/magic?t=${row.token}`;
+    }
+  } catch (_e) { /* fall through to insert */ }
   const token = randomToken(32);
   const { error } = await admin
     .from("telegram_magic_links")
     .insert({ token, user_id, purpose, target_path });
   if (error) throw error;
   return `${SITE_URL}/auth/magic?t=${token}`;
+}
+
+// ===== In-memory response cache for hot bot replies (per Edge Function instance) =====
+type CacheEntry = { text: string; expiresAt: number };
+const REPLY_CACHE = new Map<string, CacheEntry>();
+const REPLY_CACHE_TTL_MS = 30_000;
+function cacheGet(key: string): string | null {
+  const e = REPLY_CACHE.get(key);
+  if (!e) return null;
+  if (e.expiresAt < Date.now()) { REPLY_CACHE.delete(key); return null; }
+  return e.text;
+}
+function cacheSet(key: string, text: string) {
+  REPLY_CACHE.set(key, { text, expiresAt: Date.now() + REPLY_CACHE_TTL_MS });
+}
+function cacheInvalidateUser(userId: string) {
+  for (const k of REPLY_CACHE.keys()) if (k.includes(`:${userId}:`)) REPLY_CACHE.delete(k);
 }
 
 async function findProfileByTelegramId(admin: any, tgId: number) {
@@ -903,20 +934,15 @@ async function buildHomeworkMessage(admin: any, userId: string, locale: Locale):
   const t = T[locale] as any;
   const lines: string[] = [t.hwTitle, ""];
   try {
-    // Get student's group
-    const { data: prof } = await admin
-      .from("profiles")
-      .select("group_id")
-      .eq("id", userId)
-      .maybeSingle();
-    const groupId = prof?.group_id || null;
-
-    const { data: assigns } = await admin
-      .from("homework_assignments")
-      .select("id, title, max_score, task_number, module_id, is_active, modules(id, title, position, course_id)")
-      .eq("is_active", true)
-      .order("task_number", { ascending: true });
-    const list = (assigns || []) as any[];
+    // Parallel: profile (group_id) + active assignments
+    const [profRes, assignsRes] = await Promise.all([
+      admin.from("profiles").select("group_id").eq("id", userId).maybeSingle(),
+      admin.from("homework_assignments")
+        .select("id, title, max_score, task_number, module_id, is_active, modules(id, title, position, course_id)")
+        .eq("is_active", true).order("task_number", { ascending: true }),
+    ]);
+    const groupId = (profRes as any).data?.group_id || null;
+    const list = ((assignsRes as any).data || []) as any[];
     if (!list.length) { lines.push(t.hwEmpty); return lines.join("\n"); }
     list.sort((a, b) => (a.modules?.position ?? 0) - (b.modules?.position ?? 0) || (a.task_number ?? 1) - (b.task_number ?? 1));
 
@@ -1700,7 +1726,8 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
 
   if (state.state === "grade_comment") {
     if (text === "/cancel") {
-      await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+    await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+    if (sub) cacheInvalidateUser(sub.user_id);
       await sendWithKeyboard(msg.chat.id, t.gradeCancelled, locale, isAdmin, isAdmin ? "admin" : "teacher");
       return true;
     }
@@ -1849,18 +1876,26 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   }
 
   if (cmd === "/galaba" || cmd === "/streak") {
-    const text = await buildStatsMessage(admin, profile.id, locale);
+    console.time(`bot:stats:${profile.id}`);
+    const cacheKey = `stats:${profile.id}:${locale}`;
+    let text = cacheGet(cacheKey);
+    if (!text) { text = await buildStatsMessage(admin, profile.id, locale); cacheSet(cacheKey, text); }
     const url = await createMagicLink(admin, profile.id, "login", "/dashboard");
     await sendMessage(chatId, text, { inline_keyboard: [[{ text: t.btnSiteOpen, url }]] });
     await sendKeyboardHint(chatId, locale);
+    console.timeEnd(`bot:stats:${profile.id}`);
     return;
   }
 
   if (cmd === "/vazifalar" || cmd === "/homework") {
-    const text = await buildHomeworkMessage(admin, profile.id, locale);
+    console.time(`bot:hw:${profile.id}`);
+    const cacheKey = `hw:${profile.id}:${locale}`;
+    let text = cacheGet(cacheKey);
+    if (!text) { text = await buildHomeworkMessage(admin, profile.id, locale); cacheSet(cacheKey, text); }
     const url = await createMagicLink(admin, profile.id, "login", "/dashboard");
     await sendMessage(chatId, text, { inline_keyboard: [[{ text: t.btnHwSite, url }]] });
     await sendKeyboardHint(chatId, locale);
+    console.timeEnd(`bot:hw:${profile.id}`);
     return;
   }
 
@@ -2068,6 +2103,10 @@ async function handleCallback(admin: any, cq: any) {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  // Warmth ping (GET) — keeps Edge Function warm via pg_cron net.http_get
+  if (req.method === "GET") {
+    return new Response(JSON.stringify({ ok: true, warm: true }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
   if (req.method !== "POST") {
     return new Response("Method not allowed", { status: 405, headers: corsHeaders });
   }

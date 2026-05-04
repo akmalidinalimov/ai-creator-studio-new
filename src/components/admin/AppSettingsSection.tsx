@@ -59,16 +59,25 @@ export function AppSettingsSection() {
     return m;
   }, [rows]);
 
-  const saveOne = async (key: string) => {
-    setBusy(key);
-    const value = drafts[key];
-    const { error } = await supabase.from("app_settings" as any).update({
-      value, updated_by: user?.id, updated_at: new Date().toISOString(),
-    }).eq("key", key);
+  const dirtyKeys = useMemo(() => {
+    return rows.filter((r) => JSON.stringify(drafts[r.key]) !== JSON.stringify(r.value)).map((r) => r.key);
+  }, [rows, drafts]);
+
+  const saveAll = async () => {
+    if (dirtyKeys.length === 0) { toast.info("O'zgarishlar yo'q"); return; }
+    setBusy("__all__");
+    const now = new Date().toISOString();
+    const errors: string[] = [];
+    for (const key of dirtyKeys) {
+      const { error } = await supabase.from("app_settings" as any).update({
+        value: drafts[key], updated_by: user?.id, updated_at: now,
+      }).eq("key", key);
+      if (error) errors.push(`${key}: ${error.message}`);
+      else clearSettingCache(key);
+    }
     setBusy(null);
-    if (error) { toast.error(error.message); return; }
-    clearSettingCache(key);
-    toast.success(`✅ ${key} saqlandi`);
+    if (errors.length) toast.error(`Xato: ${errors.length} ta`);
+    else toast.success(`✅ ${dirtyKeys.length} ta sozlama saqlandi`);
     load();
   };
 
@@ -80,13 +89,16 @@ export function AppSettingsSection() {
 
   return (
     <Card className="p-5 space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">⚙️ Platforma sozlamalari</h2>
-        <Badge variant="outline">{rows.length} kalit</Badge>
+      <div className="sticky top-14 z-20 -mx-5 -mt-5 mb-2 bg-background/95 backdrop-blur border-b px-5 py-3 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold">⚙️ Platforma sozlamalari</h2>
+          <p className="text-xs text-muted-foreground">{rows.length} kalit{dirtyKeys.length > 0 ? ` · ${dirtyKeys.length} ta o'zgartirildi` : ""}</p>
+        </div>
+        <Button onClick={saveAll} disabled={busy === "__all__" || dirtyKeys.length === 0} size="lg">
+          <Save className="h-4 w-4 mr-2" />
+          Hammasini saqlash{dirtyKeys.length > 0 ? ` (${dirtyKeys.length})` : ""}
+        </Button>
       </div>
-      <p className="text-xs text-muted-foreground">
-        Hech qanday qiymat kodda qattiq qotirilmagan — hammasini shu yerda boshqaring.
-      </p>
 
       <div className="space-y-2">
         {SECTIONS.map((s) => {
@@ -112,11 +124,15 @@ export function AppSettingsSection() {
                     const kind = inferKind(SETTING_DEFAULTS[r.key] ?? r.value);
                     const v = drafts[r.key];
                     const set = (next: any) => setDrafts((d) => ({ ...d, [r.key]: next }));
+                    const dirty = dirtyKeys.includes(r.key);
                     return (
                       <div key={r.key} className="border-t pt-3 first:border-t-0 first:pt-0">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0 flex-1">
-                            <Label className="font-mono text-xs">{r.key}</Label>
+                            <Label className="font-mono text-xs flex items-center gap-2">
+                              {r.key}
+                              {dirty && <span className="text-[10px] font-sans font-normal text-amber-600 dark:text-amber-400">● o'zgartirildi</span>}
+                            </Label>
                             {r.description && (
                               <p className="text-xs text-muted-foreground mt-0.5">{r.description}</p>
                             )}
@@ -124,9 +140,6 @@ export function AppSettingsSection() {
                           <div className="flex gap-1 shrink-0">
                             <Button size="sm" variant="ghost" onClick={() => reset(r.key)} title="Standartga qaytar">
                               <RotateCcw className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button size="sm" onClick={() => saveOne(r.key)} disabled={busy === r.key}>
-                              <Save className="h-3.5 w-3.5 mr-1" /> Saqlash
                             </Button>
                           </div>
                         </div>

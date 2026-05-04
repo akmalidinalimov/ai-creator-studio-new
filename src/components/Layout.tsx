@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { LogOut, Settings, Shield, LayoutDashboard, BookOpen, Users, Rocket, BarChart3, FileText, Bell } from "lucide-react";
+import { LogOut, Settings, Shield, LayoutDashboard, BookOpen, Users, Rocket, BarChart3, FileText, Bell, ChevronDown } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { StudentBottomNav } from "@/components/StudentBottomNav";
 
@@ -42,14 +42,22 @@ export const TopNav = () => {
         { to: "/admin/courses", label: t("nav.courses"), match: (p: string) => p.startsWith("/admin/courses") },
         { to: "/admin/users", label: t("nav.users"), match: (p: string) => p.startsWith("/admin/users") },
         { to: "/admin/groups", label: "Groups", match: (p: string) => p.startsWith("/admin/groups") },
-        { to: "/admin/homework", label: "📝 Vazifalar", match: (p: string) => p.startsWith("/admin/homework") },
-        { to: "/teacher/homework", label: "Bahalash", match: (p: string) => p.startsWith("/teacher/homework") },
       ]
     : [
         { to: "/admin/dashboard", label: t("nav.dashboard"), match: (p: string) => p === "/admin/dashboard" || p === "/admin" },
         { to: "/admin/users", label: "Mening talabalarim", match: (p: string) => p.startsWith("/admin/users") },
-        { to: "/teacher/homework", label: "📝 Vazifalar", match: (p: string) => p.startsWith("/teacher/homework") },
       ];
+
+  const boshqaruvLinks = isAdmin ? [
+    { to: "/admin/homework", label: "📝 Vazifalar" },
+    { to: "/teacher/homework", label: "📜 Bahalar tarixi" },
+    { to: "/admin/certificates", label: "🏆 Sertifikatlar" },
+    { to: "/admin/reengagement", label: "🎯 Reaktivatsiya" },
+    { to: "/admin/nudges", label: "🔔 Smart eslatmalar" },
+    { to: "/admin/analytics", label: "📈 Chuqur tahlillar" },
+    { to: "/leaderboard", label: "🏆 Reyting" },
+    { to: "/admin/settings", label: "⚙️ Sozlamalar" },
+  ] : [];
 
   return (
     <header className="sticky top-0 z-30 w-full border-b border-border bg-background/80 backdrop-blur-md">
@@ -63,6 +71,20 @@ export const TopNav = () => {
             {isStaff && adminLinks.map((l) => (
               <Link key={l.to} to={l.to} className={linkCls(l.match(loc.pathname))}>{l.label}</Link>
             ))}
+            {isAdmin && boshqaruvLinks.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger className={`inline-flex items-center gap-1 ${linkCls(false)} focus:outline-none`}>
+                  Boshqaruv <ChevronDown className="h-3.5 w-3.5" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-56">
+                  {boshqaruvLinks.map((l) => (
+                    <DropdownMenuItem key={l.to} asChild>
+                      <Link to={l.to}>{l.label}</Link>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </nav>
         </div>
         <div className="flex items-center gap-1">

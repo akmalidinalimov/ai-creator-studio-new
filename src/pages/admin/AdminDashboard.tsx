@@ -398,55 +398,76 @@ export default function AdminDashboard() {
           </Card>
         )}
         {!isTeacher && <AnalyticsTiles />}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3">
+
+        {/* Engagement health: unified stacked bar */}
+        {(() => {
+          const total = stats.total || 1;
+          const active7 = stats.active7d;
+          const active30 = Math.max(0, stats.activated - stats.inactive7d - stats.neverLoggedIn); // approx
+          const loggedOnce = Math.max(0, stats.activated - active30 - active7);
+          const never = stats.neverLoggedIn;
+          const seg = (n: number) => Math.max(0, Math.round((n / total) * 100));
+          return (
+            <Card className="p-5 shadow-soft">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-sm">Engagement health</h3>
+                <span className="text-xs text-muted-foreground">{stats.total} talaba</span>
+              </div>
+              <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted">
+                <Link to="/admin/users?status=active7d" style={{ width: `${seg(active7)}%` }} className="bg-emerald-500" title={`Active 7d: ${active7}`} />
+                <Link to="/admin/users?status=active30d" style={{ width: `${seg(active30)}%` }} className="bg-blue-500" title={`Active 30d: ${active30}`} />
+                <Link to="/admin/users?status=logged_once" style={{ width: `${seg(loggedOnce)}%` }} className="bg-amber-500" title={`Logged in once: ${loggedOnce}`} />
+                <Link to="/admin/users?status=never_logged_in" style={{ width: `${seg(never)}%` }} className="bg-rose-500" title={`Never: ${never}`} />
+              </div>
+              <div className="mt-3 flex flex-wrap gap-4 text-xs">
+                <Link to="/admin/users?status=active7d" className="flex items-center gap-1.5 hover:underline"><span className="h-2 w-2 rounded-full bg-emerald-500" />Active 7d <b className="tabular-nums">{active7}</b></Link>
+                <Link to="/admin/users?status=active30d" className="flex items-center gap-1.5 hover:underline"><span className="h-2 w-2 rounded-full bg-blue-500" />Active 30d <b className="tabular-nums">{active30}</b></Link>
+                <Link to="/admin/users?status=logged_once" className="flex items-center gap-1.5 hover:underline"><span className="h-2 w-2 rounded-full bg-amber-500" />Logged once <b className="tabular-nums">{loggedOnce}</b></Link>
+                <button type="button" onClick={() => setNeverOpen(true)} className="flex items-center gap-1.5 hover:underline"><span className="h-2 w-2 rounded-full bg-rose-500" />Never logged in <b className="tabular-nums">{never}</b></button>
+              </div>
+            </Card>
+          );
+        })()}
+
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
           <StatCard icon={<UsersIcon className="h-4 w-4" />} label={t("admin.dashboard.stats.totalStudents")} value={stats.total} />
           <StatCard icon={<LogIn className="h-4 w-4" />} label={t("admin.dashboard.stats.logins30d")} value={stats.logins30d} />
           <StatCard icon={<Activity className="h-4 w-4" />} label={t("admin.dashboard.stats.active7d")} value={stats.active7d} />
           <StatCard icon={<Trophy className="h-4 w-4" />} label={t("admin.dashboard.stats.completions")} value={stats.completions} />
           <StatCard icon={<UserCheck className="h-4 w-4" />} label={t("admin.dashboard.stats.activated")} value={stats.activated} tooltip={t("admin.dashboard.stats.activatedTooltip")} />
-          <StatCard
-            icon={<UserX className="h-4 w-4" />}
-            label={t("admin.dashboard.stats.neverLoggedIn")}
-            value={stats.neverLoggedIn}
-            tooltip={t("admin.dashboard.stats.neverLoggedInTooltip")}
-            variant="warning"
-            onClick={() => setNeverOpen(true)}
-          />
-          <StatCard
-            icon={<Moon className="h-4 w-4" />}
-            label={t("admin.dashboard.stats.inactive3d")}
-            value={stats.inactive3d}
-            tooltip={t("admin.dashboard.stats.inactive3dTooltip")}
-            variant="warning"
-            onClick={() => setInactiveOpen(3)}
-          />
-          <StatCard
-            icon={<MoonStar className="h-4 w-4" />}
-            label={t("admin.dashboard.stats.inactive7d")}
-            value={stats.inactive7d}
-            tooltip={t("admin.dashboard.stats.inactive7dTooltip")}
-            variant="warning"
-            onClick={() => setInactiveOpen(7)}
-          />
-          {!isTeacher && (
-            <Link to="/admin/reengagement" className="block">
-              <Card className="p-4 hover:bg-muted/50 transition cursor-pointer h-full">
-                <div className="text-xs text-muted-foreground">🎯 Reaktivatsiya</div>
-                <div className="text-2xl font-bold mt-1">{stats.neverLoggedIn}</div>
-                <div className="text-xs text-muted-foreground">Hech qachon kirmaganlar uchun</div>
-              </Card>
-            </Link>
-          )}
-          {!isTeacher && (
-            <Link to="/admin/nudges" className="block">
-              <Card className="p-4 hover:bg-muted/50 transition cursor-pointer h-full">
-                <div className="text-xs text-muted-foreground">🔔 Smart eslatmalar</div>
-                <div className="text-2xl font-bold mt-1">Nudges</div>
-                <div className="text-xs text-muted-foreground">Rate-limited, opt-out</div>
-              </Card>
-            </Link>
-          )}
           {!isTeacher && <WeeklyDigestTile />}
+        </div>
+
+        {/* Inactivity sub-section */}
+        <div>
+          <h3 className="text-sm font-semibold text-muted-foreground mb-2">😴 Inactivity</h3>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <StatCard
+              icon={<Moon className="h-4 w-4" />}
+              label={t("admin.dashboard.stats.inactive3d")}
+              value={stats.inactive3d}
+              tooltip={t("admin.dashboard.stats.inactive3dTooltip")}
+              variant="warning"
+              onClick={() => setInactiveOpen(3)}
+            />
+            <StatCard
+              icon={<MoonStar className="h-4 w-4" />}
+              label={t("admin.dashboard.stats.inactive7d")}
+              value={stats.inactive7d}
+              tooltip={t("admin.dashboard.stats.inactive7dTooltip")}
+              variant="warning"
+              onClick={() => setInactiveOpen(7)}
+            />
+            {!isTeacher && (
+              <Link to="/admin/nudges" className="block">
+                <Card className="p-4 hover:bg-muted/50 transition cursor-pointer h-full">
+                  <div className="text-xs text-muted-foreground">🔔 Smart eslatmalar</div>
+                  <div className="text-2xl font-bold mt-1">Nudges</div>
+                  <div className="text-xs text-muted-foreground">Rate-limited, opt-out</div>
+                </Card>
+              </Link>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
