@@ -934,20 +934,15 @@ async function buildHomeworkMessage(admin: any, userId: string, locale: Locale):
   const t = T[locale] as any;
   const lines: string[] = [t.hwTitle, ""];
   try {
-    // Get student's group
-    const { data: prof } = await admin
-      .from("profiles")
-      .select("group_id")
-      .eq("id", userId)
-      .maybeSingle();
-    const groupId = prof?.group_id || null;
-
-    const { data: assigns } = await admin
-      .from("homework_assignments")
-      .select("id, title, max_score, task_number, module_id, is_active, modules(id, title, position, course_id)")
-      .eq("is_active", true)
-      .order("task_number", { ascending: true });
-    const list = (assigns || []) as any[];
+    // Parallel: profile (group_id) + active assignments
+    const [profRes, assignsRes] = await Promise.all([
+      admin.from("profiles").select("group_id").eq("id", userId).maybeSingle(),
+      admin.from("homework_assignments")
+        .select("id, title, max_score, task_number, module_id, is_active, modules(id, title, position, course_id)")
+        .eq("is_active", true).order("task_number", { ascending: true }),
+    ]);
+    const groupId = (profRes as any).data?.group_id || null;
+    const list = ((assignsRes as any).data || []) as any[];
     if (!list.length) { lines.push(t.hwEmpty); return lines.join("\n"); }
     list.sort((a, b) => (a.modules?.position ?? 0) - (b.modules?.position ?? 0) || (a.task_number ?? 1) - (b.task_number ?? 1));
 
