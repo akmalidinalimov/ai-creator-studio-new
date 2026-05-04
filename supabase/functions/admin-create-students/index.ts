@@ -256,7 +256,14 @@ Deno.serve(async (req) => {
         const alreadyInTargetGroup = !!resolvedGroupId && existingGroupId === resolvedGroupId;
         const patch: Record<string, any> = {};
         if (resolvedGroupId && !alreadyInTargetGroup) patch.group_id = resolvedGroupId;
-        if (Object.keys(patch).length) await admin.from("profiles").update(patch).eq("id", existingId);
+        if (Object.keys(patch).length) {
+          const { error: updateErr } = await admin.from("profiles").update(patch).eq("id", existingId);
+          if (updateErr) {
+            results.push({ email, status: "error", error: updateErr.message, row_index, identifier_used });
+            auditLog(row_index, identifier_used, "failed", updateErr.message);
+            continue;
+          }
+        }
         const status = alreadyInTargetGroup ? "skipped_already_in_group" : "updated";
         results.push({ email, status, userId: existingId, row_index, identifier_used });
         auditLog(row_index, identifier_used, alreadyInTargetGroup ? "skipped_already_in_group" : "matched");
@@ -275,7 +282,12 @@ Deno.serve(async (req) => {
           if (existingProfile?.id) {
             const alreadyInTargetGroup = !!resolvedGroupId && (existingProfile as any).group_id === resolvedGroupId;
             if (resolvedGroupId && !alreadyInTargetGroup) {
-              await admin.from("profiles").update({ group_id: resolvedGroupId }).eq("id", (existingProfile as any).id);
+              const { error: updateErr } = await admin.from("profiles").update({ group_id: resolvedGroupId }).eq("id", (existingProfile as any).id);
+              if (updateErr) {
+                results.push({ email, status: "error", error: updateErr.message, row_index, identifier_used });
+                auditLog(row_index, identifier_used, "failed", updateErr.message);
+                continue;
+              }
             }
             const status = alreadyInTargetGroup ? "skipped_already_in_group" : "updated";
             results.push({ email, status, userId: (existingProfile as any).id, row_index, identifier_used });
