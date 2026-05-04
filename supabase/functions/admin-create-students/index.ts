@@ -357,11 +357,13 @@ Deno.serve(async (req) => {
     // Reconciliation: compare csv input rows vs DB state for the target group
     const csv_rows = students.length;
     let group_count_after: number | null = null;
-    let delta: number | null = null;
+    let delta = 0;
     if (targetGroupId) {
       const { count } = await admin.from("profiles").select("id", { count: "exact", head: true }).eq("group_id", targetGroupId);
       group_count_after = count ?? 0;
     }
+    const successful = results.filter(r => r.status === "created" || r.status === "updated" || r.status === "skipped_already_in_group").length;
+    delta = csv_rows - successful;
     console.log(JSON.stringify({ scope: "admin-create-students", request_id: requestId, action: "summary", csv_rows, group_count_after, results_total: results.length, created: results.filter(r => r.status === "created").length, updated: results.filter(r => r.status === "updated").length, skipped: results.filter(r => r.status === "skipped_already_in_group").length, errors: results.filter(r => r.status === "error" || r.status === "invalid_email").length }));
 
     return new Response(JSON.stringify({ ok: true, results, request_id: requestId, csv_rows, group_count_after, delta }), {
