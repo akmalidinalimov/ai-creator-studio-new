@@ -1704,7 +1704,7 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
   const t = T[locale] as any;
   const { data: sub } = await admin
     .from("homework_submissions")
-    .select("id, assignment_id, user_id, submitted_text, submitted_image_url, submitted_at, is_late, score")
+    .select("id, assignment_id, user_id, submitted_text, submitted_image_url, submitted_at, is_late, score, telegram_message_url, telegram_file_kind")
     .eq("id", submissionId)
     .maybeSingle();
   if (!sub) {
@@ -1718,6 +1718,14 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
   const header = `<b>${csvEscapeHtml(name)}</b> — ${csvEscapeHtml(a?.title || "")}${tn}`;
   const body = sub.submitted_text ? csvEscapeHtml(sub.submitted_text) : "<i>(no text)</i>";
   await sendMessage(chatId, `${header}\n\n${body}`);
+  // Telegram-source submission: surface the original message link
+  if (sub.telegram_message_url) {
+    const tt = T[locale] as any;
+    await sendMessage(chatId, `📂 ${sub.telegram_file_kind || "file"}`, {
+      inline_keyboard: [[{ text: tt.hwTeacherBtnFile, url: sub.telegram_message_url }]],
+    });
+  }
+  // Legacy web-source submission: show signed image URL
   if (sub.submitted_image_url) {
     try {
       const { data: signed } = await admin.storage.from("homework_images").createSignedUrl(sub.submitted_image_url, 600);
