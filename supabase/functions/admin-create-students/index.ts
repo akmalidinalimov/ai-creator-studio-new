@@ -195,22 +195,28 @@ Deno.serve(async (req) => {
       // Normalize telegram_username early so we can use it as a placeholder identifier
       const tgUserNorm = (s.telegram_username || "").trim().replace(/^@/, "").toLowerCase();
       const tgUserSafe = sanitizeForEmailLocal(tgUserNorm);
+      let synthesizedEmail = "";
+      let synthesizedFrom: "telegram_user_id" | "telegram_username" | "name_hash" | "" = "";
       // If no email but we have a telegram id or username, synthesize a placeholder so auth.admin.createUser accepts it.
       // Login will happen via the Telegram bot which matches profiles by telegram_id OR telegram_username.
       if (!email) {
         if (tgIdNum) {
-          email = `tg-${tgIdNum}@telegram.local`;
+          synthesizedEmail = `tg-${tgIdNum}@telegram.local`;
+          synthesizedFrom = "telegram_user_id";
         } else if (tgUserSafe) {
-          email = `tg-${tgUserSafe}@telegram.local`;
+          synthesizedEmail = `tg-${tgUserSafe}@telegram.local`;
+          synthesizedFrom = "telegram_username";
         } else {
           // Last-resort deterministic placeholder so rows with only a non-ASCII name still import.
-          // Use whatever identifying info we have (name, raw username) so re-imports collide with the same hash.
+          // Use a hash, never the raw name, because names are not unique and collide in Auth.
           const seed = `${(s.name || "").trim()}|${(s.last_name || "").trim()}|${tgUserNorm}|${s.telegram_user_id ?? ""}`;
           if (seed.replace(/\|/g, "").length > 0) {
             const h = await shortHash(seed);
-            email = `tg-anon-${h}@telegram.local`;
+            synthesizedEmail = `tg-anon-${h}@telegram.local`;
+            synthesizedFrom = "name_hash";
           }
         }
+        email = synthesizedEmail;
       }
       // Compute the identifier_used label early for audit logs
       const identifier_used = (s.email || "").trim()
@@ -234,20 +240,20 @@ Deno.serve(async (req) => {
       if (!resolvedGroupId && targetGroupId) resolvedGroupId = targetGroupId;
       if (!resolvedGroupId && defaultGroupId) resolvedGroupId = defaultGroupId;
 
-      // Smart dedupe: if a profile already exists by email, telegram_id, or telegram_username,
+      // Smart dedupe: if a profile already exists by email, telegram_username, telegram_id, or synthesized placeholder,
       // update its group instead of creating a new auth user.
       let existingId: string | null = null;
       let existingGroupId: string | null = null;
-      if (!email.endsWith("@telegram.local")) {
+      if (email) {
         const { data: e1 } = await admin.from("profiles").select("id, group_id").eq("email", email).maybeSingle();
         if (e1) { existingId = (e1 as any).id; existingGroupId = (e1 as any).group_id || null; }
       }
-      if (!existingId && tgIdNum) {
-        const { data: e2 } = await admin.from("profiles").select("id, group_id").eq("telegram_id", tgIdNum).maybeSingle();
+      if (!existingId && tgUserNorm) {
+        const { data: e2 } = await admin.from("profiles").select("id, group_id").eq("telegram_username", tgUserNorm as any).maybeSingle();
         if (e2) { existingId = (e2 as any).id; existingGroupId = (e2 as any).group_id || null; }
       }
-      if (!existingId && tgUserNorm) {
-        const { data: e3 } = await admin.from("profiles").select("id, group_id").eq("telegram_username", tgUserNorm as any).maybeSingle();
+      if (!existingId && tgIdNum) {
+        const { data: e3 } = await admin.from("profiles").select("id, group_id").eq("telegram_id", tgIdNum).maybeSingle();
         if (e3) { existingId = (e3 as any).id; existingGroupId = (e3 as any).group_id || null; }
       }
       if (existingId) {
