@@ -249,7 +249,10 @@ Deno.serve(async (req) => {
         user_metadata: { name: s.name || email.split("@")[0], last_name: s.last_name || null },
       });
       if (error) {
-        results.push({ email, status: "error", error: error.message });
+        const friendly = /validate email|invalid format/i.test(error.message)
+          ? `invalid_placeholder_email (${email}) — auth rejected synthesized email`
+          : error.message;
+        results.push({ email, status: "error", error: friendly });
         continue;
       }
       const userId = created.user!.id;
