@@ -1,49 +1,64 @@
-# Show Group on Users + Filter + Export by Group
+# Fix CSV group import errors
 
-## What you'll see after this change
+## What's happening
 
-On **Admin → Users**:
+When uploading the group CSV, 10 rows fail with:
 
-1. A new **Group** column on the users table (and on the mobile cards) showing each student's assigned group name (e.g. "Group A"). Empty groups show "—".
-2. A new **Group** filter dropdown next to the existing Status / Role filters: *All groups*, plus one entry per group, plus *No group*.
-3. A new **Export CSV** button in the toolbar. It exports the **currently filtered list** of users — so to export a single group, you pick that group in the filter and click Export. The CSV uses the same column layout as the import template, so it round-trips cleanly.
-4. The downloadable **CSV import template** already includes a `group_name` column today (and the importer already creates/assigns the group). No change needed there beyond making sure the filename and helper text mention it clearly.
+> `tg-угилой@telegram.local: Unable to validate email address: invalid format`
+> `tg-н.@telegram.local: …`
+> `tg-мухайё☀@telegram.local: …`
+> `tg-q^@telegram.local: …`
 
-The bulk **"Move N to group…"** action that's already on the page stays as-is.
+Supabase Auth's email validator only accepts **ASCII** local parts. When a row has no real email, our edge function (`admin-create-students`) synthesizes a placeholder like `tg-<something>@telegram.local`. For Cyrillic names (`Угилой`, `Мохичехра`, `Бегзод`), emoji (`☀`, `🌸`), dots, carets, or spaces, that synthesized email is rejected and the row fails.
 
-## Already in place (no work needed)
+The 39 "Allaqachon" (already exists) users were imported during an earlier attempt where some bad placeholders did slip through; the 10 "Xato" rows are the ones the validator now rejects.
 
-- `profiles.group_id` column exists and is populated.
-- CSV importer (`admin-create-students` edge function) already reads `group_name`, auto-creates the group if missing, and assigns the student to it.
-- The current CSV template (`CSV_TEMPLATE` in `AdminUsers.tsx`) already has a `group_name` column with examples.
-- `groups` are already loaded into the page state (`groups`, used by the bulk-move dropdown).
-- Each user row already carries `group_id` (hydrated from profiles in `reload()`).
+## Root cause
 
-## Technical changes
+In `supabase/functions/admin-create-students/index.ts` (lines 159–177):
 
-All edits are in **`src/pages/admin/AdminUsers.tsx`** — no DB migration, no edge-function change.
+- It tries to use `tg-<telegram_user_id>@telegram.local` first (good).
+- But when `telegram_user_id` is missing/unparsable, it falls back to the raw `telegram_username` or, in older imports, the `name` — neither is sanitized for ASCII / valid-email characters.
 
-1. **Group lookup map**: derive `groupNameById` from the existing `groups` state (`Map<string, string>`).
+Some CSV rows have non-numeric or quoted IDs, or a `name` containing Cyrillic/emoji, so the placeholder becomes invalid.
 
-2. **Filter state**: add `const [groupFilter, setGroupFilter] = useState<string>("all")` where value is `"all"`, `"none"`, or a group id. Extend the `filtered` `useMemo` to apply it.
+## Fix
 
-3. **Filter UI**: add a `<Select>` next to Status/Role filters, populated from `groups` plus an "All groups" and "No group" entry.
+### 1. Edge function — always produce an Auth-safe placeholder
 
-4. **Group column** in the desktop `<table>`: insert `<th>Group</th>` after Role (or before Status) and a `<td>` rendering `groupNameById.get(u.group_id) ?? "—"`. Update the `colSpan={10}` placeholders to `11`.
+In `supabase/functions/admin-create-students/index.ts`:
 
-5. **Group line on mobile cards**: add a small line showing the group name when present.
+- Make `telegram_user_id` parsing more tolerant: strip whitespace, quotes, and non-digit chars before `Number(...)`.
+- When the ID is present, **always** use `tg-<id>@telegram.local` (already correct, just hardened).
+- When falling back to the username, **sanitize** it: lowercase, strip `@`, then keep only `[a-z0-9._-]` and trim to ≤32 chars. Drop empty results.
+- If after sanitization there is still nothing usable, mint a deterministic safe placeholder using a short hash of `name + row index`, e.g. `tg-anon-<6charhash>@telegram.local`, so Auth always accepts it and the row can still be created and later linked via Telegram bot.
+- Add the same sanitizer to the existing-profile dedupe lookup so we don't create duplicates.
 
-6. **Export CSV button**: new toolbar button next to "Import CSV". Implementation:
-   - Builds rows from `filtered` (so the group filter scopes the export).
-   - Columns match the import template exactly: `name,last_name,email,password,telegram_user_id,telegram_username,role,group_name`.
-   - `password` is left blank (we don't expose stored passwords).
-   - Uses Papa.unparse for proper escaping.
-   - Filename: `users_<groupName-or-all>_<YYYY-MM-DD>.csv`.
+### 2. Edge function — better error reporting
 
-7. **Localization**: add `admin.users.headers.group`, `admin.users.allGroups`, `admin.users.noGroup`, `admin.users.exportCsv` keys to `src/i18n/locales/{uz,ru,en}.json` with sensible defaults.
+When `auth.admin.createUser` fails on email validation, surface a clearer message in the response (`invalid_placeholder_email` instead of the raw Supabase string) so the UI's error pill is readable.
 
-## Out of scope
+### 3. CSV preview (`src/pages/admin/GroupDetail.tsx`)
 
-- The CSV template content already has `group_name` — no template change needed.
-- No DB schema changes.
-- Teacher view (`staff_list_students`) already returns the same shape; the Group column will work for them too if they have access (read-only filter).
+Already validates "need email/tg id/username", but it doesn't warn when the synthesized placeholder will be non-ASCII. Add a soft pre-check: if no email and no numeric `telegram_user_id`, and the username contains non-ASCII characters, mark the row's status hint as "placeholder will be auto-generated" so the admin sees what's coming.
+
+### 4. Clean up the 10 broken rows
+
+These rows did NOT create auth users (that's why they show as Xato), so nothing to delete. Re-uploading the same CSV after the fix will pick them up and create them with safe placeholders. No data migration needed.
+
+### Optional — also harden the second importer
+
+`src/pages/admin/AdminGroups.tsx` has a simpler one-column importer (`handleCsv`) that does its own synthesis client-side. It already routes numeric values to `telegram_user_id` and `@`-strings to email, so it's fine, but I'll add the same sanitizer to the username path for consistency.
+
+## Files to change
+
+- `supabase/functions/admin-create-students/index.ts` — tolerant ID parsing, ASCII sanitizer, deterministic anon fallback, clearer error labels.
+- `src/pages/admin/GroupDetail.tsx` — preview hint when a placeholder will be synthesized.
+- `src/pages/admin/AdminGroups.tsx` — apply the same username sanitizer (small).
+
+## Verification
+
+1. Re-upload `users_import_1guruh.csv` in the **Students in 1-GURUH** dialog.
+2. Expect: **0 Xato**, ~10 new users created with safe placeholder emails (e.g. `tg-7882146989@telegram.local`).
+3. Open one of the new students and confirm `telegram_id`, `telegram_username`, `group_id`, and display name (`Угилой`, `Бегзод`, etc.) are stored correctly — only the email placeholder is sanitized.
+4. The Telegram bot login still works because it matches by `telegram_id` / `telegram_username`, not by email.
