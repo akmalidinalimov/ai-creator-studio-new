@@ -1726,7 +1726,8 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
 
   if (state.state === "grade_comment") {
     if (text === "/cancel") {
-      await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+    await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+    if (sub) cacheInvalidateUser(sub.user_id);
       await sendWithKeyboard(msg.chat.id, t.gradeCancelled, locale, isAdmin, isAdmin ? "admin" : "teacher");
       return true;
     }
@@ -2102,6 +2103,10 @@ async function handleCallback(admin: any, cq: any) {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  // Warmth ping (GET) — keeps Edge Function warm via pg_cron net.http_get
+  if (req.method === "GET") {
+    return new Response(JSON.stringify({ ok: true, warm: true }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
   if (req.method !== "POST") {
     return new Response("Method not allowed", { status: 405, headers: corsHeaders });
   }
