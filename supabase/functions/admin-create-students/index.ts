@@ -180,7 +180,8 @@ Deno.serve(async (req) => {
     for (let __i = 0; __i < students.length; __i++) {
       const s = students[__i];
       const row_index = __i + 1;
-      let email = (s.email || "").trim().toLowerCase();
+      const inputEmail = (s.email || "").trim().toLowerCase();
+      let email = inputEmail;
       // Normalize telegram_user_id early so we can synthesize an email if needed.
       // Tolerate quoted/whitespace/decorated values like " 12345 ", "'12345'", or "id:12345".
       let tgIdNum: number | undefined;
@@ -195,23 +196,21 @@ Deno.serve(async (req) => {
       // Normalize telegram_username early so we can use it as a placeholder identifier
       const tgUserNorm = (s.telegram_username || "").trim().replace(/^@/, "").toLowerCase();
       const tgUserSafe = sanitizeForEmailLocal(tgUserNorm);
-      // If no email but we have a telegram id or username, synthesize a placeholder so auth.admin.createUser accepts it.
-      // Login will happen via the Telegram bot which matches profiles by telegram_id OR telegram_username.
-      if (!email) {
-        if (tgIdNum) {
-          email = `tg-${tgIdNum}@telegram.local`;
-        } else if (tgUserSafe) {
-          email = `tg-${tgUserSafe}@telegram.local`;
-        } else {
-          // Last-resort deterministic placeholder so rows with only a non-ASCII name still import.
-          // Use whatever identifying info we have (name, raw username) so re-imports collide with the same hash.
-          const seed = `${(s.name || "").trim()}|${(s.last_name || "").trim()}|${tgUserNorm}|${s.telegram_user_id ?? ""}`;
-          if (seed.replace(/\|/g, "").length > 0) {
-            const h = await shortHash(seed);
-            email = `tg-anon-${h}@telegram.local`;
-          }
+      let synthesizedEmail = "";
+      // Synthesize a deterministic placeholder in priority order: telegram_id → telegram_username → hashed name.
+      // Never use the raw name in the email because names are not unique and collide in Auth.
+      if (tgIdNum) {
+        synthesizedEmail = `tg-${tgIdNum}@telegram.local`;
+      } else if (tgUserSafe) {
+        synthesizedEmail = `tg-${tgUserSafe}@telegram.local`;
+      } else {
+        const seed = `${(s.name || "").trim()}|${(s.last_name || "").trim()}|${tgUserNorm}|${s.telegram_user_id ?? ""}`;
+        if (seed.replace(/\|/g, "").length > 0) {
+          const h = await shortHash(seed);
+          synthesizedEmail = `tg-anon-${h}@telegram.local`;
         }
       }
+      if (!email) email = synthesizedEmail;
       // Compute the identifier_used label early for audit logs
       const identifier_used = (s.email || "").trim()
         || (tgIdNum ? `tg_id:${tgIdNum}` : "")
@@ -234,27 +233,38 @@ Deno.serve(async (req) => {
       if (!resolvedGroupId && targetGroupId) resolvedGroupId = targetGroupId;
       if (!resolvedGroupId && defaultGroupId) resolvedGroupId = defaultGroupId;
 
-      // Smart dedupe: if a profile already exists by email, telegram_id, or telegram_username,
+      // Smart dedupe: if a profile already exists by email, telegram_username, telegram_id, or synthesized placeholder,
       // update its group instead of creating a new auth user.
       let existingId: string | null = null;
       let existingGroupId: string | null = null;
-      if (!email.endsWith("@telegram.local")) {
+      if (inputEmail) {
         const { data: e1 } = await admin.from("profiles").select("id, group_id").eq("email", email).maybeSingle();
         if (e1) { existingId = (e1 as any).id; existingGroupId = (e1 as any).group_id || null; }
       }
-      if (!existingId && tgIdNum) {
-        const { data: e2 } = await admin.from("profiles").select("id, group_id").eq("telegram_id", tgIdNum).maybeSingle();
+      if (!existingId && tgUserNorm) {
+        const { data: e2 } = await admin.from("profiles").select("id, group_id").eq("telegram_username", tgUserNorm as any).maybeSingle();
         if (e2) { existingId = (e2 as any).id; existingGroupId = (e2 as any).group_id || null; }
       }
-      if (!existingId && tgUserNorm) {
-        const { data: e3 } = await admin.from("profiles").select("id, group_id").eq("telegram_username", tgUserNorm as any).maybeSingle();
+      if (!existingId && tgIdNum) {
+        const { data: e3 } = await admin.from("profiles").select("id, group_id").eq("telegram_id", tgIdNum).maybeSingle();
         if (e3) { existingId = (e3 as any).id; existingGroupId = (e3 as any).group_id || null; }
+      }
+      if (!existingId && synthesizedEmail) {
+        const { data: e4 } = await admin.from("profiles").select("id, group_id").eq("email", synthesizedEmail).maybeSingle();
+        if (e4) { existingId = (e4 as any).id; existingGroupId = (e4 as any).group_id || null; }
       }
       if (existingId) {
         const alreadyInTargetGroup = !!resolvedGroupId && existingGroupId === resolvedGroupId;
         const patch: Record<string, any> = {};
         if (resolvedGroupId && !alreadyInTargetGroup) patch.group_id = resolvedGroupId;
-        if (Object.keys(patch).length) await admin.from("profiles").update(patch).eq("id", existingId);
+        if (Object.keys(patch).length) {
+          const { error: updateErr } = await admin.from("profiles").update(patch).eq("id", existingId);
+          if (updateErr) {
+            results.push({ email, status: "error", error: updateErr.message, row_index, identifier_used });
+            auditLog(row_index, identifier_used, "failed", updateErr.message);
+            continue;
+          }
+        }
         const status = alreadyInTargetGroup ? "skipped_already_in_group" : "updated";
         results.push({ email, status, userId: existingId, row_index, identifier_used });
         auditLog(row_index, identifier_used, alreadyInTargetGroup ? "skipped_already_in_group" : "matched");
@@ -268,6 +278,24 @@ Deno.serve(async (req) => {
         user_metadata: { name: s.name || email.split("@")[0], last_name: s.last_name || null },
       });
       if (error) {
+        if (email.endsWith("@telegram.local") && /already.*registered|already.*exists|email.*registered/i.test(error.message)) {
+          const { data: existingProfile } = await admin.from("profiles").select("id, group_id").eq("email", email).maybeSingle();
+          if (existingProfile?.id) {
+            const alreadyInTargetGroup = !!resolvedGroupId && (existingProfile as any).group_id === resolvedGroupId;
+            if (resolvedGroupId && !alreadyInTargetGroup) {
+              const { error: updateErr } = await admin.from("profiles").update({ group_id: resolvedGroupId }).eq("id", (existingProfile as any).id);
+              if (updateErr) {
+                results.push({ email, status: "error", error: updateErr.message, row_index, identifier_used });
+                auditLog(row_index, identifier_used, "failed", updateErr.message);
+                continue;
+              }
+            }
+            const status = alreadyInTargetGroup ? "skipped_already_in_group" : "updated";
+            results.push({ email, status, userId: (existingProfile as any).id, row_index, identifier_used });
+            auditLog(row_index, identifier_used, "matched_existing_placeholder");
+            continue;
+          }
+        }
         const friendly = /validate email|invalid format/i.test(error.message)
           ? `invalid_placeholder_email (${email}) — auth rejected synthesized email`
           : error.message;
