@@ -768,6 +768,7 @@ export default function AdminUsers() {
                         <Badge variant="secondary">{u.role_name || "student"}</Badge>
                       )}
                     </td>
+                    <td className="p-3 text-xs">{u.group_id ? <Badge variant="secondary">{groupNameById.get(u.group_id) || "—"}</Badge> : <span className="text-muted-foreground">—</span>}</td>
                     <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : "bg-destructive/10 text-destructive"}`}>{u.status === "active" ? t("admin.users.active") : t("admin.users.inactive")}</span></td>
                     <td className="p-3 text-xs text-muted-foreground">{(enrollMap[u.id]?.size) || 0}</td>
                     <td className="p-3 text-xs text-muted-foreground">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}</td>
