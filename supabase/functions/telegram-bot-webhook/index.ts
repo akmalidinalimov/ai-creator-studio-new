@@ -1938,12 +1938,12 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
 
   if (cmd === "/vazifalar" || cmd === "/homework") {
     console.time(`bot:hw:${profile.id}`);
-    const cacheKey = `hw:${profile.id}:${locale}`;
-    let text = cacheGet(cacheKey);
-    if (!text) { text = await buildHomeworkMessage(admin, profile.id, locale); cacheSet(cacheKey, text); }
+    // No cache: message contains personalized inline submit buttons.
+    const { text, keyboard } = await buildHomeworkMessage(admin, profile.id, locale);
     const url = await createMagicLink(admin, profile.id, "login", "/dashboard");
-    await sendMessage(chatId, text, { inline_keyboard: [[{ text: t.btnHwSite, url }]] });
-    await sendKeyboardHint(chatId, locale);
+    const submitRows = keyboard?.inline_keyboard || [];
+    const inline_keyboard = [...submitRows, [{ text: t.btnHwSite, url }]];
+    await sendMessage(chatId, text, { inline_keyboard });
     console.timeEnd(`bot:hw:${profile.id}`);
     return;
   }
