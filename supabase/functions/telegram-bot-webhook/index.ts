@@ -2124,15 +2124,22 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     const threadId = msg.message_thread_id;
     const fromId = msg.from?.id;
     const messageId = msg.message_id;
-    if (!chatId || !threadId || !fromId || !messageId) return;
+    console.log("hw:group:enter", JSON.stringify({ chatId, threadId, fromId, messageId }));
+    if (!chatId || !threadId || !fromId || !messageId) {
+      console.log("hw:group:skip-missing-fields");
+      return;
+    }
 
     // Identify the student
     const profile = await findProfileByTelegramId(admin, fromId);
-    if (!profile) return;
+    if (!profile) {
+      console.log("hw:group:no-profile-for-tg", fromId);
+      return;
+    }
 
     // Find a non-expired matching intent
     const nowIso = new Date().toISOString();
-    const { data: intents } = await admin
+    const { data: intents, error: intentErr } = await admin
       .from("bot_homework_intents")
       .select("id, assignment_id, module_id, group_id")
       .eq("user_id", profile.id)
@@ -2141,9 +2148,12 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       .gt("expires_at", nowIso)
       .order("created_at", { ascending: false })
       .limit(1);
+    if (intentErr) console.error("hw:group:intent-query-err", intentErr);
     const intent = (intents && intents[0]) as any;
-    if (!intent) return; // silent — student didn't go through bot
-
+    if (!intent) {
+      console.log("hw:group:no-matching-intent", JSON.stringify({ user_id: profile.id, chatId, threadId }));
+      return; // silent — student didn't go through bot
+    }
     // Extract media
     let fileId: string | null = null;
     let kind = "text";
