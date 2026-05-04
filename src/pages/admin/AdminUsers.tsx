@@ -174,12 +174,25 @@ export default function AdminUsers() {
 
   useEffect(() => { reload(); }, []);
 
+  const groupNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    groups.forEach((g) => m.set(g.id, g.name));
+    return m;
+  }, [groups]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return users.filter((u) => {
       if (statusFilter !== "all" && u.status !== statusFilter) return false;
       if (roleFilter === "admin" && !u.is_admin) return false;
       if (roleFilter === "student" && u.is_admin) return false;
+      if (groupFilter !== "all") {
+        if (groupFilter === "none") {
+          if (u.group_id) return false;
+        } else if (u.group_id !== groupFilter) {
+          return false;
+        }
+      }
       if (q) {
         return (
           (u.name || "").toLowerCase().includes(q) ||
@@ -191,7 +204,30 @@ export default function AdminUsers() {
       }
       return true;
     });
-  }, [users, search, statusFilter, roleFilter]);
+  }, [users, search, statusFilter, roleFilter, groupFilter]);
+
+  const exportFilteredCsv = () => {
+    const rows = filtered.map((u) => ({
+      name: u.name || "",
+      last_name: u.last_name || "",
+      email: u.email.endsWith("@telegram.local") ? "" : u.email,
+      password: "",
+      telegram_user_id: u.telegram_id ?? "",
+      telegram_username: u.telegram_username || "",
+      role: u.role_name || "student",
+      group_name: u.group_id ? (groupNameById.get(u.group_id) || "") : "",
+    }));
+    const csv = Papa.unparse(rows, { columns: ["name","last_name","email","password","telegram_user_id","telegram_username","role","group_name"] });
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const groupSlug = groupFilter === "all" ? "all" : groupFilter === "none" ? "no-group" : (groupNameById.get(groupFilter) || "group").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    const date = new Date().toISOString().slice(0, 10);
+    a.href = url; a.download = `users_${groupSlug}_${date}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    toast.success(t("admin.users.exportedToast", { defaultValue: "Exported {{n}} users", n: rows.length }));
+  };
 
   const callCreate = async (rows: any[], extra: Record<string, unknown> = {}) => {
     const r = await fetch(`${FN_BASE}/admin-create-students`, {
