@@ -523,8 +523,9 @@ const T = {
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Module ${n} — ${csvEscapeHtml(title)}</b> (${taskCount})`,
     hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ T${tn}: ${sc}/${mx}${fb ? ` — "${csvEscapeHtml(fb).slice(0, 40)}"` : ""}`,
     hwTaskUnscored: (tn: number) => `   ⏳ T${tn}: not graded yet`,
-    hwTopicLine: (url: string) => `   📌 Submit in topic: ${url}`,
-    hwTopicMissing: "   📌 Topic not configured",
+    hwSubmitHint: (mn: number, tn: number) => `   👇 Tap "📤 Submit — M${mn}·T${tn}" below.`,
+    hwModuleAllDone: "   ✅ All tasks for this module submitted.",
+    hwTopicMissing: "   ⚠️ Topic not configured — contact your teacher.",
     hwSubmitBtn: (mn: number, tn: number) => `📤 Submit — M${mn}·T${tn}`,
     hwIntentReady: (mn: number, tn: number) =>
       `📤 <b>Module ${mn} · Task ${tn}</b>\n\nTap the button below to open the topic and post your photo or video. The bot will accept it automatically (within 10 minutes).`,
