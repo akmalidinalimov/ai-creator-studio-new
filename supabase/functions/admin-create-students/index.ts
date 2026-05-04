@@ -180,7 +180,8 @@ Deno.serve(async (req) => {
     for (let __i = 0; __i < students.length; __i++) {
       const s = students[__i];
       const row_index = __i + 1;
-      let email = (s.email || "").trim().toLowerCase();
+      const inputEmail = (s.email || "").trim().toLowerCase();
+      let email = inputEmail;
       // Normalize telegram_user_id early so we can synthesize an email if needed.
       // Tolerate quoted/whitespace/decorated values like " 12345 ", "'12345'", or "id:12345".
       let tgIdNum: number | undefined;
@@ -196,24 +197,20 @@ Deno.serve(async (req) => {
       const tgUserNorm = (s.telegram_username || "").trim().replace(/^@/, "").toLowerCase();
       const tgUserSafe = sanitizeForEmailLocal(tgUserNorm);
       let synthesizedEmail = "";
-      // If no email but we have a telegram id or username, synthesize a placeholder so auth.admin.createUser accepts it.
-      // Login will happen via the Telegram bot which matches profiles by telegram_id OR telegram_username.
-      if (!email) {
-        if (tgIdNum) {
-          synthesizedEmail = `tg-${tgIdNum}@telegram.local`;
-        } else if (tgUserSafe) {
-          synthesizedEmail = `tg-${tgUserSafe}@telegram.local`;
-        } else {
-          // Last-resort deterministic placeholder so rows with only a non-ASCII name still import.
-          // Use a hash, never the raw name, because names are not unique and collide in Auth.
-          const seed = `${(s.name || "").trim()}|${(s.last_name || "").trim()}|${tgUserNorm}|${s.telegram_user_id ?? ""}`;
-          if (seed.replace(/\|/g, "").length > 0) {
-            const h = await shortHash(seed);
-            synthesizedEmail = `tg-anon-${h}@telegram.local`;
-          }
+      // Synthesize a deterministic placeholder in priority order: telegram_id → telegram_username → hashed name.
+      // Never use the raw name in the email because names are not unique and collide in Auth.
+      if (tgIdNum) {
+        synthesizedEmail = `tg-${tgIdNum}@telegram.local`;
+      } else if (tgUserSafe) {
+        synthesizedEmail = `tg-${tgUserSafe}@telegram.local`;
+      } else {
+        const seed = `${(s.name || "").trim()}|${(s.last_name || "").trim()}|${tgUserNorm}|${s.telegram_user_id ?? ""}`;
+        if (seed.replace(/\|/g, "").length > 0) {
+          const h = await shortHash(seed);
+          synthesizedEmail = `tg-anon-${h}@telegram.local`;
         }
-        email = synthesizedEmail;
       }
+      if (!email) email = synthesizedEmail;
       // Compute the identifier_used label early for audit logs
       const identifier_used = (s.email || "").trim()
         || (tgIdNum ? `tg_id:${tgIdNum}` : "")
