@@ -773,7 +773,7 @@ function cacheInvalidateUser(userId: string) {
 async function findProfileByTelegramId(admin: any, tgId: number) {
   const { data } = await admin
     .from("profiles")
-    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale")
+    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id")
     .eq("telegram_id", tgId)
     .maybeSingle();
   return data;
