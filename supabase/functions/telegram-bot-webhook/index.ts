@@ -2012,6 +2012,251 @@ async function renderSettings(admin: any, chatId: number, userId: string, locale
   await sendMessage(chatId, t.settingsTitle, settingsKeyboard(locale, prefs || { notifications_enabled: true, reminder_time: "20:00:00", timezone: "Asia/Tashkent" }));
 }
 
+// =================== HOMEWORK SUBMISSION (BOT-FIRST) ===================
+
+// Parse a Telegram topic URL like:
+//   https://t.me/c/2123456789/15           → { chatId: -1002123456789, threadId: 15 }
+//   https://t.me/c/2123456789/15/42        → same (extra is message id, ignored)
+// Returns null if it can't parse a private (c/) supergroup topic URL.
+function parseTopicUrl(url: string): { chatId: number; threadId: number } | null {
+  try {
+    const m = (url || "").match(/^https:\/\/t\.me\/c\/(\d+)\/(\d+)(?:\/\d+)?/);
+    if (!m) return null;
+    const stripped = m[1];
+    const threadId = parseInt(m[2], 10);
+    if (!Number.isFinite(threadId)) return null;
+    // Telegram supergroup chat ids are -100 + the public id
+    const chatId = -1 * Number("100" + stripped);
+    return { chatId, threadId };
+  } catch {
+    return null;
+  }
+}
+
+// Build a re-openable link to a specific message inside a private supergroup topic.
+function buildMessageLink(chatId: number, threadId: number, messageId: number): string {
+  // chatId is -100xxxxxxxxxx → strip -100 → xxxxxxxxxx
+  const s = String(chatId).replace(/^-100/, "");
+  return `https://t.me/c/${s}/${threadId}/${messageId}`;
+}
+
+async function setMessageReaction(chatId: number, messageId: number, emoji = "✅") {
+  try {
+    await tgApi("setMessageReaction", {
+      chat_id: chatId,
+      message_id: messageId,
+      reaction: [{ type: "emoji", emoji }],
+      is_big: false,
+    });
+  } catch (_e) { /* best-effort */ }
+}
+
+// Student tapped "📤 Topshirish" in /vazifalar — open intent and point to topic.
+async function startHomeworkIntent(
+  admin: any, chatId: number, profile: any, locale: Locale, assignmentId: string,
+) {
+  const t = T[locale] as any;
+
+  // 1. Load assignment + module
+  const { data: a } = await admin
+    .from("homework_assignments")
+    .select("id, title, max_score, task_number, module_id, modules(id, title, position)")
+    .eq("id", assignmentId)
+    .maybeSingle();
+  if (!a) { await sendMessage(chatId, t.gradeNotFound); return; }
+
+  // 2. Already graded? Block.
+  const { data: existing } = await admin
+    .from("homework_submissions")
+    .select("id, score")
+    .eq("user_id", profile.id).eq("assignment_id", assignmentId)
+    .maybeSingle();
+  if (existing && existing.score != null) {
+    await sendMessage(chatId, t.hwIntentAlreadyScored);
+    return;
+  }
+
+  // 3. Resolve student group + topic
+  if (!profile.group_id) { await sendMessage(chatId, t.hwIntentNoGroup); return; }
+  const { data: gmt } = await admin
+    .from("group_module_topics")
+    .select("telegram_topic_url")
+    .eq("group_id", profile.group_id).eq("module_id", a.module_id)
+    .maybeSingle();
+  const topicUrl = gmt?.telegram_topic_url;
+  if (!topicUrl) { await sendMessage(chatId, t.hwIntentNoTopic); return; }
+
+  const parsed = parseTopicUrl(topicUrl);
+  if (!parsed) { await sendMessage(chatId, t.hwIntentNoTopic); return; }
+
+  // 4. Upsert intent (10 min TTL)
+  const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+  await admin.from("bot_homework_intents").upsert({
+    user_id: profile.id,
+    assignment_id: assignmentId,
+    module_id: a.module_id,
+    group_id: profile.group_id,
+    telegram_chat_id: parsed.chatId,
+    telegram_thread_id: parsed.threadId,
+    expires_at: expiresAt,
+    created_at: new Date().toISOString(),
+  }, { onConflict: "user_id,assignment_id" });
+
+  const mn = (a.modules?.position ?? 0) + 1;
+  const tn = a.task_number || 1;
+  await sendMessage(chatId, t.hwIntentReady(mn, tn), {
+    inline_keyboard: [[{ text: t.hwIntentBtnGoTopic, url: topicUrl }]],
+  });
+}
+
+// Group/supergroup post inside a topic — try to attach it to a pending intent.
+async function handleGroupTopicMessage(admin: any, msg: any) {
+  try {
+    const chatId = msg.chat?.id;
+    const threadId = msg.message_thread_id;
+    const fromId = msg.from?.id;
+    const messageId = msg.message_id;
+    if (!chatId || !threadId || !fromId || !messageId) return;
+
+    // Identify the student
+    const profile = await findProfileByTelegramId(admin, fromId);
+    if (!profile) return;
+
+    // Find a non-expired matching intent
+    const nowIso = new Date().toISOString();
+    const { data: intents } = await admin
+      .from("bot_homework_intents")
+      .select("id, assignment_id, module_id, group_id")
+      .eq("user_id", profile.id)
+      .eq("telegram_chat_id", chatId)
+      .eq("telegram_thread_id", threadId)
+      .gt("expires_at", nowIso)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const intent = (intents && intents[0]) as any;
+    if (!intent) return; // silent — student didn't go through bot
+
+    // Extract media
+    let fileId: string | null = null;
+    let kind = "text";
+    if (Array.isArray(msg.photo) && msg.photo.length) {
+      fileId = msg.photo[msg.photo.length - 1].file_id;
+      kind = "photo";
+    } else if (msg.document) {
+      fileId = msg.document.file_id;
+      kind = "document";
+    } else if (msg.video) {
+      fileId = msg.video.file_id;
+      kind = "video";
+    } else if (msg.voice) {
+      fileId = msg.voice.file_id;
+      kind = "voice";
+    } else if (msg.video_note) {
+      fileId = msg.video_note.file_id;
+      kind = "video_note";
+    } else if (!msg.text && !msg.caption) {
+      return; // unsupported message type, no media, no text
+    }
+
+    const messageUrl = buildMessageLink(chatId, threadId, messageId);
+    const submittedText = (msg.caption || msg.text || "").slice(0, 4000);
+
+    // Upsert submission. Unique key (user_id, assignment_id) — idempotent.
+    const { data: upserted, error: upErr } = await admin
+      .from("homework_submissions")
+      .upsert({
+        user_id: profile.id,
+        assignment_id: intent.assignment_id,
+        submitted_text: submittedText,
+        submitted_at: new Date().toISOString(),
+        score: null,
+        score_feedback: null,
+        scored_by: null,
+        scored_at: null,
+        is_late: false,
+        telegram_chat_id: chatId,
+        telegram_thread_id: threadId,
+        telegram_message_id: messageId,
+        telegram_message_url: messageUrl,
+        telegram_file_id: fileId,
+        telegram_file_kind: kind,
+        source: "telegram_topic",
+      }, { onConflict: "user_id,assignment_id" })
+      .select("id")
+      .maybeSingle();
+    if (upErr) {
+      console.error("hw upsert error", upErr);
+      return;
+    }
+
+    // Consume intent
+    await admin.from("bot_homework_intents").delete().eq("id", intent.id);
+
+    // ✅ React to confirm in-thread
+    await setMessageReaction(chatId, messageId, "✅");
+
+    // Locale + assignment meta for messages
+    const locale: Locale = normLocale(profile.preferred_locale);
+    const t = T[locale] as any;
+    const { data: a } = await admin
+      .from("homework_assignments")
+      .select("title, task_number, modules(position)")
+      .eq("id", intent.assignment_id)
+      .maybeSingle();
+    const mn = ((a?.modules?.position ?? 0) as number) + 1;
+    const tn = (a?.task_number ?? 1) as number;
+    const aTitle = a?.title || "";
+
+    // Private DM to student
+    if (profile.telegram_id) {
+      try { await sendMessage(profile.telegram_id, t.hwReceived(mn, tn)); } catch (_e) {}
+    }
+
+    // Notify the teacher of the student's group
+    const subId = upserted?.id;
+    await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId);
+
+    // Invalidate any cached "stats" for the student so next /galaba is fresh
+    cacheInvalidateUser(profile.id);
+  } catch (e) {
+    console.error("handleGroupTopicMessage error", e);
+  }
+}
+
+async function notifyTeachersOfSubmission(
+  admin: any,
+  studentProfile: any,
+  groupId: string | null,
+  mn: number, tn: number, aTitle: string,
+  messageUrl: string,
+  submissionId: string | undefined,
+) {
+  try {
+    if (!groupId) return;
+    const { data: g } = await admin.from("groups").select("teacher_id").eq("id", groupId).maybeSingle();
+    const teacherId = g?.teacher_id;
+    if (!teacherId) return;
+    const { data: tProf } = await admin
+      .from("profiles")
+      .select("telegram_id, preferred_locale")
+      .eq("id", teacherId)
+      .maybeSingle();
+    if (!tProf?.telegram_id) return;
+
+    const tLocale: Locale = normLocale(tProf.preferred_locale);
+    const tt = T[tLocale] as any;
+    const studentName = [studentProfile.name, studentProfile.last_name].filter(Boolean).join(" ") || "—";
+    const text = tt.hwTeacherNotify(studentName, mn, tn, aTitle);
+    const buttons: any[] = [{ text: tt.hwTeacherBtnFile, url: messageUrl }];
+    if (submissionId) {
+      buttons.push({ text: tt.hwTeacherBtnGrade, callback_data: `gs:open:${submissionId}` });
+    }
+    await sendMessage(tProf.telegram_id, text, { inline_keyboard: [buttons] });
+  } catch (e) {
+    console.error("notifyTeachersOfSubmission error", e);
+  }
+}
+
 async function handleCallback(admin: any, cq: any) {
   const data: string = cq.data || "";
   const tgId = cq.from.id as number;
