@@ -11,6 +11,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Plus, Pencil, Trash2, Users as UsersIcon, Upload } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 
 type Group = {
@@ -164,9 +165,26 @@ export default function AdminGroups() {
                     >{g.is_default ? "Default" : "Set"}</Button>
                   </TableCell>
                   <TableCell className="text-right space-x-2">
-                    <Button variant="outline" size="sm" onClick={() => setStudentsGroup(g)}><UsersIcon className="h-4 w-4" /></Button>
-                    <Button variant="outline" size="sm" onClick={() => setEditGroup(g)}><Pencil className="h-4 w-4" /></Button>
-                    <Button variant="outline" size="sm" onClick={() => setDeleteGroup(g)}><Trash2 className="h-4 w-4" /></Button>
+                    <TooltipProvider delayDuration={150}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button variant="outline" size="sm" onClick={() => setStudentsGroup(g)} aria-label="Talabalar"><UsersIcon className="h-4 w-4" /></Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Talabalar</TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button variant="outline" size="sm" onClick={() => setEditGroup(g)} aria-label="Tahrirlash"><Pencil className="h-4 w-4" /></Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Tahrirlash</TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button variant="outline" size="sm" onClick={() => setDeleteGroup(g)} aria-label="O'chirish"><Trash2 className="h-4 w-4" /></Button>
+                        </TooltipTrigger>
+                        <TooltipContent>O'chirish</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   </TableCell>
                 </TableRow>
                 );

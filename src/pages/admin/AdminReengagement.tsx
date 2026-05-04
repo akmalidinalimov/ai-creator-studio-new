@@ -263,6 +263,14 @@ export default function AdminReengagement() {
         {/* Editor */}
         {draft && (
           <Card className="p-4 space-y-4">
+            {!draft.enabled && (
+              <div className="rounded-md border-2 border-amber-500 bg-amber-500/10 p-4 flex items-start gap-3">
+                <AlertTriangle className="h-6 w-6 text-amber-600 shrink-0" />
+                <div className="text-sm font-semibold text-amber-700 dark:text-amber-400">
+                  ⚠️ Bu kampaniya O'CHIRILGAN — hech qanday xabar yuborilmaydi
+                </div>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <h2 className="font-semibold">Tahrirlash</h2>
               <div className="flex items-center gap-3">
@@ -270,9 +278,6 @@ export default function AdminReengagement() {
                   <Switch checked={draft.enabled} onCheckedChange={(v) => setDraft({ ...draft, enabled: v })} />
                   <Label className="text-sm">Yoqilgan</Label>
                 </div>
-                {!draft.enabled && (
-                  <span className="text-xs text-red-600 flex items-center gap-1"><AlertTriangle className="h-3 w-3" />O'chirilgan — xabar ketmaydi</span>
-                )}
               </div>
             </div>
 
