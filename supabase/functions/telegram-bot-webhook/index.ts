@@ -1875,18 +1875,26 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   }
 
   if (cmd === "/galaba" || cmd === "/streak") {
-    const text = await buildStatsMessage(admin, profile.id, locale);
+    console.time(`bot:stats:${profile.id}`);
+    const cacheKey = `stats:${profile.id}:${locale}`;
+    let text = cacheGet(cacheKey);
+    if (!text) { text = await buildStatsMessage(admin, profile.id, locale); cacheSet(cacheKey, text); }
     const url = await createMagicLink(admin, profile.id, "login", "/dashboard");
     await sendMessage(chatId, text, { inline_keyboard: [[{ text: t.btnSiteOpen, url }]] });
     await sendKeyboardHint(chatId, locale);
+    console.timeEnd(`bot:stats:${profile.id}`);
     return;
   }
 
   if (cmd === "/vazifalar" || cmd === "/homework") {
-    const text = await buildHomeworkMessage(admin, profile.id, locale);
+    console.time(`bot:hw:${profile.id}`);
+    const cacheKey = `hw:${profile.id}:${locale}`;
+    let text = cacheGet(cacheKey);
+    if (!text) { text = await buildHomeworkMessage(admin, profile.id, locale); cacheSet(cacheKey, text); }
     const url = await createMagicLink(admin, profile.id, "login", "/dashboard");
     await sendMessage(chatId, text, { inline_keyboard: [[{ text: t.btnHwSite, url }]] });
     await sendKeyboardHint(chatId, locale);
+    console.timeEnd(`bot:hw:${profile.id}`);
     return;
   }
 
