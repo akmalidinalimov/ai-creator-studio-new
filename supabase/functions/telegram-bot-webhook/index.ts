@@ -2123,36 +2123,55 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     const chatId = msg.chat?.id;
     const threadId = msg.message_thread_id;
     const fromId = msg.from?.id;
+    const senderChatId = msg.sender_chat?.id;
     const messageId = msg.message_id;
-    console.log("hw:group:enter", JSON.stringify({ chatId, threadId, fromId, messageId }));
-    if (!chatId || !threadId || !fromId || !messageId) {
+    // Telegram's anonymous-admin proxy bot id (when an admin posts "as the group")
+    const ANON_ADMIN_BOT_ID = 1087968824;
+    const isAnon = fromId === ANON_ADMIN_BOT_ID;
+    console.log("hw:group:enter", JSON.stringify({ chatId, threadId, fromId, senderChatId, messageId, isAnon }));
+    if (!chatId || !threadId || !messageId) {
       console.log("hw:group:skip-missing-fields");
       return;
     }
 
-    // Identify the student
-    const profile = await findProfileByTelegramId(admin, fromId);
-    if (!profile) {
-      console.log("hw:group:no-profile-for-tg", fromId);
-      return;
+    // Try to identify the student (only useful when not anonymous)
+    let profile: any = null;
+    if (fromId && !isAnon) {
+      profile = await findProfileByTelegramId(admin, fromId);
     }
 
-    // Find a non-expired matching intent
+    // Find a non-expired matching intent for this topic.
+    // If we know the user, scope by user_id; otherwise (anonymous admin post) match by topic alone — the most recent intent in this exact topic wins.
     const nowIso = new Date().toISOString();
-    const { data: intents, error: intentErr } = await admin
+    let q = admin
       .from("bot_homework_intents")
-      .select("id, assignment_id, module_id, group_id")
-      .eq("user_id", profile.id)
+      .select("id, user_id, assignment_id, module_id, group_id")
       .eq("telegram_chat_id", chatId)
       .eq("telegram_thread_id", threadId)
       .gt("expires_at", nowIso)
       .order("created_at", { ascending: false })
       .limit(1);
+    if (profile) q = q.eq("user_id", profile.id);
+    const { data: intents, error: intentErr } = await q;
     if (intentErr) console.error("hw:group:intent-query-err", intentErr);
     const intent = (intents && intents[0]) as any;
     if (!intent) {
-      console.log("hw:group:no-matching-intent", JSON.stringify({ user_id: profile.id, chatId, threadId }));
-      return; // silent — student didn't go through bot
+      console.log("hw:group:no-matching-intent", JSON.stringify({ user_id: profile?.id, chatId, threadId, isAnon }));
+      return; // silent — no pending submission for this topic
+    }
+
+    // If we didn't have a profile (anonymous post), resolve it from the intent
+    if (!profile) {
+      const { data: p } = await admin
+        .from("profiles")
+        .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id")
+        .eq("id", intent.user_id)
+        .maybeSingle();
+      profile = p;
+      if (!profile) {
+        console.log("hw:group:intent-user-not-found", intent.user_id);
+        return;
+      }
     }
     // Extract media
     let fileId: string | null = null;
