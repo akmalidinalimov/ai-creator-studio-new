@@ -731,8 +731,8 @@ export default function AdminUsers() {
                 </tr>
               </thead>
               <tbody>
-                {loading && <tr><td colSpan={10} className="p-6 text-center text-muted-foreground">{t("admin.users.loading")}</td></tr>}
-                {!loading && filtered.length === 0 && <tr><td colSpan={10} className="p-6 text-center text-muted-foreground">{t("admin.users.empty")}</td></tr>}
+                {loading && <tr><td colSpan={11} className="p-6 text-center text-muted-foreground">{t("admin.users.loading")}</td></tr>}
+                {!loading && filtered.length === 0 && <tr><td colSpan={11} className="p-6 text-center text-muted-foreground">{t("admin.users.empty")}</td></tr>}
                 {filtered.map((u) => (
                   <tr key={u.id} className="border-t hover:bg-muted/20">
                     <td className="p-3"><Checkbox checked={selected.has(u.id)} onCheckedChange={() => toggleSelect(u.id)} /></td>
