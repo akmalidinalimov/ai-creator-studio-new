@@ -205,8 +205,9 @@ const T = {
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Modul ${n} — ${csvEscapeHtml(title)}</b> (${taskCount} ta)`,
     hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ V${tn}: ${sc}/${mx}${fb ? ` — "${csvEscapeHtml(fb).slice(0, 40)}"` : ""}`,
     hwTaskUnscored: (tn: number) => `   ⏳ V${tn}: hali baholanmagan`,
-    hwTopicLine: (url: string) => `   📌 Topshirish topiki: ${url}`,
-    hwTopicMissing: "   📌 Topik sozlanmagan",
+    hwSubmitHint: (mn: number, tn: number) => `   👇 Topshirish uchun pastdagi "📤 Topshirish — M${mn}·V${tn}" tugmasini bosing.`,
+    hwModuleAllDone: "   ✅ Bu modul vazifalari topshirilgan.",
+    hwTopicMissing: "   ⚠️ Topik sozlanmagan — ustozingizga murojaat qiling.",
     hwSubmitBtn: (mn: number, tn: number) => `📤 Topshirish — M${mn}·V${tn}`,
     hwIntentReady: (mn: number, tn: number) =>
       `📤 <b>Modul ${mn} · Vazifa ${tn}</b>\n\nQuyidagi tugmani bosib topikga o'ting va rasm yoki video yuboring. Bot avtomatik qabul qiladi (10 daqiqa ichida).`,
@@ -363,8 +364,9 @@ const T = {
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Модуль ${n} — ${csvEscapeHtml(title)}</b> (${taskCount})`,
     hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ З${tn}: ${sc}/${mx}${fb ? ` — "${csvEscapeHtml(fb).slice(0, 40)}"` : ""}`,
     hwTaskUnscored: (tn: number) => `   ⏳ З${tn}: ещё не оценено`,
-    hwTopicLine: (url: string) => `   📌 Топик для сдачи: ${url}`,
-    hwTopicMissing: "   📌 Топик не настроен",
+    hwSubmitHint: (mn: number, tn: number) => `   👇 Нажмите кнопку ниже "📤 Сдать — М${mn}·З${tn}".`,
+    hwModuleAllDone: "   ✅ Задания этого модуля сданы.",
+    hwTopicMissing: "   ⚠️ Топик не настроен — обратитесь к преподавателю.",
     hwSubmitBtn: (mn: number, tn: number) => `📤 Сдать — М${mn}·З${tn}`,
     hwIntentReady: (mn: number, tn: number) =>
       `📤 <b>Модуль ${mn} · Задание ${tn}</b>\n\nНажмите кнопку ниже, перейдите в топик и отправьте фото или видео. Бот примет автоматически (в течение 10 минут).`,
@@ -521,8 +523,9 @@ const T = {
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Module ${n} — ${csvEscapeHtml(title)}</b> (${taskCount})`,
     hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ T${tn}: ${sc}/${mx}${fb ? ` — "${csvEscapeHtml(fb).slice(0, 40)}"` : ""}`,
     hwTaskUnscored: (tn: number) => `   ⏳ T${tn}: not graded yet`,
-    hwTopicLine: (url: string) => `   📌 Submit in topic: ${url}`,
-    hwTopicMissing: "   📌 Topic not configured",
+    hwSubmitHint: (mn: number, tn: number) => `   👇 Tap "📤 Submit — M${mn}·T${tn}" below.`,
+    hwModuleAllDone: "   ✅ All tasks for this module submitted.",
+    hwTopicMissing: "   ⚠️ Topic not configured — contact your teacher.",
     hwSubmitBtn: (mn: number, tn: number) => `📤 Submit — M${mn}·T${tn}`,
     hwIntentReady: (mn: number, tn: number) =>
       `📤 <b>Module ${mn} · Task ${tn}</b>\n\nTap the button below to open the topic and post your photo or video. The bot will accept it automatically (within 10 minutes).`,
@@ -1030,7 +1033,14 @@ async function buildHomeworkMessage(
         }
       }
       const topic = topicMap.get(m.mid);
-      lines.push(topic ? t.hwTopicLine(topic) : t.hwTopicMissing);
+      const ungraded = m.arr.filter((a: any) => !(subMap.get(a.id) && (subMap.get(a.id) as any).score != null));
+      if (groupId && !topic) {
+        lines.push(t.hwTopicMissing);
+      } else if (ungraded.length === 0) {
+        lines.push(t.hwModuleAllDone);
+      } else if (topic) {
+        lines.push(t.hwSubmitHint(m.position + 1, ungraded[0].task_number || 1));
+      }
       lines.push("");
     }
   } catch (e) {
