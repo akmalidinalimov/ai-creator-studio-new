@@ -1033,7 +1033,14 @@ async function buildHomeworkMessage(
         }
       }
       const topic = topicMap.get(m.mid);
-      lines.push(topic ? t.hwTopicLine(topic) : t.hwTopicMissing);
+      const ungraded = m.arr.filter((a: any) => !(subMap.get(a.id) && (subMap.get(a.id) as any).score != null));
+      if (groupId && !topic) {
+        lines.push(t.hwTopicMissing);
+      } else if (ungraded.length === 0) {
+        lines.push(t.hwModuleAllDone);
+      } else if (topic) {
+        lines.push(t.hwSubmitHint(m.position + 1, ungraded[0].task_number || 1));
+      }
       lines.push("");
     }
   } catch (e) {
