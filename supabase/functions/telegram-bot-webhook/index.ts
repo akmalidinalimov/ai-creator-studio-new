@@ -2440,6 +2440,12 @@ Deno.serve(async (req) => {
   try {
     if (update.message) {
       const msg = update.message;
+      // Group/supergroup posts (e.g. inside a forum topic) → homework intake only
+      const chatType = msg.chat?.type;
+      if (chatType === "supergroup" || chatType === "group") {
+        await handleGroupTopicMessage(admin, msg);
+        return new Response("ok", { status: 200, headers: corsHeaders });
+      }
       const text: string = msg.text || "";
       const profileForLocale = await findProfileByTelegramId(admin, msg.from.id);
       const locale: Locale = profileForLocale?.preferred_locale
