@@ -270,6 +270,19 @@ Deno.serve(async (req) => {
         user_metadata: { name: s.name || email.split("@")[0], last_name: s.last_name || null },
       });
       if (error) {
+        if (email.endsWith("@telegram.local") && /already.*registered|already.*exists|email.*registered/i.test(error.message)) {
+          const { data: existingProfile } = await admin.from("profiles").select("id, group_id").eq("email", email).maybeSingle();
+          if (existingProfile?.id) {
+            const alreadyInTargetGroup = !!resolvedGroupId && (existingProfile as any).group_id === resolvedGroupId;
+            if (resolvedGroupId && !alreadyInTargetGroup) {
+              await admin.from("profiles").update({ group_id: resolvedGroupId }).eq("id", (existingProfile as any).id);
+            }
+            const status = alreadyInTargetGroup ? "skipped_already_in_group" : "updated";
+            results.push({ email, status, userId: (existingProfile as any).id, row_index, identifier_used });
+            auditLog(row_index, identifier_used, "matched_existing_placeholder");
+            continue;
+          }
+        }
         const friendly = /validate email|invalid format/i.test(error.message)
           ? `invalid_placeholder_email (${email}) — auth rejected synthesized email`
           : error.message;
