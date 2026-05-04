@@ -636,9 +636,10 @@ async function getPersona(admin: any, userId: string): Promise<Persona> {
 
 // After sending an inline-keyboard message, follow up with a tiny hint that
 // re-applies the persistent reply keyboard (since you can't combine both).
-async function sendKeyboardHint(chatId: number, locale: Locale, isAdmin = false, persona?: Persona) {
-  const p: Persona = persona || (isAdmin ? "admin" : "student");
-  return sendMessage(chatId, T[locale].kbHint, keyboardFor(locale, p));
+async function sendKeyboardHint(_chatId: number, _locale: Locale, _isAdmin = false, _persona?: Persona) {
+  // No-op: the persistent reply keyboard stays visible from prior sends,
+  // so we don't need to send a redundant "use the buttons below" hint.
+  return null;
 }
 
 // Map ANY localized keyboard label to a canonical command, regardless of user's
