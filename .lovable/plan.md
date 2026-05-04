@@ -1,53 +1,49 @@
-## Problem
+# Show Group on Users + Filter + Export by Group
 
-In the bot's "📝 Mening vazifalarim" message, every module currently ends with a raw line like:
+## What you'll see after this change
 
-```
-📌 Topshirish topiki: https://t.me/c/3717100574/126
-```
+On **Admin → Users**:
 
-These URLs:
-- Look broken/ugly in the chat (long t.me/c/... links, no preview).
-- Are redundant — the inline buttons at the bottom of the same message ("📤 Topshirish — M1·V1", "📤 Topshirish — M2·V2", …) already deep-link the student straight to the right topic when they tap **Topshirish**.
-- For modules where every task is already graded, the line adds noise with no purpose.
+1. A new **Group** column on the users table (and on the mobile cards) showing each student's assigned group name (e.g. "Group A"). Empty groups show "—".
+2. A new **Group** filter dropdown next to the existing Status / Role filters: *All groups*, plus one entry per group, plus *No group*.
+3. A new **Export CSV** button in the toolbar. It exports the **currently filtered list** of users — so to export a single group, you pick that group in the filter and click Export. The CSV uses the same column layout as the import template, so it round-trips cleanly.
+4. The downloadable **CSV import template** already includes a `group_name` column today (and the importer already creates/assigns the group). No change needed there beyond making sure the filename and helper text mention it clearly.
 
-## Proposed replacement
+The bulk **"Move N to group…"** action that's already on the page stays as-is.
 
-Drop the raw URL line entirely. In its place, show a short, contextual hint per module:
+## Already in place (no work needed)
 
-- **If the module has at least one ungraded task and a topic is configured:**
-  `👇 Topshirish uchun pastdagi "📤 Topshirish — M{n}·V{k}" tugmasini bosing.`
-- **If all tasks in the module are already graded:**
-  `✅ Bu modul vazifalari topshirilgan.` (no link, no button needed)
-- **If the student's group has no topic configured for this module:**
-  Keep the existing `t.hwTopicMissing` warning so admins/teachers still see the misconfiguration signal.
+- `profiles.group_id` column exists and is populated.
+- CSV importer (`admin-create-students` edge function) already reads `group_name`, auto-creates the group if missing, and assigns the student to it.
+- The current CSV template (`CSV_TEMPLATE` in `AdminUsers.tsx`) already has a `group_name` column with examples.
+- `groups` are already loaded into the page state (`groups`, used by the bulk-move dropdown).
+- Each user row already carries `group_id` (hydrated from profiles in `reload()`).
 
-This keeps the message scannable, removes the broken-looking URLs, and relies on the existing inline buttons (which the user confirmed are working) as the single submission entry point.
+## Technical changes
 
-## Scope of changes
+All edits are in **`src/pages/admin/AdminUsers.tsx`** — no DB migration, no edge-function change.
 
-Single file: `supabase/functions/telegram-bot-webhook/index.ts`
+1. **Group lookup map**: derive `groupNameById` from the existing `groups` state (`Map<string, string>`).
 
-1. **Strings (in each `T[locale]` block — uz / ru / en):**
-   - Remove `hwTopicLine`.
-   - Add `hwSubmitHint(moduleNum, taskNum)` → e.g. uz: `👇 Topshirish uchun pastdagi "📤 Topshirish — M${m}·V${t}" tugmasini bosing.`
-   - Add `hwModuleAllDone` → uz: `✅ Bu modul vazifalari topshirilgan.`
-   - Keep `hwTopicMissing` as-is.
+2. **Filter state**: add `const [groupFilter, setGroupFilter] = useState<string>("all")` where value is `"all"`, `"none"`, or a group id. Extend the `filtered` `useMemo` to apply it.
 
-2. **`buildHomeworkMessage` (around line 1032–1033):**
-   Replace the current `lines.push(topic ? t.hwTopicLine(topic) : t.hwTopicMissing);` with logic:
-   - Compute `ungraded = m.arr.filter(a => !(subMap.get(a.id)?.score != null))`.
-   - If `!topic && groupId` → push `t.hwTopicMissing`.
-   - Else if `ungraded.length === 0` → push `t.hwModuleAllDone`.
-   - Else → push `t.hwSubmitHint(m.position + 1, ungraded[0].task_number || 1)` (points at the first unsubmitted task; the buttons cover all of them).
+3. **Filter UI**: add a `<Select>` next to Status/Role filters, populated from `groups` plus an "All groups" and "No group" entry.
 
-3. No DB, schema, button, or callback changes — only message text.
+4. **Group column** in the desktop `<table>`: insert `<th>Group</th>` after Role (or before Status) and a `<td>` rendering `groupNameById.get(u.group_id) ?? "—"`. Update the `colSpan={10}` placeholders to `11`.
+
+5. **Group line on mobile cards**: add a small line showing the group name when present.
+
+6. **Export CSV button**: new toolbar button next to "Import CSV". Implementation:
+   - Builds rows from `filtered` (so the group filter scopes the export).
+   - Columns match the import template exactly: `name,last_name,email,password,telegram_user_id,telegram_username,role,group_name`.
+   - `password` is left blank (we don't expose stored passwords).
+   - Uses Papa.unparse for proper escaping.
+   - Filename: `users_<groupName-or-all>_<YYYY-MM-DD>.csv`.
+
+7. **Localization**: add `admin.users.headers.group`, `admin.users.allGroups`, `admin.users.noGroup`, `admin.users.exportCsv` keys to `src/i18n/locales/{uz,ru,en}.json` with sensible defaults.
 
 ## Out of scope
 
-- Submission flow itself, intent matching, anonymous-admin handling, teacher DMs — all unchanged.
-- Web UI (`HomeworkSection.tsx`, `HomeworkProfileSection.tsx`) — unchanged; the URL still belongs there as a real button.
-
-## Deploy / verify
-
-After editing, redeploy `telegram-bot-webhook` and tap the **📝 Mening vazifalarim** button in the bot to confirm the new hint lines render and the existing **📤 Topshirish — M·V** buttons still work.
+- The CSV template content already has `group_name` — no template change needed.
+- No DB schema changes.
+- Teacher view (`staff_list_students`) already returns the same shape; the Group column will work for them too if they have access (read-only filter).
