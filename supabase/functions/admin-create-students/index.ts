@@ -196,16 +196,13 @@ Deno.serve(async (req) => {
       const tgUserNorm = (s.telegram_username || "").trim().replace(/^@/, "").toLowerCase();
       const tgUserSafe = sanitizeForEmailLocal(tgUserNorm);
       let synthesizedEmail = "";
-      let synthesizedFrom: "telegram_user_id" | "telegram_username" | "name_hash" | "" = "";
       // If no email but we have a telegram id or username, synthesize a placeholder so auth.admin.createUser accepts it.
       // Login will happen via the Telegram bot which matches profiles by telegram_id OR telegram_username.
       if (!email) {
         if (tgIdNum) {
           synthesizedEmail = `tg-${tgIdNum}@telegram.local`;
-          synthesizedFrom = "telegram_user_id";
         } else if (tgUserSafe) {
           synthesizedEmail = `tg-${tgUserSafe}@telegram.local`;
-          synthesizedFrom = "telegram_username";
         } else {
           // Last-resort deterministic placeholder so rows with only a non-ASCII name still import.
           // Use a hash, never the raw name, because names are not unique and collide in Auth.
@@ -213,7 +210,6 @@ Deno.serve(async (req) => {
           if (seed.replace(/\|/g, "").length > 0) {
             const h = await shortHash(seed);
             synthesizedEmail = `tg-anon-${h}@telegram.local`;
-            synthesizedFrom = "name_hash";
           }
         }
         email = synthesizedEmail;
