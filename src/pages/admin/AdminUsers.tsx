@@ -74,7 +74,7 @@ export default function AdminUsers() {
   const isTeacher = role === "teacher";
   const isAdmin = role === "admin";
   const [users, setUsers] = useState<UserRow[]>([]);
-  const [groups, setGroups] = useState<{ id: string; name: string }[]>([]);
+  const [groups, setGroups] = useState<{ id: string; name: string; teacher_id?: string | null }[]>([]);
   const [bulkGroupId, setBulkGroupId] = useState<string>("");
   const [bulkRole, setBulkRole] = useState<{ user: UserRow; newRole: RoleName } | null>(null);
   const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
@@ -104,6 +104,9 @@ export default function AdminUsers() {
   const [newRole, setNewRole] = useState<"student" | "teacher" | "admin">("student");
   const [newCourses, setNewCourses] = useState<Set<string>>(new Set());
   const [newGroupId, setNewGroupId] = useState<string>("none");
+  const [newTeacherGroupIds, setNewTeacherGroupIds] = useState<Set<string>>(new Set());
+  const [editTeacherGroupIds, setEditTeacherGroupIds] = useState<Set<string> | null>(null);
+  const [savingTeacherGroups, setSavingTeacherGroups] = useState(false);
   const [sendInvite, setSendInvite] = useState(true);
   // CSV
   const [openCsv, setOpenCsv] = useState(false);
@@ -174,7 +177,7 @@ export default function AdminUsers() {
     setUsers(rows as UserRow[]);
     const [{ data: cs }, { data: gs }] = await Promise.all([
       supabase.from("courses").select("id, title").order("title"),
-      supabase.from("groups").select("id, name").order("name"),
+      supabase.from("groups").select("id, name, teacher_id").order("name"),
     ]);
     setCourses(cs || []);
     setGroups(gs || []);
@@ -213,6 +216,57 @@ export default function AdminUsers() {
   }, [groups]);
 
   const activeGroupIds = useMemo(() => new Set(groups.map((g) => g.id)), [groups]);
+
+  const groupsByTeacher = useMemo(() => {
+    const m = new Map<string, { id: string; name: string }[]>();
+    groups.forEach((g) => {
+      if (g.teacher_id) {
+        const arr = m.get(g.teacher_id) || [];
+        arr.push({ id: g.id, name: g.name });
+        m.set(g.teacher_id, arr);
+      }
+    });
+    return m;
+  }, [groups]);
+
+  const teacherNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    users.forEach((u) => {
+      if (u.role_name === "teacher") {
+        m.set(u.id, [u.name, u.last_name].filter(Boolean).join(" ") || u.email);
+      }
+    });
+    return m;
+  }, [users]);
+
+  const saveTeacherGroups = async (teacherId: string, selectedIds: Set<string>): Promise<boolean> => {
+    setSavingTeacherGroups(true);
+    try {
+      const before = (groupsByTeacher.get(teacherId) || []).map((g) => g.id);
+      const after = Array.from(selectedIds);
+      const toAttach = after.filter((id) => !before.includes(id));
+      const toDetach = before.filter((id) => !after.includes(id));
+      if (toAttach.length) {
+        const { error } = await (supabase.from("groups") as any)
+          .update({ teacher_id: teacherId }).in("id", toAttach);
+        if (error) { toast.error(error.message); return false; }
+      }
+      if (toDetach.length) {
+        const { error } = await (supabase.from("groups") as any)
+          .update({ teacher_id: null }).in("id", toDetach);
+        if (error) { toast.error(error.message); return false; }
+      }
+      logAction("update_profile", {
+        target_user_id: teacherId,
+        details: { action: "teacher_groups_updated", before, after },
+      });
+      toast.success(`Ustoz ${after.length} ta guruhga biriktirildi`);
+      return true;
+    } finally {
+      setSavingTeacherGroups(false);
+    }
+  };
+
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -349,9 +403,19 @@ export default function AdminUsers() {
       } else {
         toast.success(`${label} yangilandi va guruhga qo'shildi`);
       }
+      // If creating a teacher with multi-group selection, assign groups.teacher_id
+      const createdId = (r as any).userId;
+      if (newRole === "teacher" && createdId && newTeacherGroupIds.size > 0) {
+        const ids = Array.from(newTeacherGroupIds);
+        const { error: gErr } = await (supabase.from("groups") as any)
+          .update({ teacher_id: createdId }).in("id", ids);
+        if (gErr) toast.error(gErr.message);
+        else logAction("update_profile", { target_user_id: createdId, details: { action: "teacher_groups_updated", before: [], after: ids } });
+      }
       setOpenAdd(false);
       setNewName(""); setNewLastName(""); setNewEmail(""); setNewPassword(randPassword());
       setNewTg(""); setNewTgId(""); setNewRole("student"); setNewCourses(new Set()); setNewGroupId("none");
+      setNewTeacherGroupIds(new Set());
       reload();
     } else {
       toast.error(r?.error || res?.error || t("admin.users.toasts.createFailed"));
@@ -943,7 +1007,7 @@ export default function AdminUsers() {
                   <th className="text-left p-3">{t("admin.users.headers.email")}</th>
                   <th className="text-left p-3">{t("admin.users.headers.telegram")}</th>
                   <th className="text-left p-3">{t("admin.users.headers.role")}</th>
-                  <th className="text-left p-3">{t("admin.users.headers.group", { defaultValue: "Group" })}</th>
+                  <th className="text-left p-3">{roleFilter === "teacher" ? "Guruhlar" : t("admin.users.headers.group", { defaultValue: "Group" })}</th>
                   <th className="text-left p-3">{t("admin.users.headers.status")}</th>
                   <th className="text-left p-3">{t("admin.users.headers.courses")}</th>
                   <th className="text-left p-3">{t("admin.users.headers.lastLogin")}</th>
@@ -989,7 +1053,11 @@ export default function AdminUsers() {
                         )}
                       </div>
                     </td>
-                    <td className="p-3 text-xs">{u.group_id ? <Badge variant="secondary">{(u as any).group_name || groupNameById.get(u.group_id) || "—"}</Badge> : <span className="text-muted-foreground">—</span>}</td>
+                    <td className="p-3 text-xs">{u.role_name === "teacher" ? (() => {
+                      const tg = groupsByTeacher.get(u.id) || [];
+                      if (tg.length === 0) return <span className="text-muted-foreground">—</span>;
+                      return <Badge variant="secondary" title={tg.map((x) => x.name).join(", ")}>{tg.length} ta guruh</Badge>;
+                    })() : (u.group_id ? <Badge variant="secondary">{(u as any).group_name || groupNameById.get(u.group_id) || "—"}</Badge> : <span className="text-muted-foreground">—</span>)}</td>
                     <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : u.status === "archived" ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-destructive/10 text-destructive"}`}>{u.status === "active" ? t("admin.users.active") : u.status === "archived" ? "Arxiv" : t("admin.users.inactive")}</span></td>
                     <td className="p-3 text-xs text-muted-foreground">{(enrollMap[u.id]?.size) || 0}</td>
                     <td className="p-3 text-xs text-muted-foreground">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}</td>
@@ -1054,9 +1122,9 @@ export default function AdminUsers() {
                 </SelectContent>
               </Select>
             </div>
-            {newRole !== "admin" && (
+            {newRole === "student" && (
               <div className="space-y-1.5">
-                <Label>{newRole === "teacher" ? "Mas'ul guruh" : t("admin.users.group", { defaultValue: "Group" })}</Label>
+                <Label>{t("admin.users.group", { defaultValue: "Group" })}</Label>
                 <Select value={newGroupId} onValueChange={setNewGroupId}>
                   <SelectTrigger><SelectValue placeholder={t("admin.users.noGroup", { defaultValue: "No group" })} /></SelectTrigger>
                   <SelectContent>
@@ -1066,9 +1134,41 @@ export default function AdminUsers() {
                     ))}
                   </SelectContent>
                 </Select>
-                {newRole === "teacher" && (
-                  <p className="text-xs text-muted-foreground">Yangi guruhga biriktirish eski guruhni o'zgartirmaydi</p>
-                )}
+              </div>
+            )}
+            {newRole === "teacher" && (
+              <div className="space-y-1.5">
+                <Label>Mas'ul guruhlar</Label>
+                <p className="text-xs text-muted-foreground">Bir ustozga bir nechta guruh biriktirilishi mumkin.</p>
+                <div className="space-y-1 max-h-40 overflow-y-auto border rounded-md p-2">
+                  {groups.length === 0 && <p className="text-xs text-muted-foreground">Guruh topilmadi</p>}
+                  {groups.map((g) => {
+                    const otherTeacherId = g.teacher_id || null;
+                    const otherTeacherName = otherTeacherId ? teacherNameById.get(otherTeacherId) : null;
+                    return (
+                      <label key={g.id} className="flex items-start gap-2 text-sm cursor-pointer">
+                        <Checkbox
+                          className="mt-0.5"
+                          checked={newTeacherGroupIds.has(g.id)}
+                          onCheckedChange={(v) => {
+                            if (v && otherTeacherName) {
+                              if (!confirm(`Bu guruh hozir ${otherTeacherName} ga biriktirilgan. Almashtirilsinmi?`)) return;
+                            }
+                            const s = new Set(newTeacherGroupIds);
+                            if (v) s.add(g.id); else s.delete(g.id);
+                            setNewTeacherGroupIds(s);
+                          }}
+                        />
+                        <span className="flex-1">
+                          {g.name}
+                          {otherTeacherName && (
+                            <span className="text-xs text-amber-600 dark:text-amber-400 ml-2">({otherTeacherName})</span>
+                          )}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
             )}
             <div className="space-y-1.5">
@@ -1321,7 +1421,7 @@ export default function AdminUsers() {
       </Dialog>
 
       {/* Manage drawer */}
-      <Sheet open={!!manageUser} onOpenChange={(o) => !o && setManageUser(null)}>
+      <Sheet open={!!manageUser} onOpenChange={(o) => { if (!o) { setManageUser(null); setEditTeacherGroupIds(null); } }}>
         <SheetContent className="w-full sm:max-w-md overflow-y-auto">
           {manageUser && (
             <>
@@ -1415,6 +1515,62 @@ export default function AdminUsers() {
                     </SelectContent>
                   </Select>
                 </div>
+                {manageUser.role_name === "teacher" && (() => {
+                  const current = editTeacherGroupIds ?? new Set((groupsByTeacher.get(manageUser.id) || []).map((g) => g.id));
+                  const dirty = editTeacherGroupIds !== null;
+                  return (
+                    <div className="space-y-1.5">
+                      <Label>Mas'ul guruhlar</Label>
+                      <p className="text-xs text-muted-foreground">Bir ustozga bir nechta guruh biriktirilishi mumkin.</p>
+                      <div className="space-y-1 max-h-48 overflow-y-auto border rounded-md p-2">
+                        {groups.map((g) => {
+                          const checked = current.has(g.id);
+                          const otherTeacherId = g.teacher_id && g.teacher_id !== manageUser.id ? g.teacher_id : null;
+                          const otherTeacherName = otherTeacherId ? teacherNameById.get(otherTeacherId) : null;
+                          return (
+                            <label key={g.id} className="flex items-start gap-2 text-sm cursor-pointer">
+                              <Checkbox
+                                className="mt-0.5"
+                                checked={checked}
+                                onCheckedChange={(v) => {
+                                  if (v && otherTeacherName) {
+                                    if (!confirm(`Bu guruh hozir ${otherTeacherName} ga biriktirilgan. Almashtirilsinmi?`)) return;
+                                  }
+                                  const next = new Set(current);
+                                  if (v) next.add(g.id); else next.delete(g.id);
+                                  setEditTeacherGroupIds(next);
+                                }}
+                              />
+                              <span className="flex-1">
+                                {g.name}
+                                {otherTeacherName && (
+                                  <span className="text-xs text-amber-600 dark:text-amber-400 ml-2">({otherTeacherName})</span>
+                                )}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      {dirty && (
+                        <div className="flex gap-2 pt-1">
+                          <Button
+                            size="sm"
+                            disabled={savingTeacherGroups}
+                            onClick={async () => {
+                              const ok = await saveTeacherGroups(manageUser.id, current);
+                              if (ok) { setEditTeacherGroupIds(null); reload(); }
+                            }}
+                          >
+                            {savingTeacherGroups ? "Saqlanmoqda…" : "Saqlash"}
+                          </Button>
+                          <Button size="sm" variant="outline" disabled={savingTeacherGroups} onClick={() => setEditTeacherGroupIds(null)}>
+                            Bekor
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div className="space-y-1.5">
                   <Label>{t("admin.users.headers.status")}</Label>
                   <Select value={manageUser.status} onValueChange={(v) => setStatus(manageUser, v as any)}>
