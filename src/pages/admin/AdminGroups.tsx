@@ -455,6 +455,9 @@ function GroupFormDialog({
 
 function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => void }) {
   const [students, setStudents] = useState<ProfileLite[]>([]);
+  const [loginStats, setLoginStats] = useState<{ logged: number; total: number }>({ logged: 0, total: 0 });
+  const [includeArchived, setIncludeArchived] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
@@ -469,9 +472,47 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
       .select("id,name,email,telegram_username,telegram_id,group_id")
       .eq("group_id", group.id);
     setStudents((data as any[]) || []);
+    const { data: ls } = await supabase.rpc("admin_group_login_stats" as any);
+    const row = ((ls as any[]) || []).find((r: any) => r.group_id === group.id);
+    setLoginStats({ logged: row?.logged_in_count || 0, total: row?.total_active || 0 });
     setLoading(false);
   };
   useEffect(() => { reload(); }, [group.id]);
+
+  const exportCsvWithLogins = async () => {
+    setExporting(true);
+    try {
+      const { data, error } = await supabase.rpc("admin_export_group_csv" as any, { _group_id: group.id, _include_archived: includeArchived });
+      if (error) throw error;
+      const rows = (data as any[]) || [];
+      const headers = ["name","last_name","email","telegram_user_id","telegram_username","role","group_name","first_login_at","last_login_at","has_logged_in","lessons_completed","homework_avg","status","created_at"];
+      const escape = (v: unknown) => {
+        const s = v === null || v === undefined ? "" : String(v);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const csv = [headers.join(","), ...rows.map((r: any) => headers.map((h) => escape(r[h])).join(","))].join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `group_${group.name.replace(/\s+/g, "_")}_logins.csv`; a.click();
+      URL.revokeObjectURL(url);
+      try {
+        const { data: u } = await supabase.auth.getUser();
+        await supabase.from("admin_actions" as any).insert({
+          actor_user_id: u.user?.id,
+          action: "exported_group_csv",
+          target_resource_type: "group",
+          target_resource_id: group.id,
+          details: { row_count: rows.length, has_login_data: true },
+        });
+      } catch {}
+      toast.success(`${rows.length} qator eksport qilindi`);
+    } catch (e: any) {
+      toast.error(e?.message || "Eksport xatosi");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const remove = async (id: string) => {
     const { error } = await supabase.from("profiles").update({ group_id: null }).eq("id", id);
