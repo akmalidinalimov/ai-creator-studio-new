@@ -9,6 +9,9 @@ verify_jwt = true
 [functions.admin-create-students]
 verify_jwt = true
 
+[functions.admin-merge-duplicates]
+verify_jwt = true
+
 [functions.lesson-video-url]
 verify_jwt = true
 
