@@ -80,9 +80,11 @@ export default function AdminUsers() {
   const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
   const [enrollMap, setEnrollMap] = useState<Record<string, Set<string>>>({});
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("active");
   const [roleFilter, setRoleFilter] = useState<string>("all");
   const [groupFilter, setGroupFilter] = useState<string>("all");
+  const [orphansOnly, setOrphansOnly] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState<{ ids: string[]; mode: "archive" | "unarchive" } | null>(null);
   const [loading, setLoading] = useState(true);
   // Selection (for bulk actions)
   const [selected, setSelected] = useState<Set<string>>(new Set());
