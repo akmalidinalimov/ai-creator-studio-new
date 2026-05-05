@@ -119,7 +119,7 @@ export default function AdminDashboard() {
       const inScope = (uid: string) => !isTeacher || visibleSet.has(uid);
 
       // Top stats — total scoped students
-      const totalUsers = isTeacher ? visibleIds.length : (await supabase.from("profiles").select("id", { count: "exact", head: true })).count || 0;
+      const totalUsers = isTeacher ? visibleIds.length : (await supabase.from("profiles").select("id", { count: "exact", head: true }).eq("status", "active")).count || 0;
 
       const events30 = isTeacher
         ? ((await supabase.rpc("staff_recent_auth_events", { _since: since30 })).data || [])

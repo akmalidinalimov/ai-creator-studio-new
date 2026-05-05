@@ -200,10 +200,11 @@ async function runModuleComplete(admin: any, templates: any) {
   for (const q of queue || []) {
     const { data: p } = await admin
       .from("profiles")
-      .select("id, name, telegram_id, preferred_locale, preferred_language, tashkent_offset_minutes")
+      .select("id, name, telegram_id, preferred_locale, preferred_language, tashkent_offset_minutes, status")
       .eq("id", q.profile_id)
       .maybeSingle();
     if (!p?.telegram_id) { skipped++; continue; }
+    if ((p as any).status === "archived") { skipped++; continue; }
     // Quiet hours: defer (don't mark sent)
     const hr = localHour(p.tashkent_offset_minutes ?? 300);
     if (hr < 8 || hr >= 22) { skipped++; continue; }

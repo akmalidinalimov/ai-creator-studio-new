@@ -26,6 +26,7 @@ Deno.serve(async (req) => {
     .from("profiles")
     .select("id, name, telegram_id, preferred_language, digest_opt_in")
     .eq("digest_opt_in", true)
+    .eq("status", "active")
     .not("telegram_id", "is", null);
 
   let sent = 0, skipped = 0, errors = 0;

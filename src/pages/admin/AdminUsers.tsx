@@ -28,7 +28,7 @@ interface UserRow {
   name: string | null;
   last_name?: string | null;
   avatar_url: string | null;
-  status: "active" | "inactive";
+  status: "active" | "inactive" | "archived";
   telegram_username: string | null;
   telegram_id: number | null;
   created_at: string;
@@ -36,6 +36,7 @@ interface UserRow {
   is_admin: boolean;
   role_name?: RoleName;
   group_id?: string | null;
+  archived_at?: string | null;
 }
 
 interface CsvRow {
@@ -79,9 +80,11 @@ export default function AdminUsers() {
   const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
   const [enrollMap, setEnrollMap] = useState<Record<string, Set<string>>>({});
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("active");
   const [roleFilter, setRoleFilter] = useState<string>("all");
   const [groupFilter, setGroupFilter] = useState<string>("all");
+  const [orphansOnly, setOrphansOnly] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState<{ ids: string[]; mode: "archive" | "unarchive" } | null>(null);
   const [loading, setLoading] = useState(true);
   // Selection (for bulk actions)
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -181,6 +184,8 @@ export default function AdminUsers() {
     return m;
   }, [groups]);
 
+  const activeGroupIds = useMemo(() => new Set(groups.map((g) => g.id)), [groups]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return users.filter((u) => {
@@ -194,6 +199,9 @@ export default function AdminUsers() {
           return false;
         }
       }
+      if (orphansOnly) {
+        if (u.group_id && activeGroupIds.has(u.group_id)) return false;
+      }
       if (q) {
         return (
           (u.name || "").toLowerCase().includes(q) ||
@@ -205,9 +213,35 @@ export default function AdminUsers() {
       }
       return true;
     });
-  }, [users, search, statusFilter, roleFilter, groupFilter]);
+  }, [users, search, statusFilter, roleFilter, groupFilter, orphansOnly, activeGroupIds]);
 
-  const exportFilteredCsv = () => {
+  const counts = useMemo(() => {
+    let active = 0, archived = 0;
+    for (const u of users) {
+      if (u.status === "archived") archived++;
+      else active++;
+    }
+    return { all: users.length, active, archived };
+  }, [users]);
+
+  const exportFilteredCsv = async () => {
+    // Fetch fresh group_id mapping joined with group name to guarantee group_name in export
+    const ids = filtered.map((u) => u.id);
+    const groupOf = new Map<string, string>();
+    if (ids.length) {
+      const PAGE = 1000;
+      for (let i = 0; i < ids.length; i += PAGE) {
+        const slice = ids.slice(i, i + PAGE);
+        const { data } = await supabase
+          .from("profiles")
+          .select("id, group_id, groups:group_id(name)")
+          .in("id", slice);
+        (data || []).forEach((p: any) => {
+          const gname = p?.groups?.name || (p.group_id ? groupNameById.get(p.group_id) : "") || "";
+          if (gname) groupOf.set(p.id, gname);
+        });
+      }
+    }
     const rows = filtered.map((u) => ({
       name: u.name || "",
       last_name: u.last_name || "",
@@ -216,9 +250,10 @@ export default function AdminUsers() {
       telegram_user_id: u.telegram_id ?? "",
       telegram_username: u.telegram_username || "",
       role: u.role_name || "student",
-      group_name: u.group_id ? (groupNameById.get(u.group_id) || "") : "",
+      group_name: groupOf.get(u.id) || (u.group_id ? (groupNameById.get(u.group_id) || "") : ""),
+      status: u.status,
     }));
-    const csv = Papa.unparse(rows, { columns: ["name","last_name","email","password","telegram_user_id","telegram_username","role","group_name"] });
+    const csv = Papa.unparse(rows, { columns: ["name","last_name","email","password","telegram_user_id","telegram_username","role","group_name","status"] });
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -567,6 +602,22 @@ export default function AdminUsers() {
     reload();
   };
 
+  const bulkArchive = async (ids: string[], mode: "archive" | "unarchive") => {
+    if (ids.length === 0) return;
+    const patch = mode === "archive"
+      ? { status: "archived" as any, archived_at: new Date().toISOString() }
+      : { status: "active" as any, archived_at: null };
+    const { error } = await (supabase.from("profiles") as any).update(patch).in("id", ids);
+    if (error) return toast.error(error.message);
+    logAction(mode === "archive" ? "archived_users" : "unarchived_users", { details: { profile_ids: ids, count: ids.length } });
+    toast.success(mode === "archive"
+      ? `${ids.length} ta talaba arxivlandi`
+      : `${ids.length} ta talaba qayta faollashtirildi`);
+    setSelected(new Set());
+    setConfirmArchive(null);
+    reload();
+  };
+
   const updateProfile = async (user: UserRow, patch: Record<string, any>) => {
     const { error } = await (supabase.from("profiles") as any).update(patch).eq("id", user.id);
     if (error) return toast.error(error.message);
@@ -615,10 +666,16 @@ export default function AdminUsers() {
         <div className="flex items-end justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-3xl font-semibold tracking-tight">{t("admin.users.title")}</h1>
-            <p className="text-muted-foreground mt-1">{t("admin.users.subtitle", { total: users.length, admins: users.filter(u => u.is_admin).length })}</p>
+            <p className="text-muted-foreground mt-1">
+              {statusFilter === "archived"
+                ? `Arxiv: ${counts.archived} • Faol: ${counts.active} • Jami: ${counts.all}`
+                : statusFilter === "active"
+                ? `Faol: ${counts.active} • Arxiv: ${counts.archived} • Jami: ${counts.all}`
+                : `Jami: ${counts.all} (Faol: ${counts.active}, Arxiv: ${counts.archived})`}
+            </p>
           </div>
           <div className="flex gap-2 flex-wrap">
-            {isAdmin && selected.size > 0 && (
+            {isAdmin && selected.size > 0 && statusFilter !== "archived" && (
               <Select value={bulkGroupId} onValueChange={(v) => { setBulkGroupId(v); bulkAssignGroup(v); }}>
                 <SelectTrigger className="w-[200px] h-9 text-xs">
                   <SelectValue placeholder={t("admin.users.bulkMoveTo", { defaultValue: "Move {{n}} to group…", n: selected.size })} />
@@ -629,6 +686,16 @@ export default function AdminUsers() {
                   ))}
                 </SelectContent>
               </Select>
+            )}
+            {isAdmin && selected.size > 0 && statusFilter !== "archived" && (
+              <Button variant="outline" size="sm" onClick={() => setConfirmArchive({ ids: Array.from(selected), mode: "archive" })}>
+                {`Arxivlash (${selected.size})`}
+              </Button>
+            )}
+            {isAdmin && selected.size > 0 && statusFilter === "archived" && (
+              <Button variant="outline" size="sm" onClick={() => setConfirmArchive({ ids: Array.from(selected), mode: "unarchive" })}>
+                {`Qayta faollashtirish (${selected.size})`}
+              </Button>
             )}
             {selected.size > 0 && (
               <Button variant="outline" size="sm" onClick={() => {
@@ -645,19 +712,36 @@ export default function AdminUsers() {
           </div>
         </div>
 
+        {/* Status chips */}
+        <div className="flex flex-wrap gap-2 items-center">
+          {(["active", "all", "archived"] as const).map((s) => (
+            <Button
+              key={s}
+              variant={statusFilter === s ? "default" : "outline"}
+              size="sm"
+              onClick={() => { setStatusFilter(s); setSelected(new Set()); }}
+            >
+              {s === "active" ? `Faol (${counts.active})` : s === "archived" ? `Arxiv (${counts.archived})` : `Hammasi (${counts.all})`}
+            </Button>
+          ))}
+          {isAdmin && (
+            <label className="flex items-center gap-2 text-xs cursor-pointer ml-2">
+              <Checkbox checked={orphansOnly} onCheckedChange={(v) => setOrphansOnly(!!v)} />
+              Faqat guruhsiz/eski talabalar
+            </label>
+          )}
+          {isAdmin && orphansOnly && filtered.length > 0 && statusFilter !== "archived" && (
+            <Button size="sm" variant="outline" onClick={() => setConfirmArchive({ ids: filtered.map((u) => u.id), mode: "archive" })}>
+              {`Tanlanganlarni arxivlash (${filtered.length})`}
+            </Button>
+          )}
+        </div>
+
         <div className="flex flex-wrap gap-2 items-center">
           <div className="relative flex-1 min-w-[220px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input placeholder={t("admin.users.searchPh")} value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
           </div>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("admin.users.allStatus")}</SelectItem>
-              <SelectItem value="active">{t("admin.users.active")}</SelectItem>
-              <SelectItem value="inactive">{t("admin.users.inactive")}</SelectItem>
-            </SelectContent>
-          </Select>
           <Select value={roleFilter} onValueChange={setRoleFilter}>
             <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -677,6 +761,7 @@ export default function AdminUsers() {
             </SelectContent>
           </Select>
         </div>
+
 
         {/* Mobile: card list */}
         <div className="md:hidden space-y-2">
@@ -708,8 +793,8 @@ export default function AdminUsers() {
                   )}
                   <div className="flex items-center justify-between mt-2 gap-2">
                     <div className="flex items-center gap-2 text-[11px]">
-                      <span className={`px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : "bg-destructive/10 text-destructive"}`}>
-                        {u.status === "active" ? t("admin.users.active") : t("admin.users.inactive")}
+                      <span className={`px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : u.status === "archived" ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-destructive/10 text-destructive"}`}>
+                        {u.status === "active" ? t("admin.users.active") : u.status === "archived" ? "Arxiv" : t("admin.users.inactive")}
                       </span>
                       <span className="text-muted-foreground">{(enrollMap[u.id]?.size) || 0} {t("admin.users.headers.courses").toLowerCase()}</span>
                       <span className="text-muted-foreground">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}</span>
@@ -785,7 +870,7 @@ export default function AdminUsers() {
                       )}
                     </td>
                     <td className="p-3 text-xs">{u.group_id ? <Badge variant="secondary">{groupNameById.get(u.group_id) || "—"}</Badge> : <span className="text-muted-foreground">—</span>}</td>
-                    <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : "bg-destructive/10 text-destructive"}`}>{u.status === "active" ? t("admin.users.active") : t("admin.users.inactive")}</span></td>
+                    <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : u.status === "archived" ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-destructive/10 text-destructive"}`}>{u.status === "active" ? t("admin.users.active") : u.status === "archived" ? "Arxiv" : t("admin.users.inactive")}</span></td>
                     <td className="p-3 text-xs text-muted-foreground">{(enrollMap[u.id]?.size) || 0}</td>
                     <td className="p-3 text-xs text-muted-foreground">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}</td>
                     <td className="p-3">{isAdmin && <Button variant="ghost" size="sm" onClick={() => setManageUser(u)}>{t("admin.users.manage")}</Button>}</td>
@@ -1280,6 +1365,29 @@ export default function AdminUsers() {
           <AlertDialogFooter>
             <AlertDialogCancel>{t("admin.users.cancel")}</AlertDialogCancel>
             <AlertDialogAction onClick={() => confirmDelete && removeUser(confirmDelete)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">{t("admin.users.remove")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!confirmArchive} onOpenChange={(o) => !o && setConfirmArchive(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmArchive?.mode === "archive"
+                ? `${confirmArchive?.ids.length} ta talabani arxivlash`
+                : `${confirmArchive?.ids.length} ta talabani qayta faollashtirish`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmArchive?.mode === "archive"
+                ? "Ularning ma'lumotlari, baholari, sertifikatlari saqlanadi. Arxivlangan talabalar dashboard, leaderboard, eslatmalar va digestdan chiqariladi (lekin botda javob berishni davom ettiradi)."
+                : "Ushbu talabalar yana barcha hisob-kitoblarga, eslatmalarga va digestga qo'shiladi."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Bekor</AlertDialogCancel>
+            <AlertDialogAction onClick={() => confirmArchive && bulkArchive(confirmArchive.ids, confirmArchive.mode)}>
+              Davom ettirish
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
