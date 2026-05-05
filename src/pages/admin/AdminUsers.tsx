@@ -136,10 +136,10 @@ export default function AdminUsers() {
       for (let i = 0; i < ids.length; i += PAGE) {
         const slice = ids.slice(i, i + PAGE);
         profPromises.push(
-          supabase.from("profiles").select("id, last_name, group_id, groups:group_id(name)").in("id", slice)
+          Promise.resolve(supabase.from("profiles").select("id, last_name, group_id, groups:group_id(name)").in("id", slice))
         );
         rolePromises.push(
-          supabase.from("user_roles").select("user_id, role").in("user_id", slice)
+          Promise.resolve(supabase.from("user_roles").select("user_id, role").in("user_id", slice))
         );
       }
       const profResults = await Promise.all(profPromises);
