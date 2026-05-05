@@ -291,6 +291,13 @@ Deno.serve(async (req) => {
             continue;
           }
         }
+        // Teacher: ensure role + assign as group teacher
+        if (s.role === "teacher") {
+          await admin.from("user_roles").upsert({ user_id: existingId, role: "teacher" } as any, { onConflict: "user_id,role" });
+          if (resolvedGroupId) await admin.from("groups").update({ teacher_id: existingId }).eq("id", resolvedGroupId);
+        } else if (s.role === "admin") {
+          await admin.from("user_roles").upsert({ user_id: existingId, role: "admin" } as any, { onConflict: "user_id,role" });
+        }
         const status = alreadyInTargetGroup ? "skipped_already_in_group" : "updated";
         results.push({ email, status, userId: existingId, row_index, identifier_used });
         auditLog(row_index, identifier_used, alreadyInTargetGroup ? "skipped_already_in_group" : "matched");
