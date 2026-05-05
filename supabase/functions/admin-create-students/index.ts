@@ -133,7 +133,11 @@ Deno.serve(async (req) => {
     }
 
     // Resolve / auto-create groups by name (case-insensitive). Cache to avoid duplicate work.
+    // v3.14.14: track which groups we auto-created so we can audit-log them and surface them
+    // in the toast as "(yangi guruh yaratildi)".
     const groupCache = new Map<string, string>(); // lowerName -> id
+    const groupNameById = new Map<string, string>(); // id -> canonical name
+    const autoCreatedGroups: Array<{ id: string; name: string }> = [];
     let defaultCourseForGroup: string | null = null;
     const resolveGroupId = async (rawName?: string): Promise<string | null> => {
       const nm = (rawName || "").trim();
@@ -141,16 +145,40 @@ Deno.serve(async (req) => {
       const key = nm.toLowerCase();
       if (groupCache.has(key)) return groupCache.get(key)!;
       const { data: existing } = await admin.from("groups").select("id,name").ilike("name", nm).maybeSingle();
-      if (existing?.id) { groupCache.set(key, existing.id); return existing.id; }
+      if (existing?.id) {
+        groupCache.set(key, existing.id);
+        groupNameById.set(existing.id, (existing as any).name || nm);
+        return existing.id;
+      }
       if (defaultCourseForGroup === null) {
-        const { data: cs } = await admin.from("courses").select("id").limit(2);
-        defaultCourseForGroup = (cs && cs.length === 1) ? cs[0].id : "";
+        // Prefer caller-supplied courseId, then explicit default-for-signup, then sole course.
+        if (courseId) {
+          defaultCourseForGroup = courseId;
+        } else {
+          const { data: dc } = await admin.from("courses").select("id").eq("is_default_for_signup", true).maybeSingle();
+          if (dc?.id) defaultCourseForGroup = dc.id;
+          else {
+            const { data: cs } = await admin.from("courses").select("id").limit(2);
+            defaultCourseForGroup = (cs && cs.length === 1) ? cs[0].id : "";
+          }
+        }
       }
       const { data: ins, error: insErr } = await admin.from("groups")
         .insert({ name: nm, course_id: defaultCourseForGroup || null, teacher_id: null })
-        .select("id").single();
+        .select("id,name").single();
       if (insErr || !ins) { console.error("group create failed", nm, insErr); return null; }
       groupCache.set(key, ins.id);
+      groupNameById.set(ins.id, (ins as any).name || nm);
+      autoCreatedGroups.push({ id: ins.id, name: (ins as any).name || nm });
+      try {
+        await admin.from("admin_actions").insert({
+          actor_user_id: actorId,
+          action: "auto_created_group",
+          target_resource_type: "group",
+          target_resource_id: ins.id,
+          details: { name: nm, source: "csv_import", import_request_id: requestId },
+        });
+      } catch (e) { console.error("audit auto_created_group failed", e); }
       return ins.id;
     };
 
