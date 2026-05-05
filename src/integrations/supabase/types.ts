@@ -1497,6 +1497,7 @@ export type Database = {
       }
       profiles: {
         Row: {
+          archived_at: string | null
           avatar_url: string | null
           created_at: string
           digest_opt_in: boolean
@@ -1525,6 +1526,7 @@ export type Database = {
           weekly_goal_lessons: number | null
         }
         Insert: {
+          archived_at?: string | null
           avatar_url?: string | null
           created_at?: string
           digest_opt_in?: boolean
@@ -1553,6 +1555,7 @@ export type Database = {
           weekly_goal_lessons?: number | null
         }
         Update: {
+          archived_at?: string | null
           avatar_url?: string | null
           created_at?: string
           digest_opt_in?: boolean
@@ -2361,7 +2364,7 @@ export type Database = {
       chat_role: "user" | "assistant"
       knowledge_scope: "platform" | "course"
       knowledge_status: "pending" | "processing" | "ready" | "failed"
-      user_status: "active" | "inactive"
+      user_status: "active" | "inactive" | "archived"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -2493,7 +2496,7 @@ export const Constants = {
       chat_role: ["user", "assistant"],
       knowledge_scope: ["platform", "course"],
       knowledge_status: ["pending", "processing", "ready", "failed"],
-      user_status: ["active", "inactive"],
+      user_status: ["active", "inactive", "archived"],
     },
   },
 } as const
