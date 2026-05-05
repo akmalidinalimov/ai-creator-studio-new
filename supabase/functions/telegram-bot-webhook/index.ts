@@ -1688,8 +1688,12 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
 // =================== GRADING (teacher + admin) ===================
 
 // Returns submissions in scope for grader. teacher=group students, admin=all.
-async function gradingScopeIds(admin: any, graderId: string, isAdmin: boolean): Promise<string[] | null> {
+async function gradingScopeIds(admin: any, graderId: string, isAdmin: boolean, groupId?: string | null): Promise<string[] | null> {
   if (isAdmin) return null; // null = no scope filter
+  if (groupId) {
+    const { data } = await admin.from("profiles").select("id").eq("group_id", groupId);
+    return ((data || []) as any[]).map((r) => r.id);
+  }
   const groups = await teacherGroups(admin, graderId);
   if (!groups.length) return [];
   const { data } = await admin.from("profiles").select("id").in("group_id", groups.map((g) => g.id));
