@@ -879,26 +879,27 @@ export default function AdminUsers() {
                       {u.telegram_username && <div className="text-muted-foreground">@{u.telegram_username}</div>}
                     </td>
                     <td className="p-3">
-                      {isAdmin ? (
-                        <Select
-                          value={u.role_name || "student"}
-                          disabled={u.id === session?.user?.id}
-                          onValueChange={(v) => {
-                            const next = v as RoleName;
-                            if (next !== (u.role_name || "student")) setBulkRole({ user: u, newRole: next });
-                          }}
-                        >
-                          <SelectTrigger className="h-8 w-[130px] text-xs"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="student">Student</SelectItem>
-                            <SelectItem value="teacher">Teacher</SelectItem>
-                            <SelectItem value="admin">Admin</SelectItem>
-                            <SelectItem value="superadmin">Superadmin</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <Badge variant="secondary">{u.role_name || "student"}</Badge>
-                      )}
+                      <div className="flex flex-col items-start gap-1">
+                        {roleBadge(u.role_name)}
+                        {isAdmin && (
+                          <Select
+                            value={u.role_name || "student"}
+                            disabled={u.id === session?.user?.id}
+                            onValueChange={(v) => {
+                              const next = v as RoleName;
+                              if (next !== (u.role_name || "student")) setBulkRole({ user: u, newRole: next });
+                            }}
+                          >
+                            <SelectTrigger className="h-7 w-[120px] text-[11px]"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="student">Student</SelectItem>
+                              <SelectItem value="teacher">Teacher</SelectItem>
+                              <SelectItem value="admin">Admin</SelectItem>
+                              <SelectItem value="superadmin">Superadmin</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
+                      </div>
                     </td>
                     <td className="p-3 text-xs">{u.group_id ? <Badge variant="secondary">{(u as any).group_name || groupNameById.get(u.group_id) || "—"}</Badge> : <span className="text-muted-foreground">—</span>}</td>
                     <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : u.status === "archived" ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-destructive/10 text-destructive"}`}>{u.status === "active" ? t("admin.users.active") : u.status === "archived" ? "Arxiv" : t("admin.users.inactive")}</span></td>
