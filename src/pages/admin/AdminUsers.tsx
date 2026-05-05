@@ -715,7 +715,34 @@ export default function AdminUsers() {
     setConfirmDelete(null); setManageUser(null); reload();
   };
 
-  const toggleSelect = (id: string) => {
+  const bulkDelete = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    setBulkDeleting(true);
+    const results = await Promise.allSettled(
+      ids.map((id) =>
+        fetch(`${FN_BASE}/admin-create-students`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+          body: JSON.stringify({ userId: id }),
+        }).then(async (r) => {
+          const j = await r.json().catch(() => ({}));
+          if (j?.error) throw new Error(j.error);
+          return j;
+        }),
+      ),
+    );
+    setBulkDeleting(false);
+    const ok = results.filter((r) => r.status === "fulfilled").length;
+    const fail = results.length - ok;
+    logAction("bulk_delete_users", { details: { profile_ids: ids, count: ok, failed: fail } });
+    if (fail === 0) toast.success(`${ok} ta foydalanuvchi o'chirildi`);
+    else toast.warning(`${ok}/${ids.length} ta o'chirildi, ${fail} ta xato`);
+    setSelected(new Set());
+    setConfirmBulkDelete(null);
+    reload();
+  };
+
+
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
