@@ -795,6 +795,11 @@ export default function AdminUsers() {
                 </SelectContent>
               </Select>
             )}
+            {isAdmin && selected.size > 0 && (
+              <Button variant="destructive" size="sm" onClick={() => setConfirmBulkDelete(Array.from(selected))}>
+                <Trash2 className="h-4 w-4" /> {`O'chirish (${selected.size})`}
+              </Button>
+            )}
             {isAdmin && selected.size > 0 && statusFilter !== "archived" && (
               <Button variant="outline" size="sm" onClick={() => setConfirmArchive({ ids: Array.from(selected), mode: "archive" })}>
                 {`Arxivlash (${selected.size})`}
