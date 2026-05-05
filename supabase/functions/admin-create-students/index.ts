@@ -285,7 +285,7 @@ Deno.serve(async (req) => {
             email: fallbackEmail,
             password,
             email_confirm: true,
-            user_metadata: { name: s.name || fallbackEmail.split("@")[0], last_name: s.last_name || null },
+            user_metadata: { name: displayName || null, last_name: csvLastName || null },
           });
           if (retry.error) {
             results.push({ email, status: "error", error: retry.error.message, row_index, identifier_used });
@@ -296,9 +296,9 @@ Deno.serve(async (req) => {
           (created as any) = retry.data;
           // fall through to success path with retry.data
           const userId = retry.data.user!.id;
-          const profilePatch: Record<string, any> = { name: s.name || fallbackEmail.split("@")[0] };
-          if (s.last_name !== undefined) profilePatch.last_name = s.last_name || null;
-          if (s.telegram_username) profilePatch.telegram_username = s.telegram_username.replace(/^@/, "");
+          const profilePatch: Record<string, any> = { name: displayName || null };
+          if (csvLastName !== undefined) profilePatch.last_name = csvLastName || null;
+          if (s.telegram_username && s.telegram_username.trim()) profilePatch.telegram_username = s.telegram_username.trim();
           if (tgIdNum !== undefined) profilePatch.telegram_id = tgIdNum;
           if (resolvedGroupId) profilePatch.group_id = resolvedGroupId;
           await admin.from("profiles").update(profilePatch).eq("id", userId);
