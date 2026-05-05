@@ -608,8 +608,28 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-2xl">
         <DialogHeader><DialogTitle>Students in {group.name}</DialogTitle></DialogHeader>
-        <div className="flex gap-2">
+        {(() => {
+          const total = loginStats.total;
+          const logged = loginStats.logged;
+          const never = Math.max(0, total - logged);
+          const pct = total > 0 ? Math.round((logged / total) * 100) : 0;
+          const color = total === 0 ? "bg-muted" : logged === 0 ? "bg-rose-50 border-rose-200" : pct < 50 ? "bg-amber-50 border-amber-200" : "bg-emerald-50 border-emerald-200";
+          return (
+            <div className={`rounded border p-3 text-sm ${color}`}>
+              <div>✅ Kirgan: <b>{logged}/{total}</b> ({pct}%)</div>
+              <div className="text-xs text-muted-foreground mt-0.5">🚫 Hech qachon kirmagan: <b>{never}</b></div>
+            </div>
+          );
+        })()}
+        <div className="flex flex-wrap gap-2">
           <Button onClick={() => setOpenAdd(true)}><UserPlus className="mr-1 h-4 w-4" />+ Yangi talaba qo'shish</Button>
+          <Button variant="outline" disabled={exporting} onClick={exportCsvWithLogins}>
+            <Upload className="mr-1 h-4 w-4 rotate-180" />{exporting ? "Eksport…" : "CSV (loginlar bilan)"}
+          </Button>
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+            <Checkbox checked={includeArchived} onCheckedChange={(v) => setIncludeArchived(!!v)} />
+            Arxivni ham qo'shish
+          </label>
         </div>
         <div className="flex flex-wrap items-center gap-2 rounded border bg-muted/30 p-2">
           <input
