@@ -45,6 +45,7 @@ export default function AdminGroups() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [teachers, setTeachers] = useState<ProfileLite[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [logins, setLogins] = useState<Record<string, { logged: number; total: number }>>({});
   const [health, setHealth] = useState<Record<string, number>>({});
   const [topics, setTopics] = useState<Record<string, { configured: number; total: number }>>({});
   const [loading, setLoading] = useState(true);
@@ -75,6 +76,11 @@ export default function AdminGroups() {
       if (r.group_id) map[r.group_id] = (map[r.group_id] || 0) + 1;
     });
     setCounts(map);
+    // Per-group login stats
+    const { data: ls } = await supabase.rpc("admin_group_login_stats" as any);
+    const lmap: Record<string, { logged: number; total: number }> = {};
+    ((ls as any[]) || []).forEach((r) => { lmap[r.group_id] = { logged: r.logged_in_count || 0, total: r.total_active || 0 }; });
+    setLogins(lmap);
     // Health scores
     const ids = ((g.data as any[]) || []).map((r) => r.id);
     const health: Record<string, number> = {};
@@ -131,6 +137,7 @@ export default function AdminGroups() {
                 <TableHead>Teacher</TableHead>
                 <TableHead>Course</TableHead>
                 <TableHead>Students</TableHead>
+                <TableHead>Loggedin</TableHead>
                 <TableHead>Health</TableHead>
                 <TableHead>Topiklar</TableHead>
                 <TableHead>Default</TableHead>
@@ -139,9 +146,9 @@ export default function AdminGroups() {
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
+                <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
               ) : groups.length === 0 ? (
-                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">No groups yet.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No groups yet.</TableCell></TableRow>
               ) : groups.map((g) => {
                 const h = health[g.id] ?? 0;
                 const hColor = h >= 70 ? "bg-emerald-500" : h >= 40 ? "bg-amber-500" : "bg-rose-500";
@@ -153,6 +160,12 @@ export default function AdminGroups() {
                   <TableCell>{teacherLabel(g.teacher_id)}</TableCell>
                   <TableCell>{courseTitle(g.course_id)}</TableCell>
                   <TableCell><Badge variant="secondary">{counts[g.id] || 0}</Badge></TableCell>
+                  <TableCell>{(() => {
+                    const ll = logins[g.id] || { logged: 0, total: 0 };
+                    const pct = ll.total > 0 ? (ll.logged / ll.total) * 100 : 0;
+                    const cls = ll.total === 0 ? "bg-muted text-muted-foreground" : ll.logged === 0 ? "bg-rose-500 text-white" : pct < 50 ? "bg-amber-500 text-white" : "bg-emerald-500 text-white";
+                    return <span className={`inline-block px-2 py-0.5 rounded text-xs ${cls}`} title={`${ll.logged}/${ll.total} kirgan`}>{ll.logged}/{ll.total}</span>;
+                  })()}</TableCell>
                   <TableCell><span className={`inline-block px-2 py-0.5 rounded text-white text-xs ${hColor}`}>{h}</span></TableCell>
                   <TableCell>{(() => {
                     const tt = topics[g.id] || { configured: 0, total: 0 };
@@ -442,6 +455,9 @@ function GroupFormDialog({
 
 function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => void }) {
   const [students, setStudents] = useState<ProfileLite[]>([]);
+  const [loginStats, setLoginStats] = useState<{ logged: number; total: number }>({ logged: 0, total: 0 });
+  const [includeArchived, setIncludeArchived] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
@@ -456,9 +472,47 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
       .select("id,name,email,telegram_username,telegram_id,group_id")
       .eq("group_id", group.id);
     setStudents((data as any[]) || []);
+    const { data: ls } = await supabase.rpc("admin_group_login_stats" as any);
+    const row = ((ls as any[]) || []).find((r: any) => r.group_id === group.id);
+    setLoginStats({ logged: row?.logged_in_count || 0, total: row?.total_active || 0 });
     setLoading(false);
   };
   useEffect(() => { reload(); }, [group.id]);
+
+  const exportCsvWithLogins = async () => {
+    setExporting(true);
+    try {
+      const { data, error } = await supabase.rpc("admin_export_group_csv" as any, { _group_id: group.id, _include_archived: includeArchived });
+      if (error) throw error;
+      const rows = (data as any[]) || [];
+      const headers = ["name","last_name","email","telegram_user_id","telegram_username","role","group_name","first_login_at","last_login_at","has_logged_in","lessons_completed","homework_avg","status","created_at"];
+      const escape = (v: unknown) => {
+        const s = v === null || v === undefined ? "" : String(v);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const csv = [headers.join(","), ...rows.map((r: any) => headers.map((h) => escape(r[h])).join(","))].join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `group_${group.name.replace(/\s+/g, "_")}_logins.csv`; a.click();
+      URL.revokeObjectURL(url);
+      try {
+        const { data: u } = await supabase.auth.getUser();
+        await supabase.from("admin_actions" as any).insert({
+          actor_user_id: u.user?.id,
+          action: "exported_group_csv",
+          target_resource_type: "group",
+          target_resource_id: group.id,
+          details: { row_count: rows.length, has_login_data: true },
+        });
+      } catch {}
+      toast.success(`${rows.length} qator eksport qilindi`);
+    } catch (e: any) {
+      toast.error(e?.message || "Eksport xatosi");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const remove = async (id: string) => {
     const { error } = await supabase.from("profiles").update({ group_id: null }).eq("id", id);
@@ -554,8 +608,28 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-2xl">
         <DialogHeader><DialogTitle>Students in {group.name}</DialogTitle></DialogHeader>
-        <div className="flex gap-2">
+        {(() => {
+          const total = loginStats.total;
+          const logged = loginStats.logged;
+          const never = Math.max(0, total - logged);
+          const pct = total > 0 ? Math.round((logged / total) * 100) : 0;
+          const color = total === 0 ? "bg-muted" : logged === 0 ? "bg-rose-50 border-rose-200" : pct < 50 ? "bg-amber-50 border-amber-200" : "bg-emerald-50 border-emerald-200";
+          return (
+            <div className={`rounded border p-3 text-sm ${color}`}>
+              <div>✅ Kirgan: <b>{logged}/{total}</b> ({pct}%)</div>
+              <div className="text-xs text-muted-foreground mt-0.5">🚫 Hech qachon kirmagan: <b>{never}</b></div>
+            </div>
+          );
+        })()}
+        <div className="flex flex-wrap gap-2">
           <Button onClick={() => setOpenAdd(true)}><UserPlus className="mr-1 h-4 w-4" />+ Yangi talaba qo'shish</Button>
+          <Button variant="outline" disabled={exporting} onClick={exportCsvWithLogins}>
+            <Upload className="mr-1 h-4 w-4 rotate-180" />{exporting ? "Eksport…" : "CSV (loginlar bilan)"}
+          </Button>
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+            <Checkbox checked={includeArchived} onCheckedChange={(v) => setIncludeArchived(!!v)} />
+            Arxivni ham qo'shish
+          </label>
         </div>
         <div className="flex flex-wrap items-center gap-2 rounded border bg-muted/30 p-2">
           <input
