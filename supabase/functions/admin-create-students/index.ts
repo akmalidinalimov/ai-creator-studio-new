@@ -227,6 +227,12 @@ Deno.serve(async (req) => {
       // Password is always optional; generate one if not provided. Magic link / Telegram bot are the real login paths.
       const passwordProvided = !!(s.password && s.password.length >= 6);
       const password = passwordProvided ? s.password! : genPassword();
+      // Display name preserved AS-IS from CSV. No INITCAP, no tg- prefix, no fallback to email-local.
+      // Only when csv.name is empty AND csv.telegram_username is present do we fall back to the
+      // raw username (without @) as a display label. Never put "tg-" in front of a person's name.
+      const csvName = (s.name || "").trim();
+      const csvLastName = s.last_name === undefined ? undefined : (s.last_name || "").trim();
+      const displayName = csvName || (tgUserNorm ? tgUserNorm : "");
       // Resolve target group: explicit row group_name → target_group_id → default
       let resolvedGroupId: string | null = null;
       if (s.group_name && s.group_name.trim()) resolvedGroupId = await resolveGroupId(s.group_name);
