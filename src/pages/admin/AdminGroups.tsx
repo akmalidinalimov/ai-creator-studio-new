@@ -76,6 +76,11 @@ export default function AdminGroups() {
       if (r.group_id) map[r.group_id] = (map[r.group_id] || 0) + 1;
     });
     setCounts(map);
+    // Per-group login stats
+    const { data: ls } = await supabase.rpc("admin_group_login_stats" as any);
+    const lmap: Record<string, { logged: number; total: number }> = {};
+    ((ls as any[]) || []).forEach((r) => { lmap[r.group_id] = { logged: r.logged_in_count || 0, total: r.total_active || 0 }; });
+    setLogins(lmap);
     // Health scores
     const ids = ((g.data as any[]) || []).map((r) => r.id);
     const health: Record<string, number> = {};
