@@ -274,7 +274,7 @@ Deno.serve(async (req) => {
         email,
         password,
         email_confirm: true,
-        user_metadata: { name: s.name || email.split("@")[0], last_name: s.last_name || null },
+        user_metadata: { name: displayName || null, last_name: csvLastName || null },
       });
       if (error) {
         // Email collision in Auth — but Telegram-identity dedupe already proved this is a NEW person.
