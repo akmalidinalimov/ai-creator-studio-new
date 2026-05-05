@@ -810,7 +810,7 @@ export default function AdminUsers() {
                     </div>
                   )}
                   {u.group_id && (
-                    <div className="text-xs mt-1"><Badge variant="secondary">{groupNameById.get(u.group_id) || "—"}</Badge></div>
+                    <div className="text-xs mt-1"><Badge variant="secondary">{(u as any).group_name || groupNameById.get(u.group_id) || "—"}</Badge></div>
                   )}
                   <div className="flex items-center justify-between mt-2 gap-2">
                     <div className="flex items-center gap-2 text-[11px]">
