@@ -1531,6 +1531,8 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
     }
     return true;
   }
+
+  if (cmd === "/tstudents" || cmd === "/tinactive") {
     const ids = await teacherStudentIds(admin, teacherId);
     if (!ids.length) {
       await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher");
