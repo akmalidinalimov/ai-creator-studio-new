@@ -177,7 +177,7 @@ export default function AdminUsers() {
     setUsers(rows as UserRow[]);
     const [{ data: cs }, { data: gs }] = await Promise.all([
       supabase.from("courses").select("id, title").order("title"),
-      supabase.from("groups").select("id, name").order("name"),
+      supabase.from("groups").select("id, name, teacher_id").order("name"),
     ]);
     setCourses(cs || []);
     setGroups(gs || []);
