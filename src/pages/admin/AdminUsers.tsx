@@ -216,8 +216,9 @@ export default function AdminUsers() {
     const q = search.trim().toLowerCase();
     return users.filter((u) => {
       if (statusFilter !== "all" && u.status !== statusFilter) return false;
-      if (roleFilter === "admin" && !u.is_admin) return false;
-      if (roleFilter === "student" && u.is_admin) return false;
+      if (roleFilter !== "all") {
+        if ((u.role_name || "student") !== roleFilter) return false;
+      }
       if (groupFilter !== "all") {
         if (groupFilter === "none") {
           if (u.group_id) return false;
