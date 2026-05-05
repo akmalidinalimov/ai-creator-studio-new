@@ -326,9 +326,14 @@ Deno.serve(async (req) => {
           if (csvLastName !== undefined) profilePatch.last_name = csvLastName || null;
           if (s.telegram_username && s.telegram_username.trim()) profilePatch.telegram_username = s.telegram_username.trim();
           if (tgIdNum !== undefined) profilePatch.telegram_id = tgIdNum;
-          if (resolvedGroupId) profilePatch.group_id = resolvedGroupId;
+          // Teachers are NOT added as group members; instead set groups.teacher_id below.
+          if (resolvedGroupId && s.role !== "teacher" && s.role !== "admin") profilePatch.group_id = resolvedGroupId;
           await admin.from("profiles").update(profilePatch).eq("id", userId);
           if (s.role === "admin") await admin.from("user_roles").insert({ user_id: userId, role: "admin" });
+          if (s.role === "teacher") {
+            await admin.from("user_roles").insert({ user_id: userId, role: "teacher" });
+            if (resolvedGroupId) await admin.from("groups").update({ teacher_id: userId }).eq("id", resolvedGroupId);
+          }
           for (const cid of courseIds) {
             await admin.from("enrollments").upsert({ user_id: userId, course_id: cid }, { onConflict: "user_id,course_id" });
           }
