@@ -153,7 +153,16 @@ export default function AdminGroups() {
                 <TableHead>Teacher</TableHead>
                 <TableHead>Course</TableHead>
                 <TableHead>Students</TableHead>
-                <TableHead>Loggedin</TableHead>
+                <TableHead>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex items-center gap-1 cursor-help">Loggedin <Info className="h-3 w-3 text-muted-foreground" /></span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-xs text-xs">
+                      Faqat faol talabalar hisoblanadi. Arxivlangan talabalar ko'rsatilmagan.
+                    </TooltipContent>
+                  </Tooltip>
+                </TableHead>
                 <TableHead>Health</TableHead>
                 <TableHead>Topiklar</TableHead>
                 <TableHead>Default</TableHead>
