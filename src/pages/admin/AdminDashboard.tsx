@@ -99,7 +99,76 @@ export default function AdminDashboard() {
     });
   }, []);
 
-  useEffect(() => { if (courseId) load(); /* eslint-disable-next-line */ }, [courseId]);
+  useEffect(() => { if (courseId) load(); /* eslint-disable-next-line */ }, [courseId, groupParam]);
+
+  // Teacher: load owned groups, sync active_teacher_group_id, route 0/1/N
+  useEffect(() => {
+    if (!isTeacher || !user) return;
+    (async () => {
+      const { data: gs } = await supabase
+        .from("groups")
+        .select("id, name")
+        .eq("teacher_id", user.id)
+        .order("name");
+      const list = (gs as any[] || []) as { id: string; name: string }[];
+      setTeacherGroups(list);
+      setTeacherGroupsLoaded(true);
+      if (list.length === 1 && !groupParam) {
+        setSearchParams({ group: list[0].id }, { replace: true });
+        return;
+      }
+      if (groupParam && !list.some((g) => g.id === groupParam)) {
+        toast.error("Bu guruh sizga biriktirilmagan");
+        setSearchParams({}, { replace: true });
+        return;
+      }
+      if (groupParam && list.some((g) => g.id === groupParam)) {
+        // Sync active_teacher_group_id so the bot stays in sync
+        (supabase.from("profiles") as any)
+          .update({ active_teacher_group_id: groupParam })
+          .eq("id", user.id)
+          .then(() => {}, () => {});
+      }
+      // Card-grid stats: per-group total + logged + ungraded
+      if (list.length >= 2 && !groupParam) {
+        const ids = list.map((g) => g.id);
+        const { data: ls } = await supabase.rpc("admin_group_login_stats" as any);
+        const lmap: Record<string, { logged: number; total: number }> = {};
+        ((ls as any[]) || []).forEach((r: any) => {
+          if (ids.includes(r.group_id)) lmap[r.group_id] = { logged: r.logged_in_count || 0, total: r.total_active || 0 };
+        });
+        // Ungraded per group
+        const { data: ung } = await supabase
+          .from("homework_submissions")
+          .select("user_id, score")
+          .is("score", null)
+          .limit(5000);
+        const userIds = Array.from(new Set(((ung as any[]) || []).map((s: any) => s.user_id)));
+        const userToGroup: Record<string, string> = {};
+        if (userIds.length) {
+          const { data: profs } = await supabase
+            .from("profiles")
+            .select("id, group_id")
+            .in("id", userIds);
+          ((profs as any[]) || []).forEach((p: any) => { if (p.group_id) userToGroup[p.id] = p.group_id; });
+        }
+        const ugMap: Record<string, number> = {};
+        ((ung as any[]) || []).forEach((s: any) => {
+          const g = userToGroup[s.user_id];
+          if (g && ids.includes(g)) ugMap[g] = (ugMap[g] || 0) + 1;
+        });
+        const out: Record<string, { total: number; logged: number; ungraded: number }> = {};
+        list.forEach((g) => {
+          out[g.id] = {
+            total: lmap[g.id]?.total || 0,
+            logged: lmap[g.id]?.logged || 0,
+            ungraded: ugMap[g.id] || 0,
+          };
+        });
+        setTeacherGroupCardStats(out);
+      }
+    })();
+  }, [isTeacher, user, groupParam]);
 
   const load = async () => {
     setLoading(true);
