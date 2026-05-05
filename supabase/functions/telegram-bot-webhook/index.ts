@@ -331,6 +331,11 @@ const T = {
     tKbHomework: "📝 Задания",
     tKbGrade: "📝 Оценить",
     tKbGraded: "📑 Оценки",
+    tKbHealth: "🩺 Состояние группы",
+    tHealthOpenSite: "🌐 Подробнее на сайте",
+    tHealthEmpty: "К вам пока не прикреплена группа.",
+    tHealthLine: (gn: string, logged: number, active: number, never: number, total: number, pct: number) =>
+      `📊 <b>${csvEscapeHtml(gn)}</b>\n✅ Вошли: <b>${logged}/${active}</b> (${pct}%)\n🚫 Ни разу не входили: <b>${never}</b>\n👥 Активных: <b>${active}</b>\n📦 Всего (с архивом): <b>${total}</b>`,
     teacherPanel: "👩‍🏫 Панель преподавателя",
     teacherNoGroups: "К вам пока не прикреплена группа. Свяжитесь с админом.",
     teacherBroadcastPrompt: "Напишите сообщение для вашей группы (до 300 символов). /cancel — отменить.",
