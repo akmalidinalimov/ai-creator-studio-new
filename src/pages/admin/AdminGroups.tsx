@@ -54,6 +54,7 @@ export default function AdminGroups() {
   const [editGroup, setEditGroup] = useState<Group | null>(null);
   const [deleteGroup, setDeleteGroup] = useState<Group | null>(null);
   const [studentsGroup, setStudentsGroup] = useState<Group | null>(null);
+  const [assignTeacherGroup, setAssignTeacherGroup] = useState<Group | null>(null);
 
   const reload = async () => {
     setLoading(true);
@@ -157,7 +158,18 @@ export default function AdminGroups() {
                   <TableCell className="font-medium">
                     <button className="hover:underline text-left" onClick={() => setEditGroup(g)}>{g.name}</button>
                   </TableCell>
-                  <TableCell>{teacherLabel(g.teacher_id)}</TableCell>
+                  <TableCell>
+                    {g.teacher_id ? (
+                      teacherLabel(g.teacher_id)
+                    ) : (
+                      <button
+                        className="text-xs text-emerald-600 hover:text-emerald-700 hover:underline font-medium inline-flex items-center gap-1"
+                        onClick={() => setAssignTeacherGroup(g)}
+                      >
+                        <Plus className="h-3 w-3" /> Ustoz tayinlash
+                      </button>
+                    )}
+                  </TableCell>
                   <TableCell>{courseTitle(g.course_id)}</TableCell>
                   <TableCell><Badge variant="secondary">{counts[g.id] || 0}</Badge></TableCell>
                   <TableCell>{(() => {
@@ -247,6 +259,14 @@ export default function AdminGroups() {
         <GroupStudentsDialog
           group={studentsGroup}
           onClose={() => { setStudentsGroup(null); reload(); }}
+        />
+      )}
+      {assignTeacherGroup && (
+        <AddStudentToGroupDialog
+          group={assignTeacherGroup}
+          initialRole="teacher"
+          onClose={() => setAssignTeacherGroup(null)}
+          onCreated={() => { setAssignTeacherGroup(null); reload(); }}
         />
       )}
     </PageShell>
@@ -685,7 +705,7 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
   );
 }
 
-function AddStudentToGroupDialog({ group, onClose, onCreated }: { group: Group; onClose: () => void; onCreated: () => void }) {
+function AddStudentToGroupDialog({ group, onClose, onCreated, initialRole }: { group: Group; onClose: () => void; onCreated: () => void; initialRole?: "student" | "teacher" | "admin" }) {
   const { session } = useAuth();
   const [name, setName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -693,7 +713,7 @@ function AddStudentToGroupDialog({ group, onClose, onCreated }: { group: Group; 
   const [password, setPassword] = useState(randPassword());
   const [tgId, setTgId] = useState("");
   const [tgUser, setTgUser] = useState("");
-  const [role, setRole] = useState<"student" | "teacher" | "admin">("student");
+  const [role, setRole] = useState<"student" | "teacher" | "admin">(initialRole || "student");
   const [sendInvite, setSendInvite] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);

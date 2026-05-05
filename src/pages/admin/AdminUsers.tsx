@@ -81,7 +81,12 @@ export default function AdminUsers() {
   const [enrollMap, setEnrollMap] = useState<Record<string, Set<string>>>({});
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("active");
-  const [roleFilter, setRoleFilter] = useState<string>("all");
+  const initialRoleFilter = (() => {
+    if (typeof window === "undefined") return "all";
+    const p = new URLSearchParams(window.location.search).get("role");
+    return p === "teacher" || p === "admin" || p === "student" ? p : "all";
+  })();
+  const [roleFilter, setRoleFilter] = useState<string>(initialRoleFilter);
   const [groupFilter, setGroupFilter] = useState<string>("all");
   const [orphansOnly, setOrphansOnly] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState<{ ids: string[]; mode: "archive" | "unarchive" } | null>(null);
@@ -211,8 +216,9 @@ export default function AdminUsers() {
     const q = search.trim().toLowerCase();
     return users.filter((u) => {
       if (statusFilter !== "all" && u.status !== statusFilter) return false;
-      if (roleFilter === "admin" && !u.is_admin) return false;
-      if (roleFilter === "student" && u.is_admin) return false;
+      if (roleFilter !== "all") {
+        if ((u.role_name || "student") !== roleFilter) return false;
+      }
       if (groupFilter !== "all") {
         if (groupFilter === "none") {
           if (u.group_id) return false;
@@ -237,12 +243,13 @@ export default function AdminUsers() {
   }, [users, search, statusFilter, roleFilter, groupFilter, orphansOnly, activeGroupIds]);
 
   const counts = useMemo(() => {
-    let active = 0, archived = 0;
+    let active = 0, archived = 0, teachers = 0;
     for (const u of users) {
       if (u.status === "archived") archived++;
       else active++;
+      if ((u.role_name || "student") === "teacher") teachers++;
     }
-    return { all: users.length, active, archived };
+    return { all: users.length, active, archived, teachers };
   }, [users]);
 
   const exportFilteredCsv = async () => {
@@ -796,6 +803,13 @@ export default function AdminUsers() {
               {s === "active" ? `Faol (${counts.active})` : s === "archived" ? `Arxiv (${counts.archived})` : `Hammasi (${counts.all})`}
             </Button>
           ))}
+          <Button
+            variant={roleFilter === "teacher" ? "default" : "outline"}
+            size="sm"
+            onClick={() => { setRoleFilter(roleFilter === "teacher" ? "all" : "teacher"); setSelected(new Set()); }}
+          >
+            Ustozlar ({counts.teachers})
+          </Button>
           {isAdmin && (
             <label className="flex items-center gap-2 text-xs cursor-pointer ml-2">
               <Checkbox checked={orphansOnly} onCheckedChange={(v) => setOrphansOnly(!!v)} />
@@ -819,6 +833,7 @@ export default function AdminUsers() {
             <SelectContent>
               <SelectItem value="all">{t("admin.users.allRoles")}</SelectItem>
               <SelectItem value="admin">{t("admin.users.admins")}</SelectItem>
+              <SelectItem value="teacher">Ustozlar</SelectItem>
               <SelectItem value="student">{t("admin.users.students")}</SelectItem>
             </SelectContent>
           </Select>
@@ -1139,6 +1154,7 @@ export default function AdminUsers() {
                       <th className="text-left p-2">{t("admin.users.tgIdLabel", { defaultValue: "Telegram ID" })}</th>
                       <th className="text-left p-2">{t("admin.users.csvHeaders.telegram")}</th>
                       <th className="text-left p-2">{t("admin.users.csvHeaders.role")}</th>
+                      <th className="text-left p-2">Guruh</th>
                       <th className="text-left p-2">{t("admin.users.csvHeaders.status")}</th>
                     </tr>
                   </thead>
@@ -1155,6 +1171,8 @@ export default function AdminUsers() {
                         : r.duplicate
                         ? t("admin.users.duplicate", { defaultValue: "Already in DB" })
                         : t("admin.users.valid");
+                      const gName = (r.group_name || "").trim();
+                      const gExists = gName && groups.some((g) => g.name.toLowerCase() === gName.toLowerCase());
                       return (
                         <tr key={i} className={`border-t ${rowBg}`}>
                           <td className="p-2">{r.name}</td>
@@ -1163,6 +1181,14 @@ export default function AdminUsers() {
                           <td className="p-2 text-xs font-mono">{r.telegram_user_id ?? "—"}</td>
                           <td className="p-2 text-xs">{r.telegram_username ? `@${r.telegram_username}` : "—"}</td>
                           <td className="p-2 text-xs">{r.role}</td>
+                          <td className="p-2 text-xs">
+                            {gName ? (
+                              <span className="inline-flex items-center gap-1">
+                                <span>{gName}</span>
+                                {!gExists && <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">yangi</span>}
+                              </span>
+                            ) : <span className="text-muted-foreground">—</span>}
+                          </td>
                           <td className={`p-2 text-xs ${statusCls}`}>{statusText}</td>
                         </tr>
                       );

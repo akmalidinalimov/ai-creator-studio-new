@@ -134,6 +134,9 @@ export const TopNav = () => {
                     <Link to="/admin/groups"><Users className="mr-2 h-4 w-4" /> Groups</Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
+                    <Link to="/admin/users?role=teacher"><Users className="mr-2 h-4 w-4" /> Ustozlar</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
                     <Link to="/admin/reengagement"><Bell className="mr-2 h-4 w-4" /> 🎯 Reaktivatsiya</Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
