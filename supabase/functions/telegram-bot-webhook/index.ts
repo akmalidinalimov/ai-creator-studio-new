@@ -159,6 +159,11 @@ const T = {
     tKbHomework: "📝 Vazifalar",
     tKbGrade: "📝 Baholash",
     tKbGraded: "📑 Baholar",
+    tKbHealth: "🩺 Guruh holati",
+    tHealthOpenSite: "🌐 Saytda batafsil",
+    tHealthEmpty: "Sizga hali guruh biriktirilmagan.",
+    tHealthLine: (gn: string, logged: number, active: number, never: number, total: number, pct: number) =>
+      `📊 <b>${csvEscapeHtml(gn)}</b>\n✅ Kirgan: <b>${logged}/${active}</b> (${pct}%)\n🚫 Hech qachon kirmagan: <b>${never}</b>\n👥 Faol talabalar: <b>${active}</b>\n📦 Jami (arxiv bilan): <b>${total}</b>`,
     teacherPanel: "👩‍🏫 O'qituvchi paneli",
     teacherNoGroups: "Sizga hali guruh biriktirilmagan. Admin bilan bog'laning.",
     teacherBroadcastPrompt: "Guruhingizga yubormoqchi bo'lgan xabarni yozing (300 belgigacha). Bekor qilish uchun /cancel.",
