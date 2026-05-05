@@ -249,7 +249,7 @@ Deno.serve(async (req) => {
         if (e1) { existingId = (e1 as any).id; existingGroupId = (e1 as any).group_id || null; }
       }
       if (!existingId && tgUserNorm) {
-        const { data: e2 } = await admin.from("profiles").select("id, group_id").eq("telegram_username", tgUserNorm as any).maybeSingle();
+        const { data: e2 } = await admin.from("profiles").select("id, group_id").or(`telegram_username.eq.${tgUserNorm},telegram_username.eq.@${tgUserNorm}`).maybeSingle();
         if (e2) { existingId = (e2 as any).id; existingGroupId = (e2 as any).group_id || null; }
       }
       if (existingId) {
