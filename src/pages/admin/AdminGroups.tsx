@@ -261,6 +261,14 @@ export default function AdminGroups() {
           onClose={() => { setStudentsGroup(null); reload(); }}
         />
       )}
+      {assignTeacherGroup && (
+        <AddStudentToGroupDialog
+          group={assignTeacherGroup}
+          initialRole="teacher"
+          onClose={() => setAssignTeacherGroup(null)}
+          onCreated={() => { setAssignTeacherGroup(null); reload(); }}
+        />
+      )}
     </PageShell>
   );
 }
