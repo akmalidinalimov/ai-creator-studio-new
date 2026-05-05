@@ -1421,7 +1421,7 @@ export default function AdminUsers() {
       </Dialog>
 
       {/* Manage drawer */}
-      <Sheet open={!!manageUser} onOpenChange={(o) => !o && setManageUser(null)}>
+      <Sheet open={!!manageUser} onOpenChange={(o) => { if (!o) { setManageUser(null); setEditTeacherGroupIds(null); } }}>
         <SheetContent className="w-full sm:max-w-md overflow-y-auto">
           {manageUser && (
             <>
