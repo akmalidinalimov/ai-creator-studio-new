@@ -178,7 +178,16 @@ export default function AdminDashboard() {
 
       // Resolve visible student scope (admins → all, teachers → their groups' students)
       const { data: visIdsData } = await supabase.rpc("get_visible_student_ids");
-      const visibleIds: string[] = ((visIdsData || []) as any[]).map((r: any) => r.id);
+      let visibleIds: string[] = ((visIdsData || []) as any[]).map((r: any) => r.id);
+      // If teacher is viewing a single group, narrow scope to that group's members
+      if (isTeacher && groupParam && visibleIds.length) {
+        const { data: gMembers } = await supabase
+          .from("profiles")
+          .select("id")
+          .eq("group_id", groupParam)
+          .in("id", visibleIds);
+        visibleIds = ((gMembers as any[]) || []).map((p: any) => p.id);
+      }
       const visibleSet = new Set(visibleIds);
       setScopedIds(visibleIds);
       if (isTeacher && visibleIds.length === 0) {
