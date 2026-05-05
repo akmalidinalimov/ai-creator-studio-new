@@ -121,6 +121,8 @@ export default function AdminUsers() {
   const [manageUser, setManageUser] = useState<UserRow | null>(null);
   const [confirmRole, setConfirmRole] = useState<{ user: UserRow; promote: boolean } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<UserRow | null>(null);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState<string[] | null>(null);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const reload = async () => {
     setLoading(true);
@@ -713,6 +715,33 @@ export default function AdminUsers() {
     setConfirmDelete(null); setManageUser(null); reload();
   };
 
+  const bulkDelete = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    setBulkDeleting(true);
+    const results = await Promise.allSettled(
+      ids.map((id) =>
+        fetch(`${FN_BASE}/admin-create-students`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+          body: JSON.stringify({ userId: id }),
+        }).then(async (r) => {
+          const j = await r.json().catch(() => ({}));
+          if (j?.error) throw new Error(j.error);
+          return j;
+        }),
+      ),
+    );
+    setBulkDeleting(false);
+    const ok = results.filter((r) => r.status === "fulfilled").length;
+    const fail = results.length - ok;
+    logAction("bulk_delete_users", { details: { profile_ids: ids, count: ok, failed: fail } });
+    if (fail === 0) toast.success(`${ok} ta foydalanuvchi o'chirildi`);
+    else toast.warning(`${ok}/${ids.length} ta o'chirildi, ${fail} ta xato`);
+    setSelected(new Set());
+    setConfirmBulkDelete(null);
+    reload();
+  };
+
   const toggleSelect = (id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -765,6 +794,11 @@ export default function AdminUsers() {
                   ))}
                 </SelectContent>
               </Select>
+            )}
+            {isAdmin && selected.size > 0 && (
+              <Button variant="destructive" size="sm" onClick={() => setConfirmBulkDelete(Array.from(selected))}>
+                <Trash2 className="h-4 w-4" /> {`O'chirish (${selected.size})`}
+              </Button>
             )}
             {isAdmin && selected.size > 0 && statusFilter !== "archived" && (
               <Button variant="outline" size="sm" onClick={() => setConfirmArchive({ ids: Array.from(selected), mode: "archive" })}>
@@ -1468,6 +1502,27 @@ export default function AdminUsers() {
           <AlertDialogFooter>
             <AlertDialogCancel>{t("admin.users.cancel")}</AlertDialogCancel>
             <AlertDialogAction onClick={() => confirmDelete && removeUser(confirmDelete)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">{t("admin.users.remove")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!confirmBulkDelete} onOpenChange={(o) => !o && !bulkDeleting && setConfirmBulkDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{`${confirmBulkDelete?.length ?? 0} ta foydalanuvchini o'chirish?`}</AlertDialogTitle>
+            <AlertDialogDescription>
+              Bu amalni qaytarib bo'lmaydi. Tanlangan foydalanuvchilar va ularning barcha ma'lumotlari (progress, baholar, sertifikatlar) butunlay o'chiriladi. Arxivlash xavfsizroq variant.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={bulkDeleting}>{t("admin.users.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={bulkDeleting}
+              onClick={(e) => { e.preventDefault(); confirmBulkDelete && bulkDelete(confirmBulkDelete); }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {bulkDeleting ? "O'chirilmoqda…" : `O'chirish (${confirmBulkDelete?.length ?? 0})`}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
