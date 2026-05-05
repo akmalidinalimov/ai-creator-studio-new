@@ -1154,6 +1154,7 @@ export default function AdminUsers() {
                       <th className="text-left p-2">{t("admin.users.tgIdLabel", { defaultValue: "Telegram ID" })}</th>
                       <th className="text-left p-2">{t("admin.users.csvHeaders.telegram")}</th>
                       <th className="text-left p-2">{t("admin.users.csvHeaders.role")}</th>
+                      <th className="text-left p-2">Guruh</th>
                       <th className="text-left p-2">{t("admin.users.csvHeaders.status")}</th>
                     </tr>
                   </thead>
@@ -1170,6 +1171,8 @@ export default function AdminUsers() {
                         : r.duplicate
                         ? t("admin.users.duplicate", { defaultValue: "Already in DB" })
                         : t("admin.users.valid");
+                      const gName = (r.group_name || "").trim();
+                      const gExists = gName && groups.some((g) => g.name.toLowerCase() === gName.toLowerCase());
                       return (
                         <tr key={i} className={`border-t ${rowBg}`}>
                           <td className="p-2">{r.name}</td>
@@ -1178,6 +1181,14 @@ export default function AdminUsers() {
                           <td className="p-2 text-xs font-mono">{r.telegram_user_id ?? "—"}</td>
                           <td className="p-2 text-xs">{r.telegram_username ? `@${r.telegram_username}` : "—"}</td>
                           <td className="p-2 text-xs">{r.role}</td>
+                          <td className="p-2 text-xs">
+                            {gName ? (
+                              <span className="inline-flex items-center gap-1">
+                                <span>{gName}</span>
+                                {!gExists && <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">yangi</span>}
+                              </span>
+                            ) : <span className="text-muted-foreground">—</span>}
+                          </td>
                           <td className={`p-2 text-xs ${statusCls}`}>{statusText}</td>
                         </tr>
                       );
