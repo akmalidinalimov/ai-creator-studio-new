@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { Users as UsersIcon, LogIn, Activity, Trophy, Shield, UserCheck, UserX, Download, ArrowUpDown, Moon, MoonStar } from "lucide-react";
 import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
 import { enUS, ru, uz } from "date-fns/locale";
@@ -34,9 +34,15 @@ const fmtDay = (d: Date) => d.toISOString().slice(5, 10);
 
 export default function AdminDashboard() {
   const { t, i18n } = useTranslation();
-  const { role } = useAuth();
+  const { role, user } = useAuth();
   const isTeacher = role === "teacher";
   const dateLocale = i18n.language === "ru" ? ru : i18n.language === "uz" ? uz : enUS;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const groupParam = searchParams.get("group");
+  const [teacherGroups, setTeacherGroups] = useState<{ id: string; name: string }[]>([]);
+  const [teacherGroupsLoaded, setTeacherGroupsLoaded] = useState(false);
+  const [teacherGroupCardStats, setTeacherGroupCardStats] = useState<Record<string, { total: number; logged: number; ungraded: number }>>({});
   const [courses, setCourses] = useState<{ id: string; title: string; published: boolean }[]>([]);
   const [courseId, setCourseId] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -93,7 +99,76 @@ export default function AdminDashboard() {
     });
   }, []);
 
-  useEffect(() => { if (courseId) load(); /* eslint-disable-next-line */ }, [courseId]);
+  useEffect(() => { if (courseId) load(); /* eslint-disable-next-line */ }, [courseId, groupParam]);
+
+  // Teacher: load owned groups, sync active_teacher_group_id, route 0/1/N
+  useEffect(() => {
+    if (!isTeacher || !user) return;
+    (async () => {
+      const { data: gs } = await supabase
+        .from("groups")
+        .select("id, name")
+        .eq("teacher_id", user.id)
+        .order("name");
+      const list = (gs as any[] || []) as { id: string; name: string }[];
+      setTeacherGroups(list);
+      setTeacherGroupsLoaded(true);
+      if (list.length === 1 && !groupParam) {
+        setSearchParams({ group: list[0].id }, { replace: true });
+        return;
+      }
+      if (groupParam && !list.some((g) => g.id === groupParam)) {
+        toast.error("Bu guruh sizga biriktirilmagan");
+        setSearchParams({}, { replace: true });
+        return;
+      }
+      if (groupParam && list.some((g) => g.id === groupParam)) {
+        // Sync active_teacher_group_id so the bot stays in sync
+        (supabase.from("profiles") as any)
+          .update({ active_teacher_group_id: groupParam })
+          .eq("id", user.id)
+          .then(() => {}, () => {});
+      }
+      // Card-grid stats: per-group total + logged + ungraded
+      if (list.length >= 2 && !groupParam) {
+        const ids = list.map((g) => g.id);
+        const { data: ls } = await supabase.rpc("admin_group_login_stats" as any);
+        const lmap: Record<string, { logged: number; total: number }> = {};
+        ((ls as any[]) || []).forEach((r: any) => {
+          if (ids.includes(r.group_id)) lmap[r.group_id] = { logged: r.logged_in_count || 0, total: r.total_active || 0 };
+        });
+        // Ungraded per group
+        const { data: ung } = await supabase
+          .from("homework_submissions")
+          .select("user_id, score")
+          .is("score", null)
+          .limit(5000);
+        const userIds = Array.from(new Set(((ung as any[]) || []).map((s: any) => s.user_id)));
+        const userToGroup: Record<string, string> = {};
+        if (userIds.length) {
+          const { data: profs } = await supabase
+            .from("profiles")
+            .select("id, group_id")
+            .in("id", userIds);
+          ((profs as any[]) || []).forEach((p: any) => { if (p.group_id) userToGroup[p.id] = p.group_id; });
+        }
+        const ugMap: Record<string, number> = {};
+        ((ung as any[]) || []).forEach((s: any) => {
+          const g = userToGroup[s.user_id];
+          if (g && ids.includes(g)) ugMap[g] = (ugMap[g] || 0) + 1;
+        });
+        const out: Record<string, { total: number; logged: number; ungraded: number }> = {};
+        list.forEach((g) => {
+          out[g.id] = {
+            total: lmap[g.id]?.total || 0,
+            logged: lmap[g.id]?.logged || 0,
+            ungraded: ugMap[g.id] || 0,
+          };
+        });
+        setTeacherGroupCardStats(out);
+      }
+    })();
+  }, [isTeacher, user, groupParam]);
 
   const load = async () => {
     setLoading(true);
@@ -103,7 +178,16 @@ export default function AdminDashboard() {
 
       // Resolve visible student scope (admins → all, teachers → their groups' students)
       const { data: visIdsData } = await supabase.rpc("get_visible_student_ids");
-      const visibleIds: string[] = ((visIdsData || []) as any[]).map((r: any) => r.id);
+      let visibleIds: string[] = ((visIdsData || []) as any[]).map((r: any) => r.id);
+      // If teacher is viewing a single group, narrow scope to that group's members
+      if (isTeacher && groupParam && visibleIds.length) {
+        const { data: gMembers } = await supabase
+          .from("profiles")
+          .select("id")
+          .eq("group_id", groupParam)
+          .in("id", visibleIds);
+        visibleIds = ((gMembers as any[]) || []).map((p: any) => p.id);
+      }
       const visibleSet = new Set(visibleIds);
       setScopedIds(visibleIds);
       if (isTeacher && visibleIds.length === 0) {
@@ -133,7 +217,9 @@ export default function AdminDashboard() {
       // Lifetime activated + never logged in via staff_list_students RPC (scoped automatically)
       const { data: allUsers } = await supabase.rpc("staff_list_students");
       const studentsAll = (allUsers || []);
-      const students = studentsAll; // already scoped by RPC
+      const students = (isTeacher && groupParam)
+        ? studentsAll.filter((u: any) => visibleSet.has(u.id))
+        : studentsAll;
       const activated = students.filter((u: any) => u.last_sign_in_at).length;
       const neverList = students
         .filter((u: any) => !u.last_sign_in_at)
@@ -375,12 +461,86 @@ export default function AdminDashboard() {
     }
   };
 
+  // Teacher card-grid landing (multi-group, no group selected)
+  if (isTeacher && teacherGroupsLoaded && teacherGroups.length === 0) {
+    return (
+      <PageShell>
+        <div className="space-y-6">
+          <h1 className="text-3xl font-semibold tracking-tight">{t("admin.dashboard.title")}</h1>
+          <Card className="p-6 border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-400">
+            Sizga hech qanday guruh biriktirilmagan. Adminga murojaat qiling.
+          </Card>
+        </div>
+      </PageShell>
+    );
+  }
+
+  if (isTeacher && teacherGroupsLoaded && teacherGroups.length >= 2 && !groupParam) {
+    return (
+      <PageShell>
+        <div className="space-y-6">
+          <div>
+            <h1 className="text-3xl font-semibold tracking-tight">Mening guruhlarim ({teacherGroups.length})</h1>
+            <p className="text-muted-foreground mt-1">Guruhni tanlang va batafsil statistikani ko'ring.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {teacherGroups.map((g) => {
+              const s = teacherGroupCardStats[g.id] || { total: 0, logged: 0, ungraded: 0 };
+              const pct = s.total > 0 ? Math.round((s.logged / s.total) * 100) : 0;
+              return (
+                <Card
+                  key={g.id}
+                  className="p-5 cursor-pointer hover:shadow-md transition group"
+                  onClick={() => setSearchParams({ group: g.id })}
+                >
+                  <div className="text-xs text-muted-foreground">Guruh</div>
+                  <div className="text-lg font-semibold mb-3">{g.name}</div>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Talabalar</span>
+                      <span className="font-semibold tabular-nums">{s.total}</span>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-muted-foreground">Login</span>
+                        <span className="font-semibold tabular-nums">{s.logged}/{s.total} ({pct}%)</span>
+                      </div>
+                      <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+                        <div className="h-full bg-emerald-500" style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Baholanmagan</span>
+                      {s.ungraded > 0
+                        ? <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-600 dark:text-rose-400">{s.ungraded}</span>
+                        : <span className="font-semibold tabular-nums text-muted-foreground">0</span>}
+                    </div>
+                  </div>
+                  <div className="mt-4 text-sm text-primary group-hover:underline">Batafsil →</div>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      </PageShell>
+    );
+  }
+
+  const activeTeacherGroup = isTeacher && groupParam ? teacherGroups.find((g) => g.id === groupParam) : null;
+
   return (
     <PageShell>
       <div className="space-y-6">
+        {isTeacher && teacherGroups.length >= 2 && activeTeacherGroup && (
+          <div className="sticky top-0 z-10 -mx-4 px-4 py-2 bg-background/80 backdrop-blur border-b flex items-center gap-2 text-sm">
+            <button onClick={() => navigate("/admin/dashboard")} className="text-primary hover:underline">← Mening guruhlarim</button>
+            <span className="text-muted-foreground">|</span>
+            <span className="font-semibold">{activeTeacherGroup.name}</span>
+          </div>
+        )}
         <div className="flex items-end justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">{t("admin.dashboard.title")}</h1>
+            <h1 className="text-3xl font-semibold tracking-tight">{activeTeacherGroup ? activeTeacherGroup.name : t("admin.dashboard.title")}</h1>
             <p className="text-muted-foreground mt-1">{t("admin.dashboard.subtitle")}</p>
           </div>
           <Select value={courseId} onValueChange={setCourseId}>

@@ -14,6 +14,11 @@ const StudentOrStaffRedirect = ({ children }: { children: JSX.Element }) => {
   if (role === "admin" || role === "teacher") return <Navigate to="/admin/dashboard" replace />;
   return children;
 };
+
+const TeacherDashboardRedirect = () => {
+  const search = typeof window !== "undefined" ? window.location.search : "";
+  return <Navigate to={`/admin/dashboard${search}`} replace />;
+};
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import ForgotPassword from "./pages/ForgotPassword";
@@ -89,6 +94,8 @@ const App = () => (
             <Route path="/badges" element={<RequireAuth><Badges /></RequireAuth>} />
 
             <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
+            <Route path="/teacher" element={<TeacherDashboardRedirect />} />
+            <Route path="/teacher/dashboard" element={<TeacherDashboardRedirect />} />
             <Route path="/admin/dashboard" element={<RequireAuth staffOnly><Suspense fallback={<AdminFallback />}><AdminDashboard /></Suspense></RequireAuth>} />
             <Route path="/admin/courses" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminCourses /></Suspense></RequireAuth>} />
             <Route path="/admin/courses/:courseId" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminCourseEditor /></Suspense></RequireAuth>} />
