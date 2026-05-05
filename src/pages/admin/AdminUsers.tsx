@@ -271,7 +271,7 @@ export default function AdminUsers() {
       telegram_user_id: u.telegram_id ?? "",
       telegram_username: u.telegram_username || "",
       role: u.role_name || "student",
-      group_name: groupOf.get(u.id) || (u.group_id ? (groupNameById.get(u.group_id) || "") : ""),
+      group_name: groupOf.get(u.id) || (u as any).group_name || (u.group_id ? (groupNameById.get(u.group_id) || "") : ""),
       status: u.status,
     }));
     const csv = Papa.unparse(rows, { columns: ["name","last_name","email","password","telegram_user_id","telegram_username","role","group_name","status"] });
