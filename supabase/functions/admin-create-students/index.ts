@@ -256,9 +256,10 @@ Deno.serve(async (req) => {
         const { data: e2 } = await admin.from("profiles").select("id, group_id, telegram_username").or(`telegram_username.eq.${tgUserNorm},telegram_username.eq.@${tgUserNorm}`).maybeSingle();
         if (e2) { existingId = (e2 as any).id; existingGroupId = (e2 as any).group_id || null; existingTgUsername = (e2 as any).telegram_username ?? null; }
       }
-      // Soft re-import dedupe: match by (lower(name), lower(last_name)) when no Telegram identity hit.
-      // This lets re-uploads of corrupted CSVs heal data without creating duplicates.
-      if (!existingId && csvName && csvLastName) {
+      // Soft re-import dedupe by (lower(name), lower(last_name)) — ONLY when CSV row has
+      // NEITHER telegram_user_id NOR telegram_username. Otherwise different real people sharing
+      // a generic name (e.g. "O'quvchi") would collapse into one profile. (v3.14.11)
+      if (!existingId && !tgIdNum && !tgUserNorm && csvName && csvLastName) {
         const { data: e3 } = await admin
           .from("profiles")
           .select("id, group_id, telegram_username")
