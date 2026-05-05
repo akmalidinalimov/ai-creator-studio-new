@@ -159,6 +159,11 @@ const T = {
     tKbHomework: "📝 Vazifalar",
     tKbGrade: "📝 Baholash",
     tKbGraded: "📑 Baholar",
+    tKbHealth: "🩺 Guruh holati",
+    tHealthOpenSite: "🌐 Saytda batafsil",
+    tHealthEmpty: "Sizga hali guruh biriktirilmagan.",
+    tHealthLine: (gn: string, logged: number, active: number, never: number, total: number, pct: number) =>
+      `📊 <b>${csvEscapeHtml(gn)}</b>\n✅ Kirgan: <b>${logged}/${active}</b> (${pct}%)\n🚫 Hech qachon kirmagan: <b>${never}</b>\n👥 Faol talabalar: <b>${active}</b>\n📦 Jami (arxiv bilan): <b>${total}</b>`,
     teacherPanel: "👩‍🏫 O'qituvchi paneli",
     teacherNoGroups: "Sizga hali guruh biriktirilmagan. Admin bilan bog'laning.",
     teacherBroadcastPrompt: "Guruhingizga yubormoqchi bo'lgan xabarni yozing (300 belgigacha). Bekor qilish uchun /cancel.",
@@ -326,6 +331,11 @@ const T = {
     tKbHomework: "📝 Задания",
     tKbGrade: "📝 Оценить",
     tKbGraded: "📑 Оценки",
+    tKbHealth: "🩺 Состояние группы",
+    tHealthOpenSite: "🌐 Подробнее на сайте",
+    tHealthEmpty: "К вам пока не прикреплена группа.",
+    tHealthLine: (gn: string, logged: number, active: number, never: number, total: number, pct: number) =>
+      `📊 <b>${csvEscapeHtml(gn)}</b>\n✅ Вошли: <b>${logged}/${active}</b> (${pct}%)\n🚫 Ни разу не входили: <b>${never}</b>\n👥 Активных: <b>${active}</b>\n📦 Всего (с архивом): <b>${total}</b>`,
     teacherPanel: "👩‍🏫 Панель преподавателя",
     teacherNoGroups: "К вам пока не прикреплена группа. Свяжитесь с админом.",
     teacherBroadcastPrompt: "Напишите сообщение для вашей группы (до 300 символов). /cancel — отменить.",
@@ -485,6 +495,11 @@ const T = {
     tKbHomework: "📝 Homework",
     tKbGrade: "📝 Grade",
     tKbGraded: "📑 Grades",
+    tKbHealth: "🩺 Group health",
+    tHealthOpenSite: "🌐 Open dashboard",
+    tHealthEmpty: "No group is assigned to you yet.",
+    tHealthLine: (gn: string, logged: number, active: number, never: number, total: number, pct: number) =>
+      `📊 <b>${csvEscapeHtml(gn)}</b>\n✅ Logged in: <b>${logged}/${active}</b> (${pct}%)\n🚫 Never logged in: <b>${never}</b>\n👥 Active: <b>${active}</b>\n📦 Total (incl. archived): <b>${total}</b>`,
     teacherPanel: "👩‍🏫 Teacher panel",
     teacherNoGroups: "No group assigned to you yet. Please contact the admin.",
     teacherBroadcastPrompt: "Type the message to send to your group (up to 300 chars). /cancel to abort.",
@@ -611,9 +626,10 @@ function getTeacherKeyboard(locale: Locale) {
   return {
     keyboard: [
       [{ text: t.tKbGrade }, { text: t.tKbGraded }],
-      [{ text: t.tKbStats }, { text: t.tKbTop }],
+      [{ text: t.tKbStats }, { text: t.tKbHealth }],
       [{ text: t.tKbStudents }, { text: t.tKbInactive }],
-      [{ text: t.tKbBroadcast }, { text: t.tKbSettings }],
+      [{ text: t.tKbTop }, { text: t.tKbBroadcast }],
+      [{ text: t.tKbSettings }, { text: t.kbLang }],
       [{ text: t.kbLang }],
     ],
     resize_keyboard: true,
@@ -714,6 +730,7 @@ function buttonTextToCommand(text: string): string | null {
     if (t.tKbSettings && trimmed === t.tKbSettings) return "/sozlamalar";
     if (t.tKbGrade && trimmed === t.tKbGrade) return "/baholash";
     if (t.tKbGraded && trimmed === t.tKbGraded) return "/baholar";
+    if (t.tKbHealth && trimmed === t.tKbHealth) return "/thealth";
   }
   return null;
 }
@@ -1476,7 +1493,44 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
     return true;
   }
 
-  if (cmd === "/tstudents" || cmd === "/tinactive") {
+  if (cmd === "/thealth") {
+    const groups = await teacherGroups(admin, teacherId);
+    if (!groups.length) {
+      await sendWithKeyboard(chatId, t.tHealthEmpty, locale, false, "teacher");
+      return true;
+    }
+    // Build a map of user_id -> last_sign_in_at via admin auth API (one call, paginated).
+    const lastSignInMap = new Map<string, string | null>();
+    try {
+      let page = 1;
+      while (true) {
+        const { data: usrs } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
+        const arr = ((usrs as any)?.users || []) as any[];
+        for (const u of arr) lastSignInMap.set(u.id, u.last_sign_in_at || null);
+        if (arr.length < 1000) break;
+        page++;
+        if (page > 20) break;
+      }
+    } catch (_e) { /* fall through; logged stays 0 */ }
+    for (const g of groups) {
+      const { data: profs } = await admin
+        .from("profiles")
+        .select("id, status, archived_at")
+        .eq("group_id", g.id);
+      const allRows = (profs || []) as any[];
+      const total = allRows.length;
+      const activeRows = allRows.filter((p) => p.status === "active" && !p.archived_at);
+      const active = activeRows.length;
+      const logged = activeRows.filter((p) => !!lastSignInMap.get(p.id)).length;
+      const never = Math.max(0, active - logged);
+      const pct = active > 0 ? Math.round((logged / active) * 100) : 0;
+      const link = await createMagicLink(admin, teacherId, "teacher_dashboard", "/teacher/dashboard");
+      await sendMessage(chatId, t.tHealthLine(g.name, logged, active, never, total, pct), {
+        inline_keyboard: [[{ text: t.tHealthOpenSite, url: link }]],
+      });
+    }
+    return true;
+  }
     const ids = await teacherStudentIds(admin, teacherId);
     if (!ids.length) {
       await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher");

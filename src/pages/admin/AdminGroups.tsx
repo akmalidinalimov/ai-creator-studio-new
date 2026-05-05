@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Pencil, Trash2, Users as UsersIcon, Upload, RefreshCw, UserPlus } from "lucide-react";
+import { Plus, Pencil, Trash2, Users as UsersIcon, Upload, RefreshCw, UserPlus, Info } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useAuth } from "@/contexts/AuthContext";
@@ -153,7 +153,16 @@ export default function AdminGroups() {
                 <TableHead>Teacher</TableHead>
                 <TableHead>Course</TableHead>
                 <TableHead>Students</TableHead>
-                <TableHead>Loggedin</TableHead>
+                <TableHead>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex items-center gap-1 cursor-help">Loggedin <Info className="h-3 w-3 text-muted-foreground" /></span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-xs text-xs">
+                      Faqat faol talabalar hisoblanadi. Arxivlangan talabalar ko'rsatilmagan.
+                    </TooltipContent>
+                  </Tooltip>
+                </TableHead>
                 <TableHead>Health</TableHead>
                 <TableHead>Topiklar</TableHead>
                 <TableHead>Default</TableHead>
