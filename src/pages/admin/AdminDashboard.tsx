@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { Users as UsersIcon, LogIn, Activity, Trophy, Shield, UserCheck, UserX, Download, ArrowUpDown, Moon, MoonStar } from "lucide-react";
 import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslation } from "react-i18next";
 import { enUS, ru, uz } from "date-fns/locale";
