@@ -1007,7 +1007,7 @@ export default function AdminUsers() {
                   <th className="text-left p-3">{t("admin.users.headers.email")}</th>
                   <th className="text-left p-3">{t("admin.users.headers.telegram")}</th>
                   <th className="text-left p-3">{t("admin.users.headers.role")}</th>
-                  <th className="text-left p-3">{t("admin.users.headers.group", { defaultValue: "Group" })}</th>
+                  <th className="text-left p-3">{roleFilter === "teacher" ? "Guruhlar" : t("admin.users.headers.group", { defaultValue: "Group" })}</th>
                   <th className="text-left p-3">{t("admin.users.headers.status")}</th>
                   <th className="text-left p-3">{t("admin.users.headers.courses")}</th>
                   <th className="text-left p-3">{t("admin.users.headers.lastLogin")}</th>
