@@ -28,7 +28,7 @@ interface UserRow {
   name: string | null;
   last_name?: string | null;
   avatar_url: string | null;
-  status: "active" | "inactive";
+  status: "active" | "inactive" | "archived";
   telegram_username: string | null;
   telegram_id: number | null;
   created_at: string;
@@ -36,6 +36,7 @@ interface UserRow {
   is_admin: boolean;
   role_name?: RoleName;
   group_id?: string | null;
+  archived_at?: string | null;
 }
 
 interface CsvRow {
