@@ -246,10 +246,16 @@ export default function AdminUsers() {
   };
 
   const handleAdd = async () => {
-    if (!newEmail) return;
+    const tgIdRaw = newTgId.trim();
+    const tgUserRaw = newTg.replace(/^@/, "").trim();
+    const emailRaw = newEmail.trim();
+    if (!emailRaw && !tgIdRaw && !tgUserRaw) {
+      toast.error("Email, Telegram ID yoki Telegram username dan kamida bittasi kerak");
+      return;
+    }
     let tgId: number | undefined;
-    if (newTgId.trim()) {
-      const n = Number(newTgId.trim());
+    if (tgIdRaw) {
+      const n = Number(tgIdRaw);
       if (!Number.isInteger(n) || n <= 0) {
         toast.error(t("admin.users.tgIdInvalid", { defaultValue: "Telegram ID must be a positive integer" }));
         return;
@@ -259,9 +265,9 @@ export default function AdminUsers() {
     const res = await callCreate([{
       name: newName,
       last_name: newLastName || undefined,
-      email: newEmail,
+      email: emailRaw,
       password: newPassword || undefined,
-      telegram_username: newTg.replace(/^@/, "") || undefined,
+      telegram_username: tgUserRaw || undefined,
       telegram_user_id: tgId,
       role: newRole,
     }], newGroupId && newGroupId !== "none" ? { target_group_id: newGroupId } : {});
