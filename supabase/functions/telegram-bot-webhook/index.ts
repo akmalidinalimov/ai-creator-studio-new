@@ -495,6 +495,11 @@ const T = {
     tKbHomework: "📝 Homework",
     tKbGrade: "📝 Grade",
     tKbGraded: "📑 Grades",
+    tKbHealth: "🩺 Group health",
+    tHealthOpenSite: "🌐 Open dashboard",
+    tHealthEmpty: "No group is assigned to you yet.",
+    tHealthLine: (gn: string, logged: number, active: number, never: number, total: number, pct: number) =>
+      `📊 <b>${csvEscapeHtml(gn)}</b>\n✅ Logged in: <b>${logged}/${active}</b> (${pct}%)\n🚫 Never logged in: <b>${never}</b>\n👥 Active: <b>${active}</b>\n📦 Total (incl. archived): <b>${total}</b>`,
     teacherPanel: "👩‍🏫 Teacher panel",
     teacherNoGroups: "No group assigned to you yet. Please contact the admin.",
     teacherBroadcastPrompt: "Type the message to send to your group (up to 300 chars). /cancel to abort.",
