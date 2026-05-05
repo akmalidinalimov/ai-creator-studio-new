@@ -555,8 +555,7 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
       <DialogContent className="max-w-2xl">
         <DialogHeader><DialogTitle>Students in {group.name}</DialogTitle></DialogHeader>
         <div className="flex gap-2">
-          <Input value={adding} onChange={(e) => setAdding(e.target.value)} placeholder="Telegram id, @username, or email" />
-          <Button onClick={add}><Plus className="mr-1 h-4 w-4" />Add</Button>
+          <Button onClick={() => setOpenAdd(true)}><UserPlus className="mr-1 h-4 w-4" />+ Yangi talaba qo'shish</Button>
         </div>
         <div className="flex flex-wrap items-center gap-2 rounded border bg-muted/30 p-2">
           <input
