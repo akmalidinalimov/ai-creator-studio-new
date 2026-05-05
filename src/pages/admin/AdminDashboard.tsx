@@ -16,6 +16,7 @@ import { enUS, ru, uz } from "date-fns/locale";
 import { useAuth } from "@/contexts/AuthContext";
 import { WeeklyDigestTile } from "@/components/admin/WeeklyDigestTile";
 import { AnalyticsTiles } from "@/components/admin/AnalyticsTiles";
+import { TeacherLoginAnalytics } from "@/components/admin/TeacherLoginAnalytics";
 
 const PALETTE = [
   "hsl(var(--primary))",
