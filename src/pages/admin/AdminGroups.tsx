@@ -708,17 +708,38 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
           </div>
         )}
         <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search…" />
-        <div className="max-h-80 overflow-auto border rounded">
+        <div className="max-h-[60vh] overflow-auto border rounded">
           <Table>
-            <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Email</TableHead><TableHead>Telegram</TableHead><TableHead></TableHead></TableRow></TableHeader>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Last name</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Telegram ID</TableHead>
+                <TableHead>Telegram</TableHead>
+                <TableHead>Role</TableHead>
+                <TableHead>Group</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead></TableHead>
+              </TableRow>
+            </TableHeader>
             <TableBody>
-              {loading ? <TableRow><TableCell colSpan={4} className="text-center py-4 text-muted-foreground">Loading…</TableCell></TableRow>
-              : filtered.length === 0 ? <TableRow><TableCell colSpan={4} className="text-center py-4 text-muted-foreground">No students.</TableCell></TableRow>
+              {loading ? <TableRow><TableCell colSpan={9} className="text-center py-4 text-muted-foreground">Loading…</TableCell></TableRow>
+              : filtered.length === 0 ? <TableRow><TableCell colSpan={9} className="text-center py-4 text-muted-foreground">No students.</TableCell></TableRow>
               : filtered.map((u) => (
                 <TableRow key={u.id}>
-                  <TableCell>{u.name || "—"}</TableCell>
-                  <TableCell className="text-xs">{u.email}</TableCell>
-                  <TableCell className="text-xs">{u.telegram_username ? `@${u.telegram_username}` : (u.telegram_id || "—")}</TableCell>
+                  <TableCell className="font-medium">{u.name || "—"}</TableCell>
+                  <TableCell className="text-muted-foreground">{u.last_name || "—"}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{u.email}</TableCell>
+                  <TableCell className="text-xs font-mono">{u.telegram_id ?? "—"}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{u.telegram_username ? `@${u.telegram_username}` : "—"}</TableCell>
+                  <TableCell>{roleBadgeFor(u.role_name)}</TableCell>
+                  <TableCell className="text-xs"><Badge variant="secondary" className="opacity-60">{group.name}</Badge></TableCell>
+                  <TableCell>
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : u.status === "archived" ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-destructive/10 text-destructive"}`}>
+                      {u.status === "active" ? "Active" : u.status === "archived" ? "Arxiv" : "Inactive"}
+                    </span>
+                  </TableCell>
                   <TableCell><Button variant="ghost" size="sm" onClick={() => remove(u.id)}><Trash2 className="h-4 w-4" /></Button></TableCell>
                 </TableRow>
               ))}
