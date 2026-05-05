@@ -224,7 +224,24 @@ export default function AdminUsers() {
     return { all: users.length, active, archived };
   }, [users]);
 
-  const exportFilteredCsv = () => {
+  const exportFilteredCsv = async () => {
+    // Fetch fresh group_id mapping joined with group name to guarantee group_name in export
+    const ids = filtered.map((u) => u.id);
+    const groupOf = new Map<string, string>();
+    if (ids.length) {
+      const PAGE = 1000;
+      for (let i = 0; i < ids.length; i += PAGE) {
+        const slice = ids.slice(i, i + PAGE);
+        const { data } = await supabase
+          .from("profiles")
+          .select("id, group_id, groups:group_id(name)")
+          .in("id", slice);
+        (data || []).forEach((p: any) => {
+          const gname = p?.groups?.name || (p.group_id ? groupNameById.get(p.group_id) : "") || "";
+          if (gname) groupOf.set(p.id, gname);
+        });
+      }
+    }
     const rows = filtered.map((u) => ({
       name: u.name || "",
       last_name: u.last_name || "",
@@ -233,9 +250,10 @@ export default function AdminUsers() {
       telegram_user_id: u.telegram_id ?? "",
       telegram_username: u.telegram_username || "",
       role: u.role_name || "student",
-      group_name: u.group_id ? (groupNameById.get(u.group_id) || "") : "",
+      group_name: groupOf.get(u.id) || (u.group_id ? (groupNameById.get(u.group_id) || "") : ""),
+      status: u.status,
     }));
-    const csv = Papa.unparse(rows, { columns: ["name","last_name","email","password","telegram_user_id","telegram_username","role","group_name"] });
+    const csv = Papa.unparse(rows, { columns: ["name","last_name","email","password","telegram_user_id","telegram_username","role","group_name","status"] });
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
