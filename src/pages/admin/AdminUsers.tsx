@@ -584,6 +584,22 @@ export default function AdminUsers() {
     reload();
   };
 
+  const bulkArchive = async (ids: string[], mode: "archive" | "unarchive") => {
+    if (ids.length === 0) return;
+    const patch = mode === "archive"
+      ? { status: "archived" as any, archived_at: new Date().toISOString() }
+      : { status: "active" as any, archived_at: null };
+    const { error } = await (supabase.from("profiles") as any).update(patch).in("id", ids);
+    if (error) return toast.error(error.message);
+    logAction(mode === "archive" ? "archived_users" : "unarchived_users", { details: { profile_ids: ids, count: ids.length } });
+    toast.success(mode === "archive"
+      ? `${ids.length} ta talaba arxivlandi`
+      : `${ids.length} ta talaba qayta faollashtirildi`);
+    setSelected(new Set());
+    setConfirmArchive(null);
+    reload();
+  };
+
   const updateProfile = async (user: UserRow, patch: Record<string, any>) => {
     const { error } = await (supabase.from("profiles") as any).update(patch).eq("id", user.id);
     if (error) return toast.error(error.message);
