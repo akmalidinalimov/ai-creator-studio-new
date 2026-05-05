@@ -2303,28 +2303,85 @@ async function notifyTeachersOfSubmission(
   mn: number, tn: number, aTitle: string,
   messageUrl: string,
   submissionId: string | undefined,
+  assignmentId: string,
+  moduleId: string,
 ) {
   try {
-    if (!groupId) return;
+    if (!submissionId) return;
+    if (!groupId) {
+      // NO_TEACHER edge case (no group) — log to audit so admin sees ungraded submissions accumulating
+      try {
+        await admin.from("admin_actions").insert({
+          actor_user_id: studentProfile.id,
+          action: "homework_submission_dm_sent",
+          target_user_id: null,
+          target_resource_type: "homework_submission",
+          target_resource_id: submissionId,
+          details: { reason: "no_group", student_id: studentProfile.id, message_url: messageUrl, queued: false },
+        });
+      } catch { /* ignore */ }
+      return;
+    }
     const { data: g } = await admin.from("groups").select("teacher_id").eq("id", groupId).maybeSingle();
     const teacherId = g?.teacher_id;
-    if (!teacherId) return;
-    const { data: tProf } = await admin
-      .from("profiles")
-      .select("telegram_id, preferred_locale")
-      .eq("id", teacherId)
-      .maybeSingle();
-    if (!tProf?.telegram_id) return;
-
-    const tLocale: Locale = normLocale(tProf.preferred_locale);
-    const tt = T[tLocale] as any;
-    const studentName = [studentProfile.name, studentProfile.last_name].filter(Boolean).join(" ") || "—";
-    const text = tt.hwTeacherNotify(studentName, mn, tn, aTitle);
-    const buttons: any[] = [{ text: tt.hwTeacherBtnFile, url: messageUrl }];
-    if (submissionId) {
-      buttons.push({ text: tt.hwTeacherBtnGrade, callback_data: `gs:open:${submissionId}` });
+    if (!teacherId) {
+      try {
+        await admin.from("admin_actions").insert({
+          actor_user_id: studentProfile.id,
+          action: "homework_submission_dm_sent",
+          target_user_id: null,
+          target_resource_type: "homework_submission",
+          target_resource_id: submissionId,
+          details: { reason: "no_teacher", student_id: studentProfile.id, group_id: groupId, module_id: moduleId, message_url: messageUrl, queued: false },
+        });
+      } catch { /* ignore */ }
+      return;
     }
-    await sendMessage(tProf.telegram_id, text, { inline_keyboard: [buttons] });
+
+    // Throttle: skip if we already queued/sent a DM for this same student+assignment in the last 24h
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: recent } = await admin
+      .from("homework_teacher_dm_queue")
+      .select("id")
+      .eq("student_id", studentProfile.id)
+      .eq("assignment_id", assignmentId)
+      .gte("created_at", since)
+      .limit(1);
+    if (recent && recent.length) return;
+
+    // Quiet hours 22:00–08:00 Tashkent
+    const now = new Date();
+    const tashHour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Tashkent", hour: "2-digit", hour12: false }).format(now));
+    let scheduled = now;
+    let quiet = false;
+    if (tashHour >= 22 || tashHour < 8) {
+      quiet = true;
+      // Compute next 08:00 Tashkent (UTC+5, no DST)
+      const utcMs = now.getTime();
+      const tashMs = utcMs + 5 * 60 * 60 * 1000;
+      const tashDate = new Date(tashMs);
+      const y = tashDate.getUTCFullYear(); const m = tashDate.getUTCMonth(); const d = tashDate.getUTCDate();
+      const targetTashMs = Date.UTC(y, m, d + (tashHour >= 22 ? 1 : 0), 8, 0, 0);
+      scheduled = new Date(targetTashMs - 5 * 60 * 60 * 1000);
+    }
+
+    const studentName = [studentProfile.name, studentProfile.last_name].filter(Boolean).join(" ") || "—";
+
+    await admin.from("homework_teacher_dm_queue").insert({
+      submission_id: submissionId,
+      teacher_id: teacherId,
+      student_id: studentProfile.id,
+      group_id: groupId,
+      module_id: moduleId,
+      assignment_id: assignmentId,
+      module_number: mn,
+      task_number: tn,
+      assignment_title: aTitle,
+      student_name: studentName,
+      message_url: messageUrl,
+      scheduled_for: scheduled.toISOString(),
+      queued_for_quiet_hours: quiet,
+    });
   } catch (e) {
     console.error("notifyTeachersOfSubmission error", e);
   }
