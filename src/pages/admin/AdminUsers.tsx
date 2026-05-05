@@ -81,7 +81,12 @@ export default function AdminUsers() {
   const [enrollMap, setEnrollMap] = useState<Record<string, Set<string>>>({});
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("active");
-  const [roleFilter, setRoleFilter] = useState<string>("all");
+  const initialRoleFilter = (() => {
+    if (typeof window === "undefined") return "all";
+    const p = new URLSearchParams(window.location.search).get("role");
+    return p === "teacher" || p === "admin" || p === "student" ? p : "all";
+  })();
+  const [roleFilter, setRoleFilter] = useState<string>(initialRoleFilter);
   const [groupFilter, setGroupFilter] = useState<string>("all");
   const [orphansOnly, setOrphansOnly] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState<{ ids: string[]; mode: "archive" | "unarchive" } | null>(null);
