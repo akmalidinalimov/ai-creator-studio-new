@@ -2013,6 +2013,34 @@ export type Database = {
           user_id: string
         }[]
       }
+      admin_export_group_csv: {
+        Args: { _group_id: string; _include_archived?: boolean }
+        Returns: {
+          created_at: string
+          email: string
+          first_login_at: string
+          group_name: string
+          has_logged_in: boolean
+          homework_avg: number
+          id: string
+          last_login_at: string
+          last_name: string
+          lessons_completed: number
+          name: string
+          role: string
+          status: Database["public"]["Enums"]["user_status"]
+          telegram_user_id: number
+          telegram_username: string
+        }[]
+      }
+      admin_group_login_stats: {
+        Args: never
+        Returns: {
+          group_id: string
+          logged_in_count: number
+          total_active: number
+        }[]
+      }
       admin_list_users: {
         Args: never
         Returns: {
