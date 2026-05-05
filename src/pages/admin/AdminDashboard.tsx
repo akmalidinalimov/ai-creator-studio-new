@@ -399,6 +399,7 @@ export default function AdminDashboard() {
           </Card>
         )}
         {!isTeacher && <AnalyticsTiles />}
+        {isTeacher && <TeacherLoginAnalytics />}
 
         {/* Engagement health: unified stacked bar */}
         {(() => {
