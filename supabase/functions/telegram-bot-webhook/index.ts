@@ -923,7 +923,7 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
       admin.from("homework_submissions").select("score").eq("user_id", userId),
       admin.from("homework_assignments").select("id", { count: "exact", head: true }),
       admin.from("leaderboard_cache").select("rank, score").eq("user_id", userId).maybeSingle(),
-      admin.from("user_roles").select("user_id", { count: "exact", head: true }).eq("role", "student"),
+      admin.from("leaderboard_cache").select("user_id", { count: "exact", head: true }),
       admin.from("user_badges").select("badge_id", { count: "exact", head: true }).eq("user_id", userId),
       admin.from("badges").select("id", { count: "exact", head: true }),
       admin.from("profiles").select("weekly_goal_lessons").eq("id", userId).maybeSingle(),
