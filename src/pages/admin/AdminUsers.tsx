@@ -121,6 +121,8 @@ export default function AdminUsers() {
   const [manageUser, setManageUser] = useState<UserRow | null>(null);
   const [confirmRole, setConfirmRole] = useState<{ user: UserRow; promote: boolean } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<UserRow | null>(null);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState<string[] | null>(null);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const reload = async () => {
     setLoading(true);
