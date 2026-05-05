@@ -1999,9 +1999,11 @@ async function handleTeacherSession(admin: any, msg: any, profileId: string, loc
     await sendWithKeyboard(msg.chat.id, t.teacherBroadcastTooLong, locale, false, "teacher");
     return true;
   }
+  const sessGroupId: string | undefined = (sess as any)?.data?.group_id;
   const groups = await teacherGroups(admin, profileId);
-  const groupName = groups.map((g: any) => g.name).join(", ");
-  const ids = await teacherStudentIds(admin, profileId);
+  const sessGroup = sessGroupId ? groups.find((g: any) => g.id === sessGroupId) : null;
+  const groupName = sessGroup ? sessGroup.name : groups.map((g: any) => g.name).join(", ");
+  const ids = await teacherStudentIds(admin, profileId, sessGroupId || null);
   const { data: profs } = ids.length
     ? await admin.from("profiles").select("id, telegram_id, name").in("id", ids)
     : { data: [] };
