@@ -122,22 +122,43 @@ export default function AdminUsers() {
     const { data, error } = await supabase.rpc(isTeacher ? "staff_list_students" as any : "admin_list_users");
     if (error) toast.error(error.message);
     const rows = (data || []) as any[];
-    // Hydrate last_name + group_id from profiles, and roles from user_roles
+    // Hydrate last_name + group_id (joined to groups.name) from profiles, and roles from user_roles.
+    // Chunked to avoid URL-length / 1000-row limits with large user counts.
     if (rows.length) {
       const ids = rows.map((u) => u.id);
-      const [{ data: profs }, { data: rolesData }] = await Promise.all([
-        supabase.from("profiles").select("id, last_name, group_id").in("id", ids),
-        supabase.from("user_roles").select("user_id, role").in("user_id", ids),
-      ]);
       const lnMap: Record<string, string | null> = {};
       const grpMap: Record<string, string | null> = {};
-      (profs || []).forEach((p: any) => { lnMap[p.id] = p.last_name; grpMap[p.id] = p.group_id; });
+      const grpNameMap: Record<string, string | null> = {};
       const rolesMap: Record<string, string[]> = {};
-      (rolesData || []).forEach((r: any) => { (rolesMap[r.user_id] ||= []).push(r.role); });
+      const PAGE = 300;
+      const profPromises: Promise<any>[] = [];
+      const rolePromises: Promise<any>[] = [];
+      for (let i = 0; i < ids.length; i += PAGE) {
+        const slice = ids.slice(i, i + PAGE);
+        profPromises.push(
+          supabase.from("profiles").select("id, last_name, group_id, groups:group_id(name)").in("id", slice)
+        );
+        rolePromises.push(
+          supabase.from("user_roles").select("user_id, role").in("user_id", slice)
+        );
+      }
+      const profResults = await Promise.all(profPromises);
+      const roleResults = await Promise.all(rolePromises);
+      profResults.forEach(({ data }) => {
+        (data || []).forEach((p: any) => {
+          lnMap[p.id] = p.last_name;
+          grpMap[p.id] = p.group_id;
+          grpNameMap[p.id] = p?.groups?.name || null;
+        });
+      });
+      roleResults.forEach(({ data }) => {
+        (data || []).forEach((r: any) => { (rolesMap[r.user_id] ||= []).push(r.role); });
+      });
       const rank: Record<string, number> = { superadmin: 1, admin: 2, teacher: 3, student: 4 };
       rows.forEach((u) => {
         u.last_name = lnMap[u.id] || null;
         u.group_id = grpMap[u.id] || null;
+        (u as any).group_name = grpNameMap[u.id] || null;
         const list = rolesMap[u.id] || [];
         const top = list.sort((a, b) => (rank[a] || 99) - (rank[b] || 99))[0] as RoleName | undefined;
         u.role_name = (top || "student") as RoleName;
