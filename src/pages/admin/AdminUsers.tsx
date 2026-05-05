@@ -648,10 +648,16 @@ export default function AdminUsers() {
         <div className="flex items-end justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-3xl font-semibold tracking-tight">{t("admin.users.title")}</h1>
-            <p className="text-muted-foreground mt-1">{t("admin.users.subtitle", { total: users.length, admins: users.filter(u => u.is_admin).length })}</p>
+            <p className="text-muted-foreground mt-1">
+              {statusFilter === "archived"
+                ? `Arxiv: ${counts.archived} • Faol: ${counts.active} • Jami: ${counts.all}`
+                : statusFilter === "active"
+                ? `Faol: ${counts.active} • Arxiv: ${counts.archived} • Jami: ${counts.all}`
+                : `Jami: ${counts.all} (Faol: ${counts.active}, Arxiv: ${counts.archived})`}
+            </p>
           </div>
           <div className="flex gap-2 flex-wrap">
-            {isAdmin && selected.size > 0 && (
+            {isAdmin && selected.size > 0 && statusFilter !== "archived" && (
               <Select value={bulkGroupId} onValueChange={(v) => { setBulkGroupId(v); bulkAssignGroup(v); }}>
                 <SelectTrigger className="w-[200px] h-9 text-xs">
                   <SelectValue placeholder={t("admin.users.bulkMoveTo", { defaultValue: "Move {{n}} to group…", n: selected.size })} />
@@ -662,6 +668,16 @@ export default function AdminUsers() {
                   ))}
                 </SelectContent>
               </Select>
+            )}
+            {isAdmin && selected.size > 0 && statusFilter !== "archived" && (
+              <Button variant="outline" size="sm" onClick={() => setConfirmArchive({ ids: Array.from(selected), mode: "archive" })}>
+                {`Arxivlash (${selected.size})`}
+              </Button>
+            )}
+            {isAdmin && selected.size > 0 && statusFilter === "archived" && (
+              <Button variant="outline" size="sm" onClick={() => setConfirmArchive({ ids: Array.from(selected), mode: "unarchive" })}>
+                {`Qayta faollashtirish (${selected.size})`}
+              </Button>
             )}
             {selected.size > 0 && (
               <Button variant="outline" size="sm" onClick={() => {
@@ -678,19 +694,36 @@ export default function AdminUsers() {
           </div>
         </div>
 
+        {/* Status chips */}
+        <div className="flex flex-wrap gap-2 items-center">
+          {(["active", "all", "archived"] as const).map((s) => (
+            <Button
+              key={s}
+              variant={statusFilter === s ? "default" : "outline"}
+              size="sm"
+              onClick={() => { setStatusFilter(s); setSelected(new Set()); }}
+            >
+              {s === "active" ? `Faol (${counts.active})` : s === "archived" ? `Arxiv (${counts.archived})` : `Hammasi (${counts.all})`}
+            </Button>
+          ))}
+          {isAdmin && (
+            <label className="flex items-center gap-2 text-xs cursor-pointer ml-2">
+              <Checkbox checked={orphansOnly} onCheckedChange={(v) => setOrphansOnly(!!v)} />
+              Faqat guruhsiz/eski talabalar
+            </label>
+          )}
+          {isAdmin && orphansOnly && filtered.length > 0 && statusFilter !== "archived" && (
+            <Button size="sm" variant="outline" onClick={() => setConfirmArchive({ ids: filtered.map((u) => u.id), mode: "archive" })}>
+              {`Tanlanganlarni arxivlash (${filtered.length})`}
+            </Button>
+          )}
+        </div>
+
         <div className="flex flex-wrap gap-2 items-center">
           <div className="relative flex-1 min-w-[220px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input placeholder={t("admin.users.searchPh")} value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
           </div>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("admin.users.allStatus")}</SelectItem>
-              <SelectItem value="active">{t("admin.users.active")}</SelectItem>
-              <SelectItem value="inactive">{t("admin.users.inactive")}</SelectItem>
-            </SelectContent>
-          </Select>
           <Select value={roleFilter} onValueChange={setRoleFilter}>
             <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -710,6 +743,7 @@ export default function AdminUsers() {
             </SelectContent>
           </Select>
         </div>
+
 
         {/* Mobile: card list */}
         <div className="md:hidden space-y-2">
