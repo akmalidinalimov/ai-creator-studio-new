@@ -184,6 +184,8 @@ export default function AdminUsers() {
     return m;
   }, [groups]);
 
+  const activeGroupIds = useMemo(() => new Set(groups.map((g) => g.id)), [groups]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return users.filter((u) => {
@@ -197,6 +199,9 @@ export default function AdminUsers() {
           return false;
         }
       }
+      if (orphansOnly) {
+        if (u.group_id && activeGroupIds.has(u.group_id)) return false;
+      }
       if (q) {
         return (
           (u.name || "").toLowerCase().includes(q) ||
@@ -208,7 +213,16 @@ export default function AdminUsers() {
       }
       return true;
     });
-  }, [users, search, statusFilter, roleFilter, groupFilter]);
+  }, [users, search, statusFilter, roleFilter, groupFilter, orphansOnly, activeGroupIds]);
+
+  const counts = useMemo(() => {
+    let active = 0, archived = 0;
+    for (const u of users) {
+      if (u.status === "archived") archived++;
+      else active++;
+    }
+    return { all: users.length, active, archived };
+  }, [users]);
 
   const exportFilteredCsv = () => {
     const rows = filtered.map((u) => ({
