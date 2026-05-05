@@ -243,12 +243,13 @@ export default function AdminUsers() {
   }, [users, search, statusFilter, roleFilter, groupFilter, orphansOnly, activeGroupIds]);
 
   const counts = useMemo(() => {
-    let active = 0, archived = 0;
+    let active = 0, archived = 0, teachers = 0;
     for (const u of users) {
       if (u.status === "archived") archived++;
       else active++;
+      if ((u.role_name || "student") === "teacher") teachers++;
     }
-    return { all: users.length, active, archived };
+    return { all: users.length, active, archived, teachers };
   }, [users]);
 
   const exportFilteredCsv = async () => {
