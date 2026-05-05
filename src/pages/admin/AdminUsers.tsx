@@ -266,10 +266,17 @@ export default function AdminUsers() {
       role: newRole,
     }], newGroupId && newGroupId !== "none" ? { target_group_id: newGroupId } : {});
     const r = res?.results?.[0];
-    if (r?.status === "created") {
-      toast.success(r.action_link
-        ? t("admin.users.toasts.createdInvite", { email: newEmail })
-        : t("admin.users.toasts.created", { email: newEmail }));
+    const okStatuses = ["created", "updated", "matched", "skipped_already_in_group"];
+    if (r && okStatuses.includes(r.status)) {
+      if (r.status === "created") {
+        toast.success(r.action_link
+          ? t("admin.users.toasts.createdInvite", { email: newEmail })
+          : t("admin.users.toasts.created", { email: newEmail }));
+      } else if (r.status === "skipped_already_in_group") {
+        toast.info(`${newEmail} allaqachon ushbu guruhda mavjud`);
+      } else {
+        toast.success(`${newEmail} yangilandi va guruhga qo'shildi`);
+      }
       setOpenAdd(false);
       setNewName(""); setNewLastName(""); setNewEmail(""); setNewPassword(randPassword());
       setNewTg(""); setNewTgId(""); setNewRole("student"); setNewCourses(new Set()); setNewGroupId("none");
