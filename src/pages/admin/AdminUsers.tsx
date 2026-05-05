@@ -95,6 +95,7 @@ export default function AdminUsers() {
   const [newTgId, setNewTgId] = useState("");
   const [newRole, setNewRole] = useState<"student" | "admin">("student");
   const [newCourses, setNewCourses] = useState<Set<string>>(new Set());
+  const [newGroupId, setNewGroupId] = useState<string>("none");
   const [sendInvite, setSendInvite] = useState(true);
   // CSV
   const [openCsv, setOpenCsv] = useState(false);
@@ -263,7 +264,7 @@ export default function AdminUsers() {
       telegram_username: newTg.replace(/^@/, "") || undefined,
       telegram_user_id: tgId,
       role: newRole,
-    }]);
+    }], newGroupId && newGroupId !== "none" ? { target_group_id: newGroupId } : {});
     const r = res?.results?.[0];
     if (r?.status === "created") {
       toast.success(r.action_link
@@ -271,7 +272,7 @@ export default function AdminUsers() {
         : t("admin.users.toasts.created", { email: newEmail }));
       setOpenAdd(false);
       setNewName(""); setNewLastName(""); setNewEmail(""); setNewPassword(randPassword());
-      setNewTg(""); setNewTgId(""); setNewRole("student"); setNewCourses(new Set());
+      setNewTg(""); setNewTgId(""); setNewRole("student"); setNewCourses(new Set()); setNewGroupId("none");
       reload();
     } else {
       toast.error(r?.error || res?.error || t("admin.users.toasts.createFailed"));
@@ -825,6 +826,18 @@ export default function AdminUsers() {
                 <SelectContent>
                   <SelectItem value="student">{t("admin.users.student")}</SelectItem>
                   <SelectItem value="admin">{t("admin.users.admin")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t("admin.users.group", { defaultValue: "Group" })}</Label>
+              <Select value={newGroupId} onValueChange={setNewGroupId}>
+                <SelectTrigger><SelectValue placeholder={t("admin.users.noGroup", { defaultValue: "No group" })} /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">{t("admin.users.noGroup", { defaultValue: "No group" })}</SelectItem>
+                  {groups.map((g) => (
+                    <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
