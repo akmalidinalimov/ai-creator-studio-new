@@ -1700,8 +1700,8 @@ async function gradingScopeIds(admin: any, graderId: string, isAdmin: boolean, g
   return ((data || []) as any[]).map((r) => r.id);
 }
 
-async function loadGradingSubmissions(admin: any, graderId: string, isAdmin: boolean, opts: { scored: boolean; limit?: number }) {
-  const ids = await gradingScopeIds(admin, graderId, isAdmin);
+async function loadGradingSubmissions(admin: any, graderId: string, isAdmin: boolean, opts: { scored: boolean; limit?: number; groupId?: string | null }) {
+  const ids = await gradingScopeIds(admin, graderId, isAdmin, opts.groupId);
   if (ids && ids.length === 0) return [];
   let q = admin.from("homework_submissions").select("id, assignment_id, user_id, submitted_at, score, score_feedback, scored_at, is_late");
   if (ids) q = q.in("user_id", ids);
