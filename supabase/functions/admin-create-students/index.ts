@@ -239,23 +239,49 @@ Deno.serve(async (req) => {
       if (!resolvedGroupId && targetGroupId) resolvedGroupId = targetGroupId;
       if (!resolvedGroupId && defaultGroupId) resolvedGroupId = defaultGroupId;
 
-      // Dedupe ONLY by Telegram identity (telegram_id → telegram_username).
-      // Email is optional metadata and intentionally NOT used for matching:
-      // two different students may share or reuse an email; identity is the Telegram account.
+      // CSV telegram_username — preserve VERBATIM from input (keep @ if present, no lowercase, no derivation).
+      // tgUserNorm above is only for matching/synthesis; the value we store is the raw csv value.
+      const csvTgUsernameRaw = (s.telegram_username || "").trim();
+
+      // Dedupe priority: telegram_id → telegram_username → (name + last_name pair, case-insensitive).
+      // Email is optional metadata and intentionally NOT used for matching.
       let existingId: string | null = null;
       let existingGroupId: string | null = null;
+      let existingTgUsername: string | null = null;
       if (tgIdNum) {
-        const { data: e1 } = await admin.from("profiles").select("id, group_id").eq("telegram_id", tgIdNum).maybeSingle();
-        if (e1) { existingId = (e1 as any).id; existingGroupId = (e1 as any).group_id || null; }
+        const { data: e1 } = await admin.from("profiles").select("id, group_id, telegram_username").eq("telegram_id", tgIdNum).maybeSingle();
+        if (e1) { existingId = (e1 as any).id; existingGroupId = (e1 as any).group_id || null; existingTgUsername = (e1 as any).telegram_username ?? null; }
       }
       if (!existingId && tgUserNorm) {
-        const { data: e2 } = await admin.from("profiles").select("id, group_id").or(`telegram_username.eq.${tgUserNorm},telegram_username.eq.@${tgUserNorm}`).maybeSingle();
-        if (e2) { existingId = (e2 as any).id; existingGroupId = (e2 as any).group_id || null; }
+        const { data: e2 } = await admin.from("profiles").select("id, group_id, telegram_username").or(`telegram_username.eq.${tgUserNorm},telegram_username.eq.@${tgUserNorm}`).maybeSingle();
+        if (e2) { existingId = (e2 as any).id; existingGroupId = (e2 as any).group_id || null; existingTgUsername = (e2 as any).telegram_username ?? null; }
+      }
+      // Soft re-import dedupe: match by (lower(name), lower(last_name)) when no Telegram identity hit.
+      // This lets re-uploads of corrupted CSVs heal data without creating duplicates.
+      if (!existingId && csvName && csvLastName) {
+        const { data: e3 } = await admin
+          .from("profiles")
+          .select("id, group_id, telegram_username")
+          .ilike("name", csvName)
+          .ilike("last_name", csvLastName)
+          .limit(2);
+        if (e3 && e3.length === 1) {
+          existingId = (e3[0] as any).id;
+          existingGroupId = (e3[0] as any).group_id || null;
+          existingTgUsername = (e3[0] as any).telegram_username ?? null;
+        }
       }
       if (existingId) {
         const alreadyInTargetGroup = !!resolvedGroupId && existingGroupId === resolvedGroupId;
         const patch: Record<string, any> = {};
         if (resolvedGroupId && !alreadyInTargetGroup) patch.group_id = resolvedGroupId;
+        // Heal telegram_username if CSV provides one and DB value differs (case/@-insensitive compare).
+        if (csvTgUsernameRaw) {
+          const dbNorm = (existingTgUsername || "").trim().replace(/^@/, "").toLowerCase();
+          const csvNormCmp = csvTgUsernameRaw.replace(/^@/, "").toLowerCase();
+          if (dbNorm !== csvNormCmp) patch.telegram_username = csvTgUsernameRaw;
+        }
+        if (tgIdNum !== undefined) patch.telegram_id = tgIdNum;
         if (Object.keys(patch).length) {
           const { error: updateErr } = await admin.from("profiles").update(patch).eq("id", existingId);
           if (updateErr) {
