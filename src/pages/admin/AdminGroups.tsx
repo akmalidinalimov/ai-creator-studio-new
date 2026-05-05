@@ -54,6 +54,7 @@ export default function AdminGroups() {
   const [editGroup, setEditGroup] = useState<Group | null>(null);
   const [deleteGroup, setDeleteGroup] = useState<Group | null>(null);
   const [studentsGroup, setStudentsGroup] = useState<Group | null>(null);
+  const [assignTeacherGroup, setAssignTeacherGroup] = useState<Group | null>(null);
 
   const reload = async () => {
     setLoading(true);
