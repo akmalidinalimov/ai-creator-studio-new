@@ -809,7 +809,11 @@ export default function AdminUsers() {
               </div>
             </div>
             <p className="text-xs text-muted-foreground -mt-1">{t("admin.users.tgHelp")}</p>
-            <div className="space-y-1.5"><Label>{t("admin.users.headers.email")}</Label><Input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} /></div>
+            <div className="space-y-1.5">
+              <Label>{t("admin.users.headers.email")} (optional)</Label>
+              <Input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="optional — Telegram ID/username is the real identity" />
+              <p className="text-xs text-muted-foreground">Email is metadata only. Identity matching uses Telegram ID/username.</p>
+            </div>
             <div className="space-y-1.5">
               <Label>{t("admin.users.passwordOptional")}</Label>
               <div className="flex gap-2">
