@@ -833,6 +833,7 @@ export default function AdminUsers() {
             <SelectContent>
               <SelectItem value="all">{t("admin.users.allRoles")}</SelectItem>
               <SelectItem value="admin">{t("admin.users.admins")}</SelectItem>
+              <SelectItem value="teacher">Ustozlar</SelectItem>
               <SelectItem value="student">{t("admin.users.students")}</SelectItem>
             </SelectContent>
           </Select>
