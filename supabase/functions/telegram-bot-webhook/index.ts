@@ -1469,20 +1469,94 @@ async function teacherGroups(admin: any, teacherId: string): Promise<{ id: strin
   return (data || []) as any[];
 }
 
-async function teacherStudentIds(admin: any, teacherId: string): Promise<string[]> {
+async function teacherStudentIds(admin: any, teacherId: string, groupId?: string | null): Promise<string[]> {
+  if (groupId) {
+    const { data } = await admin.from("profiles").select("id").eq("group_id", groupId);
+    return ((data || []) as any[]).map((r) => r.id);
+  }
   const groups = await teacherGroups(admin, teacherId);
   if (!groups.length) return [];
   const { data } = await admin.from("profiles").select("id").in("group_id", groups.map((g) => g.id));
   return ((data || []) as any[]).map((r) => r.id);
 }
 
-async function handleTeacherCommand(admin: any, chatId: number, teacherId: string, locale: Locale, cmd: string): Promise<boolean> {
+// Resolve which group the teacher is currently acting on.
+// Returns: { mode: "none" } if zero groups, { mode: "ok", group } if 1 owned or active set,
+// { mode: "pick", groups } when 2+ and no valid active group.
+async function resolveActiveGroup(admin: any, teacherId: string): Promise<
+  | { mode: "none" }
+  | { mode: "ok"; group: { id: string; name: string }; groups: { id: string; name: string }[] }
+  | { mode: "pick"; groups: { id: string; name: string }[] }
+> {
+  const groups = await teacherGroups(admin, teacherId);
+  groups.sort((a: any, b: any) => String(a.name).localeCompare(String(b.name)));
+  if (!groups.length) return { mode: "none" };
+  if (groups.length === 1) {
+    const only = groups[0];
+    await admin.from("profiles").update({ active_teacher_group_id: only.id }).eq("id", teacherId);
+    return { mode: "ok", group: only, groups };
+  }
+  const { data: prof } = await admin.from("profiles").select("active_teacher_group_id").eq("id", teacherId).maybeSingle();
+  const activeId = prof?.active_teacher_group_id;
+  const found = activeId ? groups.find((g) => g.id === activeId) : null;
+  if (found) return { mode: "ok", group: found, groups };
+  return { mode: "pick", groups };
+}
+
+async function showGroupPicker(chatId: number, locale: Locale, action: string, groups: { id: string; name: string }[]) {
+  const t = T[locale] as any;
+  const buttons = groups.map((g) => [{ text: g.name, callback_data: `tg:pick:${action}:${g.id}` }]);
+  await sendMessage(chatId, t.tPickGroup, { inline_keyboard: buttons });
+}
+
+// Map a teacher command to an "action" key used in tg:pick callback.
+const TEACHER_ACTION_CMD: Record<string, string> = {
+  tstats: "/tstats",
+  thealth: "/thealth",
+  tstudents: "/tstudents",
+  tinactive: "/tinactive",
+  tbroadcast: "/tbroadcast",
+  baholash: "/baholash",
+  baholar: "/baholar",
+};
+
+async function handleTeacherCommand(admin: any, chatId: number, teacherId: string, locale: Locale, cmd: string, explicitGroupId?: string): Promise<boolean> {
   const t = T[locale] as any;
 
   if (cmd === "/cancel") {
     await admin.from("bot_sessions").delete().eq("user_id", teacherId);
     await sendWithKeyboard(chatId, t.teacherCancelled, locale, false, "teacher");
     return true;
+  }
+
+  // Show / re-show group picker on demand
+  if (cmd === "/guruh" || cmd === "/group") {
+    const r = await resolveActiveGroup(admin, teacherId);
+    if (r.mode === "none") { await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher"); return true; }
+    await showGroupPicker(chatId, locale, "switch", r.mode === "ok" ? r.groups : r.groups);
+    return true;
+  }
+
+  // Group-scoped commands
+  const scopedCmds = new Set(["/tstats", "/thealth", "/tstudents", "/tinactive", "/tbroadcast", "/baholash", "/baholar"]);
+  let activeGroup: { id: string; name: string } | null = null;
+  if (scopedCmds.has(cmd)) {
+    if (explicitGroupId) {
+      const groups = await teacherGroups(admin, teacherId);
+      const g = groups.find((x) => x.id === explicitGroupId);
+      if (!g) { await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher"); return true; }
+      await admin.from("profiles").update({ active_teacher_group_id: g.id }).eq("id", teacherId);
+      activeGroup = g;
+    } else {
+      const r = await resolveActiveGroup(admin, teacherId);
+      if (r.mode === "none") { await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher"); return true; }
+      if (r.mode === "pick") {
+        const action = cmd.replace(/^\//, "");
+        await showGroupPicker(chatId, locale, action, r.groups);
+        return true;
+      }
+      activeGroup = r.group;
+    }
   }
 
   if (cmd === "/tstats") {
