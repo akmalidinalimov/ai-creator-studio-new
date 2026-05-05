@@ -14,6 +14,11 @@ const StudentOrStaffRedirect = ({ children }: { children: JSX.Element }) => {
   if (role === "admin" || role === "teacher") return <Navigate to="/admin/dashboard" replace />;
   return children;
 };
+
+const TeacherDashboardRedirect = () => {
+  const search = typeof window !== "undefined" ? window.location.search : "";
+  return <Navigate to={`/admin/dashboard${search}`} replace />;
+};
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import ForgotPassword from "./pages/ForgotPassword";
