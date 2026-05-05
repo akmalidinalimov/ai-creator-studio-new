@@ -34,10 +34,25 @@ type Course = { id: string; title: string };
 type ProfileLite = {
   id: string;
   name: string | null;
+  last_name?: string | null;
   email: string;
   telegram_username: string | null;
   telegram_id: number | null;
   group_id: string | null;
+  status?: string | null;
+  role_name?: "student" | "teacher" | "admin" | "superadmin";
+};
+
+const roleBadgeFor = (r?: string) => {
+  const role = r || "student";
+  const map: Record<string, { label: string; cls: string }> = {
+    student: { label: "Talaba", cls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30" },
+    teacher: { label: "Ustoz", cls: "bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/30" },
+    admin: { label: "Admin", cls: "bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/30" },
+    superadmin: { label: "Superadmin", cls: "bg-rose-700/20 text-rose-800 dark:text-rose-300 border-rose-700/40" },
+  };
+  const m = map[role] || map.student;
+  return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${m.cls}`}>{m.label}</span>;
 };
 
 export default function AdminGroups() {
@@ -489,9 +504,21 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
     setLoading(true);
     const { data } = await supabase
       .from("profiles")
-      .select("id,name,email,telegram_username,telegram_id,group_id")
+      .select("id,name,last_name,email,telegram_username,telegram_id,group_id,status")
       .eq("group_id", group.id);
-    setStudents((data as any[]) || []);
+    const list = ((data as any[]) || []) as ProfileLite[];
+    if (list.length) {
+      const ids = list.map((p) => p.id);
+      const { data: rs } = await supabase.from("user_roles").select("user_id, role").in("user_id", ids);
+      const rank: Record<string, number> = { superadmin: 1, admin: 2, teacher: 3, student: 4 };
+      const rolesMap: Record<string, string[]> = {};
+      ((rs as any[]) || []).forEach((r) => { (rolesMap[r.user_id] ||= []).push(r.role); });
+      list.forEach((p) => {
+        const top = (rolesMap[p.id] || []).sort((a, b) => (rank[a] || 99) - (rank[b] || 99))[0];
+        p.role_name = (top || "student") as any;
+      });
+    }
+    setStudents(list);
     const { data: ls } = await supabase.rpc("admin_group_login_stats" as any);
     const row = ((ls as any[]) || []).find((r: any) => r.group_id === group.id);
     setLoginStats({ logged: row?.logged_in_count || 0, total: row?.total_active || 0 });
@@ -616,17 +643,23 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
 
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
-    if (!s) return students;
-    return students.filter((u) =>
+    const sorted = [...students].sort((a, b) =>
+      ((a.name || "") + " " + (a.last_name || "")).localeCompare((b.name || "") + " " + (b.last_name || ""))
+    );
+    if (!s) return sorted;
+    return sorted.filter((u) =>
       (u.name || "").toLowerCase().includes(s) ||
+      (u.last_name || "").toLowerCase().includes(s) ||
       (u.email || "").toLowerCase().includes(s) ||
-      (u.telegram_username || "").toLowerCase().includes(s)
+      (u.telegram_username || "").toLowerCase().includes(s) ||
+      (u.telegram_id ? String(u.telegram_id) : "").includes(s) ||
+      (u.role_name || "").toLowerCase().includes(s)
     );
   }, [students, search]);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
         <DialogHeader><DialogTitle>Students in {group.name}</DialogTitle></DialogHeader>
         {(() => {
           const total = loginStats.total;
@@ -675,17 +708,38 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
           </div>
         )}
         <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search…" />
-        <div className="max-h-80 overflow-auto border rounded">
+        <div className="max-h-[60vh] overflow-auto border rounded">
           <Table>
-            <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Email</TableHead><TableHead>Telegram</TableHead><TableHead></TableHead></TableRow></TableHeader>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Last name</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Telegram ID</TableHead>
+                <TableHead>Telegram</TableHead>
+                <TableHead>Role</TableHead>
+                <TableHead>Group</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead></TableHead>
+              </TableRow>
+            </TableHeader>
             <TableBody>
-              {loading ? <TableRow><TableCell colSpan={4} className="text-center py-4 text-muted-foreground">Loading…</TableCell></TableRow>
-              : filtered.length === 0 ? <TableRow><TableCell colSpan={4} className="text-center py-4 text-muted-foreground">No students.</TableCell></TableRow>
+              {loading ? <TableRow><TableCell colSpan={9} className="text-center py-4 text-muted-foreground">Loading…</TableCell></TableRow>
+              : filtered.length === 0 ? <TableRow><TableCell colSpan={9} className="text-center py-4 text-muted-foreground">No students.</TableCell></TableRow>
               : filtered.map((u) => (
                 <TableRow key={u.id}>
-                  <TableCell>{u.name || "—"}</TableCell>
-                  <TableCell className="text-xs">{u.email}</TableCell>
-                  <TableCell className="text-xs">{u.telegram_username ? `@${u.telegram_username}` : (u.telegram_id || "—")}</TableCell>
+                  <TableCell className="font-medium">{u.name || "—"}</TableCell>
+                  <TableCell className="text-muted-foreground">{u.last_name || "—"}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{u.email}</TableCell>
+                  <TableCell className="text-xs font-mono">{u.telegram_id ?? "—"}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{u.telegram_username ? `@${u.telegram_username}` : "—"}</TableCell>
+                  <TableCell>{roleBadgeFor(u.role_name)}</TableCell>
+                  <TableCell className="text-xs"><Badge variant="secondary" className="opacity-60">{group.name}</Badge></TableCell>
+                  <TableCell>
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : u.status === "archived" ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-destructive/10 text-destructive"}`}>
+                      {u.status === "active" ? "Active" : u.status === "archived" ? "Arxiv" : "Inactive"}
+                    </span>
+                  </TableCell>
                   <TableCell><Button variant="ghost" size="sm" onClick={() => remove(u.id)}><Trash2 className="h-4 w-4" /></Button></TableCell>
                 </TableRow>
               ))}
