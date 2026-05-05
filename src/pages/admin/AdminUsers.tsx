@@ -512,8 +512,47 @@ export default function AdminUsers() {
     });
     const res = await r.json();
     setImporting(false);
-    const created = (res?.results || []).filter((x: any) => x.status === "created").length;
-    toast.success(t("admin.users.toasts.imported", { n: created, total: toCreate.length }));
+    const results: any[] = res?.results || [];
+    const autoCreated: Array<{ id: string; name: string }> = res?.auto_created_groups || [];
+    const autoSet = new Set(autoCreated.map((g) => (g.name || "").toLowerCase()));
+    // v3.14.14: build per-group breakdown.
+    const buckets = new Map<string, { created: number; updated: number; skipped: number; errors: number }>();
+    const bump = (key: string, field: "created" | "updated" | "skipped" | "errors") => {
+      const b = buckets.get(key) || { created: 0, updated: 0, skipped: 0, errors: 0 };
+      b[field]++;
+      buckets.set(key, b);
+    };
+    for (const rr of results) {
+      const idx = (rr.row_index || 0) - 1;
+      const row = toCreate[idx];
+      const gname = (row?.group_name || "").trim() || "__none__";
+      if (rr.status === "created") bump(gname, "created");
+      else if (rr.status === "updated") bump(gname, "updated");
+      else if (rr.status === "skipped_already_in_group") bump(gname, "skipped");
+      else bump(gname, "errors");
+    }
+    const totalCreated = results.filter((x: any) => x.status === "created").length;
+    const totalErrors = results.filter((x: any) => x.status === "error" || x.status === "invalid_email").length;
+    const lines: string[] = [];
+    for (const [key, b] of Array.from(buckets.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
+      const label = key === "__none__"
+        ? "Guruhsiz"
+        : `${key}${autoSet.has(key.toLowerCase()) ? " (yangi guruh yaratildi)" : ""}`;
+      const parts: string[] = [];
+      if (b.created) parts.push(`${b.created} yangi`);
+      if (b.updated) parts.push(`${b.updated} mavjud`);
+      if (b.skipped) parts.push(`${b.skipped} allaqachon`);
+      if (b.errors) parts.push(`${b.errors} xato`);
+      lines.push(`${label}: ${parts.join(" ") || "0"}`);
+    }
+    if (totalErrors) lines.push(`Xato: ${totalErrors}`);
+    const summary = lines.join("\n");
+    const head = t("admin.users.toasts.imported", { n: totalCreated, total: toCreate.length });
+    if (summary.length > 220) {
+      toast.success(head, { description: summary, duration: 12000 });
+    } else {
+      toast.success(head + (summary ? `\n${summary}` : ""), { duration: 9000 });
+    }
     setOpenCsv(false); setCsvText(""); setCsvParsed([]); reload();
   };
 
