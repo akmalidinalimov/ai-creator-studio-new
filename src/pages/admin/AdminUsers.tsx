@@ -95,6 +95,7 @@ export default function AdminUsers() {
   const [newTgId, setNewTgId] = useState("");
   const [newRole, setNewRole] = useState<"student" | "admin">("student");
   const [newCourses, setNewCourses] = useState<Set<string>>(new Set());
+  const [newGroupId, setNewGroupId] = useState<string>("none");
   const [sendInvite, setSendInvite] = useState(true);
   // CSV
   const [openCsv, setOpenCsv] = useState(false);
