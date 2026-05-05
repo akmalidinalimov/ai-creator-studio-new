@@ -272,9 +272,10 @@ Deno.serve(async (req) => {
         }
       }
       if (existingId) {
+        const isStaff = s.role === "teacher" || s.role === "admin";
         const alreadyInTargetGroup = !!resolvedGroupId && existingGroupId === resolvedGroupId;
         const patch: Record<string, any> = {};
-        if (resolvedGroupId && !alreadyInTargetGroup) patch.group_id = resolvedGroupId;
+        if (resolvedGroupId && !alreadyInTargetGroup && !isStaff) patch.group_id = resolvedGroupId;
         // Heal telegram_username if CSV provides one and DB value differs (case/@-insensitive compare).
         if (csvTgUsernameRaw) {
           const dbNorm = (existingTgUsername || "").trim().replace(/^@/, "").toLowerCase();
