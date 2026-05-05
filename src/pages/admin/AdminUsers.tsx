@@ -1506,6 +1506,27 @@ export default function AdminUsers() {
         </AlertDialogContent>
       </AlertDialog>
 
+      <AlertDialog open={!!confirmBulkDelete} onOpenChange={(o) => !o && !bulkDeleting && setConfirmBulkDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{`${confirmBulkDelete?.length ?? 0} ta foydalanuvchini o'chirish?`}</AlertDialogTitle>
+            <AlertDialogDescription>
+              Bu amalni qaytarib bo'lmaydi. Tanlangan foydalanuvchilar va ularning barcha ma'lumotlari (progress, baholar, sertifikatlar) butunlay o'chiriladi. Arxivlash xavfsizroq variant.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={bulkDeleting}>{t("admin.users.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={bulkDeleting}
+              onClick={(e) => { e.preventDefault(); confirmBulkDelete && bulkDelete(confirmBulkDelete); }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {bulkDeleting ? "O'chirilmoqda…" : `O'chirish (${confirmBulkDelete?.length ?? 0})`}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog open={!!confirmArchive} onOpenChange={(o) => !o && setConfirmArchive(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
