@@ -461,12 +461,86 @@ export default function AdminDashboard() {
     }
   };
 
+  // Teacher card-grid landing (multi-group, no group selected)
+  if (isTeacher && teacherGroupsLoaded && teacherGroups.length === 0) {
+    return (
+      <PageShell>
+        <div className="space-y-6">
+          <h1 className="text-3xl font-semibold tracking-tight">{t("admin.dashboard.title")}</h1>
+          <Card className="p-6 border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-400">
+            Sizga hech qanday guruh biriktirilmagan. Adminga murojaat qiling.
+          </Card>
+        </div>
+      </PageShell>
+    );
+  }
+
+  if (isTeacher && teacherGroupsLoaded && teacherGroups.length >= 2 && !groupParam) {
+    return (
+      <PageShell>
+        <div className="space-y-6">
+          <div>
+            <h1 className="text-3xl font-semibold tracking-tight">Mening guruhlarim ({teacherGroups.length})</h1>
+            <p className="text-muted-foreground mt-1">Guruhni tanlang va batafsil statistikani ko'ring.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {teacherGroups.map((g) => {
+              const s = teacherGroupCardStats[g.id] || { total: 0, logged: 0, ungraded: 0 };
+              const pct = s.total > 0 ? Math.round((s.logged / s.total) * 100) : 0;
+              return (
+                <Card
+                  key={g.id}
+                  className="p-5 cursor-pointer hover:shadow-md transition group"
+                  onClick={() => setSearchParams({ group: g.id })}
+                >
+                  <div className="text-xs text-muted-foreground">Guruh</div>
+                  <div className="text-lg font-semibold mb-3">{g.name}</div>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Talabalar</span>
+                      <span className="font-semibold tabular-nums">{s.total}</span>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-muted-foreground">Login</span>
+                        <span className="font-semibold tabular-nums">{s.logged}/{s.total} ({pct}%)</span>
+                      </div>
+                      <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+                        <div className="h-full bg-emerald-500" style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Baholanmagan</span>
+                      {s.ungraded > 0
+                        ? <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-600 dark:text-rose-400">{s.ungraded}</span>
+                        : <span className="font-semibold tabular-nums text-muted-foreground">0</span>}
+                    </div>
+                  </div>
+                  <div className="mt-4 text-sm text-primary group-hover:underline">Batafsil →</div>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      </PageShell>
+    );
+  }
+
+  const activeTeacherGroup = isTeacher && groupParam ? teacherGroups.find((g) => g.id === groupParam) : null;
+
   return (
     <PageShell>
       <div className="space-y-6">
+        {isTeacher && teacherGroups.length >= 2 && activeTeacherGroup && (
+          <div className="sticky top-0 z-10 -mx-4 px-4 py-2 bg-background/80 backdrop-blur border-b flex items-center gap-2 text-sm">
+            <button onClick={() => navigate("/admin/dashboard")} className="text-primary hover:underline">← Mening guruhlarim</button>
+            <span className="text-muted-foreground">|</span>
+            <span className="font-semibold">{activeTeacherGroup.name}</span>
+          </div>
+        )}
         <div className="flex items-end justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">{t("admin.dashboard.title")}</h1>
+            <h1 className="text-3xl font-semibold tracking-tight">{activeTeacherGroup ? activeTeacherGroup.name : t("admin.dashboard.title")}</h1>
             <p className="text-muted-foreground mt-1">{t("admin.dashboard.subtitle")}</p>
           </div>
           <Select value={courseId} onValueChange={setCourseId}>
