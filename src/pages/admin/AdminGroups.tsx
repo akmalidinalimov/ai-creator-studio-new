@@ -659,7 +659,7 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
         <DialogHeader><DialogTitle>Students in {group.name}</DialogTitle></DialogHeader>
         {(() => {
           const total = loginStats.total;
