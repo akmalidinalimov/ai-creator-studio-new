@@ -1595,6 +1595,7 @@ export type Database = {
       }
       profiles: {
         Row: {
+          active_teacher_group_id: string | null
           archived_at: string | null
           avatar_url: string | null
           created_at: string
@@ -1624,6 +1625,7 @@ export type Database = {
           weekly_goal_lessons: number | null
         }
         Insert: {
+          active_teacher_group_id?: string | null
           archived_at?: string | null
           avatar_url?: string | null
           created_at?: string
@@ -1653,6 +1655,7 @@ export type Database = {
           weekly_goal_lessons?: number | null
         }
         Update: {
+          active_teacher_group_id?: string | null
           archived_at?: string | null
           avatar_url?: string | null
           created_at?: string
@@ -1682,6 +1685,13 @@ export type Database = {
           weekly_goal_lessons?: number | null
         }
         Relationships: [
+          {
+            foreignKeyName: "profiles_active_teacher_group_id_fkey"
+            columns: ["active_teacher_group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "profiles_group_id_fkey"
             columns: ["group_id"]
