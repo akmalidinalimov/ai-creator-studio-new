@@ -504,9 +504,21 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
     setLoading(true);
     const { data } = await supabase
       .from("profiles")
-      .select("id,name,email,telegram_username,telegram_id,group_id")
+      .select("id,name,last_name,email,telegram_username,telegram_id,group_id,status")
       .eq("group_id", group.id);
-    setStudents((data as any[]) || []);
+    const list = ((data as any[]) || []) as ProfileLite[];
+    if (list.length) {
+      const ids = list.map((p) => p.id);
+      const { data: rs } = await supabase.from("user_roles").select("user_id, role").in("user_id", ids);
+      const rank: Record<string, number> = { superadmin: 1, admin: 2, teacher: 3, student: 4 };
+      const rolesMap: Record<string, string[]> = {};
+      ((rs as any[]) || []).forEach((r) => { (rolesMap[r.user_id] ||= []).push(r.role); });
+      list.forEach((p) => {
+        const top = (rolesMap[p.id] || []).sort((a, b) => (rank[a] || 99) - (rank[b] || 99))[0];
+        p.role_name = (top || "student") as any;
+      });
+    }
+    setStudents(list);
     const { data: ls } = await supabase.rpc("admin_group_login_stats" as any);
     const row = ((ls as any[]) || []).find((r: any) => r.group_id === group.id);
     setLoginStats({ logged: row?.logged_in_count || 0, total: row?.total_active || 0 });
