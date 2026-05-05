@@ -217,6 +217,57 @@ export default function AdminUsers() {
 
   const activeGroupIds = useMemo(() => new Set(groups.map((g) => g.id)), [groups]);
 
+  const groupsByTeacher = useMemo(() => {
+    const m = new Map<string, { id: string; name: string }[]>();
+    groups.forEach((g) => {
+      if (g.teacher_id) {
+        const arr = m.get(g.teacher_id) || [];
+        arr.push({ id: g.id, name: g.name });
+        m.set(g.teacher_id, arr);
+      }
+    });
+    return m;
+  }, [groups]);
+
+  const teacherNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    users.forEach((u) => {
+      if (u.role_name === "teacher") {
+        m.set(u.id, [u.name, u.last_name].filter(Boolean).join(" ") || u.email);
+      }
+    });
+    return m;
+  }, [users]);
+
+  const saveTeacherGroups = async (teacherId: string, selectedIds: Set<string>): Promise<boolean> => {
+    setSavingTeacherGroups(true);
+    try {
+      const before = (groupsByTeacher.get(teacherId) || []).map((g) => g.id);
+      const after = Array.from(selectedIds);
+      const toAttach = after.filter((id) => !before.includes(id));
+      const toDetach = before.filter((id) => !after.includes(id));
+      if (toAttach.length) {
+        const { error } = await (supabase.from("groups") as any)
+          .update({ teacher_id: teacherId }).in("id", toAttach);
+        if (error) { toast.error(error.message); return false; }
+      }
+      if (toDetach.length) {
+        const { error } = await (supabase.from("groups") as any)
+          .update({ teacher_id: null }).in("id", toDetach);
+        if (error) { toast.error(error.message); return false; }
+      }
+      logAction("update_profile", {
+        target_user_id: teacherId,
+        details: { action: "teacher_groups_updated", before, after },
+      });
+      toast.success(`Ustoz ${after.length} ta guruhga biriktirildi`);
+      return true;
+    } finally {
+      setSavingTeacherGroups(false);
+    }
+  };
+
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return users.filter((u) => {
