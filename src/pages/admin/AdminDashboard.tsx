@@ -34,9 +34,15 @@ const fmtDay = (d: Date) => d.toISOString().slice(5, 10);
 
 export default function AdminDashboard() {
   const { t, i18n } = useTranslation();
-  const { role } = useAuth();
+  const { role, user } = useAuth();
   const isTeacher = role === "teacher";
   const dateLocale = i18n.language === "ru" ? ru : i18n.language === "uz" ? uz : enUS;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const groupParam = searchParams.get("group");
+  const [teacherGroups, setTeacherGroups] = useState<{ id: string; name: string }[]>([]);
+  const [teacherGroupsLoaded, setTeacherGroupsLoaded] = useState(false);
+  const [teacherGroupCardStats, setTeacherGroupCardStats] = useState<Record<string, { total: number; logged: number; ungraded: number }>>({});
   const [courses, setCourses] = useState<{ id: string; title: string; published: boolean }[]>([]);
   const [courseId, setCourseId] = useState<string>("");
   const [loading, setLoading] = useState(true);
