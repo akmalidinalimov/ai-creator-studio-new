@@ -217,7 +217,9 @@ export default function AdminDashboard() {
       // Lifetime activated + never logged in via staff_list_students RPC (scoped automatically)
       const { data: allUsers } = await supabase.rpc("staff_list_students");
       const studentsAll = (allUsers || []);
-      const students = studentsAll; // already scoped by RPC
+      const students = (isTeacher && groupParam)
+        ? studentsAll.filter((u: any) => visibleSet.has(u.id))
+        : studentsAll;
       const activated = students.filter((u: any) => u.last_sign_in_at).length;
       const neverList = students
         .filter((u: any) => !u.last_sign_in_at)
