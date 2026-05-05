@@ -2581,10 +2581,15 @@ async function handleCallback(admin: any, cq: any) {
     if (persona !== "admin" && persona !== "teacher") { await answerCallback(cq.id); return; }
     const locale: Locale = normLocale(profile.preferred_locale);
     const isAdmin = persona === "admin";
+    let groupIdScope: string | null = null;
+    if (!isAdmin) {
+      const { data: pr } = await admin.from("profiles").select("active_teacher_group_id").eq("id", profile.id).maybeSingle();
+      groupIdScope = pr?.active_teacher_group_id || null;
+    }
     await answerCallback(cq.id);
     if (data.startsWith("gs:list:")) {
       const page = parseInt(data.slice("gs:list:".length), 10) || 0;
-      await renderStudentPicker(admin, chatId, profile.id, locale, isAdmin, page);
+      await renderStudentPicker(admin, chatId, profile.id, locale, isAdmin, page, groupIdScope);
     } else if (data.startsWith("gs:pick:")) {
       const sid = data.slice("gs:pick:".length);
       await renderStudentBreakdown(admin, chatId, profile.id, sid, locale, isAdmin);
