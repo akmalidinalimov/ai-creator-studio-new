@@ -1560,18 +1560,12 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
   }
 
   if (cmd === "/tstats") {
-    const groups = await teacherGroups(admin, teacherId);
-    if (!groups.length) {
-      await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher");
-      return true;
-    }
-    const lines: string[] = [t.teacherPanel];
-    for (const g of groups) {
-      const { data: ov } = await admin.rpc("staff_group_overview", { _group_id: g.id });
-      const o = (ov && ov[0]) || { total: 0, active_7d: 0, completion_pct: 0, avg_score: 0, health: 0 };
-      lines.push(`\n<b>${csvEscapeHtml(g.name)}</b>`);
-      lines.push(`👥 ${o.total} · 🟢 ${o.active_7d} (7d) · 📈 ${o.completion_pct}% · 🎯 ${o.avg_score} · ❤️ ${o.health}`);
-    }
+    const g = activeGroup!;
+    const { data: ov } = await admin.rpc("staff_group_overview", { _group_id: g.id });
+    const o = (ov && ov[0]) || { total: 0, active_7d: 0, completion_pct: 0, avg_score: 0, health: 0 };
+    const lines: string[] = [t.teacherPanel, t.tActiveGroup(g.name)];
+    lines.push(`\n<b>${csvEscapeHtml(g.name)}</b>`);
+    lines.push(`👥 ${o.total} · 🟢 ${o.active_7d} (7d) · 📈 ${o.completion_pct}% · 🎯 ${o.avg_score} · ❤️ ${o.health}`);
     await sendWithKeyboard(chatId, lines.join("\n"), locale, false, "teacher");
     return true;
   }
