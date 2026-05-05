@@ -273,15 +273,16 @@ export default function AdminUsers() {
     }], newGroupId && newGroupId !== "none" ? { target_group_id: newGroupId } : {});
     const r = res?.results?.[0];
     const okStatuses = ["created", "updated", "matched", "skipped_already_in_group"];
+    const label = newEmail.trim() || (newTgId.trim() ? `tg:${newTgId.trim()}` : "") || (newTg.trim() || "user");
     if (r && okStatuses.includes(r.status)) {
       if (r.status === "created") {
         toast.success(r.action_link
-          ? t("admin.users.toasts.createdInvite", { email: newEmail })
-          : t("admin.users.toasts.created", { email: newEmail }));
+          ? t("admin.users.toasts.createdInvite", { email: label })
+          : t("admin.users.toasts.created", { email: label }));
       } else if (r.status === "skipped_already_in_group") {
-        toast.info(`${newEmail} allaqachon ushbu guruhda mavjud`);
+        toast.info(`${label} allaqachon ushbu guruhda mavjud`);
       } else {
-        toast.success(`${newEmail} yangilandi va guruhga qo'shildi`);
+        toast.success(`${label} yangilandi va guruhga qo'shildi`);
       }
       setOpenAdd(false);
       setNewName(""); setNewLastName(""); setNewEmail(""); setNewPassword(randPassword());
