@@ -1515,6 +1515,62 @@ export default function AdminUsers() {
                     </SelectContent>
                   </Select>
                 </div>
+                {manageUser.role_name === "teacher" && (() => {
+                  const current = editTeacherGroupIds ?? new Set((groupsByTeacher.get(manageUser.id) || []).map((g) => g.id));
+                  const dirty = editTeacherGroupIds !== null;
+                  return (
+                    <div className="space-y-1.5">
+                      <Label>Mas'ul guruhlar</Label>
+                      <p className="text-xs text-muted-foreground">Bir ustozga bir nechta guruh biriktirilishi mumkin.</p>
+                      <div className="space-y-1 max-h-48 overflow-y-auto border rounded-md p-2">
+                        {groups.map((g) => {
+                          const checked = current.has(g.id);
+                          const otherTeacherId = g.teacher_id && g.teacher_id !== manageUser.id ? g.teacher_id : null;
+                          const otherTeacherName = otherTeacherId ? teacherNameById.get(otherTeacherId) : null;
+                          return (
+                            <label key={g.id} className="flex items-start gap-2 text-sm cursor-pointer">
+                              <Checkbox
+                                className="mt-0.5"
+                                checked={checked}
+                                onCheckedChange={(v) => {
+                                  if (v && otherTeacherName) {
+                                    if (!confirm(`Bu guruh hozir ${otherTeacherName} ga biriktirilgan. Almashtirilsinmi?`)) return;
+                                  }
+                                  const next = new Set(current);
+                                  if (v) next.add(g.id); else next.delete(g.id);
+                                  setEditTeacherGroupIds(next);
+                                }}
+                              />
+                              <span className="flex-1">
+                                {g.name}
+                                {otherTeacherName && (
+                                  <span className="text-xs text-amber-600 dark:text-amber-400 ml-2">({otherTeacherName})</span>
+                                )}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      {dirty && (
+                        <div className="flex gap-2 pt-1">
+                          <Button
+                            size="sm"
+                            disabled={savingTeacherGroups}
+                            onClick={async () => {
+                              const ok = await saveTeacherGroups(manageUser.id, current);
+                              if (ok) { setEditTeacherGroupIds(null); reload(); }
+                            }}
+                          >
+                            {savingTeacherGroups ? "Saqlanmoqda…" : "Saqlash"}
+                          </Button>
+                          <Button size="sm" variant="outline" disabled={savingTeacherGroups} onClick={() => setEditTeacherGroupIds(null)}>
+                            Bekor
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div className="space-y-1.5">
                   <Label>{t("admin.users.headers.status")}</Label>
                   <Select value={manageUser.status} onValueChange={(v) => setStatus(manageUser, v as any)}>
