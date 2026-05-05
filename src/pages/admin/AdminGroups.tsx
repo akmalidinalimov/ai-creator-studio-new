@@ -158,7 +158,18 @@ export default function AdminGroups() {
                   <TableCell className="font-medium">
                     <button className="hover:underline text-left" onClick={() => setEditGroup(g)}>{g.name}</button>
                   </TableCell>
-                  <TableCell>{teacherLabel(g.teacher_id)}</TableCell>
+                  <TableCell>
+                    {g.teacher_id ? (
+                      teacherLabel(g.teacher_id)
+                    ) : (
+                      <button
+                        className="text-xs text-emerald-600 hover:text-emerald-700 hover:underline font-medium inline-flex items-center gap-1"
+                        onClick={() => setAssignTeacherGroup(g)}
+                      >
+                        <Plus className="h-3 w-3" /> Ustoz tayinlash
+                      </button>
+                    )}
+                  </TableCell>
                   <TableCell>{courseTitle(g.course_id)}</TableCell>
                   <TableCell><Badge variant="secondary">{counts[g.id] || 0}</Badge></TableCell>
                   <TableCell>{(() => {
