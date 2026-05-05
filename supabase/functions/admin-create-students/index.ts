@@ -318,9 +318,9 @@ Deno.serve(async (req) => {
         continue;
       }
       const userId = created.user!.id;
-      const profilePatch: Record<string, any> = { name: s.name || email.split("@")[0] };
-      if (s.last_name !== undefined) profilePatch.last_name = s.last_name || null;
-      if (s.telegram_username) profilePatch.telegram_username = s.telegram_username.replace(/^@/, "");
+      const profilePatch: Record<string, any> = { name: displayName || null };
+      if (csvLastName !== undefined) profilePatch.last_name = csvLastName || null;
+      if (s.telegram_username && s.telegram_username.trim()) profilePatch.telegram_username = s.telegram_username.trim();
       if (tgIdNum !== undefined) {
         const { data: dup } = await admin.from("profiles").select("id").eq("telegram_id", tgIdNum).neq("id", userId).maybeSingle();
         if (dup) {
