@@ -263,11 +263,14 @@ Deno.serve(async (req) => {
       const csvName = (s.name || "").trim();
       const csvLastName = s.last_name === undefined ? undefined : (s.last_name || "").trim();
       const displayName = csvName || (tgUserNorm ? tgUserNorm : "");
-      // Resolve target group: explicit row group_name → target_group_id → default
+      // Resolve target group: explicit row group_name → target_group_id → default.
+      // v3.14.14: for master CSV imports (csv_import w/o target_group_id), DO NOT fall back to
+      // the platform default group when group_name is empty — those rows go to "Guruhsiz".
       let resolvedGroupId: string | null = null;
-      if (s.group_name && s.group_name.trim()) resolvedGroupId = await resolveGroupId(s.group_name);
+      const rowHasGroupName = !!(s.group_name && s.group_name.trim());
+      if (rowHasGroupName) resolvedGroupId = await resolveGroupId(s.group_name);
       if (!resolvedGroupId && targetGroupId) resolvedGroupId = targetGroupId;
-      if (!resolvedGroupId && defaultGroupId) resolvedGroupId = defaultGroupId;
+      if (!resolvedGroupId && defaultGroupId && !(isCsvImport && !targetGroupId)) resolvedGroupId = defaultGroupId;
 
       // CSV telegram_username — preserve VERBATIM from input (keep @ if present, no lowercase, no derivation).
       // tgUserNorm above is only for matching/synthesis; the value we store is the raw csv value.
