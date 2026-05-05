@@ -643,11 +643,17 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
 
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
-    if (!s) return students;
-    return students.filter((u) =>
+    const sorted = [...students].sort((a, b) =>
+      ((a.name || "") + " " + (a.last_name || "")).localeCompare((b.name || "") + " " + (b.last_name || ""))
+    );
+    if (!s) return sorted;
+    return sorted.filter((u) =>
       (u.name || "").toLowerCase().includes(s) ||
+      (u.last_name || "").toLowerCase().includes(s) ||
       (u.email || "").toLowerCase().includes(s) ||
-      (u.telegram_username || "").toLowerCase().includes(s)
+      (u.telegram_username || "").toLowerCase().includes(s) ||
+      (u.telegram_id ? String(u.telegram_id) : "").includes(s) ||
+      (u.role_name || "").toLowerCase().includes(s)
     );
   }, [students, search]);
 
