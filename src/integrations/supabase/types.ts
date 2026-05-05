@@ -387,6 +387,44 @@ export type Database = {
         }
         Relationships: []
       }
+      badge_award_queue: {
+        Row: {
+          awarded_at: string
+          badge_id: string
+          created_at: string
+          id: string
+          scheduled_for: string
+          sent_at: string | null
+          user_id: string
+        }
+        Insert: {
+          awarded_at?: string
+          badge_id: string
+          created_at?: string
+          id?: string
+          scheduled_for?: string
+          sent_at?: string | null
+          user_id: string
+        }
+        Update: {
+          awarded_at?: string
+          badge_id?: string
+          created_at?: string
+          id?: string
+          scheduled_for?: string
+          sent_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "badge_award_queue_badge_id_fkey"
+            columns: ["badge_id"]
+            isOneToOne: false
+            referencedRelation: "badges"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       badges: {
         Row: {
           code: string
