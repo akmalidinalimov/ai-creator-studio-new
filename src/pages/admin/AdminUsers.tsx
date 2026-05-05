@@ -272,7 +272,7 @@ export default function AdminUsers() {
         : t("admin.users.toasts.created", { email: newEmail }));
       setOpenAdd(false);
       setNewName(""); setNewLastName(""); setNewEmail(""); setNewPassword(randPassword());
-      setNewTg(""); setNewTgId(""); setNewRole("student"); setNewCourses(new Set());
+      setNewTg(""); setNewTgId(""); setNewRole("student"); setNewCourses(new Set()); setNewGroupId("none");
       reload();
     } else {
       toast.error(r?.error || res?.error || t("admin.users.toasts.createFailed"));
