@@ -1118,9 +1118,9 @@ export default function AdminUsers() {
                 </SelectContent>
               </Select>
             </div>
-            {newRole !== "admin" && (
+            {newRole === "student" && (
               <div className="space-y-1.5">
-                <Label>{newRole === "teacher" ? "Mas'ul guruh" : t("admin.users.group", { defaultValue: "Group" })}</Label>
+                <Label>{t("admin.users.group", { defaultValue: "Group" })}</Label>
                 <Select value={newGroupId} onValueChange={setNewGroupId}>
                   <SelectTrigger><SelectValue placeholder={t("admin.users.noGroup", { defaultValue: "No group" })} /></SelectTrigger>
                   <SelectContent>
@@ -1130,9 +1130,41 @@ export default function AdminUsers() {
                     ))}
                   </SelectContent>
                 </Select>
-                {newRole === "teacher" && (
-                  <p className="text-xs text-muted-foreground">Yangi guruhga biriktirish eski guruhni o'zgartirmaydi</p>
-                )}
+              </div>
+            )}
+            {newRole === "teacher" && (
+              <div className="space-y-1.5">
+                <Label>Mas'ul guruhlar</Label>
+                <p className="text-xs text-muted-foreground">Bir ustozga bir nechta guruh biriktirilishi mumkin.</p>
+                <div className="space-y-1 max-h-40 overflow-y-auto border rounded-md p-2">
+                  {groups.length === 0 && <p className="text-xs text-muted-foreground">Guruh topilmadi</p>}
+                  {groups.map((g) => {
+                    const otherTeacherId = g.teacher_id || null;
+                    const otherTeacherName = otherTeacherId ? teacherNameById.get(otherTeacherId) : null;
+                    return (
+                      <label key={g.id} className="flex items-start gap-2 text-sm cursor-pointer">
+                        <Checkbox
+                          className="mt-0.5"
+                          checked={newTeacherGroupIds.has(g.id)}
+                          onCheckedChange={(v) => {
+                            if (v && otherTeacherName) {
+                              if (!confirm(`Bu guruh hozir ${otherTeacherName} ga biriktirilgan. Almashtirilsinmi?`)) return;
+                            }
+                            const s = new Set(newTeacherGroupIds);
+                            if (v) s.add(g.id); else s.delete(g.id);
+                            setNewTeacherGroupIds(s);
+                          }}
+                        />
+                        <span className="flex-1">
+                          {g.name}
+                          {otherTeacherName && (
+                            <span className="text-xs text-amber-600 dark:text-amber-400 ml-2">({otherTeacherName})</span>
+                          )}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
             )}
             <div className="space-y-1.5">
