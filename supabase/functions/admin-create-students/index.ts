@@ -204,11 +204,13 @@ Deno.serve(async (req) => {
       } else if (tgUserSafe) {
         synthesizedEmail = `tg-${tgUserSafe}@telegram.local`;
       } else {
-        const seed = `${(s.name || "").trim()}|${(s.last_name || "").trim()}|${tgUserNorm}|${s.telegram_user_id ?? ""}`;
-        if (seed.replace(/\|/g, "").length > 0) {
-          const h = await shortHash(seed);
-          synthesizedEmail = `tg-anon-${h}@telegram.local`;
-        }
+        // v3.14.12: anon fallback MUST be unique. Include random suffix so two anonymous
+        // rows with identical name/last_name never collide on the Auth email.
+        const rand = crypto.getRandomValues(new Uint8Array(6));
+        const randHex = Array.from(rand).map((b) => b.toString(16).padStart(2, "0")).join("");
+        const seed = `${(s.name || "").trim()}|${(s.last_name || "").trim()}|${tgUserNorm}|${s.telegram_user_id ?? ""}|${randHex}`;
+        const h = await shortHash(seed);
+        synthesizedEmail = `tg-anon-${h}${randHex.slice(0, 4)}@telegram.local`;
       }
       if (!email) email = synthesizedEmail;
       // Compute the identifier_used label early for audit logs
