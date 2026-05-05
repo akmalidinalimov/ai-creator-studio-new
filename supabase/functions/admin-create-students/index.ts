@@ -481,7 +481,7 @@ Deno.serve(async (req) => {
     delta = csv_rows - successful;
     console.log(JSON.stringify({ scope: "admin-create-students", request_id: requestId, action: "summary", csv_rows, group_count_after, results_total: results.length, created: results.filter(r => r.status === "created").length, updated: results.filter(r => r.status === "updated").length, skipped: results.filter(r => r.status === "skipped_already_in_group").length, errors: results.filter(r => r.status === "error" || r.status === "invalid_email").length }));
 
-    return new Response(JSON.stringify({ ok: true, results, request_id: requestId, csv_rows, group_count_after, delta }), {
+    return new Response(JSON.stringify({ ok: true, results, request_id: requestId, csv_rows, group_count_after, delta, auto_created_groups: autoCreatedGroups }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
