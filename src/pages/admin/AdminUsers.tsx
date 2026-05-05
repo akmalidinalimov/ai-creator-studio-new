@@ -403,9 +403,18 @@ export default function AdminUsers() {
       } else {
         toast.success(`${label} yangilandi va guruhga qo'shildi`);
       }
+      // If creating a teacher with multi-group selection, assign groups.teacher_id
+      if (newRole === "teacher" && r.user_id && newTeacherGroupIds.size > 0) {
+        const ids = Array.from(newTeacherGroupIds);
+        const { error: gErr } = await (supabase.from("groups") as any)
+          .update({ teacher_id: r.user_id }).in("id", ids);
+        if (gErr) toast.error(gErr.message);
+        else logAction("update_profile", { target_user_id: r.user_id, details: { action: "teacher_groups_updated", before: [], after: ids } });
+      }
       setOpenAdd(false);
       setNewName(""); setNewLastName(""); setNewEmail(""); setNewPassword(randPassword());
       setNewTg(""); setNewTgId(""); setNewRole("student"); setNewCourses(new Set()); setNewGroupId("none");
+      setNewTeacherGroupIds(new Set());
       reload();
     } else {
       toast.error(r?.error || res?.error || t("admin.users.toasts.createFailed"));
