@@ -35,6 +35,7 @@ const AdminDashboard = lazy(() => import("./pages/admin/AdminDashboard"));
 const AdminCourses = lazy(() => import("./pages/admin/AdminCourses"));
 const AdminCourseEditor = lazy(() => import("./pages/admin/AdminCourseEditor"));
 const AdminUsers = lazy(() => import("./pages/admin/AdminUsers"));
+const AdminUsersDuplicates = lazy(() => import("./pages/admin/AdminUsersDuplicates"));
 const AdminSettings = lazy(() => import("./pages/admin/AdminSettings"));
 const AdminDeploy = lazy(() => import("./pages/admin/AdminDeploy"));
 const AdminAIAnalytics = lazy(() => import("./pages/admin/AdminAIAnalytics"));
