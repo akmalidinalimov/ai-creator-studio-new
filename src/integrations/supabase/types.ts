@@ -2016,6 +2016,7 @@ export type Database = {
       admin_list_users: {
         Args: never
         Returns: {
+          archived_at: string
           avatar_url: string
           created_at: string
           email: string
