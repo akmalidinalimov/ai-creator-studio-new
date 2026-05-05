@@ -1499,8 +1499,19 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
       await sendWithKeyboard(chatId, t.tHealthEmpty, locale, false, "teacher");
       return true;
     }
-    // Use admin client (service role) directly: this RPC is RBAC-checked but we already filter to teacher's groups.
-    // We need raw counts; fetch profiles per group instead of going through the RPC (which uses auth.uid()).
+    // Build a map of user_id -> last_sign_in_at via admin auth API (one call, paginated).
+    const lastSignInMap = new Map<string, string | null>();
+    try {
+      let page = 1;
+      while (true) {
+        const { data: usrs } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
+        const arr = ((usrs as any)?.users || []) as any[];
+        for (const u of arr) lastSignInMap.set(u.id, u.last_sign_in_at || null);
+        if (arr.length < 1000) break;
+        page++;
+        if (page > 20) break;
+      }
+    } catch (_e) { /* fall through; logged stays 0 */ }
     for (const g of groups) {
       const { data: profs } = await admin
         .from("profiles")
@@ -1510,13 +1521,7 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
       const total = allRows.length;
       const activeRows = allRows.filter((p) => p.status === "active" && !p.archived_at);
       const active = activeRows.length;
-      let logged = 0;
-      if (active > 0) {
-        const ids = activeRows.map((p) => p.id);
-        const { data: usrs } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-        const idSet = new Set(ids);
-        logged = ((usrs as any)?.users || []).filter((u: any) => idSet.has(u.id) && u.last_sign_in_at).length;
-      }
+      const logged = activeRows.filter((p) => !!lastSignInMap.get(p.id)).length;
       const never = Math.max(0, active - logged);
       const pct = active > 0 ? Math.round((logged / active) * 100) : 0;
       const link = await createMagicLink(admin, teacherId, "teacher_dashboard", "/teacher/dashboard");
