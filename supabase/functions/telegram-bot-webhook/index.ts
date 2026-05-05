@@ -1756,9 +1756,9 @@ async function handleGradingCommand(
 
 const PICKER_PAGE_SIZE = 10;
 
-async function renderStudentPicker(admin: any, chatId: number, graderId: string, locale: Locale, isAdmin: boolean, page: number) {
+async function renderStudentPicker(admin: any, chatId: number, graderId: string, locale: Locale, isAdmin: boolean, page: number, groupId?: string | null) {
   const t = T[locale] as any;
-  const ids = await gradingScopeIds(admin, graderId, isAdmin);
+  const ids = await gradingScopeIds(admin, graderId, isAdmin, groupId);
   let q = admin.from("homework_submissions").select("user_id").is("score", null);
   if (ids) {
     if (ids.length === 0) {
