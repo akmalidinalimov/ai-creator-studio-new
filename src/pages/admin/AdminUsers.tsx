@@ -264,7 +264,7 @@ export default function AdminUsers() {
       telegram_username: newTg.replace(/^@/, "") || undefined,
       telegram_user_id: tgId,
       role: newRole,
-    }]);
+    }], newGroupId && newGroupId !== "none" ? { target_group_id: newGroupId } : {});
     const r = res?.results?.[0];
     if (r?.status === "created") {
       toast.success(r.action_link
