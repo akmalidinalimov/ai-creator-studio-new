@@ -137,6 +137,7 @@ export default function AdminGroups() {
                 <TableHead>Teacher</TableHead>
                 <TableHead>Course</TableHead>
                 <TableHead>Students</TableHead>
+                <TableHead>Loggedin</TableHead>
                 <TableHead>Health</TableHead>
                 <TableHead>Topiklar</TableHead>
                 <TableHead>Default</TableHead>
@@ -145,9 +146,9 @@ export default function AdminGroups() {
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
+                <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
               ) : groups.length === 0 ? (
-                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">No groups yet.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No groups yet.</TableCell></TableRow>
               ) : groups.map((g) => {
                 const h = health[g.id] ?? 0;
                 const hColor = h >= 70 ? "bg-emerald-500" : h >= 40 ? "bg-amber-500" : "bg-rose-500";
