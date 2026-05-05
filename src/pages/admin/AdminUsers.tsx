@@ -1350,6 +1350,29 @@ export default function AdminUsers() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog open={!!confirmArchive} onOpenChange={(o) => !o && setConfirmArchive(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmArchive?.mode === "archive"
+                ? `${confirmArchive?.ids.length} ta talabani arxivlash`
+                : `${confirmArchive?.ids.length} ta talabani qayta faollashtirish`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmArchive?.mode === "archive"
+                ? "Ularning ma'lumotlari, baholari, sertifikatlari saqlanadi. Arxivlangan talabalar dashboard, leaderboard, eslatmalar va digestdan chiqariladi (lekin botda javob berishni davom ettiradi)."
+                : "Ushbu talabalar yana barcha hisob-kitoblarga, eslatmalarga va digestga qo'shiladi."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Bekor</AlertDialogCancel>
+            <AlertDialogAction onClick={() => confirmArchive && bulkArchive(confirmArchive.ids, confirmArchive.mode)}>
+              Davom ettirish
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </PageShell>
   );
 }
