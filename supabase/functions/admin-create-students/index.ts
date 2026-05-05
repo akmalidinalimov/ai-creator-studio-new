@@ -204,11 +204,13 @@ Deno.serve(async (req) => {
       } else if (tgUserSafe) {
         synthesizedEmail = `tg-${tgUserSafe}@telegram.local`;
       } else {
-        const seed = `${(s.name || "").trim()}|${(s.last_name || "").trim()}|${tgUserNorm}|${s.telegram_user_id ?? ""}`;
-        if (seed.replace(/\|/g, "").length > 0) {
-          const h = await shortHash(seed);
-          synthesizedEmail = `tg-anon-${h}@telegram.local`;
-        }
+        // v3.14.12: anon fallback MUST be unique. Include random suffix so two anonymous
+        // rows with identical name/last_name never collide on the Auth email.
+        const rand = crypto.getRandomValues(new Uint8Array(6));
+        const randHex = Array.from(rand).map((b) => b.toString(16).padStart(2, "0")).join("");
+        const seed = `${(s.name || "").trim()}|${(s.last_name || "").trim()}|${tgUserNorm}|${s.telegram_user_id ?? ""}|${randHex}`;
+        const h = await shortHash(seed);
+        synthesizedEmail = `tg-anon-${h}${randHex.slice(0, 4)}@telegram.local`;
       }
       if (!email) email = synthesizedEmail;
       // Compute the identifier_used label early for audit logs
@@ -312,43 +314,37 @@ Deno.serve(async (req) => {
         user_metadata: { name: displayName || null, last_name: csvLastName || null },
       });
       if (error) {
-        // Email collision in Auth — but Telegram-identity dedupe already proved this is a NEW person.
-        // Fall back to a synthesized placeholder email so the new user can be created.
-        if (/already.*registered|already.*exists|email.*registered/i.test(error.message) && synthesizedEmail && synthesizedEmail !== email) {
-          const fallbackEmail = synthesizedEmail;
-          const retry = await admin.auth.admin.createUser({
-            email: fallbackEmail,
-            password,
-            email_confirm: true,
-            user_metadata: { name: displayName || null, last_name: csvLastName || null },
-          });
-          if (retry.error) {
-            results.push({ email, status: "error", error: retry.error.message, row_index, identifier_used });
-            auditLog(row_index, identifier_used, "failed", retry.error.message);
+        // Email collision: an existing auth user already owns this placeholder email.
+        // v3.14.12: this means it's the same person — adopt the existing user instead of failing.
+        if (/already.*registered|already.*exists|email.*registered/i.test(error.message)) {
+          // Look up the existing auth user by email via paginated listUsers (admin API has no direct getByEmail in v2).
+          let foundId: string | null = null;
+          for (let page = 1; page <= 20 && !foundId; page++) {
+            const { data: list } = await admin.auth.admin.listUsers({ page, perPage: 200 });
+            const hit = list?.users?.find((u: any) => (u.email || "").toLowerCase() === email.toLowerCase());
+            if (hit) foundId = hit.id;
+            if (!list?.users || list.users.length < 200) break;
+          }
+          if (foundId) {
+            const profilePatch: Record<string, any> = { name: displayName || null };
+            if (csvLastName !== undefined) profilePatch.last_name = csvLastName || null;
+            if (csvTgUsernameRaw) profilePatch.telegram_username = csvTgUsernameRaw;
+            if (tgIdNum !== undefined) profilePatch.telegram_id = tgIdNum;
+            if (resolvedGroupId && s.role !== "teacher" && s.role !== "admin") profilePatch.group_id = resolvedGroupId;
+            await admin.from("profiles").update(profilePatch).eq("id", foundId);
+            if (s.role === "teacher") {
+              await admin.from("user_roles").upsert({ user_id: foundId, role: "teacher" } as any, { onConflict: "user_id,role" });
+              if (resolvedGroupId) await admin.from("groups").update({ teacher_id: foundId }).eq("id", resolvedGroupId);
+            } else if (s.role === "admin") {
+              await admin.from("user_roles").upsert({ user_id: foundId, role: "admin" } as any, { onConflict: "user_id,role" });
+            }
+            for (const cid of courseIds) {
+              await admin.from("enrollments").upsert({ user_id: foundId, course_id: cid }, { onConflict: "user_id,course_id" });
+            }
+            results.push({ email, status: "updated", userId: foundId, row_index, identifier_used });
+            auditLog(row_index, identifier_used, "matched_via_email_collision");
             continue;
           }
-          email = fallbackEmail;
-          (created as any) = retry.data;
-          // fall through to success path with retry.data
-          const userId = retry.data.user!.id;
-          const profilePatch: Record<string, any> = { name: displayName || null };
-          if (csvLastName !== undefined) profilePatch.last_name = csvLastName || null;
-          if (s.telegram_username && s.telegram_username.trim()) profilePatch.telegram_username = s.telegram_username.trim();
-          if (tgIdNum !== undefined) profilePatch.telegram_id = tgIdNum;
-          // Teachers are NOT added as group members; instead set groups.teacher_id below.
-          if (resolvedGroupId && s.role !== "teacher" && s.role !== "admin") profilePatch.group_id = resolvedGroupId;
-          await admin.from("profiles").update(profilePatch).eq("id", userId);
-          if (s.role === "admin") await admin.from("user_roles").insert({ user_id: userId, role: "admin" });
-          if (s.role === "teacher") {
-            await admin.from("user_roles").insert({ user_id: userId, role: "teacher" });
-            if (resolvedGroupId) await admin.from("groups").update({ teacher_id: userId }).eq("id", resolvedGroupId);
-          }
-          for (const cid of courseIds) {
-            await admin.from("enrollments").upsert({ user_id: userId, course_id: cid }, { onConflict: "user_id,course_id" });
-          }
-          results.push({ email: fallbackEmail, status: "created", userId, row_index, identifier_used });
-          auditLog(row_index, identifier_used, "created_with_placeholder_email");
-          continue;
         }
         const friendly = /validate email|invalid format/i.test(error.message)
           ? `invalid_placeholder_email (${email}) — auth rejected synthesized email`
