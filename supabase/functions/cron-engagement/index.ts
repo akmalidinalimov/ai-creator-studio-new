@@ -141,6 +141,7 @@ Deno.serve(async (req) => {
     .from("profiles")
     .select("id, name, telegram_id, timezone, reminder_time, notifications_enabled, preferred_locale, created_at, last_daily_reminder_at, last_streak_warning_at, last_inactive_warning_at, last_inactive_warning_day")
     .eq("notifications_enabled", true)
+    .eq("status", "active")
     .not("telegram_id", "is", null);
 
   if (error) {
