@@ -619,6 +619,7 @@ function AddStudentToGroupDialog({ group, onClose, onCreated }: { group: Group; 
   const [password, setPassword] = useState(randPassword());
   const [tgId, setTgId] = useState("");
   const [tgUser, setTgUser] = useState("");
+  const [role, setRole] = useState<"student" | "teacher" | "admin">("student");
   const [sendInvite, setSendInvite] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -640,6 +641,9 @@ function AddStudentToGroupDialog({ group, onClose, onCreated }: { group: Group; 
     }
     setBusy(true);
     try {
+      // For admin role, do NOT pass target_group_id (admins not tied to group).
+      // For teacher/student, pass it — backend assigns teacher_id or group_id accordingly.
+      const extra: Record<string, unknown> = role === "admin" ? {} : { target_group_id: group.id };
       const r = await fetch(`${FN_BASE}/admin-create-students`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
@@ -651,18 +655,18 @@ function AddStudentToGroupDialog({ group, onClose, onCreated }: { group: Group; 
             password: password || undefined,
             telegram_username: tgUserRaw || undefined,
             telegram_user_id: tgIdNum,
-            role: "student",
+            role,
           }],
           send_invite: sendInvite,
           redirectTo: `${getSiteUrl()}/reset-password`,
-          target_group_id: group.id,
+          ...extra,
         }),
       });
       const res = await r.json();
       const result = res?.results?.[0];
       const okStatuses = ["created", "updated", "matched", "skipped_already_in_group"];
       if (result && okStatuses.includes(result.status)) {
-        toast.success("Talaba qo'shildi");
+        toast.success(role === "teacher" ? "Ustoz qo'shildi" : role === "admin" ? "Admin qo'shildi" : "Talaba qo'shildi");
         onCreated();
       } else {
         setErr(result?.error || res?.error || "Qo'shishda xatolik");
@@ -677,7 +681,7 @@ function AddStudentToGroupDialog({ group, onClose, onCreated }: { group: Group; 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Yangi talaba qo'shish · {group.name}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Yangi foydalanuvchi qo'shish · {group.name}</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1.5"><Label>Ism</Label><Input value={name} onChange={(e) => setName(e.target.value)} /></div>
@@ -703,9 +707,25 @@ function AddStudentToGroupDialog({ group, onClose, onCreated }: { group: Group; 
             <Input value={tgUser} onChange={(e) => setTgUser(e.target.value)} placeholder="@username" />
           </div>
           <div className="space-y-1.5">
-            <Label>Guruh</Label>
-            <Input value={group.name} disabled readOnly />
+            <Label>Rol</Label>
+            <Select value={role} onValueChange={(v) => setRole(v as any)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="student">Talaba</SelectItem>
+                <SelectItem value="teacher">Ustoz</SelectItem>
+                <SelectItem value="admin">Admin</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
+          {role !== "admin" && (
+            <div className="space-y-1.5">
+              <Label>{role === "teacher" ? "Mas'ul guruh" : "Guruh"}</Label>
+              <Input value={group.name} disabled readOnly />
+              {role === "teacher" && (
+                <p className="text-xs text-muted-foreground">Yangi guruhga biriktirish eski guruhni o'zgartirmaydi</p>
+              )}
+            </div>
+          )}
           <label className="flex items-center gap-2 text-sm cursor-pointer pt-1">
             <Checkbox checked={sendInvite} onCheckedChange={(v) => setSendInvite(!!v)} />
             Magic link yuborish
