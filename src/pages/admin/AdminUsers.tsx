@@ -640,6 +640,7 @@ export default function AdminUsers() {
             )}
             {isAdmin && <Button variant="outline" size="sm" onClick={() => setOpenCsv(true)}><UploadIcon className="h-4 w-4" />{t("admin.users.importCsv")}</Button>}
             <Button variant="outline" size="sm" onClick={exportFilteredCsv} disabled={filtered.length === 0}><Download className="h-4 w-4" />{t("admin.users.exportCsv", { defaultValue: "Export CSV" })}</Button>
+            {isAdmin && <Button variant="outline" size="sm" asChild><a href="/admin/users/duplicates">Duplicates</a></Button>}
             {isAdmin && <Button size="sm" onClick={() => { setNewPassword(randPassword()); setOpenAdd(true); }}><Plus className="h-4 w-4" />{t("admin.users.addUser")}</Button>}
           </div>
         </div>
