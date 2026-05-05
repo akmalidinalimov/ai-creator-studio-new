@@ -363,7 +363,8 @@ Deno.serve(async (req) => {
         }
         profilePatch.telegram_id = tgIdNum;
       }
-      if (resolvedGroupId) profilePatch.group_id = resolvedGroupId;
+      // Teachers are NOT added as group members; instead set groups.teacher_id below.
+      if (resolvedGroupId && s.role !== "teacher" && s.role !== "admin") profilePatch.group_id = resolvedGroupId;
       const { error: profErr } = await admin.from("profiles").update(profilePatch).eq("id", userId);
       if (profErr) {
         results.push({ email, status: "error", error: profErr.message, row_index, identifier_used });
@@ -374,6 +375,11 @@ Deno.serve(async (req) => {
 
       if (s.role === "admin") {
         await admin.from("user_roles").insert({ user_id: userId, role: "admin" });
+      } else if (s.role === "teacher") {
+        await admin.from("user_roles").insert({ user_id: userId, role: "teacher" });
+        if (resolvedGroupId) {
+          await admin.from("groups").update({ teacher_id: userId }).eq("id", resolvedGroupId);
+        }
       }
 
       for (const cid of courseIds) {
