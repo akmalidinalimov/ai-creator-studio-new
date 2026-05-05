@@ -246,10 +246,16 @@ export default function AdminUsers() {
   };
 
   const handleAdd = async () => {
-    if (!newEmail) return;
+    const tgIdRaw = newTgId.trim();
+    const tgUserRaw = newTg.replace(/^@/, "").trim();
+    const emailRaw = newEmail.trim();
+    if (!emailRaw && !tgIdRaw && !tgUserRaw) {
+      toast.error("Email, Telegram ID yoki Telegram username dan kamida bittasi kerak");
+      return;
+    }
     let tgId: number | undefined;
-    if (newTgId.trim()) {
-      const n = Number(newTgId.trim());
+    if (tgIdRaw) {
+      const n = Number(tgIdRaw);
       if (!Number.isInteger(n) || n <= 0) {
         toast.error(t("admin.users.tgIdInvalid", { defaultValue: "Telegram ID must be a positive integer" }));
         return;
@@ -259,23 +265,24 @@ export default function AdminUsers() {
     const res = await callCreate([{
       name: newName,
       last_name: newLastName || undefined,
-      email: newEmail,
+      email: emailRaw,
       password: newPassword || undefined,
-      telegram_username: newTg.replace(/^@/, "") || undefined,
+      telegram_username: tgUserRaw || undefined,
       telegram_user_id: tgId,
       role: newRole,
     }], newGroupId && newGroupId !== "none" ? { target_group_id: newGroupId } : {});
     const r = res?.results?.[0];
     const okStatuses = ["created", "updated", "matched", "skipped_already_in_group"];
+    const label = newEmail.trim() || (newTgId.trim() ? `tg:${newTgId.trim()}` : "") || (newTg.trim() || "user");
     if (r && okStatuses.includes(r.status)) {
       if (r.status === "created") {
         toast.success(r.action_link
-          ? t("admin.users.toasts.createdInvite", { email: newEmail })
-          : t("admin.users.toasts.created", { email: newEmail }));
+          ? t("admin.users.toasts.createdInvite", { email: label })
+          : t("admin.users.toasts.created", { email: label }));
       } else if (r.status === "skipped_already_in_group") {
-        toast.info(`${newEmail} allaqachon ushbu guruhda mavjud`);
+        toast.info(`${label} allaqachon ushbu guruhda mavjud`);
       } else {
-        toast.success(`${newEmail} yangilandi va guruhga qo'shildi`);
+        toast.success(`${label} yangilandi va guruhga qo'shildi`);
       }
       setOpenAdd(false);
       setNewName(""); setNewLastName(""); setNewEmail(""); setNewPassword(randPassword());
@@ -802,7 +809,11 @@ export default function AdminUsers() {
               </div>
             </div>
             <p className="text-xs text-muted-foreground -mt-1">{t("admin.users.tgHelp")}</p>
-            <div className="space-y-1.5"><Label>{t("admin.users.headers.email")}</Label><Input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} /></div>
+            <div className="space-y-1.5">
+              <Label>{t("admin.users.headers.email")} (optional)</Label>
+              <Input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="optional — Telegram ID/username is the real identity" />
+              <p className="text-xs text-muted-foreground">Email is metadata only. Identity matching uses Telegram ID/username.</p>
+            </div>
             <div className="space-y-1.5">
               <Label>{t("admin.users.passwordOptional")}</Label>
               <div className="flex gap-2">

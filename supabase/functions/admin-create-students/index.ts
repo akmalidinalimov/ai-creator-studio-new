@@ -233,25 +233,18 @@ Deno.serve(async (req) => {
       if (!resolvedGroupId && targetGroupId) resolvedGroupId = targetGroupId;
       if (!resolvedGroupId && defaultGroupId) resolvedGroupId = defaultGroupId;
 
-      // Smart dedupe: if a profile already exists by email, telegram_username, telegram_id, or synthesized placeholder,
-      // update its group instead of creating a new auth user.
+      // Dedupe ONLY by Telegram identity (telegram_id → telegram_username).
+      // Email is optional metadata and intentionally NOT used for matching:
+      // two different students may share or reuse an email; identity is the Telegram account.
       let existingId: string | null = null;
       let existingGroupId: string | null = null;
-      if (inputEmail) {
-        const { data: e1 } = await admin.from("profiles").select("id, group_id").eq("email", email).maybeSingle();
+      if (tgIdNum) {
+        const { data: e1 } = await admin.from("profiles").select("id, group_id").eq("telegram_id", tgIdNum).maybeSingle();
         if (e1) { existingId = (e1 as any).id; existingGroupId = (e1 as any).group_id || null; }
       }
       if (!existingId && tgUserNorm) {
         const { data: e2 } = await admin.from("profiles").select("id, group_id").eq("telegram_username", tgUserNorm as any).maybeSingle();
         if (e2) { existingId = (e2 as any).id; existingGroupId = (e2 as any).group_id || null; }
-      }
-      if (!existingId && tgIdNum) {
-        const { data: e3 } = await admin.from("profiles").select("id, group_id").eq("telegram_id", tgIdNum).maybeSingle();
-        if (e3) { existingId = (e3 as any).id; existingGroupId = (e3 as any).group_id || null; }
-      }
-      if (!existingId && synthesizedEmail) {
-        const { data: e4 } = await admin.from("profiles").select("id, group_id").eq("email", synthesizedEmail).maybeSingle();
-        if (e4) { existingId = (e4 as any).id; existingGroupId = (e4 as any).group_id || null; }
       }
       if (existingId) {
         const alreadyInTargetGroup = !!resolvedGroupId && existingGroupId === resolvedGroupId;
@@ -278,23 +271,38 @@ Deno.serve(async (req) => {
         user_metadata: { name: s.name || email.split("@")[0], last_name: s.last_name || null },
       });
       if (error) {
-        if (email.endsWith("@telegram.local") && /already.*registered|already.*exists|email.*registered/i.test(error.message)) {
-          const { data: existingProfile } = await admin.from("profiles").select("id, group_id").eq("email", email).maybeSingle();
-          if (existingProfile?.id) {
-            const alreadyInTargetGroup = !!resolvedGroupId && (existingProfile as any).group_id === resolvedGroupId;
-            if (resolvedGroupId && !alreadyInTargetGroup) {
-              const { error: updateErr } = await admin.from("profiles").update({ group_id: resolvedGroupId }).eq("id", (existingProfile as any).id);
-              if (updateErr) {
-                results.push({ email, status: "error", error: updateErr.message, row_index, identifier_used });
-                auditLog(row_index, identifier_used, "failed", updateErr.message);
-                continue;
-              }
-            }
-            const status = alreadyInTargetGroup ? "skipped_already_in_group" : "updated";
-            results.push({ email, status, userId: (existingProfile as any).id, row_index, identifier_used });
-            auditLog(row_index, identifier_used, "matched_existing_placeholder");
+        // Email collision in Auth — but Telegram-identity dedupe already proved this is a NEW person.
+        // Fall back to a synthesized placeholder email so the new user can be created.
+        if (/already.*registered|already.*exists|email.*registered/i.test(error.message) && synthesizedEmail && synthesizedEmail !== email) {
+          const fallbackEmail = synthesizedEmail;
+          const retry = await admin.auth.admin.createUser({
+            email: fallbackEmail,
+            password,
+            email_confirm: true,
+            user_metadata: { name: s.name || fallbackEmail.split("@")[0], last_name: s.last_name || null },
+          });
+          if (retry.error) {
+            results.push({ email, status: "error", error: retry.error.message, row_index, identifier_used });
+            auditLog(row_index, identifier_used, "failed", retry.error.message);
             continue;
           }
+          email = fallbackEmail;
+          (created as any) = retry.data;
+          // fall through to success path with retry.data
+          const userId = retry.data.user!.id;
+          const profilePatch: Record<string, any> = { name: s.name || fallbackEmail.split("@")[0] };
+          if (s.last_name !== undefined) profilePatch.last_name = s.last_name || null;
+          if (s.telegram_username) profilePatch.telegram_username = s.telegram_username.replace(/^@/, "");
+          if (tgIdNum !== undefined) profilePatch.telegram_id = tgIdNum;
+          if (resolvedGroupId) profilePatch.group_id = resolvedGroupId;
+          await admin.from("profiles").update(profilePatch).eq("id", userId);
+          if (s.role === "admin") await admin.from("user_roles").insert({ user_id: userId, role: "admin" });
+          for (const cid of courseIds) {
+            await admin.from("enrollments").upsert({ user_id: userId, course_id: cid }, { onConflict: "user_id,course_id" });
+          }
+          results.push({ email: fallbackEmail, status: "created", userId, row_index, identifier_used });
+          auditLog(row_index, identifier_used, "created_with_placeholder_email");
+          continue;
         }
         const friendly = /validate email|invalid format/i.test(error.message)
           ? `invalid_placeholder_email (${email}) — auth rejected synthesized email`
