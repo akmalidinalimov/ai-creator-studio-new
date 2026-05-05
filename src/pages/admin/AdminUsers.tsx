@@ -949,23 +949,29 @@ export default function AdminUsers() {
               <Select value={newRole} onValueChange={(v) => setNewRole(v as any)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="student">{t("admin.users.student")}</SelectItem>
-                  <SelectItem value="admin">{t("admin.users.admin")}</SelectItem>
+                  <SelectItem value="student">Talaba</SelectItem>
+                  <SelectItem value="teacher">Ustoz</SelectItem>
+                  <SelectItem value="admin">Admin</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5">
-              <Label>{t("admin.users.group", { defaultValue: "Group" })}</Label>
-              <Select value={newGroupId} onValueChange={setNewGroupId}>
-                <SelectTrigger><SelectValue placeholder={t("admin.users.noGroup", { defaultValue: "No group" })} /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">{t("admin.users.noGroup", { defaultValue: "No group" })}</SelectItem>
-                  {groups.map((g) => (
-                    <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {newRole !== "admin" && (
+              <div className="space-y-1.5">
+                <Label>{newRole === "teacher" ? "Mas'ul guruh" : t("admin.users.group", { defaultValue: "Group" })}</Label>
+                <Select value={newGroupId} onValueChange={setNewGroupId}>
+                  <SelectTrigger><SelectValue placeholder={t("admin.users.noGroup", { defaultValue: "No group" })} /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">{t("admin.users.noGroup", { defaultValue: "No group" })}</SelectItem>
+                    {groups.map((g) => (
+                      <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {newRole === "teacher" && (
+                  <p className="text-xs text-muted-foreground">Yangi guruhga biriktirish eski guruhni o'zgartirmaydi</p>
+                )}
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label>{t("admin.users.enrollIn")}</Label>
               <div className="space-y-1 max-h-32 overflow-y-auto border rounded-md p-2">
