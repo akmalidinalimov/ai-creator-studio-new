@@ -233,25 +233,18 @@ Deno.serve(async (req) => {
       if (!resolvedGroupId && targetGroupId) resolvedGroupId = targetGroupId;
       if (!resolvedGroupId && defaultGroupId) resolvedGroupId = defaultGroupId;
 
-      // Smart dedupe: if a profile already exists by email, telegram_username, telegram_id, or synthesized placeholder,
-      // update its group instead of creating a new auth user.
+      // Dedupe ONLY by Telegram identity (telegram_id → telegram_username).
+      // Email is optional metadata and intentionally NOT used for matching:
+      // two different students may share or reuse an email; identity is the Telegram account.
       let existingId: string | null = null;
       let existingGroupId: string | null = null;
-      if (inputEmail) {
-        const { data: e1 } = await admin.from("profiles").select("id, group_id").eq("email", email).maybeSingle();
+      if (tgIdNum) {
+        const { data: e1 } = await admin.from("profiles").select("id, group_id").eq("telegram_id", tgIdNum).maybeSingle();
         if (e1) { existingId = (e1 as any).id; existingGroupId = (e1 as any).group_id || null; }
       }
       if (!existingId && tgUserNorm) {
         const { data: e2 } = await admin.from("profiles").select("id, group_id").eq("telegram_username", tgUserNorm as any).maybeSingle();
         if (e2) { existingId = (e2 as any).id; existingGroupId = (e2 as any).group_id || null; }
-      }
-      if (!existingId && tgIdNum) {
-        const { data: e3 } = await admin.from("profiles").select("id, group_id").eq("telegram_id", tgIdNum).maybeSingle();
-        if (e3) { existingId = (e3 as any).id; existingGroupId = (e3 as any).group_id || null; }
-      }
-      if (!existingId && synthesizedEmail) {
-        const { data: e4 } = await admin.from("profiles").select("id, group_id").eq("email", synthesizedEmail).maybeSingle();
-        if (e4) { existingId = (e4 as any).id; existingGroupId = (e4 as any).group_id || null; }
       }
       if (existingId) {
         const alreadyInTargetGroup = !!resolvedGroupId && existingGroupId === resolvedGroupId;
