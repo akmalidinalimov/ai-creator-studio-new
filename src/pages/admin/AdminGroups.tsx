@@ -10,9 +10,15 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Pencil, Trash2, Users as UsersIcon, Upload } from "lucide-react";
+import { Plus, Pencil, Trash2, Users as UsersIcon, Upload, RefreshCw, UserPlus } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Checkbox } from "@/components/ui/checkbox";
+import { useAuth } from "@/contexts/AuthContext";
+import { getSiteUrl } from "@/lib/siteUrl";
 import { toast } from "sonner";
+
+const FN_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+const randPassword = () => Math.random().toString(36).slice(2, 10) + "!A1";
 
 type Group = {
   id: string;
@@ -437,10 +443,10 @@ function GroupFormDialog({
 function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => void }) {
   const [students, setStudents] = useState<ProfileLite[]>([]);
   const [search, setSearch] = useState("");
-  const [adding, setAdding] = useState("");
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [importReport, setImportReport] = useState<{ created: number; moved: number; alreadyInGroup: number; errors: string[] } | null>(null);
+  const [openAdd, setOpenAdd] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const reload = async () => {
@@ -468,14 +474,6 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
     else q = q.eq("telegram_username", v as any);
     const { data } = await q.maybeSingle();
     return (data as any)?.id ?? null;
-  };
-
-  const add = async () => {
-    const id = await findProfileId(adding);
-    if (!id) { toast.error("Student not found"); return; }
-    const { error } = await supabase.from("profiles").update({ group_id: group.id }).eq("id", id);
-    if (error) { toast.error(error.message); return; }
-    setAdding(""); toast.success("Added"); reload();
   };
 
   const handleCsv = async (file: File) => {
@@ -557,8 +555,7 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
       <DialogContent className="max-w-2xl">
         <DialogHeader><DialogTitle>Students in {group.name}</DialogTitle></DialogHeader>
         <div className="flex gap-2">
-          <Input value={adding} onChange={(e) => setAdding(e.target.value)} placeholder="Telegram id, @username, or email" />
-          <Button onClick={add}><Plus className="mr-1 h-4 w-4" />Add</Button>
+          <Button onClick={() => setOpenAdd(true)}><UserPlus className="mr-1 h-4 w-4" />+ Yangi talaba qo'shish</Button>
         </div>
         <div className="flex flex-wrap items-center gap-2 rounded border bg-muted/30 p-2">
           <input
@@ -602,6 +599,123 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
           </Table>
         </div>
         <DialogFooter><Button variant="outline" onClick={onClose}>Close</Button></DialogFooter>
+      </DialogContent>
+      {openAdd && (
+        <AddStudentToGroupDialog
+          group={group}
+          onClose={() => setOpenAdd(false)}
+          onCreated={() => { setOpenAdd(false); reload(); }}
+        />
+      )}
+    </Dialog>
+  );
+}
+
+function AddStudentToGroupDialog({ group, onClose, onCreated }: { group: Group; onClose: () => void; onCreated: () => void }) {
+  const { session } = useAuth();
+  const [name, setName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState(randPassword());
+  const [tgId, setTgId] = useState("");
+  const [tgUser, setTgUser] = useState("");
+  const [sendInvite, setSendInvite] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async () => {
+    setErr(null);
+    const tgIdRaw = tgId.trim();
+    const tgUserRaw = tgUser.replace(/^@/, "").trim();
+    const emailRaw = email.trim();
+    if (!emailRaw && !tgIdRaw && !tgUserRaw) {
+      setErr("Email, Telegram ID yoki Telegram username dan kamida bittasi kerak");
+      return;
+    }
+    let tgIdNum: number | undefined;
+    if (tgIdRaw) {
+      const n = Number(tgIdRaw);
+      if (!Number.isInteger(n) || n <= 0) { setErr("Telegram ID musbat butun son bo'lishi kerak"); return; }
+      tgIdNum = n;
+    }
+    setBusy(true);
+    try {
+      const r = await fetch(`${FN_BASE}/admin-create-students`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({
+          students: [{
+            name,
+            last_name: lastName || undefined,
+            email: emailRaw,
+            password: password || undefined,
+            telegram_username: tgUserRaw || undefined,
+            telegram_user_id: tgIdNum,
+            role: "student",
+          }],
+          send_invite: sendInvite,
+          redirectTo: `${getSiteUrl()}/reset-password`,
+          target_group_id: group.id,
+        }),
+      });
+      const res = await r.json();
+      const result = res?.results?.[0];
+      const okStatuses = ["created", "updated", "matched", "skipped_already_in_group"];
+      if (result && okStatuses.includes(result.status)) {
+        toast.success("Talaba qo'shildi");
+        onCreated();
+      } else {
+        setErr(result?.error || res?.error || "Qo'shishda xatolik");
+      }
+    } catch (e: any) {
+      setErr(e?.message || "Tarmoq xatosi");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Yangi talaba qo'shish · {group.name}</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5"><Label>Ism</Label><Input value={name} onChange={(e) => setName(e.target.value)} /></div>
+            <div className="space-y-1.5"><Label>Familiya</Label><Input value={lastName} onChange={(e) => setLastName(e.target.value)} /></div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Email (ixtiyoriy)</Label>
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="optional" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Parol</Label>
+            <div className="flex gap-2">
+              <Input value={password} onChange={(e) => setPassword(e.target.value)} />
+              <Button type="button" variant="outline" size="icon" onClick={() => setPassword(randPassword())}><RefreshCw className="h-4 w-4" /></Button>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Telegram ID</Label>
+            <Input value={tgId} onChange={(e) => setTgId(e.target.value.replace(/[^\d]/g, ""))} inputMode="numeric" placeholder="123456789" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Telegram username (ixtiyoriy)</Label>
+            <Input value={tgUser} onChange={(e) => setTgUser(e.target.value)} placeholder="@username" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Guruh</Label>
+            <Input value={group.name} disabled readOnly />
+          </div>
+          <label className="flex items-center gap-2 text-sm cursor-pointer pt-1">
+            <Checkbox checked={sendInvite} onCheckedChange={(v) => setSendInvite(!!v)} />
+            Magic link yuborish
+          </label>
+          {err && <div className="text-sm text-destructive border border-destructive/40 rounded p-2 bg-destructive/10">{err}</div>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy}>Bekor qilish</Button>
+          <Button onClick={submit} disabled={busy}>{busy ? "Saqlanmoqda…" : "Saqlash"}</Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
