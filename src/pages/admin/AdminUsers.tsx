@@ -96,7 +96,7 @@ export default function AdminUsers() {
   const [newPassword, setNewPassword] = useState(randPassword());
   const [newTg, setNewTg] = useState("");
   const [newTgId, setNewTgId] = useState("");
-  const [newRole, setNewRole] = useState<"student" | "admin">("student");
+  const [newRole, setNewRole] = useState<"student" | "teacher" | "admin">("student");
   const [newCourses, setNewCourses] = useState<Set<string>>(new Set());
   const [newGroupId, setNewGroupId] = useState<string>("none");
   const [sendInvite, setSendInvite] = useState(true);
