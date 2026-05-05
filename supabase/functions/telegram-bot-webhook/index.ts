@@ -2273,21 +2273,22 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     const t = T[locale] as any;
     const { data: a } = await admin
       .from("homework_assignments")
-      .select("title, task_number, modules(position)")
+      .select("title, task_number, module_id, modules(position)")
       .eq("id", intent.assignment_id)
       .maybeSingle();
     const mn = ((a?.modules?.position ?? 0) as number) + 1;
     const tn = (a?.task_number ?? 1) as number;
     const aTitle = a?.title || "";
+    const moduleId = a?.module_id || intent.module_id;
 
     // Private DM to student
     if (profile.telegram_id) {
       try { await sendMessage(profile.telegram_id, t.hwReceived(mn, tn)); } catch (_e) {}
     }
 
-    // Notify the teacher of the student's group
+    // Queue teacher DM (handles RBAC, throttling, quiet hours)
     const subId = upserted?.id;
-    await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId);
+    await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId, moduleId);
 
     // Invalidate any cached "stats" for the student so next /galaba is fresh
     cacheInvalidateUser(profile.id);
