@@ -94,8 +94,8 @@ const App = () => (
             <Route path="/badges" element={<RequireAuth><Badges /></RequireAuth>} />
 
             <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
-            <Route path="/teacher" element={<Navigate to="/admin/dashboard" replace />} />
-            <Route path="/teacher/dashboard" element={<Navigate to="/admin/dashboard" replace />} />
+            <Route path="/teacher" element={<TeacherDashboardRedirect />} />
+            <Route path="/teacher/dashboard" element={<TeacherDashboardRedirect />} />
             <Route path="/admin/dashboard" element={<RequireAuth staffOnly><Suspense fallback={<AdminFallback />}><AdminDashboard /></Suspense></RequireAuth>} />
             <Route path="/admin/courses" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminCourses /></Suspense></RequireAuth>} />
             <Route path="/admin/courses/:courseId" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminCourseEditor /></Suspense></RequireAuth>} />
