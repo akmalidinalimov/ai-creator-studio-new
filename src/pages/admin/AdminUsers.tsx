@@ -775,8 +775,8 @@ export default function AdminUsers() {
                   )}
                   <div className="flex items-center justify-between mt-2 gap-2">
                     <div className="flex items-center gap-2 text-[11px]">
-                      <span className={`px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : "bg-destructive/10 text-destructive"}`}>
-                        {u.status === "active" ? t("admin.users.active") : t("admin.users.inactive")}
+                      <span className={`px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : u.status === "archived" ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-destructive/10 text-destructive"}`}>
+                        {u.status === "active" ? t("admin.users.active") : u.status === "archived" ? "Arxiv" : t("admin.users.inactive")}
                       </span>
                       <span className="text-muted-foreground">{(enrollMap[u.id]?.size) || 0} {t("admin.users.headers.courses").toLowerCase()}</span>
                       <span className="text-muted-foreground">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}</span>
