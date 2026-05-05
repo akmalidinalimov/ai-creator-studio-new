@@ -803,6 +803,13 @@ export default function AdminUsers() {
               {s === "active" ? `Faol (${counts.active})` : s === "archived" ? `Arxiv (${counts.archived})` : `Hammasi (${counts.all})`}
             </Button>
           ))}
+          <Button
+            variant={roleFilter === "teacher" ? "default" : "outline"}
+            size="sm"
+            onClick={() => { setRoleFilter(roleFilter === "teacher" ? "all" : "teacher"); setSelected(new Set()); }}
+          >
+            Ustozlar ({counts.teachers})
+          </Button>
           {isAdmin && (
             <label className="flex items-center gap-2 text-xs cursor-pointer ml-2">
               <Checkbox checked={orphansOnly} onCheckedChange={(v) => setOrphansOnly(!!v)} />
