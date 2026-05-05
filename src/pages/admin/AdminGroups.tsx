@@ -705,7 +705,7 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
   );
 }
 
-function AddStudentToGroupDialog({ group, onClose, onCreated }: { group: Group; onClose: () => void; onCreated: () => void }) {
+function AddStudentToGroupDialog({ group, onClose, onCreated, initialRole }: { group: Group; onClose: () => void; onCreated: () => void; initialRole?: "student" | "teacher" | "admin" }) {
   const { session } = useAuth();
   const [name, setName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -713,7 +713,7 @@ function AddStudentToGroupDialog({ group, onClose, onCreated }: { group: Group; 
   const [password, setPassword] = useState(randPassword());
   const [tgId, setTgId] = useState("");
   const [tgUser, setTgUser] = useState("");
-  const [role, setRole] = useState<"student" | "teacher" | "admin">("student");
+  const [role, setRole] = useState<"student" | "teacher" | "admin">(initialRole || "student");
   const [sendInvite, setSendInvite] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
