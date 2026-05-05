@@ -1571,12 +1571,7 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
   }
 
   if (cmd === "/thealth") {
-    const groups = await teacherGroups(admin, teacherId);
-    if (!groups.length) {
-      await sendWithKeyboard(chatId, t.tHealthEmpty, locale, false, "teacher");
-      return true;
-    }
-    // Build a map of user_id -> last_sign_in_at via admin auth API (one call, paginated).
+    const g = activeGroup!;
     const lastSignInMap = new Map<string, string | null>();
     try {
       let page = 1;
@@ -1589,30 +1584,27 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
         if (page > 20) break;
       }
     } catch (_e) { /* fall through; logged stays 0 */ }
-    for (const g of groups) {
-      const { data: profs } = await admin
-        .from("profiles")
-        .select("id, status, archived_at")
-        .eq("group_id", g.id);
-      const allRows = (profs || []) as any[];
-      const total = allRows.length;
-      const activeRows = allRows.filter((p) => p.status === "active" && !p.archived_at);
-      const active = activeRows.length;
-      const logged = activeRows.filter((p) => !!lastSignInMap.get(p.id)).length;
-      const never = Math.max(0, active - logged);
-      const pct = active > 0 ? Math.round((logged / active) * 100) : 0;
-      const link = await createMagicLink(admin, teacherId, "teacher_dashboard", "/teacher/dashboard");
-      await sendMessage(chatId, t.tHealthLine(g.name, logged, active, never, total, pct), {
-        inline_keyboard: [[{ text: t.tHealthOpenSite, url: link }]],
-      });
-    }
+    const { data: profs } = await admin
+      .from("profiles")
+      .select("id, status, archived_at")
+      .eq("group_id", g.id);
+    const allRows = (profs || []) as any[];
+    const total = allRows.length;
+    const logged = allRows.filter((p) => !!lastSignInMap.get(p.id)).length;
+    const never = Math.max(0, total - logged);
+    const pct = total > 0 ? Math.round((logged / total) * 100) : 0;
+    const link = await createMagicLink(admin, teacherId, "teacher_dashboard", "/teacher/dashboard");
+    await sendMessage(chatId, t.tHealthLine(g.name, logged, total, never, total, pct), {
+      inline_keyboard: [[{ text: t.tHealthOpenSite, url: link }]],
+    });
     return true;
   }
 
   if (cmd === "/tstudents" || cmd === "/tinactive") {
-    const ids = await teacherStudentIds(admin, teacherId);
+    const g = activeGroup!;
+    const ids = await teacherStudentIds(admin, teacherId, g.id);
     if (!ids.length) {
-      await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher");
+      await sendWithKeyboard(chatId, `${t.tActiveGroup(g.name)}\n\n—`, locale, false, "teacher");
       return true;
     }
     const { data: profs } = await admin.from("profiles").select("id, name, last_name, telegram_username, telegram_id, created_at").in("id", ids);
@@ -1635,13 +1627,12 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
     if (cmd === "/tinactive") rows = rows.filter((r) => r.days === null || r.days >= 3);
     rows.sort((a: any, b: any) => (b.days ?? 9999) - (a.days ?? 9999));
     const headerLabel = cmd === "/tinactive" ? t.tKbInactive : t.tKbStudents;
-    const header = `<b>${headerLabel}</b> — ${rows.length}`;
+    const header = `<b>${headerLabel}</b> · ${csvEscapeHtml(g.name)} — ${rows.length}`;
     if (!rows.length) {
       await sendWithKeyboard(chatId, `${header}\n\n—`, locale, false, "teacher");
       return true;
     }
     const lines = rows.map((r) => `• <b>${csvEscapeHtml(r.name)}</b> ${csvEscapeHtml(r.handle)} (${r.days === null ? "∞" : r.days + "d"})`);
-    // Telegram hard cap is 4096 chars; pack into chunks under ~3500 for safety, repeating header.
     const MAX = 3500;
     const chunks: string[] = [];
     let cur = header + "\n\n";
@@ -1674,11 +1665,7 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
   }
 
   if (cmd === "/tbroadcast") {
-    const groups = await teacherGroups(admin, teacherId);
-    if (!groups.length) {
-      await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher");
-      return true;
-    }
+    const g = activeGroup!;
     // Rate-limit: 1 per hour
     const since = new Date(Date.now() - 3600_000).toISOString();
     const { count } = await admin.from("bot_broadcast_rate").select("id", { count: "exact", head: true }).eq("actor_user_id", teacherId).eq("scope", "teacher").gte("created_at", since);
@@ -1686,14 +1673,14 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
       await sendWithKeyboard(chatId, t.teacherBroadcastRate, locale, false, "teacher");
       return true;
     }
-    await admin.from("bot_sessions").upsert({ user_id: teacherId, state: "teacher_broadcast", data: {}, updated_at: new Date().toISOString() });
-    await sendWithKeyboard(chatId, t.teacherBroadcastPrompt, locale, false, "teacher");
+    await admin.from("bot_sessions").upsert({ user_id: teacherId, state: "teacher_broadcast", data: { group_id: g.id }, updated_at: new Date().toISOString() });
+    await sendWithKeyboard(chatId, `${t.tActiveGroup(g.name)}\n\n${t.teacherBroadcastPrompt}`, locale, false, "teacher");
     return true;
   }
 
-  // Grading commands shared with admin
-  const g = await handleGradingCommand(admin, chatId, teacherId, locale, cmd, false);
-  if (g) return true;
+  // Grading commands shared with admin (scoped to active group for teachers)
+  const g2 = await handleGradingCommand(admin, chatId, teacherId, locale, cmd, false, activeGroup?.id);
+  if (g2) return true;
 
   return false;
 }
