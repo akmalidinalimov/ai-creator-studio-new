@@ -1053,7 +1053,11 @@ export default function AdminUsers() {
                         )}
                       </div>
                     </td>
-                    <td className="p-3 text-xs">{u.group_id ? <Badge variant="secondary">{(u as any).group_name || groupNameById.get(u.group_id) || "—"}</Badge> : <span className="text-muted-foreground">—</span>}</td>
+                    <td className="p-3 text-xs">{u.role_name === "teacher" ? (() => {
+                      const tg = groupsByTeacher.get(u.id) || [];
+                      if (tg.length === 0) return <span className="text-muted-foreground">—</span>;
+                      return <Badge variant="secondary" title={tg.map((x) => x.name).join(", ")}>{tg.length} ta guruh</Badge>;
+                    })() : (u.group_id ? <Badge variant="secondary">{(u as any).group_name || groupNameById.get(u.group_id) || "—"}</Badge> : <span className="text-muted-foreground">—</span>)}</td>
                     <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : u.status === "archived" ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-destructive/10 text-destructive"}`}>{u.status === "active" ? t("admin.users.active") : u.status === "archived" ? "Arxiv" : t("admin.users.inactive")}</span></td>
                     <td className="p-3 text-xs text-muted-foreground">{(enrollMap[u.id]?.size) || 0}</td>
                     <td className="p-3 text-xs text-muted-foreground">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}</td>
