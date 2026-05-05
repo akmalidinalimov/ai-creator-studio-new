@@ -443,10 +443,10 @@ function GroupFormDialog({
 function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => void }) {
   const [students, setStudents] = useState<ProfileLite[]>([]);
   const [search, setSearch] = useState("");
-  const [adding, setAdding] = useState("");
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [importReport, setImportReport] = useState<{ created: number; moved: number; alreadyInGroup: number; errors: string[] } | null>(null);
+  const [openAdd, setOpenAdd] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const reload = async () => {
@@ -474,14 +474,6 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
     else q = q.eq("telegram_username", v as any);
     const { data } = await q.maybeSingle();
     return (data as any)?.id ?? null;
-  };
-
-  const add = async () => {
-    const id = await findProfileId(adding);
-    if (!id) { toast.error("Student not found"); return; }
-    const { error } = await supabase.from("profiles").update({ group_id: group.id }).eq("id", id);
-    if (error) { toast.error(error.message); return; }
-    setAdding(""); toast.success("Added"); reload();
   };
 
   const handleCsv = async (file: File) => {
