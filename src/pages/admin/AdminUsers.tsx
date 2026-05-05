@@ -807,9 +807,7 @@ export default function AdminUsers() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
                     <div className="font-medium truncate">{[u.name, u.last_name].filter(Boolean).join(" ") || "—"}</div>
-                    <Badge variant={u.role_name && u.role_name !== "student" ? "default" : "secondary"} className="shrink-0">
-                      {u.role_name || "student"}
-                    </Badge>
+                    {roleBadge(u.role_name)}
                   </div>
                   <div className="text-xs text-muted-foreground truncate mt-0.5">
                     {u.email}
