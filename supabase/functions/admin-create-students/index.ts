@@ -15,7 +15,7 @@ type Student = {
   password?: string;
   telegram_username?: string;
   telegram_user_id?: number | string;
-  role?: "student" | "admin";
+  role?: "student" | "teacher" | "admin";
   group_name?: string;
 };
 
@@ -272,9 +272,10 @@ Deno.serve(async (req) => {
         }
       }
       if (existingId) {
+        const isStaff = s.role === "teacher" || s.role === "admin";
         const alreadyInTargetGroup = !!resolvedGroupId && existingGroupId === resolvedGroupId;
         const patch: Record<string, any> = {};
-        if (resolvedGroupId && !alreadyInTargetGroup) patch.group_id = resolvedGroupId;
+        if (resolvedGroupId && !alreadyInTargetGroup && !isStaff) patch.group_id = resolvedGroupId;
         // Heal telegram_username if CSV provides one and DB value differs (case/@-insensitive compare).
         if (csvTgUsernameRaw) {
           const dbNorm = (existingTgUsername || "").trim().replace(/^@/, "").toLowerCase();
@@ -289,6 +290,13 @@ Deno.serve(async (req) => {
             auditLog(row_index, identifier_used, "failed", updateErr.message);
             continue;
           }
+        }
+        // Teacher: ensure role + assign as group teacher
+        if (s.role === "teacher") {
+          await admin.from("user_roles").upsert({ user_id: existingId, role: "teacher" } as any, { onConflict: "user_id,role" });
+          if (resolvedGroupId) await admin.from("groups").update({ teacher_id: existingId }).eq("id", resolvedGroupId);
+        } else if (s.role === "admin") {
+          await admin.from("user_roles").upsert({ user_id: existingId, role: "admin" } as any, { onConflict: "user_id,role" });
         }
         const status = alreadyInTargetGroup ? "skipped_already_in_group" : "updated";
         results.push({ email, status, userId: existingId, row_index, identifier_used });
@@ -326,9 +334,14 @@ Deno.serve(async (req) => {
           if (csvLastName !== undefined) profilePatch.last_name = csvLastName || null;
           if (s.telegram_username && s.telegram_username.trim()) profilePatch.telegram_username = s.telegram_username.trim();
           if (tgIdNum !== undefined) profilePatch.telegram_id = tgIdNum;
-          if (resolvedGroupId) profilePatch.group_id = resolvedGroupId;
+          // Teachers are NOT added as group members; instead set groups.teacher_id below.
+          if (resolvedGroupId && s.role !== "teacher" && s.role !== "admin") profilePatch.group_id = resolvedGroupId;
           await admin.from("profiles").update(profilePatch).eq("id", userId);
           if (s.role === "admin") await admin.from("user_roles").insert({ user_id: userId, role: "admin" });
+          if (s.role === "teacher") {
+            await admin.from("user_roles").insert({ user_id: userId, role: "teacher" });
+            if (resolvedGroupId) await admin.from("groups").update({ teacher_id: userId }).eq("id", resolvedGroupId);
+          }
           for (const cid of courseIds) {
             await admin.from("enrollments").upsert({ user_id: userId, course_id: cid }, { onConflict: "user_id,course_id" });
           }
@@ -358,7 +371,8 @@ Deno.serve(async (req) => {
         }
         profilePatch.telegram_id = tgIdNum;
       }
-      if (resolvedGroupId) profilePatch.group_id = resolvedGroupId;
+      // Teachers are NOT added as group members; instead set groups.teacher_id below.
+      if (resolvedGroupId && s.role !== "teacher" && s.role !== "admin") profilePatch.group_id = resolvedGroupId;
       const { error: profErr } = await admin.from("profiles").update(profilePatch).eq("id", userId);
       if (profErr) {
         results.push({ email, status: "error", error: profErr.message, row_index, identifier_used });
@@ -369,6 +383,11 @@ Deno.serve(async (req) => {
 
       if (s.role === "admin") {
         await admin.from("user_roles").insert({ user_id: userId, role: "admin" });
+      } else if (s.role === "teacher") {
+        await admin.from("user_roles").insert({ user_id: userId, role: "teacher" });
+        if (resolvedGroupId) {
+          await admin.from("groups").update({ teacher_id: userId }).eq("id", resolvedGroupId);
+        }
       }
 
       for (const cid of courseIds) {

@@ -96,7 +96,7 @@ export default function AdminUsers() {
   const [newPassword, setNewPassword] = useState(randPassword());
   const [newTg, setNewTg] = useState("");
   const [newTgId, setNewTgId] = useState("");
-  const [newRole, setNewRole] = useState<"student" | "admin">("student");
+  const [newRole, setNewRole] = useState<"student" | "teacher" | "admin">("student");
   const [newCourses, setNewCourses] = useState<Set<string>>(new Set());
   const [newGroupId, setNewGroupId] = useState<string>("none");
   const [sendInvite, setSendInvite] = useState(true);
@@ -681,6 +681,18 @@ export default function AdminUsers() {
 
   const isLocked = (email: string) => lockedEmails.has(email.toLowerCase());
 
+  const roleBadge = (r?: RoleName) => {
+    const role = r || "student";
+    const map: Record<string, { label: string; cls: string }> = {
+      student: { label: "Talaba", cls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30" },
+      teacher: { label: "Ustoz", cls: "bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/30" },
+      admin: { label: "Admin", cls: "bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/30" },
+      superadmin: { label: "Superadmin", cls: "bg-rose-700/20 text-rose-800 dark:text-rose-300 border-rose-700/40" },
+    };
+    const m = map[role] || map.student;
+    return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${m.cls}`}>{m.label}</span>;
+  };
+
   return (
     <PageShell>
       <div className="space-y-6">
@@ -795,9 +807,7 @@ export default function AdminUsers() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
                     <div className="font-medium truncate">{[u.name, u.last_name].filter(Boolean).join(" ") || "—"}</div>
-                    <Badge variant={u.role_name && u.role_name !== "student" ? "default" : "secondary"} className="shrink-0">
-                      {u.role_name || "student"}
-                    </Badge>
+                    {roleBadge(u.role_name)}
                   </div>
                   <div className="text-xs text-muted-foreground truncate mt-0.5">
                     {u.email}
@@ -869,26 +879,27 @@ export default function AdminUsers() {
                       {u.telegram_username && <div className="text-muted-foreground">@{u.telegram_username}</div>}
                     </td>
                     <td className="p-3">
-                      {isAdmin ? (
-                        <Select
-                          value={u.role_name || "student"}
-                          disabled={u.id === session?.user?.id}
-                          onValueChange={(v) => {
-                            const next = v as RoleName;
-                            if (next !== (u.role_name || "student")) setBulkRole({ user: u, newRole: next });
-                          }}
-                        >
-                          <SelectTrigger className="h-8 w-[130px] text-xs"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="student">Student</SelectItem>
-                            <SelectItem value="teacher">Teacher</SelectItem>
-                            <SelectItem value="admin">Admin</SelectItem>
-                            <SelectItem value="superadmin">Superadmin</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <Badge variant="secondary">{u.role_name || "student"}</Badge>
-                      )}
+                      <div className="flex flex-col items-start gap-1">
+                        {roleBadge(u.role_name)}
+                        {isAdmin && (
+                          <Select
+                            value={u.role_name || "student"}
+                            disabled={u.id === session?.user?.id}
+                            onValueChange={(v) => {
+                              const next = v as RoleName;
+                              if (next !== (u.role_name || "student")) setBulkRole({ user: u, newRole: next });
+                            }}
+                          >
+                            <SelectTrigger className="h-7 w-[120px] text-[11px]"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="student">Student</SelectItem>
+                              <SelectItem value="teacher">Teacher</SelectItem>
+                              <SelectItem value="admin">Admin</SelectItem>
+                              <SelectItem value="superadmin">Superadmin</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
+                      </div>
                     </td>
                     <td className="p-3 text-xs">{u.group_id ? <Badge variant="secondary">{(u as any).group_name || groupNameById.get(u.group_id) || "—"}</Badge> : <span className="text-muted-foreground">—</span>}</td>
                     <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : u.status === "archived" ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-destructive/10 text-destructive"}`}>{u.status === "active" ? t("admin.users.active") : u.status === "archived" ? "Arxiv" : t("admin.users.inactive")}</span></td>
@@ -949,23 +960,29 @@ export default function AdminUsers() {
               <Select value={newRole} onValueChange={(v) => setNewRole(v as any)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="student">{t("admin.users.student")}</SelectItem>
-                  <SelectItem value="admin">{t("admin.users.admin")}</SelectItem>
+                  <SelectItem value="student">Talaba</SelectItem>
+                  <SelectItem value="teacher">Ustoz</SelectItem>
+                  <SelectItem value="admin">Admin</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5">
-              <Label>{t("admin.users.group", { defaultValue: "Group" })}</Label>
-              <Select value={newGroupId} onValueChange={setNewGroupId}>
-                <SelectTrigger><SelectValue placeholder={t("admin.users.noGroup", { defaultValue: "No group" })} /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">{t("admin.users.noGroup", { defaultValue: "No group" })}</SelectItem>
-                  {groups.map((g) => (
-                    <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {newRole !== "admin" && (
+              <div className="space-y-1.5">
+                <Label>{newRole === "teacher" ? "Mas'ul guruh" : t("admin.users.group", { defaultValue: "Group" })}</Label>
+                <Select value={newGroupId} onValueChange={setNewGroupId}>
+                  <SelectTrigger><SelectValue placeholder={t("admin.users.noGroup", { defaultValue: "No group" })} /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">{t("admin.users.noGroup", { defaultValue: "No group" })}</SelectItem>
+                    {groups.map((g) => (
+                      <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {newRole === "teacher" && (
+                  <p className="text-xs text-muted-foreground">Yangi guruhga biriktirish eski guruhni o'zgartirmaydi</p>
+                )}
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label>{t("admin.users.enrollIn")}</Label>
               <div className="space-y-1 max-h-32 overflow-y-auto border rounded-md p-2">
