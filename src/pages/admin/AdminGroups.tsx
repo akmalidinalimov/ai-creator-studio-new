@@ -159,7 +159,7 @@ export default function AdminGroups() {
                       <span className="inline-flex items-center gap-1 cursor-help">Loggedin <Info className="h-3 w-3 text-muted-foreground" /></span>
                     </TooltipTrigger>
                     <TooltipContent side="top" className="max-w-xs text-xs">
-                      Faqat faol talabalar hisoblanadi. Arxivlangan talabalar ko'rsatilmagan.
+                      Faol va arxivlangan barcha talabalar hisoblanadi
                     </TooltipContent>
                   </Tooltip>
                 </TableHead>
