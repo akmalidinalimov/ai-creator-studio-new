@@ -975,6 +975,66 @@ export type Database = {
           },
         ]
       }
+      homework_teacher_dm_queue: {
+        Row: {
+          assignment_id: string
+          assignment_title: string | null
+          created_at: string
+          error: string | null
+          group_id: string
+          id: string
+          message_url: string
+          module_id: string
+          module_number: number
+          queued_for_quiet_hours: boolean
+          scheduled_for: string
+          sent_at: string | null
+          student_id: string
+          student_name: string | null
+          submission_id: string
+          task_number: number
+          teacher_id: string
+        }
+        Insert: {
+          assignment_id: string
+          assignment_title?: string | null
+          created_at?: string
+          error?: string | null
+          group_id: string
+          id?: string
+          message_url: string
+          module_id: string
+          module_number: number
+          queued_for_quiet_hours?: boolean
+          scheduled_for?: string
+          sent_at?: string | null
+          student_id: string
+          student_name?: string | null
+          submission_id: string
+          task_number: number
+          teacher_id: string
+        }
+        Update: {
+          assignment_id?: string
+          assignment_title?: string | null
+          created_at?: string
+          error?: string | null
+          group_id?: string
+          id?: string
+          message_url?: string
+          module_id?: string
+          module_number?: number
+          queued_for_quiet_hours?: boolean
+          scheduled_for?: string
+          sent_at?: string | null
+          student_id?: string
+          student_name?: string | null
+          submission_id?: string
+          task_number?: number
+          teacher_id?: string
+        }
+        Relationships: []
+      }
       leaderboard_cache: {
         Row: {
           computed_at: string
