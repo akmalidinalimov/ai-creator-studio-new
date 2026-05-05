@@ -34,10 +34,25 @@ type Course = { id: string; title: string };
 type ProfileLite = {
   id: string;
   name: string | null;
+  last_name?: string | null;
   email: string;
   telegram_username: string | null;
   telegram_id: number | null;
   group_id: string | null;
+  status?: string | null;
+  role_name?: "student" | "teacher" | "admin" | "superadmin";
+};
+
+const roleBadgeFor = (r?: string) => {
+  const role = r || "student";
+  const map: Record<string, { label: string; cls: string }> = {
+    student: { label: "Talaba", cls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30" },
+    teacher: { label: "Ustoz", cls: "bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/30" },
+    admin: { label: "Admin", cls: "bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/30" },
+    superadmin: { label: "Superadmin", cls: "bg-rose-700/20 text-rose-800 dark:text-rose-300 border-rose-700/40" },
+  };
+  const m = map[role] || map.student;
+  return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${m.cls}`}>{m.label}</span>;
 };
 
 export default function AdminGroups() {
