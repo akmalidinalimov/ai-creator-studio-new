@@ -227,6 +227,12 @@ Deno.serve(async (req) => {
       // Password is always optional; generate one if not provided. Magic link / Telegram bot are the real login paths.
       const passwordProvided = !!(s.password && s.password.length >= 6);
       const password = passwordProvided ? s.password! : genPassword();
+      // Display name preserved AS-IS from CSV. No INITCAP, no tg- prefix, no fallback to email-local.
+      // Only when csv.name is empty AND csv.telegram_username is present do we fall back to the
+      // raw username (without @) as a display label. Never put "tg-" in front of a person's name.
+      const csvName = (s.name || "").trim();
+      const csvLastName = s.last_name === undefined ? undefined : (s.last_name || "").trim();
+      const displayName = csvName || (tgUserNorm ? tgUserNorm : "");
       // Resolve target group: explicit row group_name → target_group_id → default
       let resolvedGroupId: string | null = null;
       if (s.group_name && s.group_name.trim()) resolvedGroupId = await resolveGroupId(s.group_name);
@@ -243,7 +249,7 @@ Deno.serve(async (req) => {
         if (e1) { existingId = (e1 as any).id; existingGroupId = (e1 as any).group_id || null; }
       }
       if (!existingId && tgUserNorm) {
-        const { data: e2 } = await admin.from("profiles").select("id, group_id").eq("telegram_username", tgUserNorm as any).maybeSingle();
+        const { data: e2 } = await admin.from("profiles").select("id, group_id").or(`telegram_username.eq.${tgUserNorm},telegram_username.eq.@${tgUserNorm}`).maybeSingle();
         if (e2) { existingId = (e2 as any).id; existingGroupId = (e2 as any).group_id || null; }
       }
       if (existingId) {
@@ -268,7 +274,7 @@ Deno.serve(async (req) => {
         email,
         password,
         email_confirm: true,
-        user_metadata: { name: s.name || email.split("@")[0], last_name: s.last_name || null },
+        user_metadata: { name: displayName || null, last_name: csvLastName || null },
       });
       if (error) {
         // Email collision in Auth — but Telegram-identity dedupe already proved this is a NEW person.
@@ -279,7 +285,7 @@ Deno.serve(async (req) => {
             email: fallbackEmail,
             password,
             email_confirm: true,
-            user_metadata: { name: s.name || fallbackEmail.split("@")[0], last_name: s.last_name || null },
+            user_metadata: { name: displayName || null, last_name: csvLastName || null },
           });
           if (retry.error) {
             results.push({ email, status: "error", error: retry.error.message, row_index, identifier_used });
@@ -290,9 +296,9 @@ Deno.serve(async (req) => {
           (created as any) = retry.data;
           // fall through to success path with retry.data
           const userId = retry.data.user!.id;
-          const profilePatch: Record<string, any> = { name: s.name || fallbackEmail.split("@")[0] };
-          if (s.last_name !== undefined) profilePatch.last_name = s.last_name || null;
-          if (s.telegram_username) profilePatch.telegram_username = s.telegram_username.replace(/^@/, "");
+          const profilePatch: Record<string, any> = { name: displayName || null };
+          if (csvLastName !== undefined) profilePatch.last_name = csvLastName || null;
+          if (s.telegram_username && s.telegram_username.trim()) profilePatch.telegram_username = s.telegram_username.trim();
           if (tgIdNum !== undefined) profilePatch.telegram_id = tgIdNum;
           if (resolvedGroupId) profilePatch.group_id = resolvedGroupId;
           await admin.from("profiles").update(profilePatch).eq("id", userId);
@@ -312,9 +318,9 @@ Deno.serve(async (req) => {
         continue;
       }
       const userId = created.user!.id;
-      const profilePatch: Record<string, any> = { name: s.name || email.split("@")[0] };
-      if (s.last_name !== undefined) profilePatch.last_name = s.last_name || null;
-      if (s.telegram_username) profilePatch.telegram_username = s.telegram_username.replace(/^@/, "");
+      const profilePatch: Record<string, any> = { name: displayName || null };
+      if (csvLastName !== undefined) profilePatch.last_name = csvLastName || null;
+      if (s.telegram_username && s.telegram_username.trim()) profilePatch.telegram_username = s.telegram_username.trim();
       if (tgIdNum !== undefined) {
         const { data: dup } = await admin.from("profiles").select("id").eq("telegram_id", tgIdNum).neq("id", userId).maybeSingle();
         if (dup) {

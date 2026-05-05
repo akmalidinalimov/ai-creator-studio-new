@@ -1482,23 +1482,49 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
       await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher");
       return true;
     }
-    const { data: profs } = await admin.from("profiles").select("id, name, last_name, telegram_username, created_at").in("id", ids);
+    const { data: profs } = await admin.from("profiles").select("id, name, last_name, telegram_username, telegram_id, created_at").in("id", ids);
     const { data: lp } = await admin.from("lesson_progress").select("user_id, updated_at").in("user_id", ids).order("updated_at", { ascending: false }).limit(5000);
     const lastMap = new Map<string, number>();
     for (const r of lp || []) {
       if (!lastMap.has(r.user_id)) lastMap.set(r.user_id, new Date(r.updated_at).getTime());
     }
     const now = Date.now();
-    let rows = (profs || []).map((p: any) => ({
-      name: [p.name, p.last_name].filter(Boolean).join(" ") || "—",
-      handle: p.telegram_username ? `@${p.telegram_username}` : "—",
-      days: lastMap.has(p.id) ? Math.floor((now - lastMap.get(p.id)!) / 86400_000) : null,
-    }));
+    let rows = (profs || []).map((p: any) => {
+      const rawHandle = (p.telegram_username || "").toString().trim();
+      const handle = rawHandle ? (rawHandle.startsWith("@") ? rawHandle : `@${rawHandle}`) : (p.telegram_id ? `(id:${p.telegram_id})` : "—");
+      const name = [p.name, p.last_name].filter(Boolean).join(" ").trim() || handle.replace(/^@/, "") || "—";
+      return {
+        name,
+        handle,
+        days: lastMap.has(p.id) ? Math.floor((now - lastMap.get(p.id)!) / 86400_000) : null,
+      };
+    });
     if (cmd === "/tinactive") rows = rows.filter((r) => r.days === null || r.days >= 3);
     rows.sort((a: any, b: any) => (b.days ?? 9999) - (a.days ?? 9999));
-    const top = rows.slice(0, 20).map((r) => `• <b>${csvEscapeHtml(r.name)}</b> ${csvEscapeHtml(r.handle)} (${r.days === null ? "∞" : r.days + "d"})`);
-    const header = cmd === "/tinactive" ? `<b>${t.tKbInactive}</b> — ${rows.length}` : `<b>${t.tKbStudents}</b> — ${rows.length}`;
-    await sendWithKeyboard(chatId, `${header}\n\n${top.join("\n") || "—"}`, locale, false, "teacher");
+    const headerLabel = cmd === "/tinactive" ? t.tKbInactive : t.tKbStudents;
+    const header = `<b>${headerLabel}</b> — ${rows.length}`;
+    if (!rows.length) {
+      await sendWithKeyboard(chatId, `${header}\n\n—`, locale, false, "teacher");
+      return true;
+    }
+    const lines = rows.map((r) => `• <b>${csvEscapeHtml(r.name)}</b> ${csvEscapeHtml(r.handle)} (${r.days === null ? "∞" : r.days + "d"})`);
+    // Telegram hard cap is 4096 chars; pack into chunks under ~3500 for safety, repeating header.
+    const MAX = 3500;
+    const chunks: string[] = [];
+    let cur = header + "\n\n";
+    for (const line of lines) {
+      if ((cur.length + line.length + 1) > MAX) {
+        chunks.push(cur.trimEnd());
+        cur = header + "\n\n";
+      }
+      cur += line + "\n";
+    }
+    if (cur.trim().length) chunks.push(cur.trimEnd());
+    for (let i = 0; i < chunks.length; i++) {
+      const isLast = i === chunks.length - 1;
+      if (isLast) await sendWithKeyboard(chatId, chunks[i], locale, false, "teacher");
+      else await sendMessage(chatId, chunks[i]);
+    }
     return true;
   }
 
