@@ -1493,7 +1493,39 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
     return true;
   }
 
-  if (cmd === "/tstudents" || cmd === "/tinactive") {
+  if (cmd === "/thealth") {
+    const groups = await teacherGroups(admin, teacherId);
+    if (!groups.length) {
+      await sendWithKeyboard(chatId, t.tHealthEmpty, locale, false, "teacher");
+      return true;
+    }
+    // Use admin client (service role) directly: this RPC is RBAC-checked but we already filter to teacher's groups.
+    // We need raw counts; fetch profiles per group instead of going through the RPC (which uses auth.uid()).
+    for (const g of groups) {
+      const { data: profs } = await admin
+        .from("profiles")
+        .select("id, status, archived_at")
+        .eq("group_id", g.id);
+      const allRows = (profs || []) as any[];
+      const total = allRows.length;
+      const activeRows = allRows.filter((p) => p.status === "active" && !p.archived_at);
+      const active = activeRows.length;
+      let logged = 0;
+      if (active > 0) {
+        const ids = activeRows.map((p) => p.id);
+        const { data: usrs } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+        const idSet = new Set(ids);
+        logged = ((usrs as any)?.users || []).filter((u: any) => idSet.has(u.id) && u.last_sign_in_at).length;
+      }
+      const never = Math.max(0, active - logged);
+      const pct = active > 0 ? Math.round((logged / active) * 100) : 0;
+      const link = await createMagicLink(admin, teacherId, "teacher_dashboard", "/teacher/dashboard");
+      await sendMessage(chatId, t.tHealthLine(g.name, logged, active, never, total, pct), {
+        inline_keyboard: [[{ text: t.tHealthOpenSite, url: link }]],
+      });
+    }
+    return true;
+  }
     const ids = await teacherStudentIds(admin, teacherId);
     if (!ids.length) {
       await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher");
