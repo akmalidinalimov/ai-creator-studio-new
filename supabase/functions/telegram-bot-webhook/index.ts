@@ -2547,7 +2547,35 @@ async function handleCallback(admin: any, cq: any) {
     return;
   }
 
-  if ((data.startsWith("gs:list:") || data.startsWith("gs:pick:") || data.startsWith("gs:open:")) && chatId) {
+  // Teacher group picker: tg:pick:<action>:<groupId>  (action = "switch" or a teacher cmd key)
+  if (data.startsWith("tg:pick:") && chatId) {
+    const rest = data.slice("tg:pick:".length);
+    const idx = rest.lastIndexOf(":");
+    if (idx <= 0) { await answerCallback(cq.id); return; }
+    const action = rest.slice(0, idx);
+    const groupId = rest.slice(idx + 1);
+    const profile = await findProfileByTelegramId(admin, tgId);
+    if (!profile) { await answerCallback(cq.id); return; }
+    const persona = await getPersona(admin, profile.id);
+    if (persona !== "teacher") { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(profile.preferred_locale);
+    const t = T[locale] as any;
+    // Validate ownership
+    const groups = await teacherGroups(admin, profile.id);
+    const g = groups.find((x) => x.id === groupId);
+    if (!g) { await answerCallback(cq.id); return; }
+    await admin.from("profiles").update({ active_teacher_group_id: g.id }).eq("id", profile.id);
+    await answerCallback(cq.id);
+    if (action === "switch") {
+      await sendWithKeyboard(chatId, t.tGroupSwitched(g.name), locale, false, "teacher");
+    } else {
+      const cmd = TEACHER_ACTION_CMD[action];
+      if (cmd) await handleTeacherCommand(admin, chatId, profile.id, locale, cmd, g.id);
+    }
+    return;
+  }
+
+
     const profile = await findProfileByTelegramId(admin, tgId);
     if (!profile) { await answerCallback(cq.id); return; }
     const persona = await getPersona(admin, profile.id);
