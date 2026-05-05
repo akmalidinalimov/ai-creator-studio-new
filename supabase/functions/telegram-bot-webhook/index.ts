@@ -1722,17 +1722,17 @@ async function loadGradingSubmissions(admin: any, graderId: string, isAdmin: boo
 }
 
 async function handleGradingCommand(
-  admin: any, chatId: number, graderId: string, locale: Locale, cmd: string, isAdmin: boolean,
+  admin: any, chatId: number, graderId: string, locale: Locale, cmd: string, isAdmin: boolean, groupId?: string | null,
 ): Promise<boolean> {
   const t = T[locale] as any;
 
   if (cmd === "/baholash" || cmd === "/grade") {
-    await renderStudentPicker(admin, chatId, graderId, locale, isAdmin, 0);
+    await renderStudentPicker(admin, chatId, graderId, locale, isAdmin, 0, groupId);
     return true;
   }
 
   if (cmd === "/baholar" || cmd === "/grades") {
-    const items = await loadGradingSubmissions(admin, graderId, isAdmin, { scored: true, limit: 10 });
+    const items = await loadGradingSubmissions(admin, graderId, isAdmin, { scored: true, limit: 10, groupId });
     if (!items.length) {
       await sendWithKeyboard(chatId, `${t.gradedRecent}\n\n${t.gradedNone}`, locale, isAdmin, isAdmin ? "admin" : "teacher");
       return true;
