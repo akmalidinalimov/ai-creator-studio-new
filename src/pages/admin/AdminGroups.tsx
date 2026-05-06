@@ -135,12 +135,23 @@ export default function AdminGroups() {
   return (
     <PageShell>
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
             <h1 className="text-2xl font-semibold">Groups</h1>
             <p className="text-sm text-muted-foreground">Manage student groups and assign teachers.</p>
           </div>
-          <Button onClick={() => setOpenCreate(true)}><Plus className="mr-2 h-4 w-4" />Create group</Button>
+          <div className="flex items-center gap-2">
+            <Label className="text-xs text-muted-foreground">Faollik oynasi</Label>
+            <Select value={String(windowDays)} onValueChange={(v) => setWindowDays(Number(v) as 3 | 7 | 30)}>
+              <SelectTrigger className="h-9 w-[110px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="3">3 kun</SelectItem>
+                <SelectItem value="7">7 kun</SelectItem>
+                <SelectItem value="30">30 kun</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button onClick={() => setOpenCreate(true)}><Plus className="mr-2 h-4 w-4" />Create group</Button>
+          </div>
         </div>
 
         <Card className="p-0 overflow-hidden">
