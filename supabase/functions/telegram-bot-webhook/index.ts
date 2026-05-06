@@ -2806,22 +2806,23 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
     const moduleId = topicRow.module_id;
     res.resolved_thread_to_module_id = moduleId;
 
-    // Find active assignment for this module (latest task_number)
-    const { data: asg } = await admin
+    // Resolve student profile first so we can pick the next un-submitted leaf assignment
+    // (a leaf is a SAP, or a parent without SAPs)
+    const { data: allAssignsForModule } = await admin
       .from("homework_assignments")
-      .select("id, title, task_number, max_score, module_id")
+      .select("id, title, task_number, sap_number, max_score, module_id, parent_id, is_active")
       .eq("module_id", moduleId)
-      .eq("is_active", true)
-      .order("task_number", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (!asg) {
+      .eq("is_active", true);
+    const allList = (allAssignsForModule || []) as any[];
+    if (!allList.length) {
       res.skip_reason = "no_active_assignment";
       await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "no_active_assignment", module_id: moduleId }));
       return;
     }
-    res.matched_assignment_id = asg.id;
+    const parentIdsWithSap = new Set(allList.filter((a) => a.parent_id).map((a) => a.parent_id));
+    const leaves = allList.filter((a) => a.parent_id || !parentIdsWithSap.has(a.id));
+    leaves.sort((x, y) => (x.task_number ?? 0) - (y.task_number ?? 0) || (x.sap_number ?? 0) - (y.sap_number ?? 0));
 
     // Resolve student profile (telegram_id first, username fallback w/ backfill)
     const tgUsername = (msg.from.username || "").toLowerCase();
