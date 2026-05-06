@@ -2525,15 +2525,8 @@ async function recordGroupMessageEvent(admin: any, msg: any) {
   const tgUserId: number = msg.from.id;
   if (!chatId || !threadId || !messageId || !tgUserId) return;
 
-  // Resolve group: telegram_group_url contains "/c/{stripped}/" derived from chat_id
-  const stripped = String(chatId).replace(/^-100/, "");
-  const needle = `/c/${stripped}/`;
-  const { data: groupRows } = await admin
-    .from("groups")
-    .select("id, telegram_group_url")
-    .ilike("telegram_group_url", `%${needle}%`)
-    .limit(1);
-  const groupId = groupRows?.[0]?.id || null;
+  // v3.14.33: use multi-pattern resolver (groups.telegram_group_url is invite-link only)
+  const { groupId } = await resolveGroupFromChatId(admin, chatId);
   if (!groupId) return; // unknown group, skip
 
   // Resolve module via topic mapping
