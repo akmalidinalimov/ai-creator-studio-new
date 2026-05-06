@@ -855,8 +855,41 @@ async function sendUnregisteredReply(
   await sendMessage(chatId, enroll.message, {
     inline_keyboard: [[{ text: enroll.buttonLabel, url: enroll.formUrl }]],
   });
-}
+  }
 
+  if (cmd === "/thomework") {
+    const g = activeGroup!;
+    try {
+      const { data: rows, error: rpcErr } = await admin.rpc("admin_group_module_submissions", { p_caller_profile_id: teacherId });
+      if (rpcErr) throw rpcErr;
+      const mods = ((rows || []) as any[])
+        .filter((r) => r.group_id === g.id)
+        .sort((a, b) => (a.module_position ?? 0) - (b.module_position ?? 0));
+      const total = mods[0]?.total_students ?? 0;
+      const lines: string[] = [`📚 <b>Vazifa topshirilishi — ${csvEscapeHtml(g.name)}</b> (${total} talaba)`, ""];
+      const buttons: any[] = [];
+      if (!mods.length) {
+        lines.push("—");
+      } else {
+        for (const m of mods) {
+          const pct = m.total_students > 0 ? Math.round((m.submitted_count / m.total_students) * 100) : 0;
+          const pctStr = m.total_students > 0 ? `${pct}%` : "—";
+          const tag = `M${(m.module_position ?? 0) + 1}`;
+          const title = (m.module_title || "").slice(0, 30);
+          lines.push(`<code>${tag}</code> ${csvEscapeHtml(title)} — <b>${m.submitted_count}/${m.total_students}</b> (${pctStr})`);
+          buttons.push([
+            { text: `${tag} ✅ Topshirgan`, callback_data: `thw:sub:${g.id}:${m.module_id}` },
+            { text: `${tag} ❌ Topshirmagan`, callback_data: `thw:not:${g.id}:${m.module_id}` },
+          ]);
+        }
+      }
+      await sendMessage(chatId, lines.join("\n"), { inline_keyboard: buttons });
+    } catch (e: any) {
+      console.error("[bot:/thomework] failed", e?.message || e);
+      await sendWithKeyboard(chatId, `⚠️ Vazifalarni yuklashda xato: ${e?.message || e}`, locale, false, "teacher");
+    }
+    return true;
+  }
 
 async function getDefaultCourseId(admin: any): Promise<string | null> {
   const { data } = await admin
