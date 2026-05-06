@@ -2780,10 +2780,13 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
       .eq("telegram_topic_id", threadId)
       .maybeSingle();
     if (!topicRow?.module_id) {
+      res.skip_reason = "no_module_for_topic";
+      await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "no_module_for_topic", group_id: group.id, thread_id: threadId }));
       return;
     }
     const moduleId = topicRow.module_id;
+    res.resolved_thread_to_module_id = moduleId;
 
     // Find active assignment for this module (latest task_number)
     const { data: asg } = await admin
@@ -2795,17 +2798,23 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
       .limit(1)
       .maybeSingle();
     if (!asg) {
+      res.skip_reason = "no_active_assignment";
+      await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "no_active_assignment", module_id: moduleId }));
       return;
     }
+    res.matched_assignment_id = asg.id;
 
     // Resolve student profile (telegram_id first, username fallback w/ backfill)
     const tgUsername = (msg.from.username || "").toLowerCase();
     const profile = await resolveProfileForTelegramUser(admin, tgUserId, tgUsername, "bot");
     if (!profile) {
+      res.skip_reason = "unregistered_student";
+      await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "unregistered_student", telegram_id: tgUserId, username: tgUsername }));
       return;
     }
+    res.resolved_profile_id = profile.id;
 
     console.log("homework_event", JSON.stringify({
       chat_id: chatId, thread_id: threadId, resolved_group: group.id,
@@ -2822,6 +2831,8 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
     else if (msg.voice) { fileId = msg.voice.file_id; kind = "voice"; }
     else if (msg.video_note) { fileId = msg.video_note.file_id; kind = "video_note"; }
     else if (!msg.text && !msg.caption) {
+      res.skip_reason = "no_content";
+      await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "no_content", message_id: messageId }));
       return;
     }
@@ -2837,6 +2848,8 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
       .eq("assignment_id", asg.id)
       .maybeSingle();
     if (existing && existing.score != null) {
+      res.skip_reason = "already_graded";
+      await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "already_graded", submission_id: existing.id }));
       return;
     }
@@ -2855,7 +2868,13 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
       }, { onConflict: "user_id,assignment_id" })
       .select("id")
       .maybeSingle();
-    if (upErr) { console.error("homework_event_skipped upsert_err", upErr); return; }
+    if (upErr) {
+      res.skip_reason = "upsert_err";
+      res.upsert_err = String(upErr.message || upErr);
+      await updateInboxResolution(admin, inboxId, res);
+      console.error("homework_event_skipped upsert_err", upErr);
+      return;
+    }
     const submissionId = upserted?.id;
 
     // React ✅ in-thread
@@ -2865,26 +2884,38 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
     const nowMs = Date.now();
 
     // Student confirmation DM (1/day per assignment)
+    res.student_dm_sent = false;
     const lastConfirm = studentConfirmDedupe.get(dedupeKey) || 0;
     if (profile.telegram_id && nowMs - lastConfirm > STUDENT_CONFIRM_TTL_MS) {
       studentConfirmDedupe.set(dedupeKey, nowMs);
       const loc: Locale = normLocale(profile.preferred_locale);
       try {
         await sendMessage(Number(profile.telegram_id), HW_STUDENT_CONFIRM[loc]);
+        res.student_dm_sent = true;
       } catch (e) {
+        res.student_dm_error = String(e);
         console.log("student_dm_unreachable", JSON.stringify({ profile_id: profile.id, err: String(e) }));
       }
+    } else if (!profile.telegram_id) {
+      res.student_dm_error = "no_telegram_id_on_profile";
+    } else {
+      res.student_dm_error = "deduped";
     }
 
     // Teacher DM (1 per 5 min per student+assignment)
+    res.teacher_dm_sent = false;
     const lastTeacherDm = teacherDmDedupe.get(dedupeKey) || 0;
     if (nowMs - lastTeacherDm < TEACHER_DM_TTL_MS) {
+      res.teacher_dm_error = "deduped";
+      await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "teacher_dm_dedupe", key: dedupeKey }));
       return;
     }
     teacherDmDedupe.set(dedupeKey, nowMs);
 
     if (!group.teacher_id) {
+      res.teacher_dm_error = "no_teacher_assigned";
+      await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "no_teacher_assigned", group_id: group.id }));
       return;
     }
@@ -2894,10 +2925,14 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
       .eq("id", group.teacher_id)
       .maybeSingle();
     if (!teacher?.telegram_id) {
+      res.teacher_dm_error = "teacher_no_telegram";
+      await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "teacher_no_telegram", teacher_id: group.teacher_id }));
       return;
     }
     if (teacher.notifications_enabled === false) {
+      res.teacher_dm_error = "teacher_notifications_disabled";
+      await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "teacher_notifications_disabled", teacher_id: teacher.id }));
       return;
     }
@@ -2913,9 +2948,13 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
     ];
     try {
       await sendMessage(Number(teacher.telegram_id), body, { inline_keyboard: inlineKb });
+      res.teacher_dm_sent = true;
     } catch (e) {
+      res.teacher_dm_error = String(e);
       console.log("teacher_dm_unreachable", JSON.stringify({ teacher_id: teacher.id, err: String(e) }));
     }
+
+    await updateInboxResolution(admin, inboxId, res);
 
     // Audit
     try {
@@ -2929,6 +2968,9 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
       });
     } catch { /* ignore */ }
   } catch (e) {
+    res.skip_reason = "exception";
+    res.exception = String(e);
+    await updateInboxResolution(admin, inboxId, res);
     console.error("autoDetectHomeworkSubmission error", e);
   }
 }
