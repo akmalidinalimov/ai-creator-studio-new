@@ -3174,6 +3174,9 @@ Deno.serve(async (req) => {
       if (chatType === "supergroup" || chatType === "group" || chatType === "channel") {
         // v3.14.29: passively record topic messages for Statistika analytics.
         try { await recordGroupMessageEvent(admin, msg); } catch (e) { console.error("recordGroupMessageEvent failed", e); }
+        // v3.14.32: auto-detect homework submission (no /vazifalar intent required).
+        try { await autoDetectHomeworkSubmission(admin, msg); } catch (e) { console.error("autoDetectHomeworkSubmission failed", e); }
+        // Legacy intent-based flow (backward compat for /vazifalar → 📤 Topshirish).
         await handleGroupTopicMessage(admin, msg);
         return new Response("ok", { status: 200, headers: corsHeaders });
       }
