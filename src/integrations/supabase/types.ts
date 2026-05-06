@@ -910,9 +910,11 @@ export type Database = {
           is_active: boolean
           max_score: number
           module_id: string
+          parent_id: string | null
           prompt_en: string | null
           prompt_ru: string | null
           prompt_uz: string | null
+          sap_number: number | null
           task_number: number
           title: string
           updated_at: string
@@ -926,9 +928,11 @@ export type Database = {
           is_active?: boolean
           max_score?: number
           module_id: string
+          parent_id?: string | null
           prompt_en?: string | null
           prompt_ru?: string | null
           prompt_uz?: string | null
+          sap_number?: number | null
           task_number?: number
           title: string
           updated_at?: string
@@ -942,9 +946,11 @@ export type Database = {
           is_active?: boolean
           max_score?: number
           module_id?: string
+          parent_id?: string | null
           prompt_en?: string | null
           prompt_ru?: string | null
           prompt_uz?: string | null
+          sap_number?: number | null
           task_number?: number
           title?: string
           updated_at?: string
@@ -963,6 +969,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "mv_lesson_dropoff"
             referencedColumns: ["module_id"]
+          },
+          {
+            foreignKeyName: "homework_assignments_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "homework_assignments"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -2195,6 +2208,8 @@ export type Database = {
         Row: {
           avg_score_normalized: number | null
           module_id: string | null
+          module_max: number | null
+          module_total: number | null
           profile_id: string | null
           scored_tasks: number | null
           total_active_tasks_in_module: number | null
