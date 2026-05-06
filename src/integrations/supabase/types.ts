@@ -2209,14 +2209,23 @@ export type Database = {
           telegram_username: string
         }[]
       }
-      admin_group_login_stats: {
-        Args: never
-        Returns: {
-          group_id: string
-          logged_in_count: number
-          total_active: number
-        }[]
-      }
+      admin_group_login_stats:
+        | {
+            Args: never
+            Returns: {
+              group_id: string
+              logged_in_count: number
+              total_active: number
+            }[]
+          }
+        | {
+            Args: { p_caller_profile_id?: string }
+            Returns: {
+              group_id: string
+              logged_in_count: number
+              total_active: number
+            }[]
+          }
       admin_list_users: {
         Args: never
         Returns: {
@@ -2548,7 +2557,12 @@ export type Database = {
           telegram_username: string
         }[]
       }
-      teacher_group_statistics: { Args: { p_group_id: string }; Returns: Json }
+      teacher_group_statistics:
+        | { Args: { p_group_id: string }; Returns: Json }
+        | {
+            Args: { p_caller_profile_id?: string; p_group_id: string }
+            Returns: Json
+          }
       track_video_progress: {
         Args: {
           p_current_time: number
