@@ -181,8 +181,9 @@ export default function AdminGroups() {
               ) : groups.length === 0 ? (
                 <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No groups yet.</TableCell></TableRow>
               ) : groups.map((g) => {
-                const h = health[g.id] ?? 0;
-                const hColor = h >= 70 ? "bg-emerald-500" : h >= 40 ? "bg-amber-500" : "bg-rose-500";
+                const a3 = active3d[g.id] || { active: 0, total: 0 };
+                const aPct = a3.total > 0 ? (a3.active / a3.total) * 100 : 0;
+                const aColor = a3.total === 0 ? "bg-muted text-muted-foreground" : a3.active === 0 ? "bg-rose-500 text-white" : aPct < 30 ? "bg-amber-500 text-white" : "bg-emerald-500 text-white";
                 return (
                 <TableRow key={g.id}>
                   <TableCell className="font-medium">
