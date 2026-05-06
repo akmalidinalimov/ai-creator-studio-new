@@ -1621,6 +1621,7 @@ async function showGroupPicker(chatId: number, locale: Locale, action: string, g
 const TEACHER_ACTION_CMD: Record<string, string> = {
   tstats: "/tstats",
   thealth: "/thealth",
+  thomework: "/thomework",
   tstudents: "/tstudents",
   tinactive: "/tinactive",
   tbroadcast: "/tbroadcast",
