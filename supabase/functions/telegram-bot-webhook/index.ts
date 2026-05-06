@@ -1651,45 +1651,37 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
       const s: any = data || {};
       const m = s.messages || {};
       const a = s.active_students || {};
-      const sil = s.silent_students_7d || { count: 0, names: [] };
-      const top = (s.top_contributors_7d || []) as any[];
-      const arrow = (n: any) => {
-        if (n === null || n === undefined) return "";
-        const v = Number(n);
-        if (!isFinite(v)) return "";
-        if (v > 0) return ` 📈 +${v}%`;
-        if (v < 0) return ` 📉 ${v}%`;
-        return " ➡️ 0%";
-      };
-      const fmtName = (p: any) => csvEscapeHtml([p.name, p.last_name].filter(Boolean).join(" ").trim() || "—");
-      const lines: string[] = [];
-      lines.push(`📊 <b>${csvEscapeHtml(s.group_name || g.name)}</b>`);
-      lines.push(`👥 Talabalar: <b>${s.total_students ?? 0}</b>`);
-      lines.push("");
-      lines.push("<b>💬 Xabarlar</b>");
-      lines.push(`• Bugun: <b>${m.today ?? 0}</b>${arrow(m.today_vs_yesterday_pct)}`);
-      lines.push(`• 7 kun: <b>${m.last_7d ?? 0}</b>`);
-      lines.push(`• 30 kun: <b>${m.last_30d ?? 0}</b>`);
-      lines.push("");
-      lines.push("<b>🟢 Faol talabalar</b>");
-      lines.push(`• Bugun: <b>${a.today ?? 0}</b> (${a.today_pct ?? 0}%)`);
-      lines.push(`• 7 kun: <b>${a.last_7d ?? 0}</b> (${a.last_7d_pct ?? 0}%)`);
-      lines.push(`• 30 kun: <b>${a.last_30d ?? 0}</b> (${a.last_30d_pct ?? 0}%)`);
-      lines.push("");
-      lines.push(`<b>😴 Jim talabalar (7 kun): ${sil.count ?? 0}</b>`);
-      const names = (sil.names || []) as any[];
-      if (names.length) {
-        for (const p of names) lines.push(`• ${fmtName(p)}`);
-        if ((sil.count ?? 0) > names.length) lines.push(`<i>… va yana ${(sil.count ?? 0) - names.length} ta</i>`);
+      const total = s.total_students ?? 0;
+      const groupName = csvEscapeHtml(s.group_name || g.name);
+      const avg = s.avg_module_score;
+      const avgLine = (avg === null || avg === undefined)
+        ? "📊 O'rtacha modul bahosi: hali baholanmagan"
+        : `📊 O'rtacha modul bahosi: ${avg}/10`;
+      const text = [
+        `📊 <b>${groupName}</b> · Statistika`,
+        ``,
+        `📨 <b>Xabarlar</b>`,
+        `   Bugun:    ${m.today ?? 0}`,
+        `   7 kun:   ${m.last_7d ?? 0}`,
+        `   30 kun:  ${m.last_30d ?? 0}`,
+        ``,
+        `👥 <b>Eng aktiv talabalar</b>`,
+        `   Bugun:   ${a.today ?? 0} / ${total}`,
+        `   7 kun:   ${a.last_7d ?? 0} / ${total}`,
+        `   30 kun: ${a.last_30d ?? 0} / ${total}`,
+        ``,
+        `📝 Baholanmagan vazifalar: ${s.pending_homework_count ?? 0} ta`,
+        avgLine,
+      ].join("\n");
+      const groupsAll = await teacherGroups(admin, teacherId);
+      const rows: any[] = [[
+        { text: t.tKbGrade, callback_data: `tg:pick:baholash:${g.id}` },
+        { text: t.tKbStudents, callback_data: `tg:pick:tstudents:${g.id}` },
+      ]];
+      if (groupsAll.length >= 2) {
+        rows.push([{ text: "🔄 Guruhni o'zgartirish", callback_data: `tg:switch` }]);
       }
-      lines.push("");
-      lines.push("<b>🏆 Top faollar (7 kun)</b>");
-      if (!top.length) lines.push("—");
-      else top.forEach((p, i) => lines.push(`${i + 1}. ${fmtName(p)} — <b>${p.message_count}</b>`));
-      lines.push("");
-      lines.push(`📝 Baholash kutmoqda: <b>${s.pending_homework_count ?? 0}</b>`);
-      lines.push(`🎯 O'rtacha baho: <b>${s.avg_module_score === null || s.avg_module_score === undefined ? "—" : s.avg_module_score + "%"}</b>`);
-      await sendWithKeyboard(chatId, lines.join("\n"), locale, false, "teacher");
+      await sendMessage(chatId, text, { inline_keyboard: rows });
     } catch (e: any) {
       console.error("[bot:/tstats] failed", e?.message || e);
       await sendWithKeyboard(chatId, `⚠️ Statistikani yuklashda xato: ${e?.message || e}`, locale, false, "teacher");
@@ -2757,6 +2749,18 @@ async function handleCallback(admin: any, cq: any) {
     return;
   }
 
+  // Teacher: re-show group picker
+  if (data === "tg:switch" && chatId) {
+    const profile = await findProfileByTelegramId(admin, tgId);
+    if (!profile) { await answerCallback(cq.id); return; }
+    const persona = await getPersona(admin, profile.id);
+    if (persona !== "teacher") { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(profile.preferred_locale);
+    const groups = await teacherGroups(admin, profile.id);
+    await answerCallback(cq.id);
+    if (groups.length >= 2) await showGroupPicker(chatId, locale, "switch", groups);
+    return;
+  }
   // Teacher group picker: tg:pick:<action>:<groupId>  (action = "switch" or a teacher cmd key)
   if (data.startsWith("tg:pick:") && chatId) {
     const rest = data.slice("tg:pick:".length);
