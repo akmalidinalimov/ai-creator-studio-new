@@ -2724,28 +2724,51 @@ function hwTeacherBody(studentName: string, groupName: string, moduleName: strin
 }
 
 // v3.14.32: auto-detect homework submission from any topic message — no /vazifalar intent needed.
-async function autoDetectHomeworkSubmission(admin: any, msg: any) {
+async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: number | null = null) {
+  const res: Record<string, any> = { homework_detector_fired: true };
   try {
     const chatType = msg.chat?.type;
-    if (chatType !== "supergroup" && chatType !== "group") return;
-    if (!msg.is_topic_message || !msg.message_thread_id) return;
-    if (!msg.from || msg.from.is_bot) return;
+    res.chat_type_seen = chatType;
+    if (chatType !== "supergroup" && chatType !== "group") {
+      res.skip_reason = "not_group_chat";
+      await updateInboxResolution(admin, inboxId, res);
+      return;
+    }
+    if (!msg.is_topic_message || !msg.message_thread_id) {
+      res.skip_reason = "not_topic_message";
+      await updateInboxResolution(admin, inboxId, res);
+      return;
+    }
+    if (!msg.from || msg.from.is_bot) {
+      res.skip_reason = "from_bot_or_missing";
+      await updateInboxResolution(admin, inboxId, res);
+      return;
+    }
     const chatId: number = msg.chat.id;
     const threadId: number = msg.message_thread_id;
     const messageId: number = msg.message_id;
     const tgUserId: number = msg.from.id;
 
-    // Resolve group via /c/{stripped}/ in telegram_group_url
-    const stripped = String(chatId).replace(/^-100/, "");
-    const needle = `/c/${stripped}/`;
-    const { data: groupRows } = await admin
+    // v3.14.33: multi-pattern resolver. Old code only checked groups.telegram_group_url
+    // which stores invite links (https://t.me/+xxxx) — never matched, always silent fail.
+    const { groupId, pattern } = await resolveGroupFromChatId(admin, chatId);
+    res.resolved_chat_to_group_id = groupId;
+    res.group_resolver_pattern = pattern;
+    if (!groupId) {
+      res.skip_reason = "no_group";
+      await updateInboxResolution(admin, inboxId, res);
+      console.log("homework_event_skipped", JSON.stringify({ reason: "no_group", chat_id: chatId, thread_id: threadId }));
+      return;
+    }
+    const { data: groupFull } = await admin
       .from("groups")
       .select("id, name, teacher_id")
-      .ilike("telegram_group_url", `%${needle}%`)
-      .limit(1);
-    const group = groupRows?.[0];
+      .eq("id", groupId)
+      .maybeSingle();
+    const group = groupFull;
     if (!group) {
-      console.log("homework_event_skipped", JSON.stringify({ reason: "no_group", chat_id: chatId, thread_id: threadId }));
+      res.skip_reason = "group_row_missing";
+      await updateInboxResolution(admin, inboxId, res);
       return;
     }
 
