@@ -1142,10 +1142,6 @@ async function buildHomeworkMessage(
           lines.push(t.hwTaskScored(tnLabel, s.score, a.max_score || 10, s.score_feedback || ""));
         } else {
           lines.push(t.hwTaskUnscored(tnLabel));
-          // Add a submit button for unscored assignments (only if topic + group exist)
-          if (groupId && topicMap.get(m.mid)) {
-            buttons.push([{ text: t.hwSubmitBtn(m.position + 1, tnLabel), callback_data: `hw:start:${a.id}` }]);
-          }
         }
       }
       const topic = topicMap.get(m.mid);
@@ -1160,6 +1156,11 @@ async function buildHomeworkMessage(
         lines.push(t.hwSubmitHint(m.position + 1, u0Tn));
       }
       lines.push("");
+
+      // One button per module (expands to per-SAP buttons via hw:mod callback).
+      if (groupId && topic && ungraded.length > 0) {
+        buttons.push([{ text: `📝 M${m.position + 1} — ${(m.title || "").slice(0, 40)}`, callback_data: `hw:mod:${m.mid}` }]);
+      }
     }
   } catch (e) {
     console.error("buildHomeworkMessage error", e);
