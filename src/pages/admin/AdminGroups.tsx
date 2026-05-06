@@ -61,9 +61,10 @@ export default function AdminGroups() {
   const [teachers, setTeachers] = useState<ProfileLite[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [logins, setLogins] = useState<Record<string, { logged: number; total: number }>>({});
-  const [active3d, setActive3d] = useState<Record<string, { active: number; total: number }>>({});
+  const [activeWin, setActiveWin] = useState<Record<string, { active: number; total: number }>>({});
   const [topics, setTopics] = useState<Record<string, { configured: number; total: number }>>({});
   const [loading, setLoading] = useState(true);
+  const [windowDays, setWindowDays] = useState<3 | 7 | 30>(3);
 
   const [openCreate, setOpenCreate] = useState(false);
   const [editGroup, setEditGroup] = useState<Group | null>(null);
@@ -92,16 +93,16 @@ export default function AdminGroups() {
       if (r.group_id) map[r.group_id] = (map[r.group_id] || 0) + 1;
     });
     setCounts(map);
-    // Per-group engagement stats (loggedin + active 3d)
-    const { data: ls } = await supabase.rpc("admin_group_engagement_stats" as any);
+    // Per-group engagement stats (loggedin + active in window)
+    const { data: ls } = await supabase.rpc("admin_group_engagement_stats" as any, { p_window_days: windowDays });
     const lmap: Record<string, { logged: number; total: number }> = {};
     const amap: Record<string, { active: number; total: number }> = {};
     ((ls as any[]) || []).forEach((r) => {
       lmap[r.group_id] = { logged: r.logged_in_count || 0, total: r.total_active || 0 };
-      amap[r.group_id] = { active: r.active_3d_count || 0, total: r.total_active || 0 };
+      amap[r.group_id] = { active: (r.active_count ?? r.active_3d_count) || 0, total: r.total_active || 0 };
     });
     setLogins(lmap);
-    setActive3d(amap);
+    setActiveWin(amap);
 
     // Topics configured per group
     const groupRows = ((g.data as any[]) || []) as Group[];
@@ -122,7 +123,7 @@ export default function AdminGroups() {
     setLoading(false);
   };
 
-  useEffect(() => { reload(); }, []);
+  useEffect(() => { reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [windowDays]);
 
   const courseTitle = (id: string | null) => courses.find((c) => c.id === id)?.title || "—";
   const teacherLabel = (id: string | null) => {
@@ -134,12 +135,23 @@ export default function AdminGroups() {
   return (
     <PageShell>
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
             <h1 className="text-2xl font-semibold">Groups</h1>
             <p className="text-sm text-muted-foreground">Manage student groups and assign teachers.</p>
           </div>
-          <Button onClick={() => setOpenCreate(true)}><Plus className="mr-2 h-4 w-4" />Create group</Button>
+          <div className="flex items-center gap-2">
+            <Label className="text-xs text-muted-foreground">Faollik oynasi</Label>
+            <Select value={String(windowDays)} onValueChange={(v) => setWindowDays(Number(v) as 3 | 7 | 30)}>
+              <SelectTrigger className="h-9 w-[110px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="3">3 kun</SelectItem>
+                <SelectItem value="7">7 kun</SelectItem>
+                <SelectItem value="30">30 kun</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button onClick={() => setOpenCreate(true)}><Plus className="mr-2 h-4 w-4" />Create group</Button>
+          </div>
         </div>
 
         <Card className="p-0 overflow-hidden">
@@ -163,10 +175,10 @@ export default function AdminGroups() {
                 <TableHead>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <span className="inline-flex items-center gap-1 cursor-help">Faol (3 kun) <Info className="h-3 w-3 text-muted-foreground" /></span>
+                      <span className="inline-flex items-center gap-1 cursor-help">Faol ({windowDays} kun) <Info className="h-3 w-3 text-muted-foreground" /></span>
                     </TooltipTrigger>
                     <TooltipContent side="top" className="max-w-xs text-xs">
-                      So'nggi 3 kunda darsda faol bo'lgan talabalar
+                      So'nggi {windowDays} kunda darsda faol bo'lgan talabalar
                     </TooltipContent>
                   </Tooltip>
                 </TableHead>
@@ -181,7 +193,7 @@ export default function AdminGroups() {
               ) : groups.length === 0 ? (
                 <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No groups yet.</TableCell></TableRow>
               ) : groups.map((g) => {
-                const a3 = active3d[g.id] || { active: 0, total: 0 };
+                const a3 = activeWin[g.id] || { active: 0, total: 0 };
                 const aPct = a3.total > 0 ? (a3.active / a3.total) * 100 : 0;
                 const aColor = a3.total === 0 ? "bg-muted text-muted-foreground" : a3.active === 0 ? "bg-rose-500 text-white" : aPct < 30 ? "bg-amber-500 text-white" : "bg-emerald-500 text-white";
                 return (
@@ -209,7 +221,7 @@ export default function AdminGroups() {
                     const cls = ll.total === 0 ? "bg-muted text-muted-foreground" : ll.logged === 0 ? "bg-rose-500 text-white" : pct < 50 ? "bg-amber-500 text-white" : "bg-emerald-500 text-white";
                     return <span className={`inline-block px-2 py-0.5 rounded text-xs ${cls}`} title={`${ll.logged}/${ll.total} kirgan`}>{ll.logged}/{ll.total}</span>;
                   })()}</TableCell>
-                  <TableCell><span className={`inline-block px-2 py-0.5 rounded text-xs ${aColor}`} title={`${a3.active}/${a3.total} faol (3 kun)`}>{a3.active}/{a3.total}{a3.total > 0 ? ` · ${Math.round(aPct)}%` : ""}</span></TableCell>
+                  <TableCell><span className={`inline-block px-2 py-0.5 rounded text-xs ${aColor}`} title={`${a3.active}/${a3.total} faol (${windowDays} kun)`}>{a3.active}/{a3.total}{a3.total > 0 ? ` · ${Math.round(aPct)}%` : ""}</span></TableCell>
                   <TableCell>{(() => {
                     const tt = topics[g.id] || { configured: 0, total: 0 };
                     const cls = tt.total === 0 ? "bg-muted text-muted-foreground" : tt.configured === 0 ? "bg-rose-500 text-white" : tt.configured < tt.total ? "bg-amber-500 text-white" : "bg-emerald-500 text-white";
