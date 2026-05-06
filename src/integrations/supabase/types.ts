@@ -2297,6 +2297,17 @@ export type Database = {
               total_active: number
             }[]
           }
+      admin_group_module_submissions: {
+        Args: { p_caller_profile_id?: string }
+        Returns: {
+          group_id: string
+          module_id: string
+          module_position: number
+          module_title: string
+          submitted_count: number
+          total_students: number
+        }[]
+      }
       admin_list_users: {
         Args: never
         Returns: {

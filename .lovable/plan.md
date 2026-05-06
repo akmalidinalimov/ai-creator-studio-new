@@ -1,45 +1,114 @@
-## Problem
+## Goal
 
-The "Loggedin" column shows inflated numbers like `19/4099` because the current `admin_group_engagement_stats` RPC does `COUNT(*)` after LEFT JOINing `auth_events` and `lesson_progress`. Each profile gets multiplied by the number of its sign-in events and recent lesson_progress rows, so `total_active` (the denominator) explodes far beyond the real student count.
+Give admins and teachers visibility into per-module homework submission rates per group, both in the web Groups UI and in the Telegram bot (replacing the teacher's "🩺 Guruh holati" button).
 
-Additionally, the user wants the "logged in" metric to mean: **student has either signed in to the platform OR linked/used the Telegram bot at least once**.
+## Submission rule
 
-## Fix
+A student "submitted" a module if they have **at least one row** in `homework_submissions` for any active assignment under that module (graded or not).
 
-Rewrite `admin_group_engagement_stats` using per-profile subqueries (no row multiplication), and broaden the "logged in" definition to include Telegram bot usage.
+## 1. New RPC: `admin_group_module_submissions`
 
-### New RPC logic
+Returns one row per (group, module) with submission counts, callable by admin and by teachers (for groups they own).
 
 ```sql
-CREATE OR REPLACE FUNCTION public.admin_group_engagement_stats(
-  p_window_days int DEFAULT 3,
+CREATE OR REPLACE FUNCTION public.admin_group_module_submissions(
   p_caller_profile_id uuid DEFAULT NULL
 )
-RETURNS TABLE(group_id uuid, total_active int, logged_in_count int, active_count int)
--- ... auth checks unchanged ...
-RETURN QUERY
-SELECT
-  p.group_id,
-  COUNT(*)::int AS total_active,
-  COUNT(*) FILTER (
-    WHERE EXISTS (SELECT 1 FROM auth_events ae WHERE ae.user_id = p.id AND ae.event = 'sign_in')
-       OR p.telegram_id IS NOT NULL
-       OR EXISTS (SELECT 1 FROM bot_sessions bs WHERE bs.user_id = p.id)
-  )::int AS logged_in_count,
-  COUNT(*) FILTER (
-    WHERE EXISTS (
-      SELECT 1 FROM lesson_progress lp
-      WHERE lp.user_id = p.id AND lp.updated_at >= now() - make_interval(days => v_days)
-    )
-  )::int AS active_count
-FROM profiles p
-WHERE p.group_id IS NOT NULL AND p.archived_at IS NULL
-GROUP BY p.group_id;
+RETURNS TABLE (
+  group_id uuid,
+  module_id uuid,
+  module_position int,
+  module_title text,
+  total_students int,
+  submitted_count int
+)
+-- security definer, search_path=public
+-- auth: admin sees all; teacher sees only groups where teacher_id = caller
 ```
 
-This guarantees `total_active` equals the real number of non-archived students per group, and `logged_in_count` = students who either signed into the web platform **or** linked / used the Telegram bot at least once.
+Logic per (group, module): count distinct profiles in the group with at least one `homework_submissions` row for any `homework_assignments` (active) belonging to that module. `total_students` = non-archived profiles in group.
 
-## Files
+## 2. Admin/Teacher Groups page (`AdminGroups.tsx`)
 
-- New migration: replace `admin_group_engagement_stats`.
-- No frontend changes needed — `AdminGroups.tsx` already renders `logged_in_count / total_active` and the Faol % using the same fields.
+Add a new column **"Vazifalar bo'yicha"** showing a horizontal mini bar row, one chip per module:
+
+```text
+M1 ████░ 14/20   M2 ██░░░ 6/20   M3 ░░░░░ 0/20   M4 ─
+```
+
+- Each chip: `M{n}` label + tiny progress bar (color: `bg-primary` fill, `bg-muted` track) + `submitted/total`.
+- Hover/tooltip = module title + percentage.
+- Empty/no-active-assignment modules render as a faded `─`.
+- Modules sorted by `position` from the group's course; capped at first 6 with "+N" overflow.
+
+No removal of existing columns. Same column shows for teachers viewing their groups (existing page already gates by role).
+
+## 3. Telegram bot — replace "🩺 Guruh holati" with "📚 Vazifalar"
+
+In `getTeacherKeyboard()`, swap `tKbHealth` button for new `tKbHomework` ("📚 Vazifalar"). Old `/thealth` command stays accessible (typed) so we don't break anything; just hidden from the keyboard.
+
+### New `/thomework` handler
+
+For the active group, show a clean list with two columns (module / submitted‑of‑total) and per‑module action buttons:
+
+```
+📚 Vazifa topshirilishi — Guruh A (24 talaba)
+
+M1  Asoslar           20/24  (83%)
+M2  Promptlar         15/24  (62%)
+M3  Tasvir generatsiya  6/24 (25%)
+M4  Loyiha             0/24  (—)
+```
+
+Followed by **inline keyboards, one row per module**:
+
+```
+[ M1 ✅ Topshirganlar ] [ M1 ❌ Topshirmaganlar ]
+[ M2 ✅ Topshirganlar ] [ M2 ❌ Topshirmaganlar ]
+...
+```
+
+Callbacks: `thw:sub:<group>:<module>` and `thw:not:<group>:<module>`.
+
+When tapped:
+- `sub` → list of usernames who submitted, with one `homework_submissions` link per submitted assignment in that module:
+  ```
+  ✅ M2 — Topshirganlar (15/24)
+  • @aliya — Promptlar 1, Promptlar 2 (links)
+  • @bobur — Promptlar 1
+  ...
+  ```
+- `not` → list of usernames who did NOT submit anything for that module:
+  ```
+  ❌ M2 — Topshirmaganlar (9/24)
+  • @malika
+  • @sherzod
+  ...
+  ```
+
+Long lists are chunked at ~3500 chars (existing `chunks` pattern in the file).
+
+### Effectiveness improvements over the user's draft
+
+1. **One overview message** with all modules + counts so the teacher can spot weak modules at a glance, instead of opening each module separately.
+2. **Percentage** shown next to each module so teachers immediately see which module needs attention.
+3. **Action buttons grouped per module** (one row each) — teachers tap directly on the weak module without re-typing.
+4. **Submitted view links to actual submissions** so the teacher can jump to grading from there (we already have message URLs).
+5. The "Guruh statistikasi" `/tstats` summary will get one extra line: `📚 Vazifa topshirgan (jami): X / Y`.
+
+## 4. Files
+
+- New migration: create `admin_group_module_submissions(uuid)` RPC with admin + teacher access.
+- `src/pages/admin/AdminGroups.tsx` — fetch new RPC + new column with mini bars.
+- `src/pages/admin/GroupDetail.tsx` — add same per-module bar block at top.
+- `supabase/functions/telegram-bot-webhook/index.ts`:
+  - Add `tKbHomework` label (uz/ru/en), swap into `getTeacherKeyboard`.
+  - Map label → `/thomework` command in the keyboard-label resolver.
+  - Implement `/thomework` handler + `thw:sub` / `thw:not` callbacks.
+  - Add summary line to `/tstats` output.
+
+## Out of scope
+
+- No grading UI changes.
+- No change to student-facing flow.
+- No change to `admin_group_engagement_stats` (kept as-is).
