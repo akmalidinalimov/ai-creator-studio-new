@@ -61,7 +61,7 @@ export default function AdminGroups() {
   const [teachers, setTeachers] = useState<ProfileLite[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [logins, setLogins] = useState<Record<string, { logged: number; total: number }>>({});
-  const [health, setHealth] = useState<Record<string, number>>({});
+  const [active3d, setActive3d] = useState<Record<string, { active: number; total: number }>>({});
   const [topics, setTopics] = useState<Record<string, { configured: number; total: number }>>({});
   const [loading, setLoading] = useState(true);
 
@@ -92,19 +92,16 @@ export default function AdminGroups() {
       if (r.group_id) map[r.group_id] = (map[r.group_id] || 0) + 1;
     });
     setCounts(map);
-    // Per-group login stats
-    const { data: ls } = await supabase.rpc("admin_group_login_stats" as any);
+    // Per-group engagement stats (loggedin + active 3d)
+    const { data: ls } = await supabase.rpc("admin_group_engagement_stats" as any);
     const lmap: Record<string, { logged: number; total: number }> = {};
-    ((ls as any[]) || []).forEach((r) => { lmap[r.group_id] = { logged: r.logged_in_count || 0, total: r.total_active || 0 }; });
+    const amap: Record<string, { active: number; total: number }> = {};
+    ((ls as any[]) || []).forEach((r) => {
+      lmap[r.group_id] = { logged: r.logged_in_count || 0, total: r.total_active || 0 };
+      amap[r.group_id] = { active: r.active_3d_count || 0, total: r.total_active || 0 };
+    });
     setLogins(lmap);
-    // Health scores
-    const ids = ((g.data as any[]) || []).map((r) => r.id);
-    const health: Record<string, number> = {};
-    await Promise.all(ids.map(async (gid) => {
-      const { data } = await supabase.rpc("group_health_score" as any, { _group_id: gid });
-      health[gid] = Number(data) || 0;
-    }));
-    setHealth(health);
+    setActive3d(amap);
 
     // Topics configured per group
     const groupRows = ((g.data as any[]) || []) as Group[];
@@ -163,7 +160,16 @@ export default function AdminGroups() {
                     </TooltipContent>
                   </Tooltip>
                 </TableHead>
-                <TableHead>Health</TableHead>
+                <TableHead>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex items-center gap-1 cursor-help">Faol (3 kun) <Info className="h-3 w-3 text-muted-foreground" /></span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-xs text-xs">
+                      So'nggi 3 kunda darsda faol bo'lgan talabalar
+                    </TooltipContent>
+                  </Tooltip>
+                </TableHead>
                 <TableHead>Topiklar</TableHead>
                 <TableHead>Default</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -175,8 +181,9 @@ export default function AdminGroups() {
               ) : groups.length === 0 ? (
                 <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No groups yet.</TableCell></TableRow>
               ) : groups.map((g) => {
-                const h = health[g.id] ?? 0;
-                const hColor = h >= 70 ? "bg-emerald-500" : h >= 40 ? "bg-amber-500" : "bg-rose-500";
+                const a3 = active3d[g.id] || { active: 0, total: 0 };
+                const aPct = a3.total > 0 ? (a3.active / a3.total) * 100 : 0;
+                const aColor = a3.total === 0 ? "bg-muted text-muted-foreground" : a3.active === 0 ? "bg-rose-500 text-white" : aPct < 30 ? "bg-amber-500 text-white" : "bg-emerald-500 text-white";
                 return (
                 <TableRow key={g.id}>
                   <TableCell className="font-medium">
@@ -202,7 +209,7 @@ export default function AdminGroups() {
                     const cls = ll.total === 0 ? "bg-muted text-muted-foreground" : ll.logged === 0 ? "bg-rose-500 text-white" : pct < 50 ? "bg-amber-500 text-white" : "bg-emerald-500 text-white";
                     return <span className={`inline-block px-2 py-0.5 rounded text-xs ${cls}`} title={`${ll.logged}/${ll.total} kirgan`}>{ll.logged}/{ll.total}</span>;
                   })()}</TableCell>
-                  <TableCell><span className={`inline-block px-2 py-0.5 rounded text-white text-xs ${hColor}`}>{h}</span></TableCell>
+                  <TableCell><span className={`inline-block px-2 py-0.5 rounded text-xs ${aColor}`} title={`${a3.active}/${a3.total} faol (3 kun)`}>{a3.active}/{a3.total}{a3.total > 0 ? ` · ${Math.round(aPct)}%` : ""}</span></TableCell>
                   <TableCell>{(() => {
                     const tt = topics[g.id] || { configured: 0, total: 0 };
                     const cls = tt.total === 0 ? "bg-muted text-muted-foreground" : tt.configured === 0 ? "bg-rose-500 text-white" : tt.configured < tt.total ? "bg-amber-500 text-white" : "bg-emerald-500 text-white";
