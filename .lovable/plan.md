@@ -1,38 +1,73 @@
-## Add Bulk Delete to /admin/users
+## Root cause (confirmed from edge logs + DB introspection)
 
-The page already supports per-user delete (calls `admin-create-students` edge function with DELETE method) and bulk-selection (checkboxes feed `selected: Set<string>`). It only lacks a bulk delete action button — currently only Move-to-group, Archive, Unarchive, and Resend Welcome appear when rows are selected.
+The edge function logs show the same error on every photo/video posted to a homework topic:
 
-### Changes (single file: `src/pages/admin/AdminUsers.tsx`)
+```
+hw upsert error { code: "42703", message: 'record "new" has no field "awarded_at"' }
+```
 
-1. **New state** `confirmBulkDelete: string[] | null` for confirm dialog.
+This is **NOT** in our edge function code. It is a **database trigger chain failure**:
 
-2. **New handler** `bulkDelete(ids)`:
-   - Loops `ids` and calls existing `admin-create-students` edge function with `DELETE` method + `{ userId }` (same as `removeUser`) sequentially with `Promise.allSettled` for parallelism.
-   - Tracks success/failure counts; toasts `"{n}/{total} foydalanuvchi o'chirildi"`.
-   - Logs `bulk_delete_users` admin action with the id list.
-   - Clears `selected`, closes dialog, calls `reload()`.
+1. Student posts in topic → edge function calls `homework_submissions.upsert(...)`.
+2. `AFTER INSERT` trigger `trg_award_first_homework` fires → calls `award_badge()` → inserts into `public.user_badges`.
+3. `AFTER INSERT` trigger `trg_queue_badge_dm` on `user_badges` fires → runs `queue_badge_dm()` which references **`NEW.awarded_at`**.
+4. But `user_badges` columns are: `id, user_id, badge_id, earned_at`. There is no `awarded_at` column on that table → Postgres raises `42703`.
+5. The error propagates back up, the entire `homework_submissions` insert is **rolled back**, the edge function returns the upsert error, and **nothing is saved, no student DM, no teacher DM, no ✅ reaction**.
 
-3. **Toolbar button** (in the bulk action row near line 769–778, visible to admins when `selected.size > 0`, regardless of `statusFilter`):
-   ```tsx
-   <Button variant="destructive" size="sm"
-     onClick={() => setConfirmBulkDelete(Array.from(selected))}>
-     <Trash2 className="h-4 w-4" /> O'chirish ({selected.size})
-   </Button>
-   ```
+So every prior fix (resolver, identity gate, dedupe, inbox) was correct in isolation — the database was silently rejecting every submission before the DM code path could even run.
 
-4. **Confirm AlertDialog** mirroring the existing single-user `confirmDelete` dialog, with strong wording:
-   - Title: "{n} ta foydalanuvchini o'chirish?"
-   - Description: "Bu amalni qaytarib bo'lmaydi. Barcha tegishli ma'lumotlar (progress, baholar, sertifikatlar) o'chiriladi. Arxivlash xavfsizroq variant."
-   - Cancel + destructive Confirm → `bulkDelete(confirmBulkDelete)`.
+## Fix (single migration, no edge function change needed)
 
-5. **i18n**: add `admin.users.bulkDelete`, `admin.users.bulkDeleteConfirmTitle`, `admin.users.bulkDeleteConfirmDesc`, `admin.users.toasts.bulkDeleted` keys for uz/ru/en.
+Patch `public.queue_badge_dm()` so it reads from the actual `user_badges` column `earned_at` instead of the nonexistent `awarded_at`:
 
-### Out of scope
-- No edge function changes (existing `admin-create-students` DELETE works per-user).
-- No schema migration.
-- Self-deletion guard (admin deleting themselves) is already handled by the edge function; we'll surface its error in the toast.
+```sql
+CREATE OR REPLACE FUNCTION public.queue_badge_dm()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+DECLARE
+  tashkent_now timestamptz := now() AT TIME ZONE 'Asia/Tashkent';
+  tashkent_hour int := EXTRACT(HOUR FROM (now() AT TIME ZONE 'Asia/Tashkent'))::int;
+  sched timestamptz := now();
+  tashkent_today date := (now() AT TIME ZONE 'Asia/Tashkent')::date;
+BEGIN
+  IF tashkent_hour >= 22 OR tashkent_hour < 8 THEN
+    IF tashkent_hour >= 22 THEN
+      sched := ((tashkent_today + 1) + time '08:00') AT TIME ZONE 'Asia/Tashkent';
+    ELSE
+      sched := (tashkent_today + time '08:00') AT TIME ZONE 'Asia/Tashkent';
+    END IF;
+  END IF;
+  INSERT INTO public.badge_award_queue (user_id, badge_id, awarded_at, scheduled_for)
+  VALUES (NEW.user_id, NEW.badge_id, COALESCE(NEW.earned_at, now()), sched);
+  RETURN NEW;
+END;
+$function$;
+```
 
-### Verify
-- Select multiple rows → red "O'chirish (N)" appears next to Archive button.
-- Click → confirm dialog → users removed, list refreshes, toast shows count.
-- Works in both Active and Archived filter views.
+Only `NEW.awarded_at` → `COALESCE(NEW.earned_at, now())`. Everything else identical. The destination column on `badge_award_queue` is still called `awarded_at`, so that stays.
+
+## Why this fixes all three symptoms in one shot
+
+- Submission row now persists → `homework_submissions` upsert succeeds.
+- Edge function reaches `sendMessage(student.telegram_id, HW_STUDENT_CONFIRM[loc])` → student gets "Vazifangiz topshirildi" DM.
+- Edge function reaches `sendMessage(teacher.telegram_id, ...)` with the Baholash inline button → teacher gets the notification.
+- Bot debug page (`/admin/bot-debug`) will now show all 7 ticks green and `homework_detector_fired = true`.
+
+## Scope-lock
+
+- Only patches `queue_badge_dm()`.
+- No edge function changes.
+- No changes to `award_first_homework`, `user_badges`, `badge_award_queue`, `homework_submissions`, RLS, identity gate, resolver, or any UI.
+- No frozen-version code (v3.14.10–v3.14.33) is touched.
+
+## Verification after deploy
+
+1. Have a student post a photo in a homework topic.
+2. Open `/admin/bot-debug` — the new row should show all green ticks and `student_dm_sent: true`, `teacher_dm_sent: true`.
+3. Confirm: student receives "Vazifangiz topshirildi" DM. Teacher receives DM with Baholash button.
+4. Edge function logs should no longer contain `hw upsert error 42703`.
+
+Commit label: **v3.14.34 — Fix queue_badge_dm referencing nonexistent NEW.awarded_at; restores homework submission persistence and student/teacher DMs.**
