@@ -195,6 +195,8 @@ const T = {
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ hammasi" : `${n} vazifa baholanmagan`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Modul ${n} topikga o'tish`,
+    gradeOpenSubmissionBtn: (tn: number) => `📌 V${tn} postiga o'tish`,
+    gradeOpenSubmissionPostBtn: "📌 Topshirilgan postga o'tish",
     gradeBackList: "↩️ Talabalar ro'yxatiga",
     gradeBackHome: "🏠 Bosh menyu",
     gradeNextPage: "⏭ Keyingi 10",
@@ -370,6 +372,8 @@ const T = {
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ всё" : `${n} не оценено`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Перейти в топик модуля ${n}`,
+    gradeOpenSubmissionBtn: (tn: number) => `📌 Перейти к посту З${tn}`,
+    gradeOpenSubmissionPostBtn: "📌 Перейти к сданному посту",
     gradeBackList: "↩️ К списку студентов",
     gradeBackHome: "🏠 Главное меню",
     gradeNextPage: "⏭ Следующие 10",
@@ -537,6 +541,8 @@ const T = {
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ all done" : `${n} ungraded`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Open module ${n} topic`,
+    gradeOpenSubmissionBtn: (tn: number) => `📌 Open T${tn} post`,
+    gradeOpenSubmissionPostBtn: "📌 Open submitted post",
     gradeBackList: "↩️ Back to students",
     gradeBackHome: "🏠 Main menu",
     gradeNextPage: "⏭ Next 10",
@@ -1963,7 +1969,7 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
   }
   const [{ data: prof }, { data: subs }] = await Promise.all([
     admin.from("profiles").select("name, last_name, group_id").eq("id", studentId).maybeSingle(),
-    admin.from("homework_submissions").select("id, assignment_id, submitted_at").eq("user_id", studentId).is("score", null).order("submitted_at", { ascending: true }),
+    admin.from("homework_submissions").select("id, assignment_id, submitted_at, telegram_message_url").eq("user_id", studentId).is("score", null).order("submitted_at", { ascending: true }),
   ]);
   const list = (subs || []) as any[];
   const name = [prof?.name, prof?.last_name].filter(Boolean).join(" ") || "—";
@@ -1996,13 +2002,19 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
   const buttons: any[][] = [];
   for (const m of modules) {
     lines.push(`📚 <b>Modul ${m.mPos + 1} — ${csvEscapeHtml(m.mTitle)}</b>`);
+    let anyPostUrl = false;
     for (const it of m.items) {
       const tn = it.a.task_number || 1;
       lines.push(`   ⏳ V${tn}: ${csvEscapeHtml(it.a.title || "")}`);
       buttons.push([{ text: `M${m.mPos + 1}·V${tn} — ${it.a.title || ""}`.slice(0, 60), callback_data: `gs:open:${it.sub.id}` }]);
+      const postUrl = it.sub.telegram_message_url;
+      if (postUrl) {
+        anyPostUrl = true;
+        buttons.push([{ text: t.gradeOpenSubmissionBtn(tn), url: postUrl }]);
+      }
     }
     const url = topicMap.get(m.mid);
-    if (url) buttons.push([{ text: t.gradeOpenTopicBtn(m.mPos + 1), url }]);
+    if (url && !anyPostUrl) buttons.push([{ text: t.gradeOpenTopicBtn(m.mPos + 1), url }]);
     lines.push("");
   }
   buttons.push([{ text: t.gradeBackList, callback_data: "gs:list:0" }]);
@@ -2037,7 +2049,10 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
   if (sub.telegram_message_url) {
     const tt = T[locale] as any;
     await sendMessage(chatId, `📂 ${sub.telegram_file_kind || "file"}`, {
-      inline_keyboard: [[{ text: tt.hwTeacherBtnFile, url: sub.telegram_message_url }]],
+      inline_keyboard: [[
+        { text: tt.hwTeacherBtnFile, url: sub.telegram_message_url },
+        { text: tt.gradeOpenSubmissionPostBtn, url: sub.telegram_message_url },
+      ]],
     });
   }
   // Legacy web-source submission: show signed image URL
