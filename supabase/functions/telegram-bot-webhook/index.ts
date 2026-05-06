@@ -2625,6 +2625,211 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
   }
 }
 
+// v3.14.32: in-memory dedupe caches for auto-detected homework submissions.
+// teacher DM: one per (student, assignment) within 5 minutes.
+// student confirmation: one per (student, assignment) within 24 hours.
+const teacherDmDedupe = new Map<string, number>(); // key=`${studentId}:${assignmentId}` -> ts
+const studentConfirmDedupe = new Map<string, number>(); // same key -> ts
+const TEACHER_DM_TTL_MS = 5 * 60_000;
+const STUDENT_CONFIRM_TTL_MS = 24 * 60 * 60_000;
+
+const HW_STUDENT_CONFIRM: Record<Locale, string> = {
+  uz: "✅ Vazifangiz topshirildi. Ustoz baholaganidan keyin natija saytda ko'rinadi. Kutib turing.",
+  ru: "✅ Ваше задание отправлено. После проверки преподавателем результат появится на сайте.",
+  en: "✅ Your homework was submitted. After teacher review, the score will appear on the website.",
+};
+
+function hwTeacherBody(studentName: string, groupName: string, moduleName: string, assignmentTitle: string): string {
+  return `🆕 <b>Yangi vazifa topshirildi</b>\n👤 Talaba: <b>${csvEscapeHtml(studentName)}</b>\n👥 Guruh: <b>${csvEscapeHtml(groupName)}</b>\n📚 Modul: <b>${csvEscapeHtml(moduleName)}</b>\n📝 Vazifa: <b>${csvEscapeHtml(assignmentTitle)}</b>\n\nXabarni topikda ko'ring va baholang.`;
+}
+
+// v3.14.32: auto-detect homework submission from any topic message — no /vazifalar intent needed.
+async function autoDetectHomeworkSubmission(admin: any, msg: any) {
+  try {
+    const chatType = msg.chat?.type;
+    if (chatType !== "supergroup" && chatType !== "group") return;
+    if (!msg.is_topic_message || !msg.message_thread_id) return;
+    if (!msg.from || msg.from.is_bot) return;
+    const chatId: number = msg.chat.id;
+    const threadId: number = msg.message_thread_id;
+    const messageId: number = msg.message_id;
+    const tgUserId: number = msg.from.id;
+
+    // Resolve group via /c/{stripped}/ in telegram_group_url
+    const stripped = String(chatId).replace(/^-100/, "");
+    const needle = `/c/${stripped}/`;
+    const { data: groupRows } = await admin
+      .from("groups")
+      .select("id, name, teacher_id")
+      .ilike("telegram_group_url", `%${needle}%`)
+      .limit(1);
+    const group = groupRows?.[0];
+    if (!group) {
+      console.log("homework_event_skipped", JSON.stringify({ reason: "no_group", chat_id: chatId, thread_id: threadId }));
+      return;
+    }
+
+    // Resolve module via topic mapping
+    const { data: topicRow } = await admin
+      .from("group_module_topics")
+      .select("module_id")
+      .eq("group_id", group.id)
+      .eq("telegram_topic_id", threadId)
+      .maybeSingle();
+    if (!topicRow?.module_id) {
+      console.log("homework_event_skipped", JSON.stringify({ reason: "no_module_for_topic", group_id: group.id, thread_id: threadId }));
+      return;
+    }
+    const moduleId = topicRow.module_id;
+
+    // Find active assignment for this module (latest task_number)
+    const { data: asg } = await admin
+      .from("homework_assignments")
+      .select("id, title, task_number, max_score, module_id")
+      .eq("module_id", moduleId)
+      .eq("is_active", true)
+      .order("task_number", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!asg) {
+      console.log("homework_event_skipped", JSON.stringify({ reason: "no_active_assignment", module_id: moduleId }));
+      return;
+    }
+
+    // Resolve student profile (telegram_id first, username fallback w/ backfill)
+    const tgUsername = (msg.from.username || "").toLowerCase();
+    const profile = await resolveProfileForTelegramUser(admin, tgUserId, tgUsername, "bot");
+    if (!profile) {
+      console.log("homework_event_skipped", JSON.stringify({ reason: "unregistered_student", telegram_id: tgUserId, username: tgUsername }));
+      return;
+    }
+
+    console.log("homework_event", JSON.stringify({
+      chat_id: chatId, thread_id: threadId, resolved_group: group.id,
+      resolved_module: moduleId, resolved_profile: profile.id,
+      matched_assignment: asg.id, action: "submission_detected",
+    }));
+
+    // Extract media kind
+    let fileId: string | null = null;
+    let kind = "text";
+    if (Array.isArray(msg.photo) && msg.photo.length) { fileId = msg.photo[msg.photo.length - 1].file_id; kind = "photo"; }
+    else if (msg.document) { fileId = msg.document.file_id; kind = "document"; }
+    else if (msg.video) { fileId = msg.video.file_id; kind = "video"; }
+    else if (msg.voice) { fileId = msg.voice.file_id; kind = "voice"; }
+    else if (msg.video_note) { fileId = msg.video_note.file_id; kind = "video_note"; }
+    else if (!msg.text && !msg.caption) {
+      console.log("homework_event_skipped", JSON.stringify({ reason: "no_content", message_id: messageId }));
+      return;
+    }
+
+    const messageUrl = buildMessageLink(chatId, threadId, messageId);
+    const submittedText = (msg.caption || msg.text || "").slice(0, 4000);
+
+    // Upsert submission (idempotent on user_id+assignment_id). Don't overwrite a graded one.
+    const { data: existing } = await admin
+      .from("homework_submissions")
+      .select("id, score")
+      .eq("user_id", profile.id)
+      .eq("assignment_id", asg.id)
+      .maybeSingle();
+    if (existing && existing.score != null) {
+      console.log("homework_event_skipped", JSON.stringify({ reason: "already_graded", submission_id: existing.id }));
+      return;
+    }
+
+    const { data: upserted, error: upErr } = await admin
+      .from("homework_submissions")
+      .upsert({
+        user_id: profile.id,
+        assignment_id: asg.id,
+        submitted_text: submittedText,
+        submitted_at: new Date().toISOString(),
+        score: null, score_feedback: null, scored_by: null, scored_at: null, is_late: false,
+        telegram_chat_id: chatId, telegram_thread_id: threadId, telegram_message_id: messageId,
+        telegram_message_url: messageUrl, telegram_file_id: fileId, telegram_file_kind: kind,
+        source: "telegram_topic",
+      }, { onConflict: "user_id,assignment_id" })
+      .select("id")
+      .maybeSingle();
+    if (upErr) { console.error("homework_event_skipped upsert_err", upErr); return; }
+    const submissionId = upserted?.id;
+
+    // React ✅ in-thread
+    try { await setMessageReaction(chatId, messageId, "✅"); } catch (_e) { /* ignore */ }
+
+    const dedupeKey = `${profile.id}:${asg.id}`;
+    const nowMs = Date.now();
+
+    // Student confirmation DM (1/day per assignment)
+    const lastConfirm = studentConfirmDedupe.get(dedupeKey) || 0;
+    if (profile.telegram_id && nowMs - lastConfirm > STUDENT_CONFIRM_TTL_MS) {
+      studentConfirmDedupe.set(dedupeKey, nowMs);
+      const loc: Locale = normLocale(profile.preferred_locale);
+      try {
+        await sendMessage(Number(profile.telegram_id), HW_STUDENT_CONFIRM[loc]);
+      } catch (e) {
+        console.log("student_dm_unreachable", JSON.stringify({ profile_id: profile.id, err: String(e) }));
+      }
+    }
+
+    // Teacher DM (1 per 5 min per student+assignment)
+    const lastTeacherDm = teacherDmDedupe.get(dedupeKey) || 0;
+    if (nowMs - lastTeacherDm < TEACHER_DM_TTL_MS) {
+      console.log("homework_event_skipped", JSON.stringify({ reason: "teacher_dm_dedupe", key: dedupeKey }));
+      return;
+    }
+    teacherDmDedupe.set(dedupeKey, nowMs);
+
+    if (!group.teacher_id) {
+      console.log("homework_event_skipped", JSON.stringify({ reason: "no_teacher_assigned", group_id: group.id }));
+      return;
+    }
+    const { data: teacher } = await admin
+      .from("profiles")
+      .select("id, telegram_id, notifications_enabled")
+      .eq("id", group.teacher_id)
+      .maybeSingle();
+    if (!teacher?.telegram_id) {
+      console.log("homework_event_skipped", JSON.stringify({ reason: "teacher_no_telegram", teacher_id: group.teacher_id }));
+      return;
+    }
+    if (teacher.notifications_enabled === false) {
+      console.log("homework_event_skipped", JSON.stringify({ reason: "teacher_notifications_disabled", teacher_id: teacher.id }));
+      return;
+    }
+
+    const { data: mod } = await admin.from("modules").select("title, position").eq("id", moduleId).maybeSingle();
+    const moduleName = mod?.title ? `M${(mod.position ?? 0) + 1} — ${mod.title}` : `Modul`;
+    const studentName = [profile.name, profile.last_name].filter(Boolean).join(" ") || "—";
+
+    const body = hwTeacherBody(studentName, group.name || "—", moduleName, asg.title || "");
+    const inlineKb = [
+      [{ text: "🎯 Baholash", callback_data: `grade_task:${asg.id}:${profile.id}` }],
+      [{ text: "📌 Topikga o'tish", url: messageUrl }],
+    ];
+    try {
+      await sendMessage(Number(teacher.telegram_id), body, { inline_keyboard: inlineKb });
+    } catch (e) {
+      console.log("teacher_dm_unreachable", JSON.stringify({ teacher_id: teacher.id, err: String(e) }));
+    }
+
+    // Audit
+    try {
+      await admin.from("admin_actions").insert({
+        actor_user_id: profile.id,
+        action: "homework_submission_dm_sent",
+        target_user_id: teacher.id,
+        target_resource_type: "homework_submission",
+        target_resource_id: submissionId,
+        details: { auto_detected: true, group_id: group.id, module_id: moduleId, assignment_id: asg.id, message_url: messageUrl },
+      });
+    } catch { /* ignore */ }
+  } catch (e) {
+    console.error("autoDetectHomeworkSubmission error", e);
+  }
+}
+
 async function notifyTeachersOfSubmission(
   admin: any,
   studentProfile: any,
@@ -2734,6 +2939,31 @@ async function handleCallback(admin: any, cq: any) {
     const locale: Locale = normLocale(profile.preferred_locale);
     await answerCallback(cq.id);
     await startHomeworkIntent(admin, chatId, profile, locale, assignmentId);
+    return;
+  }
+
+  // v3.14.32: teacher taps "🎯 Baholash" on auto-detected submission DM.
+  if (data.startsWith("grade_task:") && chatId) {
+    const parts = data.split(":");
+    const assignmentId = parts[1];
+    const studentProfileId = parts[2];
+    const profile = await findProfileByTelegramId(admin, tgId);
+    if (!profile) { await answerCallback(cq.id); return; }
+    const persona = await getPersona(admin, profile.id);
+    if (persona !== "admin" && persona !== "teacher") { await answerCallback(cq.id); return; }
+    const { data: sub } = await admin
+      .from("homework_submissions")
+      .select("id")
+      .eq("user_id", studentProfileId)
+      .eq("assignment_id", assignmentId)
+      .maybeSingle();
+    await answerCallback(cq.id);
+    if (!sub?.id) {
+      await sendMessage(chatId, "Topshiriq topilmadi.");
+      return;
+    }
+    const locale: Locale = normLocale(profile.preferred_locale);
+    await startGradingFlow(admin, chatId, tgId, profile.id, sub.id, locale, persona === "admin");
     return;
   }
 
@@ -2969,6 +3199,9 @@ Deno.serve(async (req) => {
       if (chatType === "supergroup" || chatType === "group" || chatType === "channel") {
         // v3.14.29: passively record topic messages for Statistika analytics.
         try { await recordGroupMessageEvent(admin, msg); } catch (e) { console.error("recordGroupMessageEvent failed", e); }
+        // v3.14.32: auto-detect homework submission (no /vazifalar intent required).
+        try { await autoDetectHomeworkSubmission(admin, msg); } catch (e) { console.error("autoDetectHomeworkSubmission failed", e); }
+        // Legacy intent-based flow (backward compat for /vazifalar → 📤 Topshirish).
         await handleGroupTopicMessage(admin, msg);
         return new Response("ok", { status: 200, headers: corsHeaders });
       }
@@ -2977,12 +3210,19 @@ Deno.serve(async (req) => {
       const msg = update.message;
       const text: string = msg.text || "";
       const tgUsername = (msg.from.username || "").toLowerCase();
+      // v3.14.32: identity gate ONLY runs for private chats. Group/supergroup/channel
+      // posts are handled above and must not be short-circuited here.
+      const isPrivateChat = msg.chat?.type === "private";
       // v3.14.27: identity gate. Login deeplinks are the ONE exception (token carries identity).
       const isStartLogin = text.startsWith("/start ") && text.slice(7).trim().startsWith("login_");
       let profileForLocale: any = null;
       if (!isStartLogin) {
         profileForLocale = await resolveProfileForTelegramUser(admin, msg.from.id, tgUsername, "bot");
         if (!profileForLocale) {
+          if (!isPrivateChat) {
+            // Non-private and unregistered: silently ignore (no rate-limited reply).
+            return new Response("ok", { status: 200, headers: corsHeaders });
+          }
           // /myid is allowed for unregistered users so they can share their id with admin.
           if (text === "/myid") {
             const loc: Locale = normLocale(msg.from.language_code);
