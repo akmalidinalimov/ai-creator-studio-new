@@ -830,11 +830,11 @@ async function findProfileByUsername(admin: any, username: string) {
 const UNREGISTERED_REPLY_TTL_MS = 60_000;
 const unregisteredLastReplyAt = new Map<number, number>();
 
-const UNREGISTERED_TEXT = "Salom! Siz hali AI Creators Academy platformasida ro'yxatdan o'tmagansiz.\n\nRo'yxatdan o'tish uchun adminga murojaat qiling: @shahlo_alikhanova\n\nYoki saytdan ro'yxatdan o'ting: https://aicreator.academy";
-
 async function sendUnregisteredReply(
+  admin: any,
   chatId: number,
-  from: { id: number; username?: string; first_name?: string } | null | undefined,
+  from: { id: number; username?: string; first_name?: string; language_code?: string } | null | undefined,
+  localeOverride?: Locale,
 ) {
   const tgId = from?.id ?? chatId;
   console.log("[bot:unregistered]", { telegram_id: tgId, username: from?.username || null, first_name: from?.first_name || null });
@@ -842,8 +842,11 @@ async function sendUnregisteredReply(
   const last = unregisteredLastReplyAt.get(tgId) || 0;
   if (now - last < UNREGISTERED_REPLY_TTL_MS) return;
   unregisteredLastReplyAt.set(tgId, now);
-  // Strip any cached reply keyboard from a prior registered session.
-  await sendMessage(chatId, UNREGISTERED_TEXT, { remove_keyboard: true });
+  const locale: Locale = localeOverride || normLocale(from?.language_code);
+  const enroll = await getEnrollmentSettings(admin, locale);
+  await sendMessage(chatId, enroll.message, {
+    inline_keyboard: [[{ text: enroll.buttonLabel, url: enroll.formUrl }]],
+  });
 }
 
 
@@ -2199,7 +2202,7 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   }
 
   if (!profile) {
-    await sendUnregisteredReply(chatId, msg.from);
+    await sendUnregisteredReply(admin, chatId, msg.from, locale);
     return;
   }
 
@@ -3379,7 +3382,7 @@ Deno.serve(async (req) => {
             const loc: Locale = normLocale(msg.from.language_code);
             await sendMessage(msg.chat.id, T[loc].myidResponse(msg.from.id));
           } else {
-            await sendUnregisteredReply(msg.chat.id, msg.from);
+            await sendUnregisteredReply(admin, msg.chat.id, msg.from);
           }
           return new Response("ok", { status: 200, headers: corsHeaders });
         }
@@ -3437,7 +3440,7 @@ Deno.serve(async (req) => {
       if (!cbProfile) {
         try { await answerCallback(cq.id); } catch (_e) {}
         if (cq.message?.chat?.id) {
-          await sendUnregisteredReply(cq.message.chat.id, cq.from);
+          await sendUnregisteredReply(admin, cq.message.chat.id, cq.from);
         }
         return new Response("ok", { status: 200, headers: corsHeaders });
       }
