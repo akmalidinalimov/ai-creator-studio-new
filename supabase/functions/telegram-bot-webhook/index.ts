@@ -1648,7 +1648,7 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
   }
 
   // Group-scoped commands
-  const scopedCmds = new Set(["/tstats", "/thealth", "/tstudents", "/tinactive", "/tbroadcast", "/baholash", "/baholar", "/ttop"]);
+  const scopedCmds = new Set(["/tstats", "/thealth", "/thomework", "/tstudents", "/tinactive", "/tbroadcast", "/baholash", "/baholar", "/ttop"]);
   let activeGroup: { id: string; name: string } | null = null;
   if (scopedCmds.has(cmd)) {
     if (explicitGroupId) {
