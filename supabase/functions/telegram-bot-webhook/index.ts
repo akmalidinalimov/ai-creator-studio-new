@@ -3382,7 +3382,7 @@ Deno.serve(async (req) => {
             const loc: Locale = normLocale(msg.from.language_code);
             await sendMessage(msg.chat.id, T[loc].myidResponse(msg.from.id));
           } else {
-            await sendUnregisteredReply(msg.chat.id, msg.from);
+            await sendUnregisteredReply(admin, msg.chat.id, msg.from);
           }
           return new Response("ok", { status: 200, headers: corsHeaders });
         }
