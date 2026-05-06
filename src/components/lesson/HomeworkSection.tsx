@@ -12,6 +12,7 @@ interface Assignment {
   id: string; title: string; description: string | null;
   prompt_uz: string | null; prompt_ru: string | null; prompt_en: string | null;
   max_score: number; task_number: number; is_active: boolean;
+  parent_id: string | null; sap_number: number | null;
 }
 interface Submission {
   id: string; assignment_id: string;
@@ -22,7 +23,8 @@ export function HomeworkSection({ lessonId }: Props) {
   const { user } = useAuth();
   const { i18n } = useTranslation();
   const [isLast, setIsLast] = useState(false);
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [parents, setParents] = useState<Assignment[]>([]);
+  const [sapsByParent, setSapsByParent] = useState<Record<string, Assignment[]>>({});
   const [subsByAssign, setSubsByAssign] = useState<Record<string, Submission>>({});
   const [groupId, setGroupId] = useState<string | null>(null);
   const [topicUrl, setTopicUrl] = useState<string | null>(null);
@@ -43,14 +45,29 @@ export function HomeworkSection({ lessonId }: Props) {
 
       const { data: as } = await supabase
         .from("homework_assignments").select("*")
-        .eq("module_id", l.module_id).eq("is_active", true).order("task_number");
-      const list = (as as any[] || []) as Assignment[];
-      setAssignments(list);
+        .eq("module_id", l.module_id).eq("is_active", true)
+        .order("task_number").order("sap_number", { nullsFirst: true });
+      const all = (as as any[] || []) as Assignment[];
+      const ps = all.filter(a => !a.parent_id).sort((a, b) => a.task_number - b.task_number);
+      const sapMap: Record<string, Assignment[]> = {};
+      all.filter(a => !!a.parent_id).forEach(s => {
+        (sapMap[s.parent_id!] ||= []).push(s);
+      });
+      Object.values(sapMap).forEach(arr => arr.sort((a, b) => (a.sap_number || 0) - (b.sap_number || 0)));
+      setParents(ps);
+      setSapsByParent(sapMap);
 
-      if (list.length) {
+      // Submissions are keyed off whichever id (parent without SAPs OR each SAP) is active.
+      const ids: string[] = [];
+      ps.forEach(p => {
+        const saps = sapMap[p.id] || [];
+        if (saps.length) saps.forEach(s => ids.push(s.id));
+        else ids.push(p.id);
+      });
+      if (ids.length) {
         const { data: ss } = await supabase
           .from("homework_submissions").select("id, assignment_id, score, score_feedback")
-          .eq("user_id", user.id).in("assignment_id", list.map((a) => a.id));
+          .eq("user_id", user.id).in("assignment_id", ids);
         const m: Record<string, Submission> = {};
         (ss as any[] || []).forEach((s) => { m[s.assignment_id] = s as Submission; });
         setSubsByAssign(m);
@@ -69,26 +86,71 @@ export function HomeworkSection({ lessonId }: Props) {
     })();
   }, [user, lessonId]);
 
-  if (!isLast || assignments.length === 0) return null;
+  if (!isLast || parents.length === 0) return null;
 
   const lng = (i18n.language || "uz").slice(0, 2);
   const promptOf = (a: Assignment) =>
     (lng === "ru" ? a.prompt_ru : lng === "en" ? a.prompt_en : a.prompt_uz) || a.description || "";
 
-  const scored = assignments.filter((a) => subsByAssign[a.id]?.score != null);
-  const moduleAvg = scored.length
-    ? +(
-        (scored.reduce((acc, a) => acc + Number(subsByAssign[a.id].score) / a.max_score, 0) / scored.length) * 10
-      ).toFixed(1)
-    : null;
+  // Build leaves (each parent without saps OR each sap)
+  const leaves: { leaf: Assignment; parent: Assignment }[] = [];
+  parents.forEach(p => {
+    const saps = sapsByParent[p.id] || [];
+    if (saps.length) saps.forEach(s => leaves.push({ leaf: s, parent: p }));
+    else leaves.push({ leaf: p, parent: p });
+  });
+
+  const scoredLeaves = leaves.filter(({ leaf }) => subsByAssign[leaf.id]?.score != null);
+  const totalScore = scoredLeaves.reduce((acc, { leaf }) => acc + Number(subsByAssign[leaf.id].score), 0);
+  const totalMax = scoredLeaves.reduce((acc, { leaf }) => acc + leaf.max_score, 0);
+
+  const renderLeaf = (leaf: Assignment, parent: Assignment) => {
+    const s = subsByAssign[leaf.id];
+    const isSap = !!leaf.parent_id;
+    const label = isSap ? `V${parent.task_number}.S${leaf.sap_number}` : `V${parent.task_number}`;
+    return (
+      <div key={leaf.id} className="border rounded-lg p-4 space-y-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge>{label}</Badge>
+          <span className="font-medium">{leaf.title}</span>
+          <span className="ml-auto text-xs text-muted-foreground">Max: {leaf.max_score} ball</span>
+        </div>
+        {promptOf(leaf) && (
+          <div className="text-sm text-muted-foreground whitespace-pre-wrap">{promptOf(leaf)}</div>
+        )}
+        <div className="text-sm">📲 Vazifani guruhdagi topikka topshiring:</div>
+        {topicUrl ? (
+          <Button asChild variant="outline" className="w-full sm:w-auto">
+            <a href={topicUrl} target="_blank" rel="noopener noreferrer">
+              📌 Modul {moduleNum ?? ""} topikga o'tish
+              <ExternalLink className="h-4 w-4 ml-1" />
+            </a>
+          </Button>
+        ) : null}
+        <div className="border-t pt-3">
+          <div className="text-xs font-semibold text-muted-foreground mb-1">Sizning natijangiz</div>
+          {s?.score != null ? (
+            <div className="space-y-1">
+              <Badge className="bg-green-600 text-white">✅ {s.score}/{leaf.max_score}</Badge>
+              {s.score_feedback && (
+                <div className="text-sm whitespace-pre-wrap mt-1">"{s.score_feedback}"</div>
+              )}
+            </div>
+          ) : (
+            <div className="text-sm text-muted-foreground">⏳ Hali baholanmagan</div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <Card className="p-5 space-y-4 shadow-soft">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h2 className="font-semibold text-lg">📝 Modul vazifalari</h2>
         <div className="text-xs text-muted-foreground">
-          {scored.length}/{assignments.length} baholangan
-          {moduleAvg != null && ` · O'rtacha: ${moduleAvg}/10`}
+          {scoredLeaves.length}/{leaves.length} baholangan
+          {totalMax > 0 && ` · Jami: ${totalScore}/${totalMax}`}
         </div>
       </div>
 
@@ -103,44 +165,24 @@ export function HomeworkSection({ lessonId }: Props) {
         </div>
       )}
 
-      {assignments.map((a) => {
-        const s = subsByAssign[a.id];
+      {parents.map((p) => {
+        const saps = sapsByParent[p.id] || [];
+        if (saps.length === 0) return renderLeaf(p, p);
+        // Parent with SAPs: header + nested SAPs
+        const sapScored = saps.filter(s => subsByAssign[s.id]?.score != null);
+        const pScore = sapScored.reduce((acc, s) => acc + Number(subsByAssign[s.id].score), 0);
+        const pMax = sapScored.reduce((acc, s) => acc + s.max_score, 0);
         return (
-          <div key={a.id} className="border rounded-lg p-4 space-y-3">
+          <div key={p.id} className="space-y-3">
             <div className="flex items-center gap-2 flex-wrap">
-              <Badge>V{a.task_number}</Badge>
-              <span className="font-medium">{a.title}</span>
-              <span className="ml-auto text-xs text-muted-foreground">Max: {a.max_score} ball</span>
+              <Badge variant="secondary">V{p.task_number}</Badge>
+              <span className="font-semibold">{p.title}</span>
+              <span className="ml-auto text-xs text-muted-foreground">
+                {sapScored.length}/{saps.length} · {pMax > 0 ? `${pScore}/${pMax}` : "—"}
+              </span>
             </div>
-            {promptOf(a) && (
-              <div className="text-sm text-muted-foreground whitespace-pre-wrap">{promptOf(a)}</div>
-            )}
-            <div className="text-sm">
-              📲 Vazifani guruhdagi topikka topshiring:
-            </div>
-            {topicUrl ? (
-              <Button asChild variant="outline" className="w-full sm:w-auto">
-                <a href={topicUrl} target="_blank" rel="noopener noreferrer">
-                  📌 Modul {moduleNum ?? ""} topikga o'tish
-                  <ExternalLink className="h-4 w-4 ml-1" />
-                </a>
-              </Button>
-            ) : null}
-            <div className="text-xs text-muted-foreground">
-              Ustoz baholaganidan keyin natija bu yerda ko'rinadi.
-            </div>
-            <div className="border-t pt-3">
-              <div className="text-xs font-semibold text-muted-foreground mb-1">Sizning natijangiz</div>
-              {s?.score != null ? (
-                <div className="space-y-1">
-                  <Badge className="bg-green-600 text-white">✅ {s.score}/{a.max_score}</Badge>
-                  {s.score_feedback && (
-                    <div className="text-sm whitespace-pre-wrap mt-1">"{s.score_feedback}"</div>
-                  )}
-                </div>
-              ) : (
-                <div className="text-sm text-muted-foreground">⏳ Hali baholanmagan</div>
-              )}
+            <div className="pl-3 border-l-2 space-y-3">
+              {saps.map(s => renderLeaf(s, p))}
             </div>
           </div>
         );

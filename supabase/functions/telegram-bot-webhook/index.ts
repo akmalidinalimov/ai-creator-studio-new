@@ -1091,13 +1091,23 @@ async function buildHomeworkMessage(
     const [profRes, assignsRes] = await Promise.all([
       admin.from("profiles").select("group_id").eq("id", userId).maybeSingle(),
       admin.from("homework_assignments")
-        .select("id, title, max_score, task_number, module_id, is_active, modules(id, title, position, course_id)")
-        .eq("is_active", true).order("task_number", { ascending: true }),
+        .select("id, title, max_score, task_number, sap_number, parent_id, module_id, is_active, modules(id, title, position, course_id)")
+        .eq("is_active", true)
+        .order("task_number", { ascending: true })
+        .order("sap_number", { ascending: true, nullsFirst: true }),
     ]);
     const groupId = (profRes as any).data?.group_id || null;
-    const list = ((assignsRes as any).data || []) as any[];
-    if (!list.length) { lines.push(t.hwEmpty); return { text: lines.join("\n"), keyboard: null }; }
-    list.sort((a, b) => (a.modules?.position ?? 0) - (b.modules?.position ?? 0) || (a.task_number ?? 1) - (b.task_number ?? 1));
+    const allList = ((assignsRes as any).data || []) as any[];
+    if (!allList.length) { lines.push(t.hwEmpty); return { text: lines.join("\n"), keyboard: null }; }
+    // Compute leaves: a parent without children OR every SAP
+    const parentIdsWithSap = new Set(allList.filter((a) => a.parent_id).map((a) => a.parent_id));
+    const list = allList.filter((a) => a.parent_id || !parentIdsWithSap.has(a.id));
+    // Map parent task_number for label rendering
+    const parentTaskNum = new Map<string, number>();
+    allList.filter((a) => !a.parent_id).forEach((p) => parentTaskNum.set(p.id, p.task_number || 1));
+    list.sort((a, b) => (a.modules?.position ?? 0) - (b.modules?.position ?? 0)
+      || (a.task_number ?? 1) - (b.task_number ?? 1)
+      || ((a.sap_number ?? 0) - (b.sap_number ?? 0)));
 
     const aIds = list.map((a) => a.id);
     const moduleIds = Array.from(new Set(list.map((a) => a.module_id)));
@@ -1126,14 +1136,15 @@ async function buildHomeworkMessage(
       lines.push(t.hwModuleHeader(m.position + 1, m.title, m.arr.length));
       for (const a of m.arr) {
         const s: any = subMap.get(a.id);
-        const tn = a.task_number || 1;
+        const parentTn = a.parent_id ? (parentTaskNum.get(a.parent_id) || 1) : (a.task_number || 1);
+        const tnLabel: any = a.parent_id ? `${parentTn}.S${a.sap_number ?? "?"}` : parentTn;
         if (s && s.score != null) {
-          lines.push(t.hwTaskScored(tn, s.score, a.max_score || 10, s.score_feedback || ""));
+          lines.push(t.hwTaskScored(tnLabel, s.score, a.max_score || 10, s.score_feedback || ""));
         } else {
-          lines.push(t.hwTaskUnscored(tn));
+          lines.push(t.hwTaskUnscored(tnLabel));
           // Add a submit button for unscored assignments (only if topic + group exist)
           if (groupId && topicMap.get(m.mid)) {
-            buttons.push([{ text: t.hwSubmitBtn(m.position + 1, tn), callback_data: `hw:start:${a.id}` }]);
+            buttons.push([{ text: t.hwSubmitBtn(m.position + 1, tnLabel), callback_data: `hw:start:${a.id}` }]);
           }
         }
       }
@@ -1144,7 +1155,9 @@ async function buildHomeworkMessage(
       } else if (ungraded.length === 0) {
         lines.push(t.hwModuleAllDone);
       } else if (topic) {
-        lines.push(t.hwSubmitHint(m.position + 1, ungraded[0].task_number || 1));
+        const u0 = ungraded[0];
+        const u0Tn: any = u0.parent_id ? `${parentTaskNum.get(u0.parent_id) || 1}.S${u0.sap_number ?? "?"}` : (u0.task_number || 1);
+        lines.push(t.hwSubmitHint(m.position + 1, u0Tn));
       }
       lines.push("");
     }
@@ -2699,12 +2712,16 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     const t = T[locale] as any;
     const { data: a } = await admin
       .from("homework_assignments")
-      .select("title, task_number, module_id, modules(position)")
+      .select("title, task_number, sap_number, parent_id, module_id, modules(position)")
       .eq("id", intent.assignment_id)
       .maybeSingle();
     const mn = ((a?.modules?.position ?? 0) as number) + 1;
     const tn = (a?.task_number ?? 1) as number;
-    const aTitle = a?.title || "";
+    let aTitle = a?.title || "";
+    if (a?.parent_id) {
+      const { data: par } = await admin.from("homework_assignments").select("task_number").eq("id", a.parent_id).maybeSingle();
+      aTitle = `V${par?.task_number ?? "?"}.S${a?.sap_number ?? "?"} — ${a?.title || ""}`;
+    }
     const moduleId = a?.module_id || intent.module_id;
 
     // Private DM to student
@@ -2806,22 +2823,23 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
     const moduleId = topicRow.module_id;
     res.resolved_thread_to_module_id = moduleId;
 
-    // Find active assignment for this module (latest task_number)
-    const { data: asg } = await admin
+    // Resolve student profile first so we can pick the next un-submitted leaf assignment
+    // (a leaf is a SAP, or a parent without SAPs)
+    const { data: allAssignsForModule } = await admin
       .from("homework_assignments")
-      .select("id, title, task_number, max_score, module_id")
+      .select("id, title, task_number, sap_number, max_score, module_id, parent_id, is_active")
       .eq("module_id", moduleId)
-      .eq("is_active", true)
-      .order("task_number", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (!asg) {
+      .eq("is_active", true);
+    const allList = (allAssignsForModule || []) as any[];
+    if (!allList.length) {
       res.skip_reason = "no_active_assignment";
       await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "no_active_assignment", module_id: moduleId }));
       return;
     }
-    res.matched_assignment_id = asg.id;
+    const parentIdsWithSap = new Set(allList.filter((a) => a.parent_id).map((a) => a.parent_id));
+    const leaves = allList.filter((a) => a.parent_id || !parentIdsWithSap.has(a.id));
+    leaves.sort((x, y) => (x.task_number ?? 0) - (y.task_number ?? 0) || (x.sap_number ?? 0) - (y.sap_number ?? 0));
 
     // Resolve student profile (telegram_id first, username fallback w/ backfill)
     const tgUsername = (msg.from.username || "").toLowerCase();
@@ -2833,6 +2851,22 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
       return;
     }
     res.resolved_profile_id = profile.id;
+
+    // Pick the next un-submitted (or un-graded) leaf for this student.
+    // If all are graded, fall back to the latest leaf so we still attach to something.
+    const leafIds = leaves.map((l: any) => l.id);
+    const { data: existingSubs } = await admin
+      .from("homework_submissions")
+      .select("assignment_id, score")
+      .eq("user_id", profile.id)
+      .in("assignment_id", leafIds);
+    const subMap = new Map((existingSubs || []).map((s: any) => [s.assignment_id, s]));
+    let asg: any = leaves.find((l: any) => {
+      const s = subMap.get(l.id);
+      return !s || s.score == null;
+    });
+    if (!asg) asg = leaves[leaves.length - 1];
+    res.matched_assignment_id = asg.id;
 
     console.log("homework_event", JSON.stringify({
       chat_id: chatId, thread_id: threadId, resolved_group: group.id,
@@ -2959,7 +2993,15 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
     const moduleName = mod?.title ? `M${(mod.position ?? 0) + 1} — ${mod.title}` : `Modul`;
     const studentName = [profile.name, profile.last_name].filter(Boolean).join(" ") || "—";
 
-    const body = hwTeacherBody(studentName, group.name || "—", moduleName, asg.title || "");
+    let asgLabel = asg.title || "";
+    if (asg.parent_id) {
+      const parent = allList.find((a: any) => a.id === asg.parent_id);
+      const tn = parent?.task_number ?? "?";
+      asgLabel = `V${tn}.S${asg.sap_number ?? "?"} — ${asg.title || ""}`;
+    } else if (asg.task_number) {
+      asgLabel = `V${asg.task_number} — ${asg.title || ""}`;
+    }
+    const body = hwTeacherBody(studentName, group.name || "—", moduleName, asgLabel);
     const inlineKb = [
       [{ text: "🎯 Baholash", callback_data: `grade_task:${asg.id}:${profile.id}` }],
       [{ text: "📌 Topikga o'tish", url: messageUrl }],

@@ -54,19 +54,33 @@ export default function TeacherHomework() {
     const aIds = Array.from(new Set(all.map(s => s.assignment_id)));
     const uIds = Array.from(new Set(all.map(s => s.user_id)));
     const [{ data: assigns }, { data: profs }, { data: groups }] = await Promise.all([
-      supabase.from("homework_assignments").select("id, title, max_score").in("id", aIds),
+      supabase.from("homework_assignments").select("id, title, max_score, task_number, sap_number, parent_id").in("id", aIds),
       supabase.from("profiles").select("id, name, last_name, group_id").in("id", uIds),
       supabase.from("groups").select("id, name"),
     ]);
     const aMap = new Map((assigns || []).map((a: any) => [a.id, a]));
+    // Fetch parents for SAPs to render label "V2.S1 — title"
+    const parentIds = Array.from(new Set((assigns || []).map((a: any) => a.parent_id).filter(Boolean)));
+    let parentMap = new Map<string, any>();
+    if (parentIds.length) {
+      const { data: parents } = await supabase.from("homework_assignments").select("id, title, task_number").in("id", parentIds);
+      parentMap = new Map((parents || []).map((p: any) => [p.id, p]));
+    }
     const pMap = new Map((profs || []).map((p: any) => [p.id, p]));
     const gMap = new Map((groups || []).map((g: any) => [g.id, g.name]));
     const enriched: Row[] = all.map((s: any) => {
       const a: any = aMap.get(s.assignment_id) || {};
       const p: any = pMap.get(s.user_id) || {};
+      let label = a.title || "";
+      if (a.parent_id) {
+        const par: any = parentMap.get(a.parent_id) || {};
+        label = `V${par.task_number ?? "?"}.S${a.sap_number ?? "?"} — ${a.title || ""}`;
+      } else if (a.task_number) {
+        label = `V${a.task_number} — ${a.title || ""}`;
+      }
       return {
         ...s,
-        assignment_title: a.title || "",
+        assignment_title: label,
         max_score: a.max_score || 10,
         user_name: [p.name, p.last_name].filter(Boolean).join(" ") || "—",
         user_group: p.group_id ? (gMap.get(p.group_id) as string) : null,
