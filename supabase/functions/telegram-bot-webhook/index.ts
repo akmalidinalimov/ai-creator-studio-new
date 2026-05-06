@@ -809,12 +809,22 @@ async function findProfileByTelegramId(admin: any, tgId: number) {
 }
 
 async function findProfileByUsername(admin: any, username: string) {
+  // Step 2 fallback: only match profiles WITHOUT a telegram_id yet (case-insensitive, strip leading @).
+  // If multiple match (shouldn't happen post unique index), prefer most recently updated.
+  const cleaned = (username || "").replace(/^@+/, "").toLowerCase();
+  if (!cleaned) return null;
   const { data } = await admin
     .from("profiles")
-    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale")
-    .ilike("telegram_username", username)
-    .maybeSingle();
-  return data;
+    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id")
+    .is("telegram_id", null)
+    .ilike("telegram_username", cleaned)
+    .order("updated_at", { ascending: false })
+    .limit(2);
+  if (!data || data.length === 0) return null;
+  if (data.length > 1) {
+    console.warn("[telegram-auth] multiple username-only profiles matched", { username: cleaned, count: data.length });
+  }
+  return data[0];
 }
 
 async function getDefaultCourseId(admin: any): Promise<string | null> {
