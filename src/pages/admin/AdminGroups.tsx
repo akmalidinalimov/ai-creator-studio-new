@@ -326,53 +326,46 @@ function GroupFormDialog({
   const [busy, setBusy] = useState(false);
 
   const [tgGroupUrl, setTgGroupUrl] = useState<string>("");
-  const [modules, setModules] = useState<{ id: string; title: string; position: number }[]>([]);
-  const [topicByMod, setTopicByMod] = useState<Record<string, string>>({});
-  const [errByMod, setErrByMod] = useState<Record<string, string>>({});
   const [tgGroupErr, setTgGroupErr] = useState<string>("");
+  const [hwTopicUrl, setHwTopicUrl] = useState<string>("");
+  const [hwTopicErr, setHwTopicErr] = useState<string>("");
 
-  // Load existing group telegram_group_url + topics on edit; load modules whenever course changes
+  // Load existing group telegram_group_url + shared homework topic on edit
   useEffect(() => {
     (async () => {
       if (group) {
-        const { data: g } = await supabase.from("groups").select("telegram_group_url").eq("id", group.id).maybeSingle();
+        const { data: g } = await supabase
+          .from("groups")
+          .select("telegram_group_url, homework_topic_url")
+          .eq("id", group.id)
+          .maybeSingle();
         setTgGroupUrl(((g as any)?.telegram_group_url) || "");
-        const { data: gmt } = await supabase
-          .from("group_module_topics" as any)
-          .select("module_id, telegram_topic_url")
-          .eq("group_id", group.id);
-        const m: Record<string, string> = {};
-        ((gmt as any[]) || []).forEach((r) => { m[r.module_id] = r.telegram_topic_url; });
-        setTopicByMod(m);
+        setHwTopicUrl(((g as any)?.homework_topic_url) || "");
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [group?.id]);
 
-  useEffect(() => {
-    (async () => {
-      if (!courseId) { setModules([]); return; }
-      const { data } = await supabase.from("modules").select("id, title, position").eq("course_id", courseId).order("position");
-      setModules(((data as any[]) || []) as any);
-    })();
-  }, [courseId]);
+  const HW_TOPIC_RE = /^https?:\/\/t\.me\/c\/\d+\/(\d+)/;
+  const parsedTopicId = (() => {
+    const m = hwTopicUrl.trim().match(HW_TOPIC_RE);
+    return m ? Number(m[1]) : null;
+  })();
 
   const submit = async () => {
     if (!name.trim()) { toast.error("Name required"); return; }
 
-    // Validate Telegram URLs
-    const newErrs: Record<string, string> = {};
     let groupErr = "";
+    let hwErr = "";
     if (tgGroupUrl.trim() && !TG_URL_RE.test(tgGroupUrl.trim())) {
       groupErr = "URL noto'g'ri (https://t.me/...)";
     }
-    for (const m of modules) {
-      const v = (topicByMod[m.id] || "").trim();
-      if (v && !TG_URL_RE.test(v)) newErrs[m.id] = "URL noto'g'ri";
+    if (hwTopicUrl.trim() && !HW_TOPIC_RE.test(hwTopicUrl.trim())) {
+      hwErr = "URL noto'g'ri (https://t.me/c/<chat>/<topic>)";
     }
     setTgGroupErr(groupErr);
-    setErrByMod(newErrs);
-    if (groupErr || Object.keys(newErrs).length) { toast.error("URL formatlarini tekshiring"); return; }
+    setHwTopicErr(hwErr);
+    if (groupErr || hwErr) { toast.error("URL formatlarini tekshiring"); return; }
 
     setBusy(true);
     try {
@@ -392,37 +385,17 @@ function GroupFormDialog({
         course_id: courseId || null,
         teacher_id,
         telegram_group_url: tgGroupUrl.trim() || null,
+        homework_topic_url: hwTopicUrl.trim() || null,
       };
-      let groupId = group?.id;
       if (group) {
         const { error } = await supabase.from("groups").update(payload).eq("id", group.id);
         if (error) throw error;
       } else {
-        const { data, error } = await supabase.from("groups").insert(payload).select("id").maybeSingle();
+        const { error } = await supabase.from("groups").insert(payload);
         if (error) throw error;
-        groupId = (data as any)?.id;
       }
 
-      let topicsSaved = 0;
-      if (groupId) {
-        const upserts: any[] = [];
-        const deletes: string[] = [];
-        modules.forEach((m) => {
-          const v = (topicByMod[m.id] || "").trim();
-          if (v) upserts.push({ group_id: groupId, module_id: m.id, telegram_topic_url: v });
-          else deletes.push(m.id);
-        });
-        if (upserts.length) {
-          const { error } = await supabase.from("group_module_topics" as any).upsert(upserts, { onConflict: "group_id,module_id" });
-          if (error) throw error;
-          topicsSaved = upserts.length;
-        }
-        if (deletes.length) {
-          await supabase.from("group_module_topics" as any).delete().eq("group_id", groupId).in("module_id", deletes);
-        }
-      }
-
-      toast.success(`Guruh saqlandi · ${topicsSaved} ta topik`);
+      toast.success("Guruh saqlandi");
       onSaved();
     } catch (e: any) {
       toast.error(e?.message || "Saqlashda xatolik");
