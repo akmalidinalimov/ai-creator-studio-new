@@ -2986,7 +2986,7 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
         assignment_id: asg.id,
         submitted_text: submittedText,
         submitted_at: new Date().toISOString(),
-        score: null, score_feedback: null, scored_by: null, scored_at: null, is_late: false,
+        score: null, score_feedback: null, scored_by: null, scored_at: null, is_late: isLate,
         telegram_chat_id: chatId, telegram_thread_id: threadId, telegram_message_id: messageId,
         telegram_message_url: messageUrl, telegram_file_id: fileId, telegram_file_kind: kind,
         source: "telegram_topic",
