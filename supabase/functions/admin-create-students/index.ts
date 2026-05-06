@@ -281,6 +281,8 @@ Deno.serve(async (req) => {
       let existingId: string | null = null;
       let existingGroupId: string | null = null;
       let existingTgUsername: string | null = null;
+      // v3.14.35: also fetch existing email so we can match by email collision early.
+      // Email-based match comes last (after tg_id, tg_username, name+last_name).
       if (tgIdNum) {
         const { data: e1 } = await admin.from("profiles").select("id, group_id, telegram_username").eq("telegram_id", tgIdNum).maybeSingle();
         if (e1) { existingId = (e1 as any).id; existingGroupId = (e1 as any).group_id || null; existingTgUsername = (e1 as any).telegram_username ?? null; }
