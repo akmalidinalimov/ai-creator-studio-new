@@ -1646,7 +1646,7 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
   if (cmd === "/tstats") {
     const g = activeGroup!;
     try {
-      const { data, error } = await admin.rpc("teacher_group_statistics", { p_group_id: g.id });
+      const { data, error } = await admin.rpc("teacher_group_statistics", { p_group_id: g.id, p_caller_profile_id: teacherId });
       if (error) throw error;
       const s: any = data || {};
       const m = s.messages || {};
