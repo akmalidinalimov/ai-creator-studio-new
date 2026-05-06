@@ -104,20 +104,11 @@ export default function AdminGroups() {
     setLogins(lmap);
     setActiveWin(amap);
 
-    // Topics configured per group
-    const groupRows = ((g.data as any[]) || []) as Group[];
-    const courseIds = Array.from(new Set(groupRows.map((gg) => gg.course_id).filter(Boolean) as string[]));
-    const { data: allMods } = courseIds.length
-      ? await supabase.from("modules").select("id, course_id").in("course_id", courseIds)
-      : { data: [] };
-    const modsByCourse: Record<string, number> = {};
-    ((allMods as any[]) || []).forEach((m) => { modsByCourse[m.course_id] = (modsByCourse[m.course_id] || 0) + 1; });
-    const { data: gmt } = await supabase.from("group_module_topics" as any).select("group_id");
-    const cfgByGroup: Record<string, number> = {};
-    ((gmt as any[]) || []).forEach((r) => { cfgByGroup[r.group_id] = (cfgByGroup[r.group_id] || 0) + 1; });
+    // Shared homework topic configured per group?
+    const groupRows = ((g.data as any[]) || []) as any[];
     const tmap: Record<string, { configured: number; total: number }> = {};
     groupRows.forEach((gg) => {
-      tmap[gg.id] = { configured: cfgByGroup[gg.id] || 0, total: gg.course_id ? (modsByCourse[gg.course_id] || 0) : 0 };
+      tmap[gg.id] = { configured: gg.homework_topic_url ? 1 : 0, total: 1 };
     });
     setTopics(tmap);
     setLoading(false);
@@ -224,8 +215,9 @@ export default function AdminGroups() {
                   <TableCell><span className={`inline-block px-2 py-0.5 rounded text-xs ${aColor}`} title={`${a3.active}/${a3.total} faol (${windowDays} kun)`}>{a3.active}/{a3.total}{a3.total > 0 ? ` · ${Math.round(aPct)}%` : ""}</span></TableCell>
                   <TableCell>{(() => {
                     const tt = topics[g.id] || { configured: 0, total: 0 };
-                    const cls = tt.total === 0 ? "bg-muted text-muted-foreground" : tt.configured === 0 ? "bg-rose-500 text-white" : tt.configured < tt.total ? "bg-amber-500 text-white" : "bg-emerald-500 text-white";
-                    return <span className={`inline-block px-2 py-0.5 rounded text-xs ${cls}`}>{tt.configured}/{tt.total}</span>;
+                    return tt.configured > 0
+                      ? <span className="inline-block px-2 py-0.5 rounded text-xs bg-emerald-500 text-white">✓ Topik sozlangan</span>
+                      : <span className="inline-block px-2 py-0.5 rounded text-xs bg-rose-500 text-white">✗ Topik yo'q</span>;
                   })()}</TableCell>
                   <TableCell>
                     <Button
@@ -334,53 +326,46 @@ function GroupFormDialog({
   const [busy, setBusy] = useState(false);
 
   const [tgGroupUrl, setTgGroupUrl] = useState<string>("");
-  const [modules, setModules] = useState<{ id: string; title: string; position: number }[]>([]);
-  const [topicByMod, setTopicByMod] = useState<Record<string, string>>({});
-  const [errByMod, setErrByMod] = useState<Record<string, string>>({});
   const [tgGroupErr, setTgGroupErr] = useState<string>("");
+  const [hwTopicUrl, setHwTopicUrl] = useState<string>("");
+  const [hwTopicErr, setHwTopicErr] = useState<string>("");
 
-  // Load existing group telegram_group_url + topics on edit; load modules whenever course changes
+  // Load existing group telegram_group_url + shared homework topic on edit
   useEffect(() => {
     (async () => {
       if (group) {
-        const { data: g } = await supabase.from("groups").select("telegram_group_url").eq("id", group.id).maybeSingle();
+        const { data: g } = await supabase
+          .from("groups")
+          .select("telegram_group_url, homework_topic_url")
+          .eq("id", group.id)
+          .maybeSingle();
         setTgGroupUrl(((g as any)?.telegram_group_url) || "");
-        const { data: gmt } = await supabase
-          .from("group_module_topics" as any)
-          .select("module_id, telegram_topic_url")
-          .eq("group_id", group.id);
-        const m: Record<string, string> = {};
-        ((gmt as any[]) || []).forEach((r) => { m[r.module_id] = r.telegram_topic_url; });
-        setTopicByMod(m);
+        setHwTopicUrl(((g as any)?.homework_topic_url) || "");
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [group?.id]);
 
-  useEffect(() => {
-    (async () => {
-      if (!courseId) { setModules([]); return; }
-      const { data } = await supabase.from("modules").select("id, title, position").eq("course_id", courseId).order("position");
-      setModules(((data as any[]) || []) as any);
-    })();
-  }, [courseId]);
+  const HW_TOPIC_RE = /^https?:\/\/t\.me\/c\/\d+\/(\d+)/;
+  const parsedTopicId = (() => {
+    const m = hwTopicUrl.trim().match(HW_TOPIC_RE);
+    return m ? Number(m[1]) : null;
+  })();
 
   const submit = async () => {
     if (!name.trim()) { toast.error("Name required"); return; }
 
-    // Validate Telegram URLs
-    const newErrs: Record<string, string> = {};
     let groupErr = "";
+    let hwErr = "";
     if (tgGroupUrl.trim() && !TG_URL_RE.test(tgGroupUrl.trim())) {
       groupErr = "URL noto'g'ri (https://t.me/...)";
     }
-    for (const m of modules) {
-      const v = (topicByMod[m.id] || "").trim();
-      if (v && !TG_URL_RE.test(v)) newErrs[m.id] = "URL noto'g'ri";
+    if (hwTopicUrl.trim() && !HW_TOPIC_RE.test(hwTopicUrl.trim())) {
+      hwErr = "URL noto'g'ri (https://t.me/c/<chat>/<topic>)";
     }
     setTgGroupErr(groupErr);
-    setErrByMod(newErrs);
-    if (groupErr || Object.keys(newErrs).length) { toast.error("URL formatlarini tekshiring"); return; }
+    setHwTopicErr(hwErr);
+    if (groupErr || hwErr) { toast.error("URL formatlarini tekshiring"); return; }
 
     setBusy(true);
     try {
@@ -400,37 +385,17 @@ function GroupFormDialog({
         course_id: courseId || null,
         teacher_id,
         telegram_group_url: tgGroupUrl.trim() || null,
+        homework_topic_url: hwTopicUrl.trim() || null,
       };
-      let groupId = group?.id;
       if (group) {
         const { error } = await supabase.from("groups").update(payload).eq("id", group.id);
         if (error) throw error;
       } else {
-        const { data, error } = await supabase.from("groups").insert(payload).select("id").maybeSingle();
+        const { error } = await supabase.from("groups").insert(payload);
         if (error) throw error;
-        groupId = (data as any)?.id;
       }
 
-      let topicsSaved = 0;
-      if (groupId) {
-        const upserts: any[] = [];
-        const deletes: string[] = [];
-        modules.forEach((m) => {
-          const v = (topicByMod[m.id] || "").trim();
-          if (v) upserts.push({ group_id: groupId, module_id: m.id, telegram_topic_url: v });
-          else deletes.push(m.id);
-        });
-        if (upserts.length) {
-          const { error } = await supabase.from("group_module_topics" as any).upsert(upserts, { onConflict: "group_id,module_id" });
-          if (error) throw error;
-          topicsSaved = upserts.length;
-        }
-        if (deletes.length) {
-          await supabase.from("group_module_topics" as any).delete().eq("group_id", groupId).in("module_id", deletes);
-        }
-      }
-
-      toast.success(`Guruh saqlandi · ${topicsSaved} ta topik`);
+      toast.success("Guruh saqlandi");
       onSaved();
     } catch (e: any) {
       toast.error(e?.message || "Saqlashda xatolik");
@@ -483,28 +448,21 @@ function GroupFormDialog({
               />
               {tgGroupErr && <p className="text-xs text-rose-600 mt-1">{tgGroupErr}</p>}
             </div>
-            {!courseId ? (
-              <p className="text-xs text-muted-foreground italic">Modul topiklari uchun avval kurs tanlang.</p>
-            ) : modules.length === 0 ? (
-              <p className="text-xs text-muted-foreground italic">Bu kursda modul yo'q.</p>
-            ) : (
-              <div className="space-y-2">
-                {modules.map((m, i) => (
-                  <div key={m.id}>
-                    <Label className="text-xs">Modul {i + 1} — {m.title} topiki</Label>
-                    <Input
-                      value={topicByMod[m.id] || ""}
-                      onChange={(e) => {
-                        setTopicByMod({ ...topicByMod, [m.id]: e.target.value });
-                        setErrByMod((prev) => { const n = { ...prev }; delete n[m.id]; return n; });
-                      }}
-                      placeholder="https://t.me/c/2123456789/15"
-                    />
-                    {errByMod[m.id] && <p className="text-xs text-rose-600 mt-1">{errByMod[m.id]}</p>}
-                  </div>
-                ))}
-              </div>
-            )}
+            <div>
+              <Label className="text-xs">Vazifalar topiki URL</Label>
+              <Input
+                value={hwTopicUrl}
+                onChange={(e) => { setHwTopicUrl(e.target.value); setHwTopicErr(""); }}
+                placeholder="https://t.me/c/2123456789/65"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Bitta topik barcha vazifalar uchun (yoki bo'sh qoldiring).
+              </p>
+              {hwTopicErr && <p className="text-xs text-rose-600 mt-1">{hwTopicErr}</p>}
+              {parsedTopicId !== null && (
+                <p className="text-xs text-emerald-600 mt-1">Topik ID: {parsedTopicId}</p>
+              )}
+            </div>
           </div>
         </div>
         <DialogFooter>

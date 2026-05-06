@@ -863,6 +863,8 @@ export type Database = {
         Row: {
           course_id: string | null
           created_at: string
+          homework_topic_id: number | null
+          homework_topic_url: string | null
           id: string
           is_default: boolean
           name: string
@@ -873,6 +875,8 @@ export type Database = {
         Insert: {
           course_id?: string | null
           created_at?: string
+          homework_topic_id?: number | null
+          homework_topic_url?: string | null
           id?: string
           is_default?: boolean
           name: string
@@ -883,6 +887,8 @@ export type Database = {
         Update: {
           course_id?: string | null
           created_at?: string
+          homework_topic_id?: number | null
+          homework_topic_url?: string | null
           id?: string
           is_default?: boolean
           name?: string
