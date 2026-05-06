@@ -2864,6 +2864,8 @@ Deno.serve(async (req) => {
       // Group/supergroup posts (e.g. inside a forum topic) → homework intake only
       const chatType = msg.chat?.type;
       if (chatType === "supergroup" || chatType === "group" || chatType === "channel") {
+        // v3.14.29: passively record topic messages for Statistika analytics.
+        try { await recordGroupMessageEvent(admin, msg); } catch (e) { console.error("recordGroupMessageEvent failed", e); }
         await handleGroupTopicMessage(admin, msg);
         return new Response("ok", { status: 200, headers: corsHeaders });
       }
