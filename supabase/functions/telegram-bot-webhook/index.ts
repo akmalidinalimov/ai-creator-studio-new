@@ -1,6 +1,7 @@
 // Telegram bot webhook. Receives Updates from api.telegram.org via setWebhook.
 // Verifies X-Telegram-Bot-Api-Secret-Token, then dispatches commands.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { computeLeaves, pickNextLeaf } from "./homework-routing.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
