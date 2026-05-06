@@ -2749,6 +2749,18 @@ async function handleCallback(admin: any, cq: any) {
     return;
   }
 
+  // Teacher: re-show group picker
+  if (data === "tg:switch" && chatId) {
+    const profile = await findProfileByTelegramId(admin, tgId);
+    if (!profile) { await answerCallback(cq.id); return; }
+    const persona = await getPersona(admin, profile.id);
+    if (persona !== "teacher") { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(profile.preferred_locale);
+    const groups = await teacherGroups(admin, profile.id);
+    await answerCallback(cq.id);
+    if (groups.length >= 2) await showGroupPicker(chatId, locale, "switch", groups);
+    return;
+  }
   // Teacher group picker: tg:pick:<action>:<groupId>  (action = "switch" or a teacher cmd key)
   if (data.startsWith("tg:pick:") && chatId) {
     const rest = data.slice("tg:pick:".length);
