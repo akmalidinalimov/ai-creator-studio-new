@@ -177,6 +177,9 @@ const T = {
     gradeNoneP: "Hozircha baholash uchun vazifa yo'q.",
     gradeListItem: (i: number, name: string, title: string, when: string) => `${i}. <b>${name}</b>\n   ${title} · ${when}`,
     gradeOpenBtn: "Ochish",
+    tPickGroup: "📚 Qaysi guruh uchun?",
+    tActiveGroup: (n: string) => `📌 Faol guruh: <b>${csvEscapeHtml(n)}</b>\n<i>Boshqa guruhga o'tish: /guruh</i>`,
+    tGroupSwitched: (n: string) => `✅ Faol guruh: <b>${csvEscapeHtml(n)}</b>`,
     gradedRecent: "📑 <b>So'nggi baholar</b>",
     gradedNone: "Hali baholangan vazifa yo'q.",
     gradedItem: (i: number, name: string, title: string, sc: number, mx: number) => `${i}. <b>${name}</b> — ${title} · <b>${sc}/${mx}</b>`,
@@ -349,6 +352,9 @@ const T = {
     gradeNoneP: "Сейчас нечего оценивать.",
     gradeListItem: (i: number, name: string, title: string, when: string) => `${i}. <b>${name}</b>\n   ${title} · ${when}`,
     gradeOpenBtn: "Открыть",
+    tPickGroup: "📚 Для какой группы?",
+    tActiveGroup: (n: string) => `📌 Активная группа: <b>${csvEscapeHtml(n)}</b>\n<i>Сменить: /guruh</i>`,
+    tGroupSwitched: (n: string) => `✅ Активная группа: <b>${csvEscapeHtml(n)}</b>`,
     gradedRecent: "📑 <b>Последние оценки</b>",
     gradedNone: "Пока нет оценённых работ.",
     gradedItem: (i: number, name: string, title: string, sc: number, mx: number) => `${i}. <b>${name}</b> — ${title} · <b>${sc}/${mx}</b>`,
@@ -513,6 +519,9 @@ const T = {
     gradeNoneP: "Nothing to grade right now.",
     gradeListItem: (i: number, name: string, title: string, when: string) => `${i}. <b>${name}</b>\n   ${title} · ${when}`,
     gradeOpenBtn: "Open",
+    tPickGroup: "📚 For which group?",
+    tActiveGroup: (n: string) => `📌 Active group: <b>${csvEscapeHtml(n)}</b>\n<i>Switch: /guruh</i>`,
+    tGroupSwitched: (n: string) => `✅ Active group: <b>${csvEscapeHtml(n)}</b>`,
     gradedRecent: "📑 <b>Recent grades</b>",
     gradedNone: "No graded work yet.",
     gradedItem: (i: number, name: string, title: string, sc: number, mx: number) => `${i}. <b>${name}</b> — ${title} · <b>${sc}/${mx}</b>`,
@@ -1460,14 +1469,58 @@ async function teacherGroups(admin: any, teacherId: string): Promise<{ id: strin
   return (data || []) as any[];
 }
 
-async function teacherStudentIds(admin: any, teacherId: string): Promise<string[]> {
+async function teacherStudentIds(admin: any, teacherId: string, groupId?: string | null): Promise<string[]> {
+  if (groupId) {
+    const { data } = await admin.from("profiles").select("id").eq("group_id", groupId);
+    return ((data || []) as any[]).map((r) => r.id);
+  }
   const groups = await teacherGroups(admin, teacherId);
   if (!groups.length) return [];
   const { data } = await admin.from("profiles").select("id").in("group_id", groups.map((g) => g.id));
   return ((data || []) as any[]).map((r) => r.id);
 }
 
-async function handleTeacherCommand(admin: any, chatId: number, teacherId: string, locale: Locale, cmd: string): Promise<boolean> {
+// Resolve which group the teacher is currently acting on.
+// Returns: { mode: "none" } if zero groups, { mode: "ok", group } if 1 owned or active set,
+// { mode: "pick", groups } when 2+ and no valid active group.
+async function resolveActiveGroup(admin: any, teacherId: string): Promise<
+  | { mode: "none" }
+  | { mode: "ok"; group: { id: string; name: string }; groups: { id: string; name: string }[] }
+  | { mode: "pick"; groups: { id: string; name: string }[] }
+> {
+  const groups = await teacherGroups(admin, teacherId);
+  groups.sort((a: any, b: any) => String(a.name).localeCompare(String(b.name)));
+  if (!groups.length) return { mode: "none" };
+  if (groups.length === 1) {
+    const only = groups[0];
+    await admin.from("profiles").update({ active_teacher_group_id: only.id }).eq("id", teacherId);
+    return { mode: "ok", group: only, groups };
+  }
+  const { data: prof } = await admin.from("profiles").select("active_teacher_group_id").eq("id", teacherId).maybeSingle();
+  const activeId = prof?.active_teacher_group_id;
+  const found = activeId ? groups.find((g) => g.id === activeId) : null;
+  if (found) return { mode: "ok", group: found, groups };
+  return { mode: "pick", groups };
+}
+
+async function showGroupPicker(chatId: number, locale: Locale, action: string, groups: { id: string; name: string }[]) {
+  const t = T[locale] as any;
+  const buttons = groups.map((g) => [{ text: g.name, callback_data: `tg:pick:${action}:${g.id}` }]);
+  await sendMessage(chatId, t.tPickGroup, { inline_keyboard: buttons });
+}
+
+// Map a teacher command to an "action" key used in tg:pick callback.
+const TEACHER_ACTION_CMD: Record<string, string> = {
+  tstats: "/tstats",
+  thealth: "/thealth",
+  tstudents: "/tstudents",
+  tinactive: "/tinactive",
+  tbroadcast: "/tbroadcast",
+  baholash: "/baholash",
+  baholar: "/baholar",
+};
+
+async function handleTeacherCommand(admin: any, chatId: number, teacherId: string, locale: Locale, cmd: string, explicitGroupId?: string): Promise<boolean> {
   const t = T[locale] as any;
 
   if (cmd === "/cancel") {
@@ -1476,30 +1529,49 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
     return true;
   }
 
+  // Show / re-show group picker on demand
+  if (cmd === "/guruh" || cmd === "/group") {
+    const r = await resolveActiveGroup(admin, teacherId);
+    if (r.mode === "none") { await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher"); return true; }
+    await showGroupPicker(chatId, locale, "switch", r.mode === "ok" ? r.groups : r.groups);
+    return true;
+  }
+
+  // Group-scoped commands
+  const scopedCmds = new Set(["/tstats", "/thealth", "/tstudents", "/tinactive", "/tbroadcast", "/baholash", "/baholar"]);
+  let activeGroup: { id: string; name: string } | null = null;
+  if (scopedCmds.has(cmd)) {
+    if (explicitGroupId) {
+      const groups = await teacherGroups(admin, teacherId);
+      const g = groups.find((x) => x.id === explicitGroupId);
+      if (!g) { await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher"); return true; }
+      await admin.from("profiles").update({ active_teacher_group_id: g.id }).eq("id", teacherId);
+      activeGroup = g;
+    } else {
+      const r = await resolveActiveGroup(admin, teacherId);
+      if (r.mode === "none") { await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher"); return true; }
+      if (r.mode === "pick") {
+        const action = cmd.replace(/^\//, "");
+        await showGroupPicker(chatId, locale, action, r.groups);
+        return true;
+      }
+      activeGroup = r.group;
+    }
+  }
+
   if (cmd === "/tstats") {
-    const groups = await teacherGroups(admin, teacherId);
-    if (!groups.length) {
-      await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher");
-      return true;
-    }
-    const lines: string[] = [t.teacherPanel];
-    for (const g of groups) {
-      const { data: ov } = await admin.rpc("staff_group_overview", { _group_id: g.id });
-      const o = (ov && ov[0]) || { total: 0, active_7d: 0, completion_pct: 0, avg_score: 0, health: 0 };
-      lines.push(`\n<b>${csvEscapeHtml(g.name)}</b>`);
-      lines.push(`👥 ${o.total} · 🟢 ${o.active_7d} (7d) · 📈 ${o.completion_pct}% · 🎯 ${o.avg_score} · ❤️ ${o.health}`);
-    }
+    const g = activeGroup!;
+    const { data: ov } = await admin.rpc("staff_group_overview", { _group_id: g.id });
+    const o = (ov && ov[0]) || { total: 0, active_7d: 0, completion_pct: 0, avg_score: 0, health: 0 };
+    const lines: string[] = [t.teacherPanel, t.tActiveGroup(g.name)];
+    lines.push(`\n<b>${csvEscapeHtml(g.name)}</b>`);
+    lines.push(`👥 ${o.total} · 🟢 ${o.active_7d} (7d) · 📈 ${o.completion_pct}% · 🎯 ${o.avg_score} · ❤️ ${o.health}`);
     await sendWithKeyboard(chatId, lines.join("\n"), locale, false, "teacher");
     return true;
   }
 
   if (cmd === "/thealth") {
-    const groups = await teacherGroups(admin, teacherId);
-    if (!groups.length) {
-      await sendWithKeyboard(chatId, t.tHealthEmpty, locale, false, "teacher");
-      return true;
-    }
-    // Build a map of user_id -> last_sign_in_at via admin auth API (one call, paginated).
+    const g = activeGroup!;
     const lastSignInMap = new Map<string, string | null>();
     try {
       let page = 1;
@@ -1512,30 +1584,27 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
         if (page > 20) break;
       }
     } catch (_e) { /* fall through; logged stays 0 */ }
-    for (const g of groups) {
-      const { data: profs } = await admin
-        .from("profiles")
-        .select("id, status, archived_at")
-        .eq("group_id", g.id);
-      const allRows = (profs || []) as any[];
-      const total = allRows.length;
-      const activeRows = allRows.filter((p) => p.status === "active" && !p.archived_at);
-      const active = activeRows.length;
-      const logged = activeRows.filter((p) => !!lastSignInMap.get(p.id)).length;
-      const never = Math.max(0, active - logged);
-      const pct = active > 0 ? Math.round((logged / active) * 100) : 0;
-      const link = await createMagicLink(admin, teacherId, "teacher_dashboard", "/teacher/dashboard");
-      await sendMessage(chatId, t.tHealthLine(g.name, logged, active, never, total, pct), {
-        inline_keyboard: [[{ text: t.tHealthOpenSite, url: link }]],
-      });
-    }
+    const { data: profs } = await admin
+      .from("profiles")
+      .select("id, status, archived_at")
+      .eq("group_id", g.id);
+    const allRows = (profs || []) as any[];
+    const total = allRows.length;
+    const logged = allRows.filter((p) => !!lastSignInMap.get(p.id)).length;
+    const never = Math.max(0, total - logged);
+    const pct = total > 0 ? Math.round((logged / total) * 100) : 0;
+    const link = await createMagicLink(admin, teacherId, "teacher_dashboard", "/teacher/dashboard");
+    await sendMessage(chatId, t.tHealthLine(g.name, logged, total, never, total, pct), {
+      inline_keyboard: [[{ text: t.tHealthOpenSite, url: link }]],
+    });
     return true;
   }
 
   if (cmd === "/tstudents" || cmd === "/tinactive") {
-    const ids = await teacherStudentIds(admin, teacherId);
+    const g = activeGroup!;
+    const ids = await teacherStudentIds(admin, teacherId, g.id);
     if (!ids.length) {
-      await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher");
+      await sendWithKeyboard(chatId, `${t.tActiveGroup(g.name)}\n\n—`, locale, false, "teacher");
       return true;
     }
     const { data: profs } = await admin.from("profiles").select("id, name, last_name, telegram_username, telegram_id, created_at").in("id", ids);
@@ -1558,13 +1627,12 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
     if (cmd === "/tinactive") rows = rows.filter((r) => r.days === null || r.days >= 3);
     rows.sort((a: any, b: any) => (b.days ?? 9999) - (a.days ?? 9999));
     const headerLabel = cmd === "/tinactive" ? t.tKbInactive : t.tKbStudents;
-    const header = `<b>${headerLabel}</b> — ${rows.length}`;
+    const header = `<b>${headerLabel}</b> · ${csvEscapeHtml(g.name)} — ${rows.length}`;
     if (!rows.length) {
       await sendWithKeyboard(chatId, `${header}\n\n—`, locale, false, "teacher");
       return true;
     }
     const lines = rows.map((r) => `• <b>${csvEscapeHtml(r.name)}</b> ${csvEscapeHtml(r.handle)} (${r.days === null ? "∞" : r.days + "d"})`);
-    // Telegram hard cap is 4096 chars; pack into chunks under ~3500 for safety, repeating header.
     const MAX = 3500;
     const chunks: string[] = [];
     let cur = header + "\n\n";
@@ -1597,11 +1665,7 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
   }
 
   if (cmd === "/tbroadcast") {
-    const groups = await teacherGroups(admin, teacherId);
-    if (!groups.length) {
-      await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher");
-      return true;
-    }
+    const g = activeGroup!;
     // Rate-limit: 1 per hour
     const since = new Date(Date.now() - 3600_000).toISOString();
     const { count } = await admin.from("bot_broadcast_rate").select("id", { count: "exact", head: true }).eq("actor_user_id", teacherId).eq("scope", "teacher").gte("created_at", since);
@@ -1609,14 +1673,14 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
       await sendWithKeyboard(chatId, t.teacherBroadcastRate, locale, false, "teacher");
       return true;
     }
-    await admin.from("bot_sessions").upsert({ user_id: teacherId, state: "teacher_broadcast", data: {}, updated_at: new Date().toISOString() });
-    await sendWithKeyboard(chatId, t.teacherBroadcastPrompt, locale, false, "teacher");
+    await admin.from("bot_sessions").upsert({ user_id: teacherId, state: "teacher_broadcast", data: { group_id: g.id }, updated_at: new Date().toISOString() });
+    await sendWithKeyboard(chatId, `${t.tActiveGroup(g.name)}\n\n${t.teacherBroadcastPrompt}`, locale, false, "teacher");
     return true;
   }
 
-  // Grading commands shared with admin
-  const g = await handleGradingCommand(admin, chatId, teacherId, locale, cmd, false);
-  if (g) return true;
+  // Grading commands shared with admin (scoped to active group for teachers)
+  const g2 = await handleGradingCommand(admin, chatId, teacherId, locale, cmd, false, activeGroup?.id);
+  if (g2) return true;
 
   return false;
 }
@@ -1624,16 +1688,20 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
 // =================== GRADING (teacher + admin) ===================
 
 // Returns submissions in scope for grader. teacher=group students, admin=all.
-async function gradingScopeIds(admin: any, graderId: string, isAdmin: boolean): Promise<string[] | null> {
+async function gradingScopeIds(admin: any, graderId: string, isAdmin: boolean, groupId?: string | null): Promise<string[] | null> {
   if (isAdmin) return null; // null = no scope filter
+  if (groupId) {
+    const { data } = await admin.from("profiles").select("id").eq("group_id", groupId);
+    return ((data || []) as any[]).map((r) => r.id);
+  }
   const groups = await teacherGroups(admin, graderId);
   if (!groups.length) return [];
   const { data } = await admin.from("profiles").select("id").in("group_id", groups.map((g) => g.id));
   return ((data || []) as any[]).map((r) => r.id);
 }
 
-async function loadGradingSubmissions(admin: any, graderId: string, isAdmin: boolean, opts: { scored: boolean; limit?: number }) {
-  const ids = await gradingScopeIds(admin, graderId, isAdmin);
+async function loadGradingSubmissions(admin: any, graderId: string, isAdmin: boolean, opts: { scored: boolean; limit?: number; groupId?: string | null }) {
+  const ids = await gradingScopeIds(admin, graderId, isAdmin, opts.groupId);
   if (ids && ids.length === 0) return [];
   let q = admin.from("homework_submissions").select("id, assignment_id, user_id, submitted_at, score, score_feedback, scored_at, is_late");
   if (ids) q = q.in("user_id", ids);
@@ -1654,17 +1722,17 @@ async function loadGradingSubmissions(admin: any, graderId: string, isAdmin: boo
 }
 
 async function handleGradingCommand(
-  admin: any, chatId: number, graderId: string, locale: Locale, cmd: string, isAdmin: boolean,
+  admin: any, chatId: number, graderId: string, locale: Locale, cmd: string, isAdmin: boolean, groupId?: string | null,
 ): Promise<boolean> {
   const t = T[locale] as any;
 
   if (cmd === "/baholash" || cmd === "/grade") {
-    await renderStudentPicker(admin, chatId, graderId, locale, isAdmin, 0);
+    await renderStudentPicker(admin, chatId, graderId, locale, isAdmin, 0, groupId);
     return true;
   }
 
   if (cmd === "/baholar" || cmd === "/grades") {
-    const items = await loadGradingSubmissions(admin, graderId, isAdmin, { scored: true, limit: 10 });
+    const items = await loadGradingSubmissions(admin, graderId, isAdmin, { scored: true, limit: 10, groupId });
     if (!items.length) {
       await sendWithKeyboard(chatId, `${t.gradedRecent}\n\n${t.gradedNone}`, locale, isAdmin, isAdmin ? "admin" : "teacher");
       return true;
@@ -1688,9 +1756,9 @@ async function handleGradingCommand(
 
 const PICKER_PAGE_SIZE = 10;
 
-async function renderStudentPicker(admin: any, chatId: number, graderId: string, locale: Locale, isAdmin: boolean, page: number) {
+async function renderStudentPicker(admin: any, chatId: number, graderId: string, locale: Locale, isAdmin: boolean, page: number, groupId?: string | null) {
   const t = T[locale] as any;
-  const ids = await gradingScopeIds(admin, graderId, isAdmin);
+  const ids = await gradingScopeIds(admin, graderId, isAdmin, groupId);
   let q = admin.from("homework_submissions").select("user_id").is("score", null);
   if (ids) {
     if (ids.length === 0) {
@@ -1931,9 +1999,11 @@ async function handleTeacherSession(admin: any, msg: any, profileId: string, loc
     await sendWithKeyboard(msg.chat.id, t.teacherBroadcastTooLong, locale, false, "teacher");
     return true;
   }
+  const sessGroupId: string | undefined = (sess as any)?.data?.group_id;
   const groups = await teacherGroups(admin, profileId);
-  const groupName = groups.map((g: any) => g.name).join(", ");
-  const ids = await teacherStudentIds(admin, profileId);
+  const sessGroup = sessGroupId ? groups.find((g: any) => g.id === sessGroupId) : null;
+  const groupName = sessGroup ? sessGroup.name : groups.map((g: any) => g.name).join(", ");
+  const ids = await teacherStudentIds(admin, profileId, sessGroupId || null);
   const { data: profs } = ids.length
     ? await admin.from("profiles").select("id, telegram_id, name").in("id", ids)
     : { data: [] };
@@ -2477,6 +2547,33 @@ async function handleCallback(admin: any, cq: any) {
     return;
   }
 
+  // Teacher group picker: tg:pick:<action>:<groupId>  (action = "switch" or a teacher cmd key)
+  if (data.startsWith("tg:pick:") && chatId) {
+    const rest = data.slice("tg:pick:".length);
+    const idx = rest.lastIndexOf(":");
+    if (idx <= 0) { await answerCallback(cq.id); return; }
+    const action = rest.slice(0, idx);
+    const groupId = rest.slice(idx + 1);
+    const profile = await findProfileByTelegramId(admin, tgId);
+    if (!profile) { await answerCallback(cq.id); return; }
+    const persona = await getPersona(admin, profile.id);
+    if (persona !== "teacher") { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(profile.preferred_locale);
+    const t = T[locale] as any;
+    // Validate ownership
+    const groups = await teacherGroups(admin, profile.id);
+    const g = groups.find((x) => x.id === groupId);
+    if (!g) { await answerCallback(cq.id); return; }
+    await admin.from("profiles").update({ active_teacher_group_id: g.id }).eq("id", profile.id);
+    await answerCallback(cq.id);
+    if (action === "switch") {
+      await sendWithKeyboard(chatId, t.tGroupSwitched(g.name), locale, false, "teacher");
+    } else {
+      const cmd = TEACHER_ACTION_CMD[action];
+      if (cmd) await handleTeacherCommand(admin, chatId, profile.id, locale, cmd, g.id);
+    }
+    return;
+  }
   if ((data.startsWith("gs:list:") || data.startsWith("gs:pick:") || data.startsWith("gs:open:")) && chatId) {
     const profile = await findProfileByTelegramId(admin, tgId);
     if (!profile) { await answerCallback(cq.id); return; }
@@ -2484,10 +2581,15 @@ async function handleCallback(admin: any, cq: any) {
     if (persona !== "admin" && persona !== "teacher") { await answerCallback(cq.id); return; }
     const locale: Locale = normLocale(profile.preferred_locale);
     const isAdmin = persona === "admin";
+    let groupIdScope: string | null = null;
+    if (!isAdmin) {
+      const { data: pr } = await admin.from("profiles").select("active_teacher_group_id").eq("id", profile.id).maybeSingle();
+      groupIdScope = pr?.active_teacher_group_id || null;
+    }
     await answerCallback(cq.id);
     if (data.startsWith("gs:list:")) {
       const page = parseInt(data.slice("gs:list:".length), 10) || 0;
-      await renderStudentPicker(admin, chatId, profile.id, locale, isAdmin, page);
+      await renderStudentPicker(admin, chatId, profile.id, locale, isAdmin, page, groupIdScope);
     } else if (data.startsWith("gs:pick:")) {
       const sid = data.slice("gs:pick:".length);
       await renderStudentBreakdown(admin, chatId, profile.id, sid, locale, isAdmin);
