@@ -164,12 +164,17 @@ export default function AdminHomework() {
   return (
     <PageShell>
       <div className="max-w-4xl space-y-6">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight">📝 Uy vazifalari</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Har modulga bir nechta vazifa qo'shing. Standart: {defaults.count} ta vazifa, max bal {defaults.max}.
-            Har vazifaga SAP (sub-vazifa) qo'shish mumkin. Modul bahosi — barcha SAP/vazifalar ballarining yig'indisi.
-          </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-semibold tracking-tight">📝 Uy vazifalari</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Har modulga bir nechta vazifa qo'shing. Standart: {defaults.count} ta vazifa, max bal {defaults.max}.
+              Har vazifaga SAP (sub-vazifa) qo'shish mumkin. Modul bahosi — barcha SAP/vazifalar ballarining yig'indisi.
+            </p>
+          </div>
+          <Button onClick={openNewModule} className="shrink-0">
+            <Plus className="h-4 w-4 mr-1" /> Yangi modul
+          </Button>
         </div>
 
         <div className="space-y-4">
