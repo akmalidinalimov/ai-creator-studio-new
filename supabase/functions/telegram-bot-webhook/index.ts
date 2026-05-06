@@ -2425,6 +2425,93 @@ async function startHomeworkIntent(
   });
 }
 
+// v3.14.33: resolve group from supergroup chat_id by trying multiple URL patterns.
+// Returns { groupId, pattern } or null. Bug fix: groups.telegram_group_url stores
+// invite links like https://t.me/+abc, NOT /c/{id}/ links. So we have to look at
+// group_module_topics.telegram_topic_url which DOES contain /c/{stripped}/{thread}.
+async function resolveGroupFromChatId(
+  admin: any,
+  chatId: number,
+): Promise<{ groupId: string | null; pattern: string }> {
+  const stripped = String(chatId).replace(/^-100/, "");
+  const needle = `/c/${stripped}/`;
+
+  // Pattern 1: group_module_topics.telegram_topic_url contains /c/{stripped}/
+  try {
+    const { data: gmt } = await admin
+      .from("group_module_topics")
+      .select("group_id")
+      .ilike("telegram_topic_url", `%${needle}%`)
+      .limit(1);
+    if (gmt?.[0]?.group_id) return { groupId: gmt[0].group_id, pattern: "gmt_topic_url" };
+  } catch (_e) { /* noop */ }
+
+  // Pattern 2: groups.telegram_group_url contains /c/{stripped}/ (legacy/manual)
+  try {
+    const { data: g2 } = await admin
+      .from("groups")
+      .select("id")
+      .ilike("telegram_group_url", `%${needle}%`)
+      .limit(1);
+    if (g2?.[0]?.id) return { groupId: g2[0].id, pattern: "group_url_c" };
+  } catch (_e) { /* noop */ }
+
+  // Pattern 3: groups.telegram_group_url contains raw chat_id
+  try {
+    const { data: g3 } = await admin
+      .from("groups")
+      .select("id")
+      .ilike("telegram_group_url", `%${chatId}%`)
+      .limit(1);
+    if (g3?.[0]?.id) return { groupId: g3[0].id, pattern: "group_url_raw" };
+  } catch (_e) { /* noop */ }
+
+  return { groupId: null, pattern: "none" };
+}
+
+// v3.14.33: log every incoming update to webhook_inbox. Best-effort.
+async function logWebhookInbox(admin: any, update: any): Promise<number | null> {
+  try {
+    const m = update.message || update.channel_post || update.edited_message || update.callback_query?.message;
+    const cb = update.callback_query;
+    let updateType = "unknown";
+    if (update.message) updateType = "message";
+    else if (update.edited_message) updateType = "edited_message";
+    else if (update.channel_post) updateType = "channel_post";
+    else if (update.callback_query) updateType = "callback_query";
+    const fromUser = update.callback_query?.from || update.message?.from || update.channel_post?.from || update.edited_message?.from;
+    const text = update.message?.text || update.message?.caption || update.channel_post?.text || cb?.data || "";
+    const { data, error } = await admin.from("webhook_inbox").insert({
+      update_type: updateType,
+      chat_id: m?.chat?.id ?? null,
+      chat_type: m?.chat?.type ?? null,
+      chat_title: m?.chat?.title ?? null,
+      message_thread_id: m?.message_thread_id ?? null,
+      message_id: m?.message_id ?? null,
+      from_user_id: fromUser?.id ?? null,
+      from_username: fromUser?.username ?? null,
+      text_preview: String(text).slice(0, 200),
+      raw_update: update,
+      resolution: null,
+    }).select("id").maybeSingle();
+    if (error) { console.error("webhook_inbox insert err", error); return null; }
+    return data?.id ?? null;
+  } catch (e) {
+    console.error("logWebhookInbox failed", e);
+    return null;
+  }
+}
+
+async function updateInboxResolution(admin: any, inboxId: number | null, patch: Record<string, any>) {
+  if (!inboxId) return;
+  try {
+    // Merge with existing resolution
+    const { data: row } = await admin.from("webhook_inbox").select("resolution").eq("id", inboxId).maybeSingle();
+    const merged = { ...(row?.resolution || {}), ...patch };
+    await admin.from("webhook_inbox").update({ resolution: merged }).eq("id", inboxId);
+  } catch (e) { console.error("updateInboxResolution failed", e); }
+}
+
 // Group/supergroup post inside a topic — try to attach it to a pending intent.
 // v3.14.29: persist topic message event for teacher statistics. Best-effort, never throws.
 async function recordGroupMessageEvent(admin: any, msg: any) {
