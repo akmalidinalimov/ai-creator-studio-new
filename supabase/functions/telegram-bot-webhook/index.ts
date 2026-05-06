@@ -2391,6 +2391,62 @@ async function startHomeworkIntent(
 }
 
 // Group/supergroup post inside a topic — try to attach it to a pending intent.
+// v3.14.29: persist topic message event for teacher statistics. Best-effort, never throws.
+async function recordGroupMessageEvent(admin: any, msg: any) {
+  const chatType = msg.chat?.type;
+  if (chatType !== "supergroup" && chatType !== "group") return;
+  if (!msg.is_topic_message || !msg.message_thread_id) return;
+  if (!msg.from || msg.from.is_bot) return;
+  const chatId: number = msg.chat?.id;
+  const threadId: number = msg.message_thread_id;
+  const messageId: number = msg.message_id;
+  const tgUserId: number = msg.from.id;
+  if (!chatId || !threadId || !messageId || !tgUserId) return;
+
+  // Resolve group: telegram_group_url contains "/c/{stripped}/" derived from chat_id
+  const stripped = String(chatId).replace(/^-100/, "");
+  const needle = `/c/${stripped}/`;
+  const { data: groupRows } = await admin
+    .from("groups")
+    .select("id, telegram_group_url")
+    .ilike("telegram_group_url", `%${needle}%`)
+    .limit(1);
+  const groupId = groupRows?.[0]?.id || null;
+  if (!groupId) return; // unknown group, skip
+
+  // Resolve module via topic mapping
+  const { data: topicRow } = await admin
+    .from("group_module_topics")
+    .select("module_id")
+    .eq("group_id", groupId)
+    .eq("telegram_topic_id", threadId)
+    .maybeSingle();
+  const moduleId = topicRow?.module_id || null;
+
+  // Resolve profile (don't backfill here; bot identity gate handles that)
+  let profileId: string | null = null;
+  const tgUsername = (msg.from.username || "").toLowerCase();
+  const byId = await findProfileByTelegramId(admin, tgUserId);
+  if (byId) profileId = byId.id;
+  else if (tgUsername) {
+    const byU = await findProfileByUsername(admin, tgUsername);
+    if (byU) profileId = byU.id;
+  }
+
+  await admin
+    .from("group_message_events")
+    .upsert({
+      group_id: groupId,
+      module_id: moduleId,
+      profile_id: profileId,
+      telegram_user_id: tgUserId,
+      telegram_chat_id: chatId,
+      telegram_message_id: messageId,
+      telegram_thread_id: threadId,
+      sent_at: msg.date ? new Date(msg.date * 1000).toISOString() : new Date().toISOString(),
+    }, { onConflict: "telegram_chat_id,telegram_message_id" });
+}
+
 async function handleGroupTopicMessage(admin: any, msg: any) {
   try {
     const chatId = msg.chat?.id;
