@@ -3440,7 +3440,7 @@ Deno.serve(async (req) => {
       if (!cbProfile) {
         try { await answerCallback(cq.id); } catch (_e) {}
         if (cq.message?.chat?.id) {
-          await sendUnregisteredReply(cq.message.chat.id, cq.from);
+          await sendUnregisteredReply(admin, cq.message.chat.id, cq.from);
         }
         return new Response("ok", { status: 200, headers: corsHeaders });
       }
