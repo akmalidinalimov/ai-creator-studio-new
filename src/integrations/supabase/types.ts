@@ -2548,7 +2548,12 @@ export type Database = {
           telegram_username: string
         }[]
       }
-      teacher_group_statistics: { Args: { p_group_id: string }; Returns: Json }
+      teacher_group_statistics:
+        | { Args: { p_group_id: string }; Returns: Json }
+        | {
+            Args: { p_caller_profile_id?: string; p_group_id: string }
+            Returns: Json
+          }
       track_video_progress: {
         Args: {
           p_current_time: number
