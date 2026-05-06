@@ -642,7 +642,7 @@ function getTeacherKeyboard(locale: Locale) {
   return {
     keyboard: [
       [{ text: t.tKbGrade }, { text: t.tKbGraded }],
-      [{ text: t.tKbStats }, { text: t.tKbHealth }],
+      [{ text: t.tKbStats }, { text: t.tKbHomework }],
       [{ text: t.tKbStudents }, { text: t.tKbInactive }],
       [{ text: t.tKbTop }, { text: t.tKbBroadcast }],
       [{ text: t.tKbSettings }, { text: t.kbLang }],
