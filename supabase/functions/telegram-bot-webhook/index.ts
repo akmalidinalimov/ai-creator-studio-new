@@ -1601,6 +1601,7 @@ const TEACHER_ACTION_CMD: Record<string, string> = {
   tbroadcast: "/tbroadcast",
   baholash: "/baholash",
   baholar: "/baholar",
+  ttop: "/ttop",
 };
 
 async function handleTeacherCommand(admin: any, chatId: number, teacherId: string, locale: Locale, cmd: string, explicitGroupId?: string): Promise<boolean> {
