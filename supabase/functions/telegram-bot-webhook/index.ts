@@ -1105,9 +1105,11 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
 
   // v2.1.1: hybrid match — by Telegram numeric user_id OR by @username (case-insensitive).
   // After first match by username, we permanently bind telegram_id so future logins are id-matched.
+  let matchedBy: "telegram_id" | "telegram_username" = "telegram_id";
   let profile = await findProfileByTelegramId(admin, tgId);
   if (!profile && tgUsername) {
     profile = await findProfileByUsername(admin, tgUsername);
+    if (profile) matchedBy = "telegram_username";
   }
 
   if (!profile) {
@@ -1120,12 +1122,23 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
 
   // Permanently bind telegram_id on first successful match (was NULL before).
   if (!profile.telegram_id) {
-    await admin.from("profiles").update({ telegram_id: tgId }).eq("id", profile.id);
+    await admin.from("profiles").update({ telegram_id: tgId, updated_at: new Date().toISOString() }).eq("id", profile.id).is("telegram_id", null);
     profile.telegram_id = tgId;
+    console.log("[telegram-auth] backfilled telegram_id", { profile_id: profile.id, telegram_id: tgId, matched_by: matchedBy, source: "bot" });
+    try {
+      await admin.from("audit_log").insert({
+        actor_user_id: profile.id,
+        target_user_id: profile.id,
+        action: "profile_telegram_id_backfilled",
+        new_value: { profile_id: profile.id, telegram_id: tgId, telegram_username: tgUsername, source: "bot" },
+      });
+    } catch (_e) { /* audit_log may not exist or insert blocked — ignore */ }
+  } else if (matchedBy === "telegram_username") {
+    console.log("[telegram-auth] matched_by username (no backfill needed)", { profile_id: profile.id, telegram_id: tgId });
   }
 
   // Refresh @username metadata for admin display only (does NOT affect login).
-  if (tgUsername && profile.telegram_username !== tgUsername) {
+  if (tgUsername && (profile.telegram_username || "").toLowerCase() !== tgUsername) {
     await admin.from("profiles").update({ telegram_username: tgUsername }).eq("id", profile.id);
   }
 
