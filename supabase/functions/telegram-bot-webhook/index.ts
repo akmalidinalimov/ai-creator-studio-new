@@ -1155,7 +1155,9 @@ async function buildHomeworkMessage(
       } else if (ungraded.length === 0) {
         lines.push(t.hwModuleAllDone);
       } else if (topic) {
-        lines.push(t.hwSubmitHint(m.position + 1, ungraded[0].task_number || 1));
+        const u0 = ungraded[0];
+        const u0Tn: any = u0.parent_id ? `${parentTaskNum.get(u0.parent_id) || 1}.S${u0.sap_number ?? "?"}` : (u0.task_number || 1);
+        lines.push(t.hwSubmitHint(m.position + 1, u0Tn));
       }
       lines.push("");
     }
