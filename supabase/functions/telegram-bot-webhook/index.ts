@@ -2712,9 +2712,9 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       try { await sendMessage(profile.telegram_id, t.hwReceived(mn, tn)); } catch (_e) {}
     }
 
-    // Queue teacher DM (handles RBAC, throttling, quiet hours)
+    // Queue teacher DM (handles RBAC, throttling, quiet hours) + immediate send
     const subId = upserted?.id;
-    await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId, moduleId);
+    await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId, intent.assignment_id, moduleId);
 
     // Invalidate any cached "stats" for the student so next /galaba is fresh
     cacheInvalidateUser(profile.id);
@@ -3064,7 +3064,7 @@ async function notifyTeachersOfSubmission(
 
     const studentName = [studentProfile.name, studentProfile.last_name].filter(Boolean).join(" ") || "—";
 
-    await admin.from("homework_teacher_dm_queue").insert({
+    const { data: queued } = await admin.from("homework_teacher_dm_queue").insert({
       submission_id: submissionId,
       teacher_id: teacherId,
       student_id: studentProfile.id,
@@ -3078,7 +3078,34 @@ async function notifyTeachersOfSubmission(
       message_url: messageUrl,
       scheduled_for: scheduled.toISOString(),
       queued_for_quiet_hours: quiet,
-    });
+    }).select("id").maybeSingle();
+
+    // Immediate teacher DM (skip during quiet hours so cron delivers at 08:00)
+    if (!quiet) {
+      const { data: teacher } = await admin
+        .from("profiles")
+        .select("id, telegram_id, notifications_enabled, name, last_name")
+        .eq("id", teacherId)
+        .maybeSingle();
+      if (teacher?.telegram_id && teacher.notifications_enabled !== false) {
+        const { data: grp } = await admin.from("groups").select("name").eq("id", groupId).maybeSingle();
+        const moduleName = `Modul ${mn}`;
+        const body = hwTeacherBody(studentName, grp?.name || "—", moduleName, aTitle || "");
+        const inlineKb = [
+          [{ text: "🎯 Baholash", callback_data: `grade_task:${assignmentId}:${studentProfile.id}` }],
+          [{ text: "📌 Topikga o'tish", url: messageUrl }],
+        ];
+        try {
+          await sendMessage(Number(teacher.telegram_id), body, { inline_keyboard: inlineKb });
+          if (queued?.id) {
+            await admin.from("homework_teacher_dm_queue").update({ sent_at: new Date().toISOString() }).eq("id", queued.id);
+          }
+        } catch (e) {
+          console.log("teacher_dm_immediate_failed", JSON.stringify({ teacher_id: teacherId, err: String(e) }));
+          // leave queue row unsent so cron retries
+        }
+      }
+    }
   } catch (e) {
     console.error("notifyTeachersOfSubmission error", e);
   }
