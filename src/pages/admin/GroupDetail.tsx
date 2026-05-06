@@ -309,8 +309,8 @@ export default function GroupDetail() {
       const resultsArr: any[] = res?.results || [];
       const created = resultsArr.filter((x) => x.status === "created").length;
       const updated = resultsArr.filter((x) => x.status === "updated").length;
-      const skipped = resultsArr.filter((x) => x.status === "skipped_already_in_group").length;
-      const failed = resultsArr.filter((x) => x.status === "error" || x.status === "invalid_email");
+      const skipped = resultsArr.filter((x) => x.status === "skipped_already_in_group" || x.status === "already_in_group").length;
+      const failed = resultsArr.filter((x) => x.status === "error" || x.status === "invalid_email" || x.status === "role_conflict");
       const okCount = created + updated + skipped;
       const csvRowsCount = res?.csv_rows ?? toSend.length;
       const groupCountAfter = res?.group_count_after;
