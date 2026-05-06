@@ -2835,6 +2835,22 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
     }
     res.resolved_profile_id = profile.id;
 
+    // Pick the next un-submitted (or un-graded) leaf for this student.
+    // If all are graded, fall back to the latest leaf so we still attach to something.
+    const leafIds = leaves.map((l: any) => l.id);
+    const { data: existingSubs } = await admin
+      .from("homework_submissions")
+      .select("assignment_id, score")
+      .eq("user_id", profile.id)
+      .in("assignment_id", leafIds);
+    const subMap = new Map((existingSubs || []).map((s: any) => [s.assignment_id, s]));
+    let asg: any = leaves.find((l: any) => {
+      const s = subMap.get(l.id);
+      return !s || s.score == null;
+    });
+    if (!asg) asg = leaves[leaves.length - 1];
+    res.matched_assignment_id = asg.id;
+
     console.log("homework_event", JSON.stringify({
       chat_id: chatId, thread_id: threadId, resolved_group: group.id,
       resolved_module: moduleId, resolved_profile: profile.id,
