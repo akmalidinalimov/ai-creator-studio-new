@@ -1679,7 +1679,7 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
         { text: t.tKbStudents, callback_data: `tg:pick:tstudents:${g.id}` },
       ]];
       if (groupsAll.length >= 2) {
-        rows.push([{ text: "🔄 Guruhni o'zgartirish", callback_data: `tg:pick:switch:${g.id}` }]);
+        rows.push([{ text: "🔄 Guruhni o'zgartirish", callback_data: `tg:switch` }]);
       }
       await sendMessage(chatId, text, { inline_keyboard: rows });
     } catch (e: any) {
