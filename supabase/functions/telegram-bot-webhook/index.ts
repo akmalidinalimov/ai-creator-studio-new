@@ -836,7 +836,43 @@ async function getDefaultCourseId(admin: any): Promise<string | null> {
     .order("created_at", { ascending: true })
     .limit(1)
     .maybeSingle();
-  return data?.id ?? null;
+
+async function resolveProfileForTelegramUser(
+  admin: any,
+  tgId: number,
+  tgUsernameRaw: string | null | undefined,
+  source: "bot" | "web" = "bot",
+) {
+  const tgUsername = (tgUsernameRaw || "").replace(/^@+/, "").toLowerCase();
+  let profile = await findProfileByTelegramId(admin, tgId);
+  let matchedBy: "telegram_id" | "telegram_username" = "telegram_id";
+  if (!profile && tgUsername) {
+    profile = await findProfileByUsername(admin, tgUsername);
+    if (profile) matchedBy = "telegram_username";
+  }
+  if (!profile) return null;
+  if (!profile.telegram_id) {
+    await admin
+      .from("profiles")
+      .update({ telegram_id: tgId, updated_at: new Date().toISOString() })
+      .eq("id", profile.id)
+      .is("telegram_id", null);
+    profile.telegram_id = tgId;
+    console.log("[telegram-auth] backfilled telegram_id", { profile_id: profile.id, telegram_id: tgId, matched_by: matchedBy, source });
+    try {
+      await admin.from("audit_log").insert({
+        actor_user_id: profile.id,
+        target_user_id: profile.id,
+        action: "profile_telegram_id_backfilled",
+        new_value: { profile_id: profile.id, telegram_id: tgId, telegram_username: tgUsername, source },
+      });
+    } catch (_e) { /* ignore */ }
+  }
+  if (tgUsername && (profile.telegram_username || "").toLowerCase() !== tgUsername) {
+    await admin.from("profiles").update({ telegram_username: tgUsername }).eq("id", profile.id);
+    profile.telegram_username = tgUsername;
+  }
+  return profile;
 }
 
 async function getFirstLesson(admin: any, courseId: string) {
