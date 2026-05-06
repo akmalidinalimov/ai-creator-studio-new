@@ -9,7 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { getSetting } from "@/lib/settings";
@@ -38,8 +39,12 @@ export default function AdminHomework() {
     parentTaskNumber?: number;
     nextSapNumber?: number;
   } | null>(null);
+  const [newModule, setNewModule] = useState<{ title: string; course_id: string } | null>(null);
+  const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
 
   const load = async () => {
+    const { data: cs } = await supabase.from("courses").select("id, title").order("created_at");
+    setCourses((cs as any) || []);
     const { data: ms } = await supabase
       .from("modules")
       .select("id, title, course_id, courses(title)")
@@ -137,15 +142,39 @@ export default function AdminHomework() {
     if (error) toast.error(error.message); else load();
   };
 
+  const createModule = async () => {
+    if (!newModule?.title.trim() || !newModule.course_id) { toast.error("Sarlavha va kurs kerak"); return; }
+    const courseModules = modules.filter(m => m.course_id === newModule.course_id);
+    const nextPos = courseModules.length;
+    const { error } = await supabase.from("modules").insert({
+      course_id: newModule.course_id,
+      title: newModule.title.trim().slice(0, 200),
+      position: nextPos,
+    });
+    if (error) { toast.error(error.message); return; }
+    toast.success("Modul yaratildi");
+    setNewModule(null);
+    load();
+  };
+
+  const openNewModule = () => {
+    setNewModule({ title: "", course_id: courses[0]?.id || "" });
+  };
+
   return (
     <PageShell>
       <div className="max-w-4xl space-y-6">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight">📝 Uy vazifalari</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Har modulga bir nechta vazifa qo'shing. Standart: {defaults.count} ta vazifa, max bal {defaults.max}.
-            Har vazifaga SAP (sub-vazifa) qo'shish mumkin. Modul bahosi — barcha SAP/vazifalar ballarining yig'indisi.
-          </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-semibold tracking-tight">📝 Uy vazifalari</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Har modulga bir nechta vazifa qo'shing. Standart: {defaults.count} ta vazifa, max bal {defaults.max}.
+              Har vazifaga SAP (sub-vazifa) qo'shish mumkin. Modul bahosi — barcha SAP/vazifalar ballarining yig'indisi.
+            </p>
+          </div>
+          <Button onClick={openNewModule} className="shrink-0">
+            <Plus className="h-4 w-4 mr-1" /> Yangi modul
+          </Button>
         </div>
 
         <div className="space-y-4">
@@ -272,6 +301,40 @@ export default function AdminHomework() {
               onSave={save}
             />
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!newModule} onOpenChange={(o) => !o && setNewModule(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Yangi modul</DialogTitle></DialogHeader>
+          {newModule && (
+            <div className="space-y-3">
+              <div>
+                <Label>Modul sarlavhasi</Label>
+                <Input
+                  value={newModule.title}
+                  onChange={(e) => setNewModule({ ...newModule, title: e.target.value })}
+                  placeholder="Masalan: 4- MODUL: ..."
+                />
+              </div>
+              {courses.length > 1 ? (
+                <div>
+                  <Label>Kurs</Label>
+                  <Select value={newModule.course_id} onValueChange={(v) => setNewModule({ ...newModule, course_id: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {courses.map((c) => <SelectItem key={c.id} value={c.id}>{c.title}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : (
+                <div className="text-xs text-muted-foreground">Kurs: {courses[0]?.title}</div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button onClick={createModule}>💾 Yaratish</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </PageShell>
