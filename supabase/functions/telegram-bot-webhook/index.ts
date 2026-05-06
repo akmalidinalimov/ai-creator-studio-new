@@ -1735,14 +1735,49 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
   }
 
   if (cmd === "/ttop") {
-    const { data } = await admin.rpc("staff_top_students", { _lim: 10 });
-    const rows = (data || []) as any[];
-    if (!rows.length) {
-      await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher");
-      return true;
+    const g = activeGroup!;
+    try {
+      const { data: profs } = await admin.from("profiles").select("id, name, last_name").eq("group_id", g.id);
+      const profIds = ((profs || []) as any[]).map((p) => p.id);
+      const profMap = new Map<string, any>(((profs || []) as any[]).map((p) => [p.id, p]));
+      if (!profIds.length) {
+        await sendWithKeyboard(chatId, `🏆 Top talabalar — ${csvEscapeHtml(g.name)}\n\nHali hech kim baholanmagan.`, locale, false, "teacher");
+        return true;
+      }
+      const { data: subs } = await admin
+        .from("homework_submissions")
+        .select("user_id, score, assignment_id")
+        .in("user_id", profIds)
+        .not("score", "is", null);
+      const subRows = (subs || []) as any[];
+      if (!subRows.length) {
+        await sendWithKeyboard(chatId, `🏆 Top talabalar — ${csvEscapeHtml(g.name)}\n\nHali hech kim baholanmagan.`, locale, false, "teacher");
+        return true;
+      }
+      const aIds = Array.from(new Set(subRows.map((r) => r.assignment_id)));
+      const { data: asgs } = await admin.from("homework_assignments").select("id, max_score").in("id", aIds);
+      const maxMap = new Map<string, number>(((asgs || []) as any[]).map((a) => [a.id, Number(a.max_score) || 10]));
+      const totals = new Map<string, { score: number; max: number }>();
+      for (const s of subRows) {
+        const cur = totals.get(s.user_id) || { score: 0, max: 0 };
+        cur.score += Number(s.score) || 0;
+        cur.max += maxMap.get(s.assignment_id) || 10;
+        totals.set(s.user_id, cur);
+      }
+      const ranked = Array.from(totals.entries())
+        .map(([uid, v]) => ({ uid, ...v, p: profMap.get(uid) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 10);
+      const lines = ranked.map((r, i) => {
+        const nm = [r.p?.name, r.p?.last_name].filter(Boolean).join(" ").trim() || "—";
+        const pct = r.max > 0 ? Math.round((r.score / r.max) * 100) : 0;
+        return `${i + 1}. <b>${csvEscapeHtml(nm)}</b> — ${r.score}/${r.max} (${pct}%)`;
+      });
+      await sendWithKeyboard(chatId, `🏆 Top talabalar — ${csvEscapeHtml(g.name)}\n\n${lines.join("\n")}\n\n<i>Faqat baholangan vazifalar hisoblanadi.</i>`, locale, false, "teacher");
+    } catch (e: any) {
+      console.error("[bot:/ttop] failed", e?.message || e);
+      await sendWithKeyboard(chatId, `⚠️ Top talabalarni yuklashda xato: ${e?.message || e}`, locale, false, "teacher");
     }
-    const lines = rows.map((r, i) => `${i + 1}. <b>${csvEscapeHtml(r.name || "—")}</b> ${r.telegram_username ? "@" + r.telegram_username : ""} — ✅ ${r.completed_lessons} · 🎯 ${r.avg_score}`);
-    await sendWithKeyboard(chatId, `<b>${t.tKbTop}</b>\n\n${lines.join("\n")}`, locale, false, "teacher");
     return true;
   }
 
