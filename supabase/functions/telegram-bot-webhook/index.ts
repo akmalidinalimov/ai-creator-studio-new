@@ -3076,7 +3076,8 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
     } else if (asg.task_number) {
       asgLabel = `V${asg.task_number} — ${asg.title || ""}`;
     }
-    const body = hwTeacherBody(studentName, group.name || "—", moduleName, asgLabel);
+    const lateSuffix = isLate ? `\n⏰ Kechikkan: ${lateDays} kun.` : "";
+    const body = hwTeacherBody(studentName, group.name || "—", moduleName, asgLabel) + lateSuffix;
     const inlineKb = [
       [{ text: "🎯 Baholash", callback_data: `grade_task:${asg.id}:${profile.id}` }],
       [{ text: "📌 Topikga o'tish", url: messageUrl }],
