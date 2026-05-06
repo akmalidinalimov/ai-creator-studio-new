@@ -873,6 +873,8 @@ async function resolveProfileForTelegramUser(
     if (profile) matchedBy = "telegram_username";
   }
   if (!profile) return null;
+  // v3.14.27: archived profiles are treated as unregistered for the bot.
+  if (profile.status && profile.status !== "active") return null;
   if (!profile.telegram_id) {
     await admin
       .from("profiles")
