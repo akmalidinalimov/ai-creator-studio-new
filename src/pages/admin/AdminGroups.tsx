@@ -209,7 +209,7 @@ export default function AdminGroups() {
                     const cls = ll.total === 0 ? "bg-muted text-muted-foreground" : ll.logged === 0 ? "bg-rose-500 text-white" : pct < 50 ? "bg-amber-500 text-white" : "bg-emerald-500 text-white";
                     return <span className={`inline-block px-2 py-0.5 rounded text-xs ${cls}`} title={`${ll.logged}/${ll.total} kirgan`}>{ll.logged}/{ll.total}</span>;
                   })()}</TableCell>
-                  <TableCell><span className={`inline-block px-2 py-0.5 rounded text-white text-xs ${hColor}`}>{h}</span></TableCell>
+                  <TableCell><span className={`inline-block px-2 py-0.5 rounded text-xs ${aColor}`} title={`${a3.active}/${a3.total} faol (3 kun)`}>{a3.active}/{a3.total}{a3.total > 0 ? ` · ${Math.round(aPct)}%` : ""}</span></TableCell>
                   <TableCell>{(() => {
                     const tt = topics[g.id] || { configured: 0, total: 0 };
                     const cls = tt.total === 0 ? "bg-muted text-muted-foreground" : tt.configured === 0 ? "bg-rose-500 text-white" : tt.configured < tt.total ? "bg-amber-500 text-white" : "bg-emerald-500 text-white";
