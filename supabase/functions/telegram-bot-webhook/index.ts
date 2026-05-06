@@ -2130,14 +2130,7 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   }
 
   if (!profile) {
-    if (cmd === "/start") {
-      const enroll = await getEnrollmentSettings(admin, locale);
-      await sendMessage(chatId, enroll.message, {
-        inline_keyboard: [[{ text: enroll.buttonLabel, url: enroll.formUrl }]],
-      });
-    } else {
-      await sendMessage(chatId, t.noProfile);
-    }
+    await sendUnregisteredReply(chatId, msg.from);
     return;
   }
 
