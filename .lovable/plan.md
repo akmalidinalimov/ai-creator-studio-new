@@ -1,41 +1,42 @@
-## Root cause
+## Goal
 
-Students do successfully submit homework (rows appear in `homework_submissions`), but the teacher never gets a DM. The submission flow goes through the legacy intent path `handleGroupTopicMessage` in `supabase/functions/telegram-bot-webhook/index.ts`. That path calls:
+Add `/start` (and the other commonly-used commands) to the blue **Menu** button next to the Telegram message input, so users can tap "Menu → /start" instead of typing it.
 
-```ts
-await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId, moduleId);
-// 9 args
+Telegram populates that menu from `setMyCommands`. This is a one-time API call per bot — not something to do on every webhook hit.
+
+## Approach
+
+Run `setMyCommands` once via the Bot API. Commands and short descriptions in 3 locales (uz/ru/en) so the menu localizes for each user.
+
+**Commands to register** (covering both student and teacher/admin daily use, all already implemented in `telegram-bot-webhook/index.ts`):
+
+- `/start` — Boshlash / Начать / Start
+- `/davom` — Darsni davom ettirish / Продолжить урок / Continue lesson
+- `/vazifalar` — Vazifalar / Задания / Homework
+- `/galaba` — Yutuqlarim / Достижения / Achievements
+- `/dars` — Bugungi dars / Урок дня / Today's lesson
+- `/sertifikat` — Sertifikat / Сертификат / Certificate
+- `/til` — Tilni almashtirish / Сменить язык / Language
+- `/yordam` — Yordam / Помощь / Help
+
+(Teacher/admin commands like `/baholash`, `/analitika` are kept out of the public menu — they're available via the persistent reply keyboard for those personas.)
+
+## Execution
+
+Run `setMyCommands` three times from the sandbox using curl against `api.telegram.org` with the existing `TELEGRAM_BOT_TOKEN` secret, once per `language_code` (`uz`, `ru`, `en`) plus a default call without language to cover other locales.
+
+```
+POST https://api.telegram.org/bot<token>/setMyCommands
+{ "commands": [...], "language_code": "uz" }
 ```
 
-but the function signature expects 10 params:
+Also call `setChatMenuButton` with `{ "menu_button": { "type": "commands" } }` to ensure the Menu button shows the commands list (this is the default, but explicit guarantees it isn't stuck on a previously-set web_app button).
 
-```ts
-notifyTeachersOfSubmission(admin, studentProfile, groupId, mn, tn, aTitle, messageUrl, submissionId, assignmentId, moduleId)
-```
-
-The `assignmentId` argument is missing, so `moduleId` is silently received as `assignmentId` and `moduleId` ends up `undefined`. The subsequent `INSERT` into `homework_teacher_dm_queue` violates the NOT NULL `module_id` constraint and silently fails inside the function's try/catch. Result: queue is empty (verified: 0 rows), `notify-homework-submission` cron has nothing to send, teacher never gets a DM.
-
-(The other path, `autoDetectHomeworkSubmission`, sends teacher DMs synchronously — but in production all current submissions land via the legacy intent path so they never trigger that DM.)
-
-## Fix — `supabase/functions/telegram-bot-webhook/index.ts`
-
-1. **Fix the call signature** at line ~2717 in `handleGroupTopicMessage`:
-   ```ts
-   await notifyTeachersOfSubmission(
-     admin, profile, intent.group_id,
-     mn, tn, aTitle, messageUrl,
-     subId, intent.assignment_id, moduleId
-   );
-   ```
-
-2. **Send the teacher DM immediately** (in addition to queuing), so the teacher is notified at the same moment as the student rather than waiting up to ~1 minute for the next cron tick. Approach: after `notifyTeachersOfSubmission` queues the row, also try a direct `sendMessage` to the teacher with the same body + buttons used by the auto-detect path (`hwTeacherBody`, "🎯 Baholash" + "📌 Topikga o'tish"). If the immediate send succeeds, mark the queue row `sent_at = now()` so the cron does not double-send. Reuse the existing teacher RBAC + `notifications_enabled` + quiet-hours checks (skip immediate send during 22:00–08:00 Tashkent so quiet hours still queue for morning delivery).
-
-3. Keep the cron (`notify-homework-submission`) untouched — it remains the safety net for retries / quiet-hours delivery and for any future submission code paths.
+No code changes to the webhook function are needed — registration is a one-shot bot-config operation.
 
 ## Verification
 
-1. Student submits homework in a topic via the legacy `/vazifalar → 📤 Topshirish` flow.
-2. Student gets the existing "✅ Vazifangiz qabul qilindi" DM.
-3. Teacher receives a DM "🆕 Yangi vazifa topshirildi …" within seconds, with "🎯 Baholash" + "📌 Topikga o'tish" buttons.
-4. Confirm a row appears in `homework_teacher_dm_queue` with `sent_at` populated (not stuck at NULL).
-5. Verify quiet-hours window still queues for next morning instead of waking the teacher.
+1. After running, in Telegram open a chat with the bot.
+2. The blue "Menu" button next to the input should list `/start` first plus the other commands.
+3. Switch Telegram interface to Russian — descriptions update accordingly.
+4. Tap `/start` from the menu — the existing `/start` handler in the webhook fires and replies with the welcome / main keyboard.
