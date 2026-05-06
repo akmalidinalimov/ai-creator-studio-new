@@ -2049,7 +2049,10 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
   if (sub.telegram_message_url) {
     const tt = T[locale] as any;
     await sendMessage(chatId, `📂 ${sub.telegram_file_kind || "file"}`, {
-      inline_keyboard: [[{ text: tt.hwTeacherBtnFile, url: sub.telegram_message_url }]],
+      inline_keyboard: [[
+        { text: tt.hwTeacherBtnFile, url: sub.telegram_message_url },
+        { text: tt.gradeOpenSubmissionPostBtn, url: sub.telegram_message_url },
+      ]],
     });
   }
   // Legacy web-source submission: show signed image URL
