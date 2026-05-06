@@ -3334,6 +3334,9 @@ Deno.serve(async (req) => {
     }));
   } catch (_e) { /* noop */ }
 
+  // v3.14.33: persist EVERY incoming update to webhook_inbox (best-effort, never fails request).
+  const inboxId = await logWebhookInbox(admin, update);
+
   try {
     // Treat both message and channel_post as inbound for group topics (forum supergroups can deliver either)
     const inbound = update.message || update.channel_post;
@@ -3345,7 +3348,10 @@ Deno.serve(async (req) => {
         // v3.14.29: passively record topic messages for Statistika analytics.
         try { await recordGroupMessageEvent(admin, msg); } catch (e) { console.error("recordGroupMessageEvent failed", e); }
         // v3.14.32: auto-detect homework submission (no /vazifalar intent required).
-        try { await autoDetectHomeworkSubmission(admin, msg); } catch (e) { console.error("autoDetectHomeworkSubmission failed", e); }
+        try { await autoDetectHomeworkSubmission(admin, msg, inboxId); } catch (e) {
+          console.error("autoDetectHomeworkSubmission failed", e);
+          await updateInboxResolution(admin, inboxId, { skip_reason: "outer_exception", outer_exception: String(e) });
+        }
         // Legacy intent-based flow (backward compat for /vazifalar → 📤 Topshirish).
         await handleGroupTopicMessage(admin, msg);
         return new Response("ok", { status: 200, headers: corsHeaders });
