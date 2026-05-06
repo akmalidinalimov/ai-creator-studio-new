@@ -802,7 +802,7 @@ function cacheInvalidateUser(userId: string) {
 async function findProfileByTelegramId(admin: any, tgId: number) {
   const { data } = await admin
     .from("profiles")
-    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id")
+    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id, status")
     .eq("telegram_id", tgId)
     .maybeSingle();
   return data;
@@ -810,12 +810,11 @@ async function findProfileByTelegramId(admin: any, tgId: number) {
 
 async function findProfileByUsername(admin: any, username: string) {
   // Step 2 fallback: only match profiles WITHOUT a telegram_id yet (case-insensitive, strip leading @).
-  // If multiple match (shouldn't happen post unique index), prefer most recently updated.
   const cleaned = (username || "").replace(/^@+/, "").toLowerCase();
   if (!cleaned) return null;
   const { data } = await admin
     .from("profiles")
-    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id")
+    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id, status")
     .is("telegram_id", null)
     .ilike("telegram_username", cleaned)
     .order("updated_at", { ascending: false })
@@ -826,6 +825,27 @@ async function findProfileByUsername(admin: any, username: string) {
   }
   return data[0];
 }
+
+// v3.14.27: in-memory throttle for unregistered users (1 reply / 60s per telegram_id).
+const UNREGISTERED_REPLY_TTL_MS = 60_000;
+const unregisteredLastReplyAt = new Map<number, number>();
+
+const UNREGISTERED_TEXT = "Salom! Siz hali AI Creators Academy platformasida ro'yxatdan o'tmagansiz.\n\nRo'yxatdan o'tish uchun adminga murojaat qiling: @shahlo_alikhanova\n\nYoki saytdan ro'yxatdan o'ting: https://aicreator.academy";
+
+async function sendUnregisteredReply(
+  chatId: number,
+  from: { id: number; username?: string; first_name?: string } | null | undefined,
+) {
+  const tgId = from?.id ?? chatId;
+  console.log("[bot:unregistered]", { telegram_id: tgId, username: from?.username || null, first_name: from?.first_name || null });
+  const now = Date.now();
+  const last = unregisteredLastReplyAt.get(tgId) || 0;
+  if (now - last < UNREGISTERED_REPLY_TTL_MS) return;
+  unregisteredLastReplyAt.set(tgId, now);
+  // Strip any cached reply keyboard from a prior registered session.
+  await sendMessage(chatId, UNREGISTERED_TEXT, { remove_keyboard: true });
+}
+
 
 async function getDefaultCourseId(admin: any): Promise<string | null> {
   const { data } = await admin
