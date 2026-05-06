@@ -1656,31 +1656,29 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
 
   if (cmd === "/thealth") {
     const g = activeGroup!;
-    const lastSignInMap = new Map<string, string | null>();
     try {
-      let page = 1;
-      while (true) {
-        const { data: usrs } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
-        const arr = ((usrs as any)?.users || []) as any[];
-        for (const u of arr) lastSignInMap.set(u.id, u.last_sign_in_at || null);
-        if (arr.length < 1000) break;
-        page++;
-        if (page > 20) break;
+      let logged = 0;
+      let total = 0;
+      const { data: stats, error: rpcErr } = await admin.rpc("admin_group_login_stats");
+      if (rpcErr) throw rpcErr;
+      const row = ((stats || []) as any[]).find((r) => r.group_id === g.id);
+      if (row) {
+        total = Number(row.total_active) || 0;
+        logged = Number(row.logged_in_count) || 0;
+      } else {
+        const { count } = await admin.from("profiles").select("id", { count: "exact", head: true }).eq("group_id", g.id);
+        total = count || 0;
       }
-    } catch (_e) { /* fall through; logged stays 0 */ }
-    const { data: profs } = await admin
-      .from("profiles")
-      .select("id, status, archived_at")
-      .eq("group_id", g.id);
-    const allRows = (profs || []) as any[];
-    const total = allRows.length;
-    const logged = allRows.filter((p) => !!lastSignInMap.get(p.id)).length;
-    const never = Math.max(0, total - logged);
-    const pct = total > 0 ? Math.round((logged / total) * 100) : 0;
-    const link = await createMagicLink(admin, teacherId, "teacher_dashboard", "/teacher/dashboard");
-    await sendMessage(chatId, t.tHealthLine(g.name, logged, total, never, total, pct), {
-      inline_keyboard: [[{ text: t.tHealthOpenSite, url: link }]],
-    });
+      const never = Math.max(0, total - logged);
+      const pct = total > 0 ? Math.round((logged / total) * 100) : 0;
+      const link = await createMagicLink(admin, teacherId, "teacher_dashboard", "/teacher/dashboard");
+      await sendMessage(chatId, t.tHealthLine(g.name, logged, total, never, total, pct), {
+        inline_keyboard: [[{ text: t.tHealthOpenSite, url: link }]],
+      });
+    } catch (e: any) {
+      console.error("[bot:/thealth] failed", e?.message || e);
+      await sendWithKeyboard(chatId, `⚠️ Holatni yuklashda xato: ${e?.message || e}`, locale, false, "teacher");
+    }
     return true;
   }
 
