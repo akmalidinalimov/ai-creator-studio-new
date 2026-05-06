@@ -93,16 +93,16 @@ export default function AdminGroups() {
       if (r.group_id) map[r.group_id] = (map[r.group_id] || 0) + 1;
     });
     setCounts(map);
-    // Per-group engagement stats (loggedin + active 3d)
-    const { data: ls } = await supabase.rpc("admin_group_engagement_stats" as any);
+    // Per-group engagement stats (loggedin + active in window)
+    const { data: ls } = await supabase.rpc("admin_group_engagement_stats" as any, { p_window_days: windowDays });
     const lmap: Record<string, { logged: number; total: number }> = {};
     const amap: Record<string, { active: number; total: number }> = {};
     ((ls as any[]) || []).forEach((r) => {
       lmap[r.group_id] = { logged: r.logged_in_count || 0, total: r.total_active || 0 };
-      amap[r.group_id] = { active: r.active_3d_count || 0, total: r.total_active || 0 };
+      amap[r.group_id] = { active: (r.active_count ?? r.active_3d_count) || 0, total: r.total_active || 0 };
     });
     setLogins(lmap);
-    setActive3d(amap);
+    setActiveWin(amap);
 
     // Topics configured per group
     const groupRows = ((g.data as any[]) || []) as Group[];
