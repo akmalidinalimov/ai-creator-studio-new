@@ -448,28 +448,21 @@ function GroupFormDialog({
               />
               {tgGroupErr && <p className="text-xs text-rose-600 mt-1">{tgGroupErr}</p>}
             </div>
-            {!courseId ? (
-              <p className="text-xs text-muted-foreground italic">Modul topiklari uchun avval kurs tanlang.</p>
-            ) : modules.length === 0 ? (
-              <p className="text-xs text-muted-foreground italic">Bu kursda modul yo'q.</p>
-            ) : (
-              <div className="space-y-2">
-                {modules.map((m, i) => (
-                  <div key={m.id}>
-                    <Label className="text-xs">Modul {i + 1} — {m.title} topiki</Label>
-                    <Input
-                      value={topicByMod[m.id] || ""}
-                      onChange={(e) => {
-                        setTopicByMod({ ...topicByMod, [m.id]: e.target.value });
-                        setErrByMod((prev) => { const n = { ...prev }; delete n[m.id]; return n; });
-                      }}
-                      placeholder="https://t.me/c/2123456789/15"
-                    />
-                    {errByMod[m.id] && <p className="text-xs text-rose-600 mt-1">{errByMod[m.id]}</p>}
-                  </div>
-                ))}
-              </div>
-            )}
+            <div>
+              <Label className="text-xs">Vazifalar topiki URL</Label>
+              <Input
+                value={hwTopicUrl}
+                onChange={(e) => { setHwTopicUrl(e.target.value); setHwTopicErr(""); }}
+                placeholder="https://t.me/c/2123456789/65"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Bitta topik barcha vazifalar uchun (yoki bo'sh qoldiring).
+              </p>
+              {hwTopicErr && <p className="text-xs text-rose-600 mt-1">{hwTopicErr}</p>}
+              {parsedTopicId !== null && (
+                <p className="text-xs text-emerald-600 mt-1">Topik ID: {parsedTopicId}</p>
+              )}
+            </div>
           </div>
         </div>
         <DialogFooter>
