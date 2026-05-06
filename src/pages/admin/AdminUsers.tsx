@@ -605,7 +605,7 @@ export default function AdminUsers() {
       else bump(gname, "errors");
     }
     const totalCreated = results.filter((x: any) => x.status === "created").length;
-    const totalErrors = results.filter((x: any) => x.status === "error" || x.status === "invalid_email").length;
+    const totalErrors = results.filter((x: any) => x.status === "error" || x.status === "invalid_email" || x.status === "role_conflict").length;
     const lines: string[] = [];
     for (const [key, b] of Array.from(buckets.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
       const label = key === "__none__"

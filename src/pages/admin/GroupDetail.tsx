@@ -139,34 +139,49 @@ export default function GroupDetail() {
     reload();
   };
 
-  // ---- Add by username/ID ----
+  // ---- Add by username/ID ---- v3.14.35: route through admin-create-students so role-exclusivity
+  // and duplicate-in-group checks are enforced server-side.
   const handleAddByLookup = async () => {
     if (!id) return;
     const q = addQuery.trim();
     if (!q) return;
     setAddBusy(true);
     try {
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(q);
-      const tgId = /^\d+$/.test(q) ? Number(q) : null;
-      const tgUser = q.replace(/^@/, "").toLowerCase();
+      const tgId = /^\d+$/.test(q) ? Number(q) : undefined;
+      const tgUser = !tgId ? q.replace(/^@/, "") : undefined;
 
-      let found: any = null;
-      if (isUuid) {
-        const { data } = await supabase.from("profiles").select("id, group_id").eq("id", q).maybeSingle();
-        found = data;
+      // Try to find existing profile so we can pass a name (the function requires name OR contacts).
+      let displayName = "";
+      let displayLast = "";
+      if (tgId) {
+        const { data } = await supabase.from("profiles").select("name,last_name").eq("telegram_id", tgId).maybeSingle();
+        if (data) { displayName = (data as any).name || ""; displayLast = (data as any).last_name || ""; }
+      } else if (tgUser) {
+        const { data } = await supabase.from("profiles").select("name,last_name").eq("telegram_username", tgUser as any).maybeSingle();
+        if (data) { displayName = (data as any).name || ""; displayLast = (data as any).last_name || ""; }
       }
-      if (!found && tgId) {
-        const { data } = await supabase.from("profiles").select("id, group_id").eq("telegram_id", tgId).maybeSingle();
-        found = data;
-      }
-      if (!found && tgUser) {
-        const { data } = await supabase.from("profiles").select("id, group_id").eq("telegram_username", tgUser as any).maybeSingle();
-        found = data;
-      }
-      if (!found) { toast.error("Profil topilmadi"); return; }
 
-      const { error } = await supabase.from("profiles").update({ group_id: id }).eq("id", found.id);
-      if (error) { toast.error(error.message); return; }
+      const r = await fetch(`${FN_BASE}/admin-create-students`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({
+          students: [{
+            name: displayName || tgUser || String(tgId || ""),
+            last_name: displayLast || undefined,
+            email: "",
+            telegram_user_id: tgId,
+            telegram_username: tgUser,
+            role: "student" as const,
+          }],
+          target_group_id: id,
+        }),
+      });
+      const res = await r.json();
+      const row = (res?.results || [])[0];
+      if (!r.ok || !row) { toast.error(res?.error || "Qo'shib bo'lmadi"); return; }
+      if (row.status === "role_conflict") { toast.error(row.error || "Rol mos kelmaydi"); return; }
+      if (row.status === "already_in_group") { toast.warning(row.error || "Allaqachon shu guruhda"); return; }
+      if (row.status === "error" || row.status === "invalid_email") { toast.error(row.error || "Xato"); return; }
       toast.success("Talaba guruhga qo'shildi");
       setAddQuery("");
       setOpenAdd(false);
@@ -294,8 +309,8 @@ export default function GroupDetail() {
       const resultsArr: any[] = res?.results || [];
       const created = resultsArr.filter((x) => x.status === "created").length;
       const updated = resultsArr.filter((x) => x.status === "updated").length;
-      const skipped = resultsArr.filter((x) => x.status === "skipped_already_in_group").length;
-      const failed = resultsArr.filter((x) => x.status === "error" || x.status === "invalid_email");
+      const skipped = resultsArr.filter((x) => x.status === "skipped_already_in_group" || x.status === "already_in_group").length;
+      const failed = resultsArr.filter((x) => x.status === "error" || x.status === "invalid_email" || x.status === "role_conflict");
       const okCount = created + updated + skipped;
       const csvRowsCount = res?.csv_rows ?? toSend.length;
       const groupCountAfter = res?.group_count_after;
