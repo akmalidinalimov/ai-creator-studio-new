@@ -1142,10 +1142,6 @@ async function buildHomeworkMessage(
           lines.push(t.hwTaskScored(tnLabel, s.score, a.max_score || 10, s.score_feedback || ""));
         } else {
           lines.push(t.hwTaskUnscored(tnLabel));
-          // Add a submit button for unscored assignments (only if topic + group exist)
-          if (groupId && topicMap.get(m.mid)) {
-            buttons.push([{ text: t.hwSubmitBtn(m.position + 1, tnLabel), callback_data: `hw:start:${a.id}` }]);
-          }
         }
       }
       const topic = topicMap.get(m.mid);
@@ -1160,6 +1156,11 @@ async function buildHomeworkMessage(
         lines.push(t.hwSubmitHint(m.position + 1, u0Tn));
       }
       lines.push("");
+
+      // One button per module (expands to per-SAP buttons via hw:mod callback).
+      if (groupId && topic && ungraded.length > 0) {
+        buttons.push([{ text: `📝 M${m.position + 1} — ${(m.title || "").slice(0, 40)}`, callback_data: `hw:mod:${m.mid}` }]);
+      }
     }
   } catch (e) {
     console.error("buildHomeworkMessage error", e);
@@ -3160,6 +3161,52 @@ async function handleCallback(admin: any, cq: any) {
 
   if (data === "ack:not_today") {
     await answerCallback(cq.id, "OK 👍");
+    return;
+  }
+
+  // Student tapped a per-module button in /vazifalar — show per-SAP submit buttons for that module.
+  if (data.startsWith("hw:mod:") && chatId) {
+    const moduleId = data.slice("hw:mod:".length);
+    const profile = await findProfileByTelegramId(admin, tgId);
+    if (!profile) { await answerCallback(cq.id); return; }
+    await answerCallback(cq.id);
+    const { data: allList } = await admin
+      .from("homework_assignments")
+      .select("id, title, max_score, task_number, sap_number, parent_id, module_id, is_active, modules(id, title, position)")
+      .eq("module_id", moduleId)
+      .eq("is_active", true);
+    const list = (allList || []) as any[];
+    if (!list.length) { await sendMessage(chatId, "Vazifa topilmadi."); return; }
+    const parentIdsWithSap = new Set(list.filter((a) => a.parent_id).map((a) => a.parent_id));
+    const leaves = list.filter((a) => a.parent_id || !parentIdsWithSap.has(a.id));
+    const parentTaskNum = new Map<string, number>();
+    list.filter((a) => !a.parent_id).forEach((p) => parentTaskNum.set(p.id, p.task_number || 1));
+    leaves.sort((a, b) => (a.task_number ?? 1) - (b.task_number ?? 1) || ((a.sap_number ?? 0) - (b.sap_number ?? 0)));
+    const leafIds = leaves.map((a) => a.id);
+    const { data: subs } = await admin
+      .from("homework_submissions")
+      .select("assignment_id, score")
+      .eq("user_id", profile.id)
+      .in("assignment_id", leafIds);
+    const subMap = new Map((subs || []).map((s: any) => [s.assignment_id, s]));
+    const modulePos = (list[0]?.modules?.position ?? 0) + 1;
+    const moduleTitle = list[0]?.modules?.title || "";
+    const buttons: any[][] = [];
+    const ungraded = leaves.filter((a) => {
+      const s: any = subMap.get(a.id);
+      return !(s && s.score != null);
+    });
+    for (const a of ungraded) {
+      const parentTn = a.parent_id ? (parentTaskNum.get(a.parent_id) || 1) : (a.task_number || 1);
+      const tnLabel = a.parent_id ? `V${parentTn}.S${a.sap_number ?? "?"}` : `V${parentTn}`;
+      const title = (a.title || "").slice(0, 30);
+      buttons.push([{ text: `📤 ${tnLabel} — ${title}`, callback_data: `hw:start:${a.id}` }]);
+    }
+    if (!buttons.length) {
+      await sendMessage(chatId, `✅ M${modulePos} — barcha vazifalar baholangan.`);
+      return;
+    }
+    await sendMessage(chatId, `📝 M${modulePos} — ${moduleTitle}\n\nQaysi vazifani topshirasiz?`, { inline_keyboard: buttons });
     return;
   }
 

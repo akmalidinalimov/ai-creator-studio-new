@@ -1,86 +1,100 @@
-## Goal
+## Problem analysis
 
-Add a true second level of homework: each module's existing V1/V2/V3 become **parent homeworks**, and each parent can hold 1–N **sub-tasks (SAPs)**. Students see one button per SAP, teachers get one notification per SAP submission, and the module score is the **sum of SAP scores**.
+There are two distinct bugs, both rooted in the same area (SAP support added on top of legacy single-task homeworks).
 
-Existing single-level homeworks keep working — a parent with zero SAPs behaves exactly like today.
+### 1. "duplicate key value violates unique constraint `homework_assignments_module_task_uniq`"
 
-## Data model
+The original migration (`20260503182607_…`) created the legacy uniqueness rule as a **unique INDEX**, not a constraint:
 
-Extend `homework_assignments` (nullable additions, no breaking change):
+```sql
+CREATE UNIQUE INDEX IF NOT EXISTS homework_assignments_module_task_uniq
+  ON public.homework_assignments(module_id, task_number);
+```
 
-- `parent_id uuid null` → references `homework_assignments(id) on delete cascade`. `null` = parent (current rows).
-- `sap_number int null` → ordering of SAPs inside a parent (1..N). `null` for parents.
-- Keep `task_number`, `max_score`, `is_active`, `prompt_*`, `due_days_after_module_unlock` on both parents and SAPs. For a parent with SAPs, parent's `max_score` is informational; effective max = Σ(SAP.max_score).
-- Index: `(parent_id, sap_number)`.
+The recent SAP migration (`20260506125414_…`) tried to remove it with:
 
-`homework_submissions` already has `assignment_id` — point it at the SAP id when SAPs exist, parent id otherwise. No schema change needed; submissions naturally become per-SAP.
+```sql
+ALTER TABLE … DROP CONSTRAINT IF EXISTS homework_assignments_module_task_uniq;
+```
 
-Update view `vw_module_homework_score` (or replace it) so module score = **sum of SAP scores per student per module** (ignoring parent rows that have SAPs, to avoid double-counting). Display as `total / Σmax`.
+`DROP CONSTRAINT` does nothing for a plain index, so the old `(module_id, task_number)` unique index is **still enforced**. When admin adds a SAP under V1 of M3, the SAP row reuses `module_id` + `task_number = 1` (the parent's number) → collision with the parent row → the error you saw.
 
-## Admin UI (`AdminHomework.tsx`)
+### 2. Telegram bot shows SAPs as separate top-level buttons next to M1, M2…
 
-Per parent row, add:
+In `telegram-bot-webhook/index.ts` `buildHomeworkMessage()`, the menu pushes **one inline button per leaf**:
 
-- "➕ SAP qo'shish" button → opens the same `AssignForm` in SAP mode (sets `parent_id`, auto `sap_number = next`).
-- Nested indented list of SAPs under the parent row (badge `S1`, `S2`, …) with edit / toggle / delete, mirroring parent controls.
-- Parent row shows aggregate: `Max: Σ SAP / Muddat: parent's value` when SAPs exist.
-- Validation: a parent cannot be deleted while it has SAPs (cascade handles DB, but confirm in UI).
+```ts
+buttons.push([{ text: t.hwSubmitBtn(m.position + 1, tnLabel), callback_data: `hw:start:${a.id}` }]);
+```
 
-The form gets one extra read-only field `parent_id` (hidden) and label switches "Yangi vazifa" ↔ "Yangi SAP".
+So a module with 3 SAPs produces 3 separate buttons (`M3.1`, `M3.2`, `M3.3`) all rendered flat in the same inline keyboard, with no visual hierarchy → looks like siblings of M1/M2 buttons.
 
-## Student UI (`HomeworkSection.tsx`)
+We want: **one button per module** (e.g. "M3 — module title"). Tapping it expands a second-level inline keyboard listing each SAP submit button for that module.
 
-For each parent assignment:
+---
 
-- If parent has **no SAPs** → render exactly as today (one card, one "Topikga o'tish" button).
-- If parent has **SAPs** → render parent header (title + cumulative score `Σscore / Σmax`), then a separate sub-card per SAP with:
-  - Badge `V{task_number}.S{sap_number}`, SAP title, SAP `max_score`, prompt.
-  - Its own "📌 Topikga o'tish" button (same module topic URL — shared per group_module_topics).
-  - Its own result block (✅ score/max + feedback or ⏳ pending).
+## Plan
 
-Module average box at top becomes `Σscore / Σmax` across all SAPs (and parents without SAPs).
+### A. Database fix (1 migration)
 
-## Telegram bot (`telegram-bot-webhook/index.ts`)
+Drop the lingering legacy unique index and re-confirm the partial indexes already added by the SAP migration.
 
-Submission flow already keys off `assignment_id`. Two adjustments:
+```sql
+-- Remove the legacy index that still enforces (module_id, task_number) uniqueness.
+DROP INDEX IF EXISTS public.homework_assignments_module_task_uniq;
 
-1. The "which assignment am I submitting?" picker after a student replies in a module topic must list **SAPs** (with parent context) instead of parents-with-SAPs. Logic: expand each parent that has children into its SAPs; leave parents-without-children as-is.
-2. `notifyTeachersOfSubmission` already runs per submission → automatically becomes per-SAP. Update the notification body to include parent title + SAP label, e.g. `V2 · S1 — "Brendlar uchun rasm"`. Deep-link button stays the same (message link).
+-- Sanity-recreate the partial indexes (idempotent).
+CREATE UNIQUE INDEX IF NOT EXISTS homework_assignments_module_task_parent_uniq
+  ON public.homework_assignments(module_id, task_number)
+  WHERE parent_id IS NULL;
 
-Quiet-hours / dedup logic unchanged.
+CREATE UNIQUE INDEX IF NOT EXISTS homework_assignments_parent_sap_uniq
+  ON public.homework_assignments(parent_id, sap_number)
+  WHERE parent_id IS NOT NULL;
+```
 
-## Teacher UI (`TeacherHomework.tsx`)
+After this, adding SAPs (which share `task_number` with their parent) works because the parent-only partial index excludes SAP rows.
 
-Each row already corresponds to one submission → naturally one-per-SAP. Add to the enrichment:
+### B. Telegram bot menu — collapse into one button per module
 
-- Show parent title + SAP label in the "Vazifa" column: `V2.S1 — Brendlar uchun rasm`.
-- Drawer header same labeling.
-- Max score per row already comes from the assignment row → works for SAPs.
+Edit `supabase/functions/telegram-bot-webhook/index.ts`:
 
-No structural changes; just label improvements.
+1. **`buildHomeworkMessage()`** (~line 1085–1169):
+   - Stop emitting one `hw:start:<assignmentId>` button per leaf.
+   - For each module that has at least one ungraded leaf and a configured group topic, emit **a single button**:
+     ```ts
+     { text: `📝 M${m.position+1} — ${m.title}`, callback_data: `hw:mod:${m.mid}` }
+     ```
+   - Keep the textual status block (V1/V1.S1 scored/unscored lines) as it is.
 
-## Scoring
+2. **New callback handler `hw:mod:<moduleId>`** (alongside existing `hw:start:` handler ~line 3167):
+   - Look up active assignments for that module + the user's submissions.
+   - Compute the SAP/parent leaves the same way as the picker.
+   - Render a new inline keyboard with one `hw:start:<assignmentId>` button per **ungraded** leaf, labeled `V{n}` or `V{n}.S{m}` plus the title (truncated).
+   - Use `editMessageText` (or send a new message) with the sub-menu and a "⬅️ Orqaga" button (`callback_data: hw:back`) that re-renders the top-level homework menu.
 
-- Per-SAP scoring unchanged (`score / max_score`).
-- Module total displayed to student & teacher = `Σ SAP.score / Σ SAP.max_score` (raw points).
-- Replace the normalization in `vw_module_homework_score` with sum-based aggregation. Keep the view name so admin module-stats keep working; column rename `avg_score_normalized` → `module_total` (and update the two readers in `AdminHomework.tsx` and any analytics).
+3. **`hw:back` handler**: re-invoke `buildHomeworkMessage(...)` and edit the message back to the module-list view.
 
-## Migration steps
+4. Keep the existing `hw:start:<id>` flow untouched — it's reused by the new sub-menu.
 
-1. **DB migration** (single migration):
-   - `ALTER TABLE homework_assignments ADD COLUMN parent_id uuid REFERENCES homework_assignments(id) ON DELETE CASCADE, ADD COLUMN sap_number int;`
-   - Index on `(parent_id, sap_number)`.
-   - Recreate `vw_module_homework_score` to sum SAP scores per `(module_id, profile_id)`, treating any parent with children as a passthrough container.
-   - RLS already covers child rows (same table, same policies).
+### C. No changes needed for
 
-2. **Admin UI** — add SAP CRUD under each parent row.
-3. **Student UI** — render SAPs as separate sub-cards.
-4. **Bot** — update submission picker + notification labels.
-5. **Teacher UI** — labeling only.
-6. **Smoke test**: existing module without SAPs, new module with 2 SAPs under V1, submit each SAP, verify two teacher notifications, verify cumulative score display.
+- Auto-routing of group-topic submissions (already picks the next un-graded leaf per student — verified earlier).
+- Admin UI flow (after the index is dropped, the existing "+SAP" button works).
+- Student web UI (`HomeworkSection.tsx`) — already groups SAPs under their parent visually.
+- Scoring view — already aggregates leaves correctly.
 
-## Out of scope
+---
 
-- Feature flags / staged rollout: skipping (low blast radius, parents without SAPs are unchanged).
-- Per-SAP topic routing (kept as same module topic per your answer).
-- Weighted scoring (raw sum only).
+## Files to touch
+
+- `supabase/migrations/<new>.sql` — drop legacy index.
+- `supabase/functions/telegram-bot-webhook/index.ts`
+  - `buildHomeworkMessage()` — emit one button per module.
+  - Callback handler section — add `hw:mod:<moduleId>` and `hw:back` branches; reuse leaf-rendering logic.
+
+## Validation
+
+1. After migration: in Admin Homework, add a SAP under M3 V1 — should succeed (no duplicate-key error).
+2. In Telegram bot menu: should show exactly one button per module (M1, M2, M3…). Tapping M3 should reveal V1.S1 / V1.S2 / V1.S3 submit buttons plus a Back button.
+3. Student submitting in the M3 group topic still routes to the next un-graded SAP (regression check).
