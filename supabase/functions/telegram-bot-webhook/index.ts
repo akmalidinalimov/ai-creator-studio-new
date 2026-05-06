@@ -1091,13 +1091,23 @@ async function buildHomeworkMessage(
     const [profRes, assignsRes] = await Promise.all([
       admin.from("profiles").select("group_id").eq("id", userId).maybeSingle(),
       admin.from("homework_assignments")
-        .select("id, title, max_score, task_number, module_id, is_active, modules(id, title, position, course_id)")
-        .eq("is_active", true).order("task_number", { ascending: true }),
+        .select("id, title, max_score, task_number, sap_number, parent_id, module_id, is_active, modules(id, title, position, course_id)")
+        .eq("is_active", true)
+        .order("task_number", { ascending: true })
+        .order("sap_number", { ascending: true, nullsFirst: true }),
     ]);
     const groupId = (profRes as any).data?.group_id || null;
-    const list = ((assignsRes as any).data || []) as any[];
-    if (!list.length) { lines.push(t.hwEmpty); return { text: lines.join("\n"), keyboard: null }; }
-    list.sort((a, b) => (a.modules?.position ?? 0) - (b.modules?.position ?? 0) || (a.task_number ?? 1) - (b.task_number ?? 1));
+    const allList = ((assignsRes as any).data || []) as any[];
+    if (!allList.length) { lines.push(t.hwEmpty); return { text: lines.join("\n"), keyboard: null }; }
+    // Compute leaves: a parent without children OR every SAP
+    const parentIdsWithSap = new Set(allList.filter((a) => a.parent_id).map((a) => a.parent_id));
+    const list = allList.filter((a) => a.parent_id || !parentIdsWithSap.has(a.id));
+    // Map parent task_number for label rendering
+    const parentTaskNum = new Map<string, number>();
+    allList.filter((a) => !a.parent_id).forEach((p) => parentTaskNum.set(p.id, p.task_number || 1));
+    list.sort((a, b) => (a.modules?.position ?? 0) - (b.modules?.position ?? 0)
+      || (a.task_number ?? 1) - (b.task_number ?? 1)
+      || ((a.sap_number ?? 0) - (b.sap_number ?? 0)));
 
     const aIds = list.map((a) => a.id);
     const moduleIds = Array.from(new Set(list.map((a) => a.module_id)));
