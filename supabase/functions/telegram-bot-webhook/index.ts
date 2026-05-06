@@ -372,6 +372,8 @@ const T = {
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ всё" : `${n} не оценено`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Перейти в топик модуля ${n}`,
+    gradeOpenSubmissionBtn: (tn: number) => `📌 Перейти к посту З${tn}`,
+    gradeOpenSubmissionPostBtn: "📌 Перейти к сданному посту",
     gradeBackList: "↩️ К списку студентов",
     gradeBackHome: "🏠 Главное меню",
     gradeNextPage: "⏭ Следующие 10",
