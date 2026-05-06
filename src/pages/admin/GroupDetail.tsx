@@ -413,7 +413,7 @@ export default function GroupDetail() {
               <Card className="p-4"><div className="text-xs text-muted-foreground">Active 7d</div><div className="text-2xl font-semibold">{overview.active_7d}</div></Card>
               <Card className="p-4"><div className="text-xs text-muted-foreground">Avg completion</div><div className="text-2xl font-semibold">{overview.avg_completion_pct}%</div></Card>
               <Card className="p-4"><div className="text-xs text-muted-foreground">Avg score</div><div className="text-2xl font-semibold">{overview.avg_score_pct}%</div></Card>
-              <Card className="p-4"><div className="text-xs text-muted-foreground">Health</div><div className="text-2xl font-semibold">{overview.health}</div></Card>
+              <Card className="p-4"><div className="text-xs text-muted-foreground">Active 3d</div><div className="text-2xl font-semibold">{overview.total_students > 0 ? Math.round((overview.active_7d / overview.total_students) * 100) : 0}%</div></Card>
             </div>
 
             {/* Telegram topics */}
