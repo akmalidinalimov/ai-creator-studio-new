@@ -2002,13 +2002,19 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
   const buttons: any[][] = [];
   for (const m of modules) {
     lines.push(`📚 <b>Modul ${m.mPos + 1} — ${csvEscapeHtml(m.mTitle)}</b>`);
+    let anyPostUrl = false;
     for (const it of m.items) {
       const tn = it.a.task_number || 1;
       lines.push(`   ⏳ V${tn}: ${csvEscapeHtml(it.a.title || "")}`);
       buttons.push([{ text: `M${m.mPos + 1}·V${tn} — ${it.a.title || ""}`.slice(0, 60), callback_data: `gs:open:${it.sub.id}` }]);
+      const postUrl = it.sub.telegram_message_url;
+      if (postUrl) {
+        anyPostUrl = true;
+        buttons.push([{ text: t.gradeOpenSubmissionBtn(tn), url: postUrl }]);
+      }
     }
     const url = topicMap.get(m.mid);
-    if (url) buttons.push([{ text: t.gradeOpenTopicBtn(m.mPos + 1), url }]);
+    if (url && !anyPostUrl) buttons.push([{ text: t.gradeOpenTopicBtn(m.mPos + 1), url }]);
     lines.push("");
   }
   buttons.push([{ text: t.gradeBackList, callback_data: "gs:list:0" }]);
