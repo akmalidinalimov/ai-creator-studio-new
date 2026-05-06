@@ -1969,7 +1969,7 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
   }
   const [{ data: prof }, { data: subs }] = await Promise.all([
     admin.from("profiles").select("name, last_name, group_id").eq("id", studentId).maybeSingle(),
-    admin.from("homework_submissions").select("id, assignment_id, submitted_at").eq("user_id", studentId).is("score", null).order("submitted_at", { ascending: true }),
+    admin.from("homework_submissions").select("id, assignment_id, submitted_at, telegram_message_url").eq("user_id", studentId).is("score", null).order("submitted_at", { ascending: true }),
   ]);
   const list = (subs || []) as any[];
   const name = [prof?.name, prof?.last_name].filter(Boolean).join(" ") || "—";
