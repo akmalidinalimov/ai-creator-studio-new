@@ -747,6 +747,7 @@ function buttonTextToCommand(text: string): string | null {
     if (t.tKbGrade && trimmed === t.tKbGrade) return "/baholash";
     if (t.tKbGraded && trimmed === t.tKbGraded) return "/baholar";
     if (t.tKbHealth && trimmed === t.tKbHealth) return "/thealth";
+    if (t.tKbHomework && trimmed === t.tKbHomework) return "/thomework";
   }
   return null;
 }
