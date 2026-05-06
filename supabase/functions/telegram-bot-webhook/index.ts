@@ -195,6 +195,8 @@ const T = {
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ hammasi" : `${n} vazifa baholanmagan`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Modul ${n} topikga o'tish`,
+    gradeOpenSubmissionBtn: (tn: number) => `📌 V${tn} postiga o'tish`,
+    gradeOpenSubmissionPostBtn: "📌 Topshirilgan postga o'tish",
     gradeBackList: "↩️ Talabalar ro'yxatiga",
     gradeBackHome: "🏠 Bosh menyu",
     gradeNextPage: "⏭ Keyingi 10",
