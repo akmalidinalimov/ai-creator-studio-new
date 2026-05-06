@@ -175,10 +175,10 @@ export default function AdminGroups() {
                 <TableHead>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <span className="inline-flex items-center gap-1 cursor-help">Faol (3 kun) <Info className="h-3 w-3 text-muted-foreground" /></span>
+                      <span className="inline-flex items-center gap-1 cursor-help">Faol ({windowDays} kun) <Info className="h-3 w-3 text-muted-foreground" /></span>
                     </TooltipTrigger>
                     <TooltipContent side="top" className="max-w-xs text-xs">
-                      So'nggi 3 kunda darsda faol bo'lgan talabalar
+                      So'nggi {windowDays} kunda darsda faol bo'lgan talabalar
                     </TooltipContent>
                   </Tooltip>
                 </TableHead>
