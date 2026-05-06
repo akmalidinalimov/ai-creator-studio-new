@@ -1136,14 +1136,15 @@ async function buildHomeworkMessage(
       lines.push(t.hwModuleHeader(m.position + 1, m.title, m.arr.length));
       for (const a of m.arr) {
         const s: any = subMap.get(a.id);
-        const tn = a.task_number || 1;
+        const parentTn = a.parent_id ? (parentTaskNum.get(a.parent_id) || 1) : (a.task_number || 1);
+        const tnLabel: any = a.parent_id ? `${parentTn}.S${a.sap_number ?? "?"}` : parentTn;
         if (s && s.score != null) {
-          lines.push(t.hwTaskScored(tn, s.score, a.max_score || 10, s.score_feedback || ""));
+          lines.push(t.hwTaskScored(tnLabel, s.score, a.max_score || 10, s.score_feedback || ""));
         } else {
-          lines.push(t.hwTaskUnscored(tn));
+          lines.push(t.hwTaskUnscored(tnLabel));
           // Add a submit button for unscored assignments (only if topic + group exist)
           if (groupId && topicMap.get(m.mid)) {
-            buttons.push([{ text: t.hwSubmitBtn(m.position + 1, tn), callback_data: `hw:start:${a.id}` }]);
+            buttons.push([{ text: t.hwSubmitBtn(m.position + 1, tnLabel), callback_data: `hw:start:${a.id}` }]);
           }
         }
       }
