@@ -142,6 +142,25 @@ export default function AdminHomework() {
     if (error) toast.error(error.message); else load();
   };
 
+  const createModule = async () => {
+    if (!newModule?.title.trim() || !newModule.course_id) { toast.error("Sarlavha va kurs kerak"); return; }
+    const courseModules = modules.filter(m => m.course_id === newModule.course_id);
+    const nextPos = courseModules.length;
+    const { error } = await supabase.from("modules").insert({
+      course_id: newModule.course_id,
+      title: newModule.title.trim().slice(0, 200),
+      position: nextPos,
+    });
+    if (error) { toast.error(error.message); return; }
+    toast.success("Modul yaratildi");
+    setNewModule(null);
+    load();
+  };
+
+  const openNewModule = () => {
+    setNewModule({ title: "", course_id: courses[0]?.id || "" });
+  };
+
   return (
     <PageShell>
       <div className="max-w-4xl space-y-6">
