@@ -9,8 +9,8 @@ const LABELS: Record<string, string> = {
   registered: "Ro'yxatdan o'tdi",
   logged_in: "Tizimga kirdi",
   watched_30s: "Birinchi darsni ko'rdi (30s+)",
-  finished_m1: "1-modulni tugatdi",
-  finished_m3: "3-modulgacha yetdi",
+  finished_m1: "1 modulni tugatdi",
+  finished_m3: "3 modulni tugatdi",
   finished_all: "Butun kursni tugatdi",
 };
 
