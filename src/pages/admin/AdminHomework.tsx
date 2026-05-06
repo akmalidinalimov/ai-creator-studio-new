@@ -43,6 +43,8 @@ export default function AdminHomework() {
   const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
 
   const load = async () => {
+    const { data: cs } = await supabase.from("courses").select("id, title").order("created_at");
+    setCourses((cs as any) || []);
     const { data: ms } = await supabase
       .from("modules")
       .select("id, title, course_id, courses(title)")
