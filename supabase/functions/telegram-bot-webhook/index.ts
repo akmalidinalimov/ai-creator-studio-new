@@ -642,7 +642,7 @@ function getTeacherKeyboard(locale: Locale) {
   return {
     keyboard: [
       [{ text: t.tKbGrade }, { text: t.tKbGraded }],
-      [{ text: t.tKbStats }, { text: t.tKbHealth }],
+      [{ text: t.tKbStats }, { text: t.tKbHomework }],
       [{ text: t.tKbStudents }, { text: t.tKbInactive }],
       [{ text: t.tKbTop }, { text: t.tKbBroadcast }],
       [{ text: t.tKbSettings }, { text: t.kbLang }],
@@ -747,6 +747,7 @@ function buttonTextToCommand(text: string): string | null {
     if (t.tKbGrade && trimmed === t.tKbGrade) return "/baholash";
     if (t.tKbGraded && trimmed === t.tKbGraded) return "/baholar";
     if (t.tKbHealth && trimmed === t.tKbHealth) return "/thealth";
+    if (t.tKbHomework && trimmed === t.tKbHomework) return "/thomework";
   }
   return null;
 }
@@ -854,7 +855,7 @@ async function sendUnregisteredReply(
   await sendMessage(chatId, enroll.message, {
     inline_keyboard: [[{ text: enroll.buttonLabel, url: enroll.formUrl }]],
   });
-}
+  }
 
 
 async function getDefaultCourseId(admin: any): Promise<string | null> {
@@ -1620,6 +1621,7 @@ async function showGroupPicker(chatId: number, locale: Locale, action: string, g
 const TEACHER_ACTION_CMD: Record<string, string> = {
   tstats: "/tstats",
   thealth: "/thealth",
+  thomework: "/thomework",
   tstudents: "/tstudents",
   tinactive: "/tinactive",
   tbroadcast: "/tbroadcast",
@@ -1646,7 +1648,7 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
   }
 
   // Group-scoped commands
-  const scopedCmds = new Set(["/tstats", "/thealth", "/tstudents", "/tinactive", "/tbroadcast", "/baholash", "/baholar", "/ttop"]);
+  const scopedCmds = new Set(["/tstats", "/thealth", "/thomework", "/tstudents", "/tinactive", "/tbroadcast", "/baholash", "/baholar", "/ttop"]);
   let activeGroup: { id: string; name: string } | null = null;
   if (scopedCmds.has(cmd)) {
     if (explicitGroupId) {
@@ -1737,6 +1739,40 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
     } catch (e: any) {
       console.error("[bot:/thealth] failed", e?.message || e);
       await sendWithKeyboard(chatId, `⚠️ Holatni yuklashda xato: ${e?.message || e}`, locale, false, "teacher");
+    }
+    return true;
+  }
+
+  if (cmd === "/thomework") {
+    const g = activeGroup!;
+    try {
+      const { data: rows, error: rpcErr } = await admin.rpc("admin_group_module_submissions", { p_caller_profile_id: teacherId });
+      if (rpcErr) throw rpcErr;
+      const mods = ((rows || []) as any[])
+        .filter((r) => r.group_id === g.id)
+        .sort((a, b) => (a.module_position ?? 0) - (b.module_position ?? 0));
+      const total = mods[0]?.total_students ?? 0;
+      const lines: string[] = [`📚 <b>Vazifa topshirilishi — ${csvEscapeHtml(g.name)}</b> (${total} talaba)`, ""];
+      const buttons: any[] = [];
+      if (!mods.length) {
+        lines.push("—");
+      } else {
+        for (const m of mods) {
+          const pct = m.total_students > 0 ? Math.round((m.submitted_count / m.total_students) * 100) : 0;
+          const pctStr = m.total_students > 0 ? `${pct}%` : "—";
+          const tag = `M${(m.module_position ?? 0) + 1}`;
+          const title = (m.module_title || "").slice(0, 30);
+          lines.push(`<code>${tag}</code> ${csvEscapeHtml(title)} — <b>${m.submitted_count}/${m.total_students}</b> (${pctStr})`);
+          buttons.push([
+            { text: `${tag} ✅ Topshirgan`, callback_data: `thw:sub:${g.id}:${m.module_id}` },
+            { text: `${tag} ❌ Topshirmagan`, callback_data: `thw:not:${g.id}:${m.module_id}` },
+          ]);
+        }
+      }
+      await sendMessage(chatId, lines.join("\n"), { inline_keyboard: buttons });
+    } catch (e: any) {
+      console.error("[bot:/thomework] failed", e?.message || e);
+      await sendWithKeyboard(chatId, `⚠️ Vazifalarni yuklashda xato: ${e?.message || e}`, locale, false, "teacher");
     }
     return true;
   }
@@ -3334,6 +3370,84 @@ async function handleCallback(admin: any, cq: any) {
   }
 
   // Teacher: re-show group picker
+  // Teacher: per-module homework drilldown (thw:sub / thw:not : <groupId> : <moduleId>)
+  if ((data.startsWith("thw:sub:") || data.startsWith("thw:not:")) && chatId) {
+    const profile = await findProfileByTelegramId(admin, tgId);
+    if (!profile) { await answerCallback(cq.id); return; }
+    const persona = await getPersona(admin, profile.id);
+    if (persona !== "teacher" && persona !== "admin") { await answerCallback(cq.id); return; }
+    const isSubmitted = data.startsWith("thw:sub:");
+    const rest = data.slice(isSubmitted ? "thw:sub:".length : "thw:not:".length);
+    const sep = rest.indexOf(":");
+    if (sep <= 0) { await answerCallback(cq.id); return; }
+    const groupId = rest.slice(0, sep);
+    const moduleId = rest.slice(sep + 1);
+    // Validate teacher owns group (admins ok)
+    if (persona === "teacher") {
+      const groups = await teacherGroups(admin, profile.id);
+      if (!groups.find((x) => x.id === groupId)) { await answerCallback(cq.id, "⛔"); return; }
+    }
+    await answerCallback(cq.id);
+    // Load group, module, students, submissions
+    const [{ data: grp }, { data: mod }, { data: profs }, { data: asgs }] = await Promise.all([
+      admin.from("groups").select("id,name").eq("id", groupId).maybeSingle(),
+      admin.from("modules").select("id,position,title").eq("id", moduleId).maybeSingle(),
+      admin.from("profiles").select("id,name,last_name,telegram_username,telegram_id").eq("group_id", groupId).is("archived_at", null),
+      admin.from("homework_assignments").select("id,title,task_number").eq("module_id", moduleId).eq("is_active", true),
+    ]);
+    const students = (profs || []) as any[];
+    const asgIds = ((asgs || []) as any[]).map((a) => a.id);
+    const asgMap = new Map(((asgs || []) as any[]).map((a) => [a.id, a]));
+    const { data: subs } = asgIds.length
+      ? await admin.from("homework_submissions").select("user_id, assignment_id, telegram_message_url").in("assignment_id", asgIds).in("user_id", students.map((s) => s.id))
+      : { data: [] as any[] };
+    const byUser = new Map<string, any[]>();
+    ((subs || []) as any[]).forEach((s) => {
+      const arr = byUser.get(s.user_id) || [];
+      arr.push(s);
+      byUser.set(s.user_id, arr);
+    });
+    const tag = `M${(mod?.position ?? 0) + 1}`;
+    const title = (mod?.title || "").slice(0, 40);
+    const groupName = grp?.name || "";
+    const submitted = students.filter((s) => byUser.has(s.id));
+    const notSubmitted = students.filter((s) => !byUser.has(s.id));
+    const list = isSubmitted ? submitted : notSubmitted;
+    const fmtName = (p: any) => {
+      const handle = (p.telegram_username || "").toString().trim();
+      const h = handle ? (handle.startsWith("@") ? handle : `@${handle}`) : (p.telegram_id ? `(id:${p.telegram_id})` : "—");
+      const n = [p.name, p.last_name].filter(Boolean).join(" ").trim();
+      return n ? `<b>${csvEscapeHtml(n)}</b> ${csvEscapeHtml(h)}` : csvEscapeHtml(h);
+    };
+    const header = `${isSubmitted ? "✅" : "❌"} <b>${tag} — ${isSubmitted ? "Topshirgan" : "Topshirmagan"}</b> (${list.length}/${students.length})\n<i>${csvEscapeHtml(groupName)} · ${csvEscapeHtml(title)}</i>`;
+    if (!list.length) {
+      await sendMessage(chatId, `${header}\n\n—`);
+      return;
+    }
+    const lines = list.map((p) => {
+      if (isSubmitted) {
+        const items = (byUser.get(p.id) || []).map((s) => {
+          const a = asgMap.get(s.assignment_id) as any;
+          const label = a ? `${tag}·V${a.task_number}` : "vazifa";
+          return s.telegram_message_url ? `<a href="${s.telegram_message_url}">${label}</a>` : label;
+        }).join(", ");
+        return `• ${fmtName(p)} — ${items}`;
+      }
+      return `• ${fmtName(p)}`;
+    });
+    const MAX = 3500;
+    let buf = header + "\n\n";
+    for (const ln of lines) {
+      if ((buf + ln + "\n").length > MAX) {
+        await sendMessage(chatId, buf);
+        buf = "";
+      }
+      buf += ln + "\n";
+    }
+    if (buf.trim().length) await sendMessage(chatId, buf);
+    return;
+  }
+
   if (data === "tg:switch" && chatId) {
     const profile = await findProfileByTelegramId(admin, tgId);
     if (!profile) { await answerCallback(cq.id); return; }

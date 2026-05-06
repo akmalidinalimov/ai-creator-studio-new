@@ -63,6 +63,7 @@ export default function AdminGroups() {
   const [logins, setLogins] = useState<Record<string, { logged: number; total: number }>>({});
   const [activeWin, setActiveWin] = useState<Record<string, { active: number; total: number }>>({});
   const [topics, setTopics] = useState<Record<string, { configured: number; total: number }>>({});
+  const [hwMods, setHwMods] = useState<Record<string, Array<{ module_id: string; position: number; title: string; submitted: number; total: number }>>>({});
   const [loading, setLoading] = useState(true);
   const [windowDays, setWindowDays] = useState<3 | 7 | 30>(3);
 
@@ -111,6 +112,17 @@ export default function AdminGroups() {
       tmap[gg.id] = { configured: gg.homework_topic_url ? 1 : 0, total: 1 };
     });
     setTopics(tmap);
+
+    // Per-module homework submission counts per group
+    const { data: hw } = await supabase.rpc("admin_group_module_submissions" as any, {});
+    const hmap: Record<string, Array<{ module_id: string; position: number; title: string; submitted: number; total: number }>> = {};
+    ((hw as any[]) || []).forEach((r) => {
+      const arr = hmap[r.group_id] || [];
+      arr.push({ module_id: r.module_id, position: r.module_position, title: r.module_title, submitted: r.submitted_count || 0, total: r.total_students || 0 });
+      hmap[r.group_id] = arr;
+    });
+    Object.keys(hmap).forEach((k) => hmap[k].sort((a, b) => a.position - b.position));
+    setHwMods(hmap);
     setLoading(false);
   };
 
@@ -174,15 +186,25 @@ export default function AdminGroups() {
                   </Tooltip>
                 </TableHead>
                 <TableHead>Topiklar</TableHead>
+                <TableHead>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex items-center gap-1 cursor-help">Vazifalar bo'yicha <Info className="h-3 w-3 text-muted-foreground" /></span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-xs text-xs">
+                      Har bir modul uchun vazifa topshirgan talabalar / jami talabalar
+                    </TooltipContent>
+                  </Tooltip>
+                </TableHead>
                 <TableHead>Default</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
+                <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
               ) : groups.length === 0 ? (
-                <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No groups yet.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">No groups yet.</TableCell></TableRow>
               ) : groups.map((g) => {
                 const a3 = activeWin[g.id] || { active: 0, total: 0 };
                 const aPct = a3.total > 0 ? (a3.active / a3.total) * 100 : 0;
@@ -218,6 +240,38 @@ export default function AdminGroups() {
                     return tt.configured > 0
                       ? <span className="inline-block px-2 py-0.5 rounded text-xs bg-emerald-500 text-white">✓ Topik sozlangan</span>
                       : <span className="inline-block px-2 py-0.5 rounded text-xs bg-rose-500 text-white">✗ Topik yo'q</span>;
+                  })()}</TableCell>
+                  <TableCell>{(() => {
+                    const mods = hwMods[g.id] || [];
+                    if (!mods.length) return <span className="text-xs text-muted-foreground">—</span>;
+                    const visible = mods.slice(0, 6);
+                    const overflow = mods.length - visible.length;
+                    return (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {visible.map((m) => {
+                          const pct = m.total > 0 ? Math.round((m.submitted / m.total) * 100) : 0;
+                          const fillCls = m.total === 0 ? "bg-muted-foreground/30" : pct === 0 ? "bg-rose-400" : pct < 50 ? "bg-amber-500" : "bg-emerald-500";
+                          return (
+                            <Tooltip key={m.module_id}>
+                              <TooltipTrigger asChild>
+                                <div className="inline-flex items-center gap-1 cursor-help">
+                                  <span className="text-[11px] font-medium text-muted-foreground">M{m.position + 1}</span>
+                                  <div className="h-1.5 w-10 rounded-full bg-muted overflow-hidden">
+                                    <div className={`h-full ${fillCls}`} style={{ width: `${m.total > 0 ? pct : 0}%` }} />
+                                  </div>
+                                  <span className="text-[11px] tabular-nums">{m.submitted}/{m.total}</span>
+                                </div>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="text-xs max-w-[260px]">
+                                <div className="font-medium">M{m.position + 1}. {m.title}</div>
+                                <div className="text-muted-foreground">{m.submitted}/{m.total} talaba topshirgan ({pct}%)</div>
+                              </TooltipContent>
+                            </Tooltip>
+                          );
+                        })}
+                        {overflow > 0 && <span className="text-[11px] text-muted-foreground">+{overflow}</span>}
+                      </div>
+                    );
                   })()}</TableCell>
                   <TableCell>
                     <Button
