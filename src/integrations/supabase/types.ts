@@ -2272,15 +2272,25 @@ export type Database = {
           telegram_username: string
         }[]
       }
-      admin_group_engagement_stats: {
-        Args: { p_caller_profile_id?: string }
-        Returns: {
-          active_3d_count: number
-          group_id: string
-          logged_in_count: number
-          total_active: number
-        }[]
-      }
+      admin_group_engagement_stats:
+        | {
+            Args: { p_caller_profile_id?: string }
+            Returns: {
+              active_3d_count: number
+              group_id: string
+              logged_in_count: number
+              total_active: number
+            }[]
+          }
+        | {
+            Args: { p_caller_profile_id?: string; p_window_days?: number }
+            Returns: {
+              active_count: number
+              group_id: string
+              logged_in_count: number
+              total_active: number
+            }[]
+          }
       admin_list_users: {
         Args: never
         Returns: {
