@@ -104,20 +104,11 @@ export default function AdminGroups() {
     setLogins(lmap);
     setActiveWin(amap);
 
-    // Topics configured per group
-    const groupRows = ((g.data as any[]) || []) as Group[];
-    const courseIds = Array.from(new Set(groupRows.map((gg) => gg.course_id).filter(Boolean) as string[]));
-    const { data: allMods } = courseIds.length
-      ? await supabase.from("modules").select("id, course_id").in("course_id", courseIds)
-      : { data: [] };
-    const modsByCourse: Record<string, number> = {};
-    ((allMods as any[]) || []).forEach((m) => { modsByCourse[m.course_id] = (modsByCourse[m.course_id] || 0) + 1; });
-    const { data: gmt } = await supabase.from("group_module_topics" as any).select("group_id");
-    const cfgByGroup: Record<string, number> = {};
-    ((gmt as any[]) || []).forEach((r) => { cfgByGroup[r.group_id] = (cfgByGroup[r.group_id] || 0) + 1; });
+    // Shared homework topic configured per group?
+    const groupRows = ((g.data as any[]) || []) as any[];
     const tmap: Record<string, { configured: number; total: number }> = {};
     groupRows.forEach((gg) => {
-      tmap[gg.id] = { configured: cfgByGroup[gg.id] || 0, total: gg.course_id ? (modsByCourse[gg.course_id] || 0) : 0 };
+      tmap[gg.id] = { configured: gg.homework_topic_url ? 1 : 0, total: 1 };
     });
     setTopics(tmap);
     setLoading(false);
