@@ -2976,7 +2976,15 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
     const moduleName = mod?.title ? `M${(mod.position ?? 0) + 1} — ${mod.title}` : `Modul`;
     const studentName = [profile.name, profile.last_name].filter(Boolean).join(" ") || "—";
 
-    const body = hwTeacherBody(studentName, group.name || "—", moduleName, asg.title || "");
+    let asgLabel = asg.title || "";
+    if (asg.parent_id) {
+      const parent = allList.find((a: any) => a.id === asg.parent_id);
+      const tn = parent?.task_number ?? "?";
+      asgLabel = `V${tn}.S${asg.sap_number ?? "?"} — ${asg.title || ""}`;
+    } else if (asg.task_number) {
+      asgLabel = `V${asg.task_number} — ${asg.title || ""}`;
+    }
+    const body = hwTeacherBody(studentName, group.name || "—", moduleName, asgLabel);
     const inlineKb = [
       [{ text: "🎯 Baholash", callback_data: `grade_task:${asg.id}:${profile.id}` }],
       [{ text: "📌 Topikga o'tish", url: messageUrl }],
