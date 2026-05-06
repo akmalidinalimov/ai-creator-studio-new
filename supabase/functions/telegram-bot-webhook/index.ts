@@ -2202,7 +2202,7 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   }
 
   if (!profile) {
-    await sendUnregisteredReply(chatId, msg.from);
+    await sendUnregisteredReply(admin, chatId, msg.from, locale);
     return;
   }
 
