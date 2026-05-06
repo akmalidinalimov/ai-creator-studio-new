@@ -809,12 +809,22 @@ async function findProfileByTelegramId(admin: any, tgId: number) {
 }
 
 async function findProfileByUsername(admin: any, username: string) {
+  // Step 2 fallback: only match profiles WITHOUT a telegram_id yet (case-insensitive, strip leading @).
+  // If multiple match (shouldn't happen post unique index), prefer most recently updated.
+  const cleaned = (username || "").replace(/^@+/, "").toLowerCase();
+  if (!cleaned) return null;
   const { data } = await admin
     .from("profiles")
-    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale")
-    .ilike("telegram_username", username)
-    .maybeSingle();
-  return data;
+    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id")
+    .is("telegram_id", null)
+    .ilike("telegram_username", cleaned)
+    .order("updated_at", { ascending: false })
+    .limit(2);
+  if (!data || data.length === 0) return null;
+  if (data.length > 1) {
+    console.warn("[telegram-auth] multiple username-only profiles matched", { username: cleaned, count: data.length });
+  }
+  return data[0];
 }
 
 async function getDefaultCourseId(admin: any): Promise<string | null> {
@@ -827,6 +837,44 @@ async function getDefaultCourseId(admin: any): Promise<string | null> {
     .limit(1)
     .maybeSingle();
   return data?.id ?? null;
+}
+
+async function resolveProfileForTelegramUser(
+  admin: any,
+  tgId: number,
+  tgUsernameRaw: string | null | undefined,
+  source: "bot" | "web" = "bot",
+) {
+  const tgUsername = (tgUsernameRaw || "").replace(/^@+/, "").toLowerCase();
+  let profile = await findProfileByTelegramId(admin, tgId);
+  let matchedBy: "telegram_id" | "telegram_username" = "telegram_id";
+  if (!profile && tgUsername) {
+    profile = await findProfileByUsername(admin, tgUsername);
+    if (profile) matchedBy = "telegram_username";
+  }
+  if (!profile) return null;
+  if (!profile.telegram_id) {
+    await admin
+      .from("profiles")
+      .update({ telegram_id: tgId, updated_at: new Date().toISOString() })
+      .eq("id", profile.id)
+      .is("telegram_id", null);
+    profile.telegram_id = tgId;
+    console.log("[telegram-auth] backfilled telegram_id", { profile_id: profile.id, telegram_id: tgId, matched_by: matchedBy, source });
+    try {
+      await admin.from("audit_log").insert({
+        actor_user_id: profile.id,
+        target_user_id: profile.id,
+        action: "profile_telegram_id_backfilled",
+        new_value: { profile_id: profile.id, telegram_id: tgId, telegram_username: tgUsername, source },
+      });
+    } catch (_e) { /* ignore */ }
+  }
+  if (tgUsername && (profile.telegram_username || "").toLowerCase() !== tgUsername) {
+    await admin.from("profiles").update({ telegram_username: tgUsername }).eq("id", profile.id);
+    profile.telegram_username = tgUsername;
+  }
+  return profile;
 }
 
 async function getFirstLesson(admin: any, courseId: string) {
@@ -1095,9 +1143,11 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
 
   // v2.1.1: hybrid match — by Telegram numeric user_id OR by @username (case-insensitive).
   // After first match by username, we permanently bind telegram_id so future logins are id-matched.
+  let matchedBy: "telegram_id" | "telegram_username" = "telegram_id";
   let profile = await findProfileByTelegramId(admin, tgId);
   if (!profile && tgUsername) {
     profile = await findProfileByUsername(admin, tgUsername);
+    if (profile) matchedBy = "telegram_username";
   }
 
   if (!profile) {
@@ -1110,12 +1160,23 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
 
   // Permanently bind telegram_id on first successful match (was NULL before).
   if (!profile.telegram_id) {
-    await admin.from("profiles").update({ telegram_id: tgId }).eq("id", profile.id);
+    await admin.from("profiles").update({ telegram_id: tgId, updated_at: new Date().toISOString() }).eq("id", profile.id).is("telegram_id", null);
     profile.telegram_id = tgId;
+    console.log("[telegram-auth] backfilled telegram_id", { profile_id: profile.id, telegram_id: tgId, matched_by: matchedBy, source: "bot" });
+    try {
+      await admin.from("audit_log").insert({
+        actor_user_id: profile.id,
+        target_user_id: profile.id,
+        action: "profile_telegram_id_backfilled",
+        new_value: { profile_id: profile.id, telegram_id: tgId, telegram_username: tgUsername, source: "bot" },
+      });
+    } catch (_e) { /* audit_log may not exist or insert blocked — ignore */ }
+  } else if (matchedBy === "telegram_username") {
+    console.log("[telegram-auth] matched_by username (no backfill needed)", { profile_id: profile.id, telegram_id: tgId });
   }
 
   // Refresh @username metadata for admin display only (does NOT affect login).
-  if (tgUsername && profile.telegram_username !== tgUsername) {
+  if (tgUsername && (profile.telegram_username || "").toLowerCase() !== tgUsername) {
     await admin.from("profiles").update({ telegram_username: tgUsername }).eq("id", profile.id);
   }
 
@@ -2031,7 +2092,8 @@ async function handleTeacherSession(admin: any, msg: any, profileId: string, loc
 async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   const chatId = msg.chat.id;
   const tgId = msg.from.id as number;
-  const profile = await findProfileByTelegramId(admin, tgId);
+  const tgUsername = (msg.from.username || "").toLowerCase();
+  const profile = await resolveProfileForTelegramUser(admin, tgId, tgUsername, "bot");
   const locale: Locale = profile?.preferred_locale
     ? normLocale(profile.preferred_locale)
     : normLocale(msg.from.language_code);
