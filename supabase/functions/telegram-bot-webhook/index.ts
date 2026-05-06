@@ -836,6 +836,8 @@ async function getDefaultCourseId(admin: any): Promise<string | null> {
     .order("created_at", { ascending: true })
     .limit(1)
     .maybeSingle();
+  return data?.id ?? null;
+}
 
 async function resolveProfileForTelegramUser(
   admin: any,
