@@ -2842,7 +2842,23 @@ Deno.serve(async (req) => {
     if (update.message) {
       const msg = update.message;
       const text: string = msg.text || "";
-      const profileForLocale = await findProfileByTelegramId(admin, msg.from.id);
+      const tgUsername = (msg.from.username || "").toLowerCase();
+      // v3.14.27: identity gate. Login deeplinks are the ONE exception (token carries identity).
+      const isStartLogin = text.startsWith("/start ") && text.slice(7).trim().startsWith("login_");
+      let profileForLocale: any = null;
+      if (!isStartLogin) {
+        profileForLocale = await resolveProfileForTelegramUser(admin, msg.from.id, tgUsername, "bot");
+        if (!profileForLocale) {
+          // /myid is allowed for unregistered users so they can share their id with admin.
+          if (text === "/myid") {
+            const loc: Locale = normLocale(msg.from.language_code);
+            await sendMessage(msg.chat.id, T[loc].myidResponse(msg.from.id));
+          } else {
+            await sendUnregisteredReply(msg.chat.id, msg.from);
+          }
+          return new Response("ok", { status: 200, headers: corsHeaders });
+        }
+      }
       const locale: Locale = profileForLocale?.preferred_locale
         ? normLocale(profileForLocale.preferred_locale)
         : normLocale(msg.from.language_code);
@@ -2855,23 +2871,11 @@ Deno.serve(async (req) => {
         if (arg.startsWith("login_")) {
           const tok = arg.slice(6);
           await handleStartLogin(admin, msg, tok, locale);
-        } else if (profileForLocale) {
-          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag, persona);
         } else {
-          const enroll = await getEnrollmentSettings(admin, locale);
-          await sendMessage(msg.chat.id, enroll.message, {
-            inline_keyboard: [[{ text: enroll.buttonLabel, url: enroll.formUrl }]],
-          });
+          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag, persona);
         }
       } else if (text === "/start") {
-        if (profileForLocale) {
-          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag, persona);
-        } else {
-          const enroll = await getEnrollmentSettings(admin, locale);
-          await sendMessage(msg.chat.id, enroll.message, {
-            inline_keyboard: [[{ text: enroll.buttonLabel, url: enroll.formUrl }]],
-          });
-        }
+        await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag, persona);
       } else if (text.startsWith("/")) {
         // Grading session intercepts /skip and /cancel for the in-progress flow
         if ((persona === "teacher" || persona === "admin") && profileForLocale) {
@@ -2901,7 +2905,18 @@ Deno.serve(async (req) => {
         }
       }
     } else if (update.callback_query) {
-      await handleCallback(admin, update.callback_query);
+      // v3.14.27: gate every callback on registered profile.
+      const cq = update.callback_query;
+      const tgUsername = (cq.from.username || "").toLowerCase();
+      const cbProfile = await resolveProfileForTelegramUser(admin, cq.from.id, tgUsername, "bot");
+      if (!cbProfile) {
+        try { await answerCallback(cq.id); } catch (_e) {}
+        if (cq.message?.chat?.id) {
+          await sendUnregisteredReply(cq.message.chat.id, cq.from);
+        }
+        return new Response("ok", { status: 200, headers: corsHeaders });
+      }
+      await handleCallback(admin, cq);
     }
   } catch (e) {
     console.error("update handler error", e);
