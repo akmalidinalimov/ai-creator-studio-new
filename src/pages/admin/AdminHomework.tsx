@@ -303,6 +303,40 @@ export default function AdminHomework() {
           )}
         </DialogContent>
       </Dialog>
+
+      <Dialog open={!!newModule} onOpenChange={(o) => !o && setNewModule(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Yangi modul</DialogTitle></DialogHeader>
+          {newModule && (
+            <div className="space-y-3">
+              <div>
+                <Label>Modul sarlavhasi</Label>
+                <Input
+                  value={newModule.title}
+                  onChange={(e) => setNewModule({ ...newModule, title: e.target.value })}
+                  placeholder="Masalan: 4- MODUL: ..."
+                />
+              </div>
+              {courses.length > 1 ? (
+                <div>
+                  <Label>Kurs</Label>
+                  <Select value={newModule.course_id} onValueChange={(v) => setNewModule({ ...newModule, course_id: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {courses.map((c) => <SelectItem key={c.id} value={c.id}>{c.title}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : (
+                <div className="text-xs text-muted-foreground">Kurs: {courses[0]?.title}</div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button onClick={createModule}>💾 Yaratish</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageShell>
   );
 }
