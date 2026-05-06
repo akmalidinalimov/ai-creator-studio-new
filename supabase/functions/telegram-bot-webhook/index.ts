@@ -2799,7 +2799,7 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
     }
     const { data: groupFull } = await admin
       .from("groups")
-      .select("id, name, teacher_id")
+      .select("id, name, teacher_id, course_id, homework_topic_id, homework_topic_url")
       .eq("id", groupId)
       .maybeSingle();
     const group = groupFull;
@@ -2809,36 +2809,88 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
       return;
     }
 
-    // Resolve module via topic mapping
-    const { data: topicRow } = await admin
-      .from("group_module_topics")
-      .select("module_id")
-      .eq("group_id", group.id)
-      .eq("telegram_topic_id", threadId)
-      .maybeSingle();
-    if (!topicRow?.module_id) {
-      res.skip_reason = "no_module_for_topic";
-      await updateInboxResolution(admin, inboxId, res);
-      console.log("homework_event_skipped", JSON.stringify({ reason: "no_module_for_topic", group_id: group.id, thread_id: threadId }));
-      return;
-    }
-    const moduleId = topicRow.module_id;
-    res.resolved_thread_to_module_id = moduleId;
+    // v3.14.34: Resolve module/assignment.
+    // Step 1 (primary): groups.homework_topic_id matches the thread → shared topic.
+    //   Pick the most-recently-created active leaf assignment in this group's course.
+    // Step 2 (fallback): legacy group_module_topics mapping → pick a leaf inside that module.
+    let moduleId: string | null = null;
+    let asg: any = null;
+    let allList: any[] = [];
+    let resolvedVia: "shared_topic" | "group_module_topic" | "no_match" = "no_match";
 
-    // Resolve student profile first so we can pick the next un-submitted leaf assignment
-    // (a leaf is a SAP, or a parent without SAPs)
-    const { data: allAssignsForModule } = await admin
-      .from("homework_assignments")
-      .select("id, title, task_number, sap_number, max_score, module_id, parent_id, is_active")
-      .eq("module_id", moduleId)
-      .eq("is_active", true);
-    const allList = (allAssignsForModule || []) as any[];
-    if (!allList.length) {
-      res.skip_reason = "no_active_assignment";
-      await updateInboxResolution(admin, inboxId, res);
-      console.log("homework_event_skipped", JSON.stringify({ reason: "no_active_assignment", module_id: moduleId }));
-      return;
+    if (group.homework_topic_id && Number(group.homework_topic_id) === Number(threadId)) {
+      resolvedVia = "shared_topic";
+      // Get all active leaf assignments across modules of this group's course,
+      // pick the most-recently-created one as the "active" assignment.
+      if (!group.course_id) {
+        res.resolved_via = resolvedVia;
+        res.skip_reason = "no_active_assignment_in_window";
+        await updateInboxResolution(admin, inboxId, res);
+        console.log("homework_event_skipped", JSON.stringify({ reason: "no_course_for_group", group_id: group.id }));
+        return;
+      }
+      const { data: mods } = await admin.from("modules").select("id").eq("course_id", group.course_id);
+      const modIds = ((mods as any[]) || []).map((m: any) => m.id);
+      if (!modIds.length) {
+        res.resolved_via = resolvedVia;
+        res.skip_reason = "no_active_assignment_in_window";
+        await updateInboxResolution(admin, inboxId, res);
+        return;
+      }
+      const { data: courseAsgs } = await admin
+        .from("homework_assignments")
+        .select("id, title, task_number, sap_number, max_score, module_id, parent_id, is_active, created_at, due_days_after_module_unlock")
+        .in("module_id", modIds)
+        .eq("is_active", true)
+        .order("created_at", { ascending: false });
+      allList = (courseAsgs || []) as any[];
+      const leaves = computeLeaves(allList as any);
+      // Most recent leaf by created_at
+      const sortedLeaves = [...leaves].sort((a: any, b: any) =>
+        String(b.created_at || "").localeCompare(String(a.created_at || ""))
+      );
+      asg = sortedLeaves[0] || null;
+      if (!asg) {
+        res.resolved_via = resolvedVia;
+        res.skip_reason = "no_active_assignment_in_window";
+        await updateInboxResolution(admin, inboxId, res);
+        console.log("homework_event_skipped", JSON.stringify({ reason: "no_active_assignment_in_window", group_id: group.id }));
+        return;
+      }
+      moduleId = asg.module_id;
+    } else {
+      // Fallback: legacy per-module topic mapping
+      const { data: topicRow } = await admin
+        .from("group_module_topics")
+        .select("module_id")
+        .eq("group_id", group.id)
+        .eq("telegram_topic_id", threadId)
+        .maybeSingle();
+      if (!topicRow?.module_id) {
+        res.resolved_via = "no_match";
+        res.skip_reason = "no_module_for_topic";
+        await updateInboxResolution(admin, inboxId, res);
+        console.log("homework_event_skipped", JSON.stringify({ reason: "no_module_for_topic", group_id: group.id, thread_id: threadId }));
+        return;
+      }
+      resolvedVia = "group_module_topic";
+      moduleId = topicRow.module_id;
+      const { data: allAssignsForModule } = await admin
+        .from("homework_assignments")
+        .select("id, title, task_number, sap_number, max_score, module_id, parent_id, is_active, created_at, due_days_after_module_unlock")
+        .eq("module_id", moduleId)
+        .eq("is_active", true);
+      allList = (allAssignsForModule || []) as any[];
+      if (!allList.length) {
+        res.resolved_via = resolvedVia;
+        res.skip_reason = "no_active_assignment";
+        await updateInboxResolution(admin, inboxId, res);
+        console.log("homework_event_skipped", JSON.stringify({ reason: "no_active_assignment", module_id: moduleId }));
+        return;
+      }
     }
+    res.resolved_via = resolvedVia;
+    res.resolved_thread_to_module_id = moduleId;
     const leaves = computeLeaves(allList as any);
 
     // Resolve student profile (telegram_id first, username fallback w/ backfill)
