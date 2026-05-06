@@ -1702,7 +1702,7 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
     try {
       let logged = 0;
       let total = 0;
-      const { data: stats, error: rpcErr } = await admin.rpc("admin_group_login_stats");
+      const { data: stats, error: rpcErr } = await admin.rpc("admin_group_login_stats", { p_caller_profile_id: teacherId });
       if (rpcErr) throw rpcErr;
       const row = ((stats || []) as any[]).find((r) => r.group_id === g.id);
       if (row) {
