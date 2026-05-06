@@ -1,6 +1,7 @@
 // Telegram bot webhook. Receives Updates from api.telegram.org via setWebhook.
 // Verifies X-Telegram-Bot-Api-Secret-Token, then dispatches commands.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { computeLeaves, pickNextLeaf } from "./homework-routing.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -2838,9 +2839,7 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
       console.log("homework_event_skipped", JSON.stringify({ reason: "no_active_assignment", module_id: moduleId }));
       return;
     }
-    const parentIdsWithSap = new Set(allList.filter((a) => a.parent_id).map((a) => a.parent_id));
-    const leaves = allList.filter((a) => a.parent_id || !parentIdsWithSap.has(a.id));
-    leaves.sort((x, y) => (x.task_number ?? 0) - (y.task_number ?? 0) || (x.sap_number ?? 0) - (y.sap_number ?? 0));
+    const leaves = computeLeaves(allList as any);
 
     // Resolve student profile (telegram_id first, username fallback w/ backfill)
     const tgUsername = (msg.from.username || "").toLowerCase();
@@ -2861,12 +2860,12 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
       .select("assignment_id, score")
       .eq("user_id", profile.id)
       .in("assignment_id", leafIds);
-    const subMap = new Map((existingSubs || []).map((s: any) => [s.assignment_id, s]));
-    let asg: any = leaves.find((l: any) => {
-      const s = subMap.get(l.id);
-      return !s || s.score == null;
-    });
-    if (!asg) asg = leaves[leaves.length - 1];
+    const asg: any = pickNextLeaf(leaves as any, (existingSubs || []) as any);
+    if (!asg) {
+      res.skip_reason = "no_active_assignment";
+      await updateInboxResolution(admin, inboxId, res);
+      return;
+    }
     res.matched_assignment_id = asg.id;
 
     console.log("homework_event", JSON.stringify({

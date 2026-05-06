@@ -1,100 +1,84 @@
-## Problem analysis
+## Goal
 
-There are two distinct bugs, both rooted in the same area (SAP support added on top of legacy single-task homeworks).
+Add a deterministic, fast test suite that locks in the SAP-leaf routing rule:
+"each detected submission is attached to the student's next un-graded leaf
+(SAP, or parent-without-children), in `task_number`/`sap_number` order; if all
+leaves are graded, fall back to the last leaf."
 
-### 1. "duplicate key value violates unique constraint `homework_assignments_module_task_uniq`"
+## Approach
 
-The original migration (`20260503182607_…`) created the legacy uniqueness rule as a **unique INDEX**, not a constraint:
+The routing logic currently lives inline inside `handleHomeworkGroupMessage`
+in `supabase/functions/telegram-bot-webhook/index.ts` (lines ~2829–2870) and
+is not exported. Trying to test it through HTTP would require a live DB and
+real Telegram payloads — slow, flaky, and noisy.
 
-```sql
-CREATE UNIQUE INDEX IF NOT EXISTS homework_assignments_module_task_uniq
-  ON public.homework_assignments(module_id, task_number);
-```
+**Plan: extract the pure decision function, then unit-test it with Deno.**
 
-The recent SAP migration (`20260506125414_…`) tried to remove it with:
+### Step 1 — Extract pure helper
 
-```sql
-ALTER TABLE … DROP CONSTRAINT IF EXISTS homework_assignments_module_task_uniq;
-```
-
-`DROP CONSTRAINT` does nothing for a plain index, so the old `(module_id, task_number)` unique index is **still enforced**. When admin adds a SAP under V1 of M3, the SAP row reuses `module_id` + `task_number = 1` (the parent's number) → collision with the parent row → the error you saw.
-
-### 2. Telegram bot shows SAPs as separate top-level buttons next to M1, M2…
-
-In `telegram-bot-webhook/index.ts` `buildHomeworkMessage()`, the menu pushes **one inline button per leaf**:
+Create `supabase/functions/telegram-bot-webhook/homework-routing.ts` exporting:
 
 ```ts
-buttons.push([{ text: t.hwSubmitBtn(m.position + 1, tnLabel), callback_data: `hw:start:${a.id}` }]);
+export type AssignmentRow = {
+  id: string;
+  task_number: number | null;
+  sap_number: number | null;
+  parent_id: string | null;
+  is_active?: boolean;
+};
+export type SubmissionRow = { assignment_id: string; score: number | null };
+
+export function computeLeaves(all: AssignmentRow[]): AssignmentRow[] { … }
+export function pickNextLeaf(
+  leaves: AssignmentRow[],
+  subs: SubmissionRow[],
+): AssignmentRow | null { … }
 ```
 
-So a module with 3 SAPs produces 3 separate buttons (`M3.1`, `M3.2`, `M3.3`) all rendered flat in the same inline keyboard, with no visual hierarchy → looks like siblings of M1/M2 buttons.
+`computeLeaves` = filter active rows, drop parents that have SAP children,
+sort by `(task_number, sap_number)`.
+`pickNextLeaf` = first leaf with no submission OR `score == null`; if none,
+return last leaf; if `leaves` is empty, return null.
 
-We want: **one button per module** (e.g. "M3 — module title"). Tapping it expands a second-level inline keyboard listing each SAP submit button for that module.
+Refactor the matching block in `index.ts` to call these two helpers — pure
+behavior preserved, no functional change.
 
----
+### Step 2 — Add Deno test file
 
-## Plan
+`supabase/functions/telegram-bot-webhook/homework-routing.test.ts` covering:
 
-### A. Database fix (1 migration)
+1. **Single parent, no SAPs, no submission** → routes to that parent.
+2. **Single parent with 3 SAPs, none submitted** → routes to S1.
+3. **Parent with SAPs, S1 graded, S2 ungraded** → routes to S2.
+4. **Parent with SAPs, S1 submitted but ungraded (`score=null`)** → routes to S1
+   (re-submission of pending work).
+5. **Multiple parents (V1 with SAPs, V2 standalone), V1 fully graded** →
+   routes to V2.
+6. **All leaves graded** → falls back to the last leaf in order.
+7. **Mixed module: parent V1 has children, parent V2 has none** → leaves =
+   V1.S1, V1.S2, V2; ordering and routing correct.
+8. **Inactive parent excluded** by upstream filter (test `computeLeaves`
+   respects `is_active=false`).
+9. **Per-student isolation**: two students with different submission states
+   get different next leaves from the same `leaves` array.
+10. **Empty input** → `pickNextLeaf` returns `null`.
 
-Drop the lingering legacy unique index and re-confirm the partial indexes already added by the SAP migration.
+Each test uses plain object literals — no DB, no network, runs in <1s.
 
-```sql
--- Remove the legacy index that still enforces (module_id, task_number) uniqueness.
-DROP INDEX IF EXISTS public.homework_assignments_module_task_uniq;
+### Step 3 — Run
 
--- Sanity-recreate the partial indexes (idempotent).
-CREATE UNIQUE INDEX IF NOT EXISTS homework_assignments_module_task_parent_uniq
-  ON public.homework_assignments(module_id, task_number)
-  WHERE parent_id IS NULL;
+Use `supabase--test_edge_functions` with
+`{"functions": ["telegram-bot-webhook"]}` to confirm green.
 
-CREATE UNIQUE INDEX IF NOT EXISTS homework_assignments_parent_sap_uniq
-  ON public.homework_assignments(parent_id, sap_number)
-  WHERE parent_id IS NOT NULL;
-```
+## Files
 
-After this, adding SAPs (which share `task_number` with their parent) works because the parent-only partial index excludes SAP rows.
+- New: `supabase/functions/telegram-bot-webhook/homework-routing.ts`
+- New: `supabase/functions/telegram-bot-webhook/homework-routing.test.ts`
+- Edited: `supabase/functions/telegram-bot-webhook/index.ts` (replace inline
+  leaf computation + leaf picker with calls into the new module; redeploy).
 
-### B. Telegram bot menu — collapse into one button per module
+## Out of scope
 
-Edit `supabase/functions/telegram-bot-webhook/index.ts`:
-
-1. **`buildHomeworkMessage()`** (~line 1085–1169):
-   - Stop emitting one `hw:start:<assignmentId>` button per leaf.
-   - For each module that has at least one ungraded leaf and a configured group topic, emit **a single button**:
-     ```ts
-     { text: `📝 M${m.position+1} — ${m.title}`, callback_data: `hw:mod:${m.mid}` }
-     ```
-   - Keep the textual status block (V1/V1.S1 scored/unscored lines) as it is.
-
-2. **New callback handler `hw:mod:<moduleId>`** (alongside existing `hw:start:` handler ~line 3167):
-   - Look up active assignments for that module + the user's submissions.
-   - Compute the SAP/parent leaves the same way as the picker.
-   - Render a new inline keyboard with one `hw:start:<assignmentId>` button per **ungraded** leaf, labeled `V{n}` or `V{n}.S{m}` plus the title (truncated).
-   - Use `editMessageText` (or send a new message) with the sub-menu and a "⬅️ Orqaga" button (`callback_data: hw:back`) that re-renders the top-level homework menu.
-
-3. **`hw:back` handler**: re-invoke `buildHomeworkMessage(...)` and edit the message back to the module-list view.
-
-4. Keep the existing `hw:start:<id>` flow untouched — it's reused by the new sub-menu.
-
-### C. No changes needed for
-
-- Auto-routing of group-topic submissions (already picks the next un-graded leaf per student — verified earlier).
-- Admin UI flow (after the index is dropped, the existing "+SAP" button works).
-- Student web UI (`HomeworkSection.tsx`) — already groups SAPs under their parent visually.
-- Scoring view — already aggregates leaves correctly.
-
----
-
-## Files to touch
-
-- `supabase/migrations/<new>.sql` — drop legacy index.
-- `supabase/functions/telegram-bot-webhook/index.ts`
-  - `buildHomeworkMessage()` — emit one button per module.
-  - Callback handler section — add `hw:mod:<moduleId>` and `hw:back` branches; reuse leaf-rendering logic.
-
-## Validation
-
-1. After migration: in Admin Homework, add a SAP under M3 V1 — should succeed (no duplicate-key error).
-2. In Telegram bot menu: should show exactly one button per module (M1, M2, M3…). Tapping M3 should reveal V1.S1 / V1.S2 / V1.S3 submit buttons plus a Back button.
-3. Student submitting in the M3 group topic still routes to the next un-graded SAP (regression check).
+- End-to-end webhook tests against live DB (would need fixtures + cleanup;
+  not warranted for this rule).
+- Re-testing the `/vazifalar` student menu (separate concern).
