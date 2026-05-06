@@ -736,6 +736,74 @@ export type Database = {
           },
         ]
       }
+      group_message_events: {
+        Row: {
+          created_at: string
+          group_id: string
+          id: string
+          module_id: string | null
+          profile_id: string | null
+          sent_at: string
+          telegram_chat_id: number
+          telegram_message_id: number
+          telegram_thread_id: number | null
+          telegram_user_id: number
+        }
+        Insert: {
+          created_at?: string
+          group_id: string
+          id?: string
+          module_id?: string | null
+          profile_id?: string | null
+          sent_at?: string
+          telegram_chat_id: number
+          telegram_message_id: number
+          telegram_thread_id?: number | null
+          telegram_user_id: number
+        }
+        Update: {
+          created_at?: string
+          group_id?: string
+          id?: string
+          module_id?: string | null
+          profile_id?: string | null
+          sent_at?: string
+          telegram_chat_id?: number
+          telegram_message_id?: number
+          telegram_thread_id?: number | null
+          telegram_user_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_message_events_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_message_events_module_id_fkey"
+            columns: ["module_id"]
+            isOneToOne: false
+            referencedRelation: "modules"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_message_events_module_id_fkey"
+            columns: ["module_id"]
+            isOneToOne: false
+            referencedRelation: "mv_lesson_dropoff"
+            referencedColumns: ["module_id"]
+          },
+          {
+            foreignKeyName: "group_message_events_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       group_module_topics: {
         Row: {
           created_at: string
@@ -2480,6 +2548,7 @@ export type Database = {
           telegram_username: string
         }[]
       }
+      teacher_group_statistics: { Args: { p_group_id: string }; Returns: Json }
       track_video_progress: {
         Args: {
           p_current_time: number

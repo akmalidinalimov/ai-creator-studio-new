@@ -1645,12 +1645,55 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
 
   if (cmd === "/tstats") {
     const g = activeGroup!;
-    const { data: ov } = await admin.rpc("staff_group_overview", { _group_id: g.id });
-    const o = (ov && ov[0]) || { total: 0, active_7d: 0, completion_pct: 0, avg_score: 0, health: 0 };
-    const lines: string[] = [t.teacherPanel, t.tActiveGroup(g.name)];
-    lines.push(`\n<b>${csvEscapeHtml(g.name)}</b>`);
-    lines.push(`👥 ${o.total} · 🟢 ${o.active_7d} (7d) · 📈 ${o.completion_pct}% · 🎯 ${o.avg_score} · ❤️ ${o.health}`);
-    await sendWithKeyboard(chatId, lines.join("\n"), locale, false, "teacher");
+    try {
+      const { data, error } = await admin.rpc("teacher_group_statistics", { p_group_id: g.id });
+      if (error) throw error;
+      const s: any = data || {};
+      const m = s.messages || {};
+      const a = s.active_students || {};
+      const sil = s.silent_students_7d || { count: 0, names: [] };
+      const top = (s.top_contributors_7d || []) as any[];
+      const arrow = (n: any) => {
+        if (n === null || n === undefined) return "";
+        const v = Number(n);
+        if (!isFinite(v)) return "";
+        if (v > 0) return ` 📈 +${v}%`;
+        if (v < 0) return ` 📉 ${v}%`;
+        return " ➡️ 0%";
+      };
+      const fmtName = (p: any) => csvEscapeHtml([p.name, p.last_name].filter(Boolean).join(" ").trim() || "—");
+      const lines: string[] = [];
+      lines.push(`📊 <b>${csvEscapeHtml(s.group_name || g.name)}</b>`);
+      lines.push(`👥 Talabalar: <b>${s.total_students ?? 0}</b>`);
+      lines.push("");
+      lines.push("<b>💬 Xabarlar</b>");
+      lines.push(`• Bugun: <b>${m.today ?? 0}</b>${arrow(m.today_vs_yesterday_pct)}`);
+      lines.push(`• 7 kun: <b>${m.last_7d ?? 0}</b>`);
+      lines.push(`• 30 kun: <b>${m.last_30d ?? 0}</b>`);
+      lines.push("");
+      lines.push("<b>🟢 Faol talabalar</b>");
+      lines.push(`• Bugun: <b>${a.today ?? 0}</b> (${a.today_pct ?? 0}%)`);
+      lines.push(`• 7 kun: <b>${a.last_7d ?? 0}</b> (${a.last_7d_pct ?? 0}%)`);
+      lines.push(`• 30 kun: <b>${a.last_30d ?? 0}</b> (${a.last_30d_pct ?? 0}%)`);
+      lines.push("");
+      lines.push(`<b>😴 Jim talabalar (7 kun): ${sil.count ?? 0}</b>`);
+      const names = (sil.names || []) as any[];
+      if (names.length) {
+        for (const p of names) lines.push(`• ${fmtName(p)}`);
+        if ((sil.count ?? 0) > names.length) lines.push(`<i>… va yana ${(sil.count ?? 0) - names.length} ta</i>`);
+      }
+      lines.push("");
+      lines.push("<b>🏆 Top faollar (7 kun)</b>");
+      if (!top.length) lines.push("—");
+      else top.forEach((p, i) => lines.push(`${i + 1}. ${fmtName(p)} — <b>${p.message_count}</b>`));
+      lines.push("");
+      lines.push(`📝 Baholash kutmoqda: <b>${s.pending_homework_count ?? 0}</b>`);
+      lines.push(`🎯 O'rtacha baho: <b>${s.avg_module_score === null || s.avg_module_score === undefined ? "—" : s.avg_module_score + "%"}</b>`);
+      await sendWithKeyboard(chatId, lines.join("\n"), locale, false, "teacher");
+    } catch (e: any) {
+      console.error("[bot:/tstats] failed", e?.message || e);
+      await sendWithKeyboard(chatId, `⚠️ Statistikani yuklashda xato: ${e?.message || e}`, locale, false, "teacher");
+    }
     return true;
   }
 
@@ -2391,6 +2434,62 @@ async function startHomeworkIntent(
 }
 
 // Group/supergroup post inside a topic — try to attach it to a pending intent.
+// v3.14.29: persist topic message event for teacher statistics. Best-effort, never throws.
+async function recordGroupMessageEvent(admin: any, msg: any) {
+  const chatType = msg.chat?.type;
+  if (chatType !== "supergroup" && chatType !== "group") return;
+  if (!msg.is_topic_message || !msg.message_thread_id) return;
+  if (!msg.from || msg.from.is_bot) return;
+  const chatId: number = msg.chat?.id;
+  const threadId: number = msg.message_thread_id;
+  const messageId: number = msg.message_id;
+  const tgUserId: number = msg.from.id;
+  if (!chatId || !threadId || !messageId || !tgUserId) return;
+
+  // Resolve group: telegram_group_url contains "/c/{stripped}/" derived from chat_id
+  const stripped = String(chatId).replace(/^-100/, "");
+  const needle = `/c/${stripped}/`;
+  const { data: groupRows } = await admin
+    .from("groups")
+    .select("id, telegram_group_url")
+    .ilike("telegram_group_url", `%${needle}%`)
+    .limit(1);
+  const groupId = groupRows?.[0]?.id || null;
+  if (!groupId) return; // unknown group, skip
+
+  // Resolve module via topic mapping
+  const { data: topicRow } = await admin
+    .from("group_module_topics")
+    .select("module_id")
+    .eq("group_id", groupId)
+    .eq("telegram_topic_id", threadId)
+    .maybeSingle();
+  const moduleId = topicRow?.module_id || null;
+
+  // Resolve profile (don't backfill here; bot identity gate handles that)
+  let profileId: string | null = null;
+  const tgUsername = (msg.from.username || "").toLowerCase();
+  const byId = await findProfileByTelegramId(admin, tgUserId);
+  if (byId) profileId = byId.id;
+  else if (tgUsername) {
+    const byU = await findProfileByUsername(admin, tgUsername);
+    if (byU) profileId = byU.id;
+  }
+
+  await admin
+    .from("group_message_events")
+    .upsert({
+      group_id: groupId,
+      module_id: moduleId,
+      profile_id: profileId,
+      telegram_user_id: tgUserId,
+      telegram_chat_id: chatId,
+      telegram_message_id: messageId,
+      telegram_thread_id: threadId,
+      sent_at: msg.date ? new Date(msg.date * 1000).toISOString() : new Date().toISOString(),
+    }, { onConflict: "telegram_chat_id,telegram_message_id" });
+}
+
 async function handleGroupTopicMessage(admin: any, msg: any) {
   try {
     const chatId = msg.chat?.id;
@@ -2864,6 +2963,8 @@ Deno.serve(async (req) => {
       // Group/supergroup posts (e.g. inside a forum topic) → homework intake only
       const chatType = msg.chat?.type;
       if (chatType === "supergroup" || chatType === "group" || chatType === "channel") {
+        // v3.14.29: passively record topic messages for Statistika analytics.
+        try { await recordGroupMessageEvent(admin, msg); } catch (e) { console.error("recordGroupMessageEvent failed", e); }
         await handleGroupTopicMessage(admin, msg);
         return new Response("ok", { status: 200, headers: corsHeaders });
       }
