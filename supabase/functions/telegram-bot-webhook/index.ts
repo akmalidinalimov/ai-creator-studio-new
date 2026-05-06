@@ -2904,21 +2904,42 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
     }
     res.resolved_profile_id = profile.id;
 
-    // Pick the next un-submitted (or un-graded) leaf for this student.
-    // If all are graded, fall back to the latest leaf so we still attach to something.
-    const leafIds = leaves.map((l: any) => l.id);
-    const { data: existingSubs } = await admin
-      .from("homework_submissions")
-      .select("assignment_id, score")
-      .eq("user_id", profile.id)
-      .in("assignment_id", leafIds);
-    const asg: any = pickNextLeaf(leaves as any, (existingSubs || []) as any);
+    // For shared_topic mode, asg is already chosen (most recent leaf).
+    // For legacy mode, pick the next un-graded leaf for this student.
     if (!asg) {
-      res.skip_reason = "no_active_assignment";
+      const leafIds = leaves.map((l: any) => l.id);
+      const { data: existingSubs } = await admin
+        .from("homework_submissions")
+        .select("assignment_id, score")
+        .eq("user_id", profile.id)
+        .in("assignment_id", leafIds);
+      asg = pickNextLeaf(leaves as any, (existingSubs || []) as any);
+    }
+    if (!asg) {
+      res.skip_reason = "no_active_assignment_in_window";
       await updateInboxResolution(admin, inboxId, res);
       return;
     }
     res.matched_assignment_id = asg.id;
+    res.resolved_assignment_id = asg.id;
+    res.resolved_assignment_module_id = asg.module_id;
+
+    // Compute is_late: deadline = created_at + due_days_after_module_unlock days
+    let isLate = false;
+    let lateDays = 0;
+    try {
+      const created = asg.created_at ? new Date(asg.created_at).getTime() : null;
+      const dueDays = Number(asg.due_days_after_module_unlock || 0);
+      if (created && dueDays > 0) {
+        const deadlineMs = created + dueDays * 86400_000;
+        if (Date.now() > deadlineMs) {
+          isLate = true;
+          lateDays = Math.max(1, Math.ceil((Date.now() - deadlineMs) / 86400_000));
+        }
+      }
+    } catch { /* ignore */ }
+    res.is_late = isLate;
+    if (isLate) res.late_days = lateDays;
 
     console.log("homework_event", JSON.stringify({
       chat_id: chatId, thread_id: threadId, resolved_group: group.id,
