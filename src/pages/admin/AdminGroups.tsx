@@ -61,7 +61,7 @@ export default function AdminGroups() {
   const [teachers, setTeachers] = useState<ProfileLite[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [logins, setLogins] = useState<Record<string, { logged: number; total: number }>>({});
-  const [health, setHealth] = useState<Record<string, number>>({});
+  const [active3d, setActive3d] = useState<Record<string, { active: number; total: number }>>({});
   const [topics, setTopics] = useState<Record<string, { configured: number; total: number }>>({});
   const [loading, setLoading] = useState(true);
 
