@@ -39,6 +39,8 @@ export default function AdminHomework() {
     parentTaskNumber?: number;
     nextSapNumber?: number;
   } | null>(null);
+  const [newModule, setNewModule] = useState<{ title: string; course_id: string } | null>(null);
+  const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
 
   const load = async () => {
     const { data: ms } = await supabase
