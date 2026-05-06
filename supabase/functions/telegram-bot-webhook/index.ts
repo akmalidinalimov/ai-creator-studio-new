@@ -2715,11 +2715,13 @@ async function handleCallback(admin: any, cq: any) {
     const lang = data.split(":")[1] as Locale;
     if (["uz", "ru", "en"].includes(lang)) {
       const profile = await findProfileByTelegramId(admin, tgId);
+      let persona: Persona = "student";
       if (profile) {
         await admin.from("profiles").update({ preferred_locale: lang }).eq("id", profile.id);
+        persona = await getPersona(admin, profile.id);
       }
       await answerCallback(cq.id);
-      await sendWithKeyboard(chatId, T[lang].langSet, lang);
+      await sendWithKeyboard(chatId, T[lang].langSet, lang, persona === "admin", persona);
       return;
     }
   }
