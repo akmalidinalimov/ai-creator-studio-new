@@ -2092,7 +2092,8 @@ async function handleTeacherSession(admin: any, msg: any, profileId: string, loc
 async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   const chatId = msg.chat.id;
   const tgId = msg.from.id as number;
-  const profile = await findProfileByTelegramId(admin, tgId);
+  const tgUsername = (msg.from.username || "").toLowerCase();
+  const profile = await resolveProfileForTelegramUser(admin, tgId, tgUsername, "bot");
   const locale: Locale = profile?.preferred_locale
     ? normLocale(profile.preferred_locale)
     : normLocale(msg.from.language_code);
