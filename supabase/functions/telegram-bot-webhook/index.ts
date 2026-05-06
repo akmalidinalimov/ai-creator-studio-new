@@ -3015,7 +3015,9 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: numbe
       studentConfirmDedupe.set(dedupeKey, nowMs);
       const loc: Locale = normLocale(profile.preferred_locale);
       try {
-        await sendMessage(Number(profile.telegram_id), HW_STUDENT_CONFIRM[loc]);
+        let confirmText = HW_STUDENT_CONFIRM[loc];
+        if (isLate) confirmText += "\n\n⏰ Vazifa kechikkan deb belgilandi, lekin baho beriladi.";
+        await sendMessage(Number(profile.telegram_id), confirmText);
         res.student_dm_sent = true;
       } catch (e) {
         res.student_dm_error = String(e);
