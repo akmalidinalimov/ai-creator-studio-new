@@ -60,23 +60,55 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: "Invalid Telegram signature" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Find profile by telegram_id first, then by username
+    // Step 1: match by telegram_id (primary identity).
     let profile: any = null;
+    let matchedBy: "telegram_id" | "telegram_username" = "telegram_id";
     {
-      const { data } = await admin.from("profiles").select("id, email, telegram_username").eq("telegram_id", tg.id).maybeSingle();
+      const { data } = await admin.from("profiles").select("id, email, telegram_id, telegram_username").eq("telegram_id", tg.id).maybeSingle();
       profile = data;
     }
+    // Step 2 fallback: match by telegram_username among profiles WITHOUT a telegram_id yet.
     if (!profile && tg.username) {
-      const { data } = await admin.from("profiles").select("id, email, telegram_username").ilike("telegram_username", tg.username).maybeSingle();
-      profile = data;
+      const cleaned = tg.username.replace(/^@+/, "").toLowerCase();
+      if (cleaned) {
+        const { data } = await admin
+          .from("profiles")
+          .select("id, email, telegram_id, telegram_username")
+          .is("telegram_id", null)
+          .ilike("telegram_username", cleaned)
+          .order("updated_at", { ascending: false })
+          .limit(2);
+        if (data && data.length > 0) {
+          if (data.length > 1) {
+            console.warn("[telegram-auth] multiple username-only profiles matched", { username: cleaned, count: data.length });
+          }
+          profile = data[0];
+          matchedBy = "telegram_username";
+        }
+      }
     }
     if (!profile) {
       return new Response(JSON.stringify({ error: `No account linked to @${tg.username || tg.id}. Ask your admin to add you.` }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Save telegram_id on first link
+    // Backfill telegram_id on first match by username.
     if (!profile.telegram_id) {
-      await admin.from("profiles").update({ telegram_id: tg.id, telegram_username: tg.username || profile.telegram_username }).eq("id", profile.id);
+      await admin
+        .from("profiles")
+        .update({ telegram_id: tg.id, telegram_username: tg.username || profile.telegram_username, updated_at: new Date().toISOString() })
+        .eq("id", profile.id)
+        .is("telegram_id", null);
+      console.log("[telegram-auth] backfilled telegram_id", { profile_id: profile.id, telegram_id: tg.id, matched_by: matchedBy, source: "web" });
+      try {
+        await admin.from("audit_log").insert({
+          actor_user_id: profile.id,
+          target_user_id: profile.id,
+          action: "profile_telegram_id_backfilled",
+          new_value: { profile_id: profile.id, telegram_id: tg.id, telegram_username: tg.username || null, source: "web" },
+        });
+      } catch (_e) { /* ignore */ }
+    } else if (tg.username && (profile.telegram_username || "").toLowerCase() !== tg.username.toLowerCase()) {
+      await admin.from("profiles").update({ telegram_username: tg.username }).eq("id", profile.id);
     }
 
     // Generate magic link
