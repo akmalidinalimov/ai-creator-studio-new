@@ -2100,6 +2100,54 @@ export type Database = {
         }
         Relationships: []
       }
+      webhook_inbox: {
+        Row: {
+          chat_id: number | null
+          chat_title: string | null
+          chat_type: string | null
+          from_user_id: number | null
+          from_username: string | null
+          id: number
+          message_id: number | null
+          message_thread_id: number | null
+          raw_update: Json
+          received_at: string
+          resolution: Json | null
+          text_preview: string | null
+          update_type: string | null
+        }
+        Insert: {
+          chat_id?: number | null
+          chat_title?: string | null
+          chat_type?: string | null
+          from_user_id?: number | null
+          from_username?: string | null
+          id?: number
+          message_id?: number | null
+          message_thread_id?: number | null
+          raw_update: Json
+          received_at?: string
+          resolution?: Json | null
+          text_preview?: string | null
+          update_type?: string | null
+        }
+        Update: {
+          chat_id?: number | null
+          chat_title?: string | null
+          chat_type?: string | null
+          from_user_id?: number | null
+          from_username?: string | null
+          id?: number
+          message_id?: number | null
+          message_thread_id?: number | null
+          raw_update?: Json
+          received_at?: string
+          resolution?: Json | null
+          text_preview?: string | null
+          update_type?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       mv_cohort_retention: {
