@@ -2699,12 +2699,16 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     const t = T[locale] as any;
     const { data: a } = await admin
       .from("homework_assignments")
-      .select("title, task_number, module_id, modules(position)")
+      .select("title, task_number, sap_number, parent_id, module_id, modules(position)")
       .eq("id", intent.assignment_id)
       .maybeSingle();
     const mn = ((a?.modules?.position ?? 0) as number) + 1;
     const tn = (a?.task_number ?? 1) as number;
-    const aTitle = a?.title || "";
+    let aTitle = a?.title || "";
+    if (a?.parent_id) {
+      const { data: par } = await admin.from("homework_assignments").select("task_number").eq("id", a.parent_id).maybeSingle();
+      aTitle = `V${par?.task_number ?? "?"}.S${a?.sap_number ?? "?"} — ${a?.title || ""}`;
+    }
     const moduleId = a?.module_id || intent.module_id;
 
     // Private DM to student
