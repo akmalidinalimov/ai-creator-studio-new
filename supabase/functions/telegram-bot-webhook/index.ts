@@ -2942,6 +2942,31 @@ async function handleCallback(admin: any, cq: any) {
     return;
   }
 
+  // v3.14.32: teacher taps "🎯 Baholash" on auto-detected submission DM.
+  if (data.startsWith("grade_task:") && chatId) {
+    const parts = data.split(":");
+    const assignmentId = parts[1];
+    const studentProfileId = parts[2];
+    const profile = await findProfileByTelegramId(admin, tgId);
+    if (!profile) { await answerCallback(cq.id); return; }
+    const persona = await getPersona(admin, profile.id);
+    if (persona !== "admin" && persona !== "teacher") { await answerCallback(cq.id); return; }
+    const { data: sub } = await admin
+      .from("homework_submissions")
+      .select("id")
+      .eq("user_id", studentProfileId)
+      .eq("assignment_id", assignmentId)
+      .maybeSingle();
+    await answerCallback(cq.id);
+    if (!sub?.id) {
+      await sendMessage(chatId, "Topshiriq topilmadi.");
+      return;
+    }
+    const locale: Locale = normLocale(profile.preferred_locale);
+    await startGradingFlow(admin, chatId, tgId, profile.id, sub.id, locale, persona === "admin");
+    return;
+  }
+
   if (data.startsWith("grade:open:") && chatId) {
     const submissionId = data.slice("grade:open:".length);
     const profile = await findProfileByTelegramId(admin, tgId);
