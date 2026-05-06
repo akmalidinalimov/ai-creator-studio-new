@@ -308,11 +308,36 @@ Deno.serve(async (req) => {
         }
       }
       if (existingId) {
-        const isStaff = s.role === "teacher" || s.role === "admin";
-        const alreadyInTargetGroup = !!resolvedGroupId && existingGroupId === resolvedGroupId;
+        // v3.14.35: enforce role exclusivity & duplicate-in-group BEFORE any mutation.
+        const { data: existingRoles } = await admin.from("user_roles").select("role").eq("user_id", existingId);
+        const roleSet = new Set<string>((existingRoles || []).map((r: any) => r.role));
+        const isExistingTeacher = roleSet.has("teacher");
+        const incomingRole = s.role || "student";
+
+        if (incomingRole === "student" && isExistingTeacher) {
+          const err = "Bu foydalanuvchi tizimda o'qituvchi sifatida ro'yxatdan o'tgan. Talaba qilib qo'shib bo'lmaydi.";
+          results.push({ email, status: "role_conflict", error: err, userId: existingId, row_index, identifier_used });
+          auditLog(row_index, identifier_used, "role_conflict_teacher_to_student");
+          continue;
+        }
+        if (incomingRole === "teacher" && (roleSet.has("student") || (existingGroupId && !roleSet.has("teacher") && !roleSet.has("admin")))) {
+          const err = "Bu foydalanuvchi tizimda talaba sifatida mavjud. O'qituvchi qilib qo'shib bo'lmaydi.";
+          results.push({ email, status: "role_conflict", error: err, userId: existingId, row_index, identifier_used });
+          auditLog(row_index, identifier_used, "role_conflict_student_to_teacher");
+          continue;
+        }
+
+        const alreadyInTargetGroup = !!resolvedGroupId && existingGroupId === resolvedGroupId && incomingRole === "student";
+        if (alreadyInTargetGroup) {
+          const err = "Bu foydalanuvchi allaqachon shu guruhda.";
+          results.push({ email, status: "already_in_group", error: err, userId: existingId, row_index, identifier_used });
+          auditLog(row_index, identifier_used, "already_in_group");
+          continue;
+        }
+
+        const isStaff = incomingRole === "teacher" || incomingRole === "admin";
         const patch: Record<string, any> = {};
-        if (resolvedGroupId && !alreadyInTargetGroup && !isStaff) patch.group_id = resolvedGroupId;
-        // Heal telegram_username if CSV provides one and DB value differs (case/@-insensitive compare).
+        if (resolvedGroupId && !isStaff) patch.group_id = resolvedGroupId;
         if (csvTgUsernameRaw) {
           const dbNorm = (existingTgUsername || "").trim().replace(/^@/, "").toLowerCase();
           const csvNormCmp = csvTgUsernameRaw.replace(/^@/, "").toLowerCase();
@@ -327,16 +352,19 @@ Deno.serve(async (req) => {
             continue;
           }
         }
-        // Teacher: ensure role + assign as group teacher
-        if (s.role === "teacher") {
-          await admin.from("user_roles").upsert({ user_id: existingId, role: "teacher" } as any, { onConflict: "user_id,role" });
+        if (incomingRole === "teacher") {
+          const { error: rErr } = await admin.from("user_roles").upsert({ user_id: existingId, role: "teacher" } as any, { onConflict: "user_id,role" });
+          if (rErr) {
+            results.push({ email, status: "role_conflict", error: rErr.message, userId: existingId, row_index, identifier_used });
+            auditLog(row_index, identifier_used, "role_conflict_db", rErr.message);
+            continue;
+          }
           if (resolvedGroupId) await admin.from("groups").update({ teacher_id: existingId }).eq("id", resolvedGroupId);
-        } else if (s.role === "admin") {
+        } else if (incomingRole === "admin") {
           await admin.from("user_roles").upsert({ user_id: existingId, role: "admin" } as any, { onConflict: "user_id,role" });
         }
-        const status = alreadyInTargetGroup ? "skipped_already_in_group" : "updated";
-        results.push({ email, status, userId: existingId, row_index, identifier_used });
-        auditLog(row_index, identifier_used, alreadyInTargetGroup ? "skipped_already_in_group" : "matched");
+        results.push({ email, status: "updated", userId: existingId, row_index, identifier_used });
+        auditLog(row_index, identifier_used, "matched");
         continue;
       }
 
