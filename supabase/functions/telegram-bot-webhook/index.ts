@@ -3185,12 +3185,19 @@ Deno.serve(async (req) => {
       const msg = update.message;
       const text: string = msg.text || "";
       const tgUsername = (msg.from.username || "").toLowerCase();
+      // v3.14.32: identity gate ONLY runs for private chats. Group/supergroup/channel
+      // posts are handled above and must not be short-circuited here.
+      const isPrivateChat = msg.chat?.type === "private";
       // v3.14.27: identity gate. Login deeplinks are the ONE exception (token carries identity).
       const isStartLogin = text.startsWith("/start ") && text.slice(7).trim().startsWith("login_");
       let profileForLocale: any = null;
       if (!isStartLogin) {
         profileForLocale = await resolveProfileForTelegramUser(admin, msg.from.id, tgUsername, "bot");
         if (!profileForLocale) {
+          if (!isPrivateChat) {
+            // Non-private and unregistered: silently ignore (no rate-limited reply).
+            return new Response("ok", { status: 200, headers: corsHeaders });
+          }
           // /myid is allowed for unregistered users so they can share their id with admin.
           if (text === "/myid") {
             const loc: Locale = normLocale(msg.from.language_code);
