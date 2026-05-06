@@ -63,6 +63,7 @@ export default function AdminGroups() {
   const [logins, setLogins] = useState<Record<string, { logged: number; total: number }>>({});
   const [activeWin, setActiveWin] = useState<Record<string, { active: number; total: number }>>({});
   const [topics, setTopics] = useState<Record<string, { configured: number; total: number }>>({});
+  const [hwMods, setHwMods] = useState<Record<string, Array<{ module_id: string; position: number; title: string; submitted: number; total: number }>>>({});
   const [loading, setLoading] = useState(true);
   const [windowDays, setWindowDays] = useState<3 | 7 | 30>(3);
 
