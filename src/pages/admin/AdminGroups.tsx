@@ -123,7 +123,7 @@ export default function AdminGroups() {
     setLoading(false);
   };
 
-  useEffect(() => { reload(); }, []);
+  useEffect(() => { reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [windowDays]);
 
   const courseTitle = (id: string | null) => courses.find((c) => c.id === id)?.title || "—";
   const teacherLabel = (id: string | null) => {
