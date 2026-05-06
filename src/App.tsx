@@ -45,6 +45,7 @@ const AdminSettings = lazy(() => import("./pages/admin/AdminSettings"));
 const AdminDeploy = lazy(() => import("./pages/admin/AdminDeploy"));
 const AdminAIAnalytics = lazy(() => import("./pages/admin/AdminAIAnalytics"));
 const AdminAudit = lazy(() => import("./pages/admin/AdminAudit"));
+const AdminBotDebug = lazy(() => import("./pages/admin/AdminBotDebug"));
 const AdminBunnyDiagnostics = lazy(() => import("./pages/admin/AdminBunnyDiagnostics"));
 const AdminNotifications = lazy(() => import("./pages/admin/AdminNotifications"));
 const AdminGroups = lazy(() => import("./pages/admin/AdminGroups"));
