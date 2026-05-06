@@ -215,8 +215,9 @@ export default function AdminGroups() {
                   <TableCell><span className={`inline-block px-2 py-0.5 rounded text-xs ${aColor}`} title={`${a3.active}/${a3.total} faol (${windowDays} kun)`}>{a3.active}/{a3.total}{a3.total > 0 ? ` · ${Math.round(aPct)}%` : ""}</span></TableCell>
                   <TableCell>{(() => {
                     const tt = topics[g.id] || { configured: 0, total: 0 };
-                    const cls = tt.total === 0 ? "bg-muted text-muted-foreground" : tt.configured === 0 ? "bg-rose-500 text-white" : tt.configured < tt.total ? "bg-amber-500 text-white" : "bg-emerald-500 text-white";
-                    return <span className={`inline-block px-2 py-0.5 rounded text-xs ${cls}`}>{tt.configured}/{tt.total}</span>;
+                    return tt.configured > 0
+                      ? <span className="inline-block px-2 py-0.5 rounded text-xs bg-emerald-500 text-white">✓ Topik sozlangan</span>
+                      : <span className="inline-block px-2 py-0.5 rounded text-xs bg-rose-500 text-white">✗ Topik yo'q</span>;
                   })()}</TableCell>
                   <TableCell>
                     <Button
