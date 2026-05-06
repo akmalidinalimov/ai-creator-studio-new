@@ -2425,6 +2425,93 @@ async function startHomeworkIntent(
   });
 }
 
+// v3.14.33: resolve group from supergroup chat_id by trying multiple URL patterns.
+// Returns { groupId, pattern } or null. Bug fix: groups.telegram_group_url stores
+// invite links like https://t.me/+abc, NOT /c/{id}/ links. So we have to look at
+// group_module_topics.telegram_topic_url which DOES contain /c/{stripped}/{thread}.
+async function resolveGroupFromChatId(
+  admin: any,
+  chatId: number,
+): Promise<{ groupId: string | null; pattern: string }> {
+  const stripped = String(chatId).replace(/^-100/, "");
+  const needle = `/c/${stripped}/`;
+
+  // Pattern 1: group_module_topics.telegram_topic_url contains /c/{stripped}/
+  try {
+    const { data: gmt } = await admin
+      .from("group_module_topics")
+      .select("group_id")
+      .ilike("telegram_topic_url", `%${needle}%`)
+      .limit(1);
+    if (gmt?.[0]?.group_id) return { groupId: gmt[0].group_id, pattern: "gmt_topic_url" };
+  } catch (_e) { /* noop */ }
+
+  // Pattern 2: groups.telegram_group_url contains /c/{stripped}/ (legacy/manual)
+  try {
+    const { data: g2 } = await admin
+      .from("groups")
+      .select("id")
+      .ilike("telegram_group_url", `%${needle}%`)
+      .limit(1);
+    if (g2?.[0]?.id) return { groupId: g2[0].id, pattern: "group_url_c" };
+  } catch (_e) { /* noop */ }
+
+  // Pattern 3: groups.telegram_group_url contains raw chat_id
+  try {
+    const { data: g3 } = await admin
+      .from("groups")
+      .select("id")
+      .ilike("telegram_group_url", `%${chatId}%`)
+      .limit(1);
+    if (g3?.[0]?.id) return { groupId: g3[0].id, pattern: "group_url_raw" };
+  } catch (_e) { /* noop */ }
+
+  return { groupId: null, pattern: "none" };
+}
+
+// v3.14.33: log every incoming update to webhook_inbox. Best-effort.
+async function logWebhookInbox(admin: any, update: any): Promise<number | null> {
+  try {
+    const m = update.message || update.channel_post || update.edited_message || update.callback_query?.message;
+    const cb = update.callback_query;
+    let updateType = "unknown";
+    if (update.message) updateType = "message";
+    else if (update.edited_message) updateType = "edited_message";
+    else if (update.channel_post) updateType = "channel_post";
+    else if (update.callback_query) updateType = "callback_query";
+    const fromUser = update.callback_query?.from || update.message?.from || update.channel_post?.from || update.edited_message?.from;
+    const text = update.message?.text || update.message?.caption || update.channel_post?.text || cb?.data || "";
+    const { data, error } = await admin.from("webhook_inbox").insert({
+      update_type: updateType,
+      chat_id: m?.chat?.id ?? null,
+      chat_type: m?.chat?.type ?? null,
+      chat_title: m?.chat?.title ?? null,
+      message_thread_id: m?.message_thread_id ?? null,
+      message_id: m?.message_id ?? null,
+      from_user_id: fromUser?.id ?? null,
+      from_username: fromUser?.username ?? null,
+      text_preview: String(text).slice(0, 200),
+      raw_update: update,
+      resolution: null,
+    }).select("id").maybeSingle();
+    if (error) { console.error("webhook_inbox insert err", error); return null; }
+    return data?.id ?? null;
+  } catch (e) {
+    console.error("logWebhookInbox failed", e);
+    return null;
+  }
+}
+
+async function updateInboxResolution(admin: any, inboxId: number | null, patch: Record<string, any>) {
+  if (!inboxId) return;
+  try {
+    // Merge with existing resolution
+    const { data: row } = await admin.from("webhook_inbox").select("resolution").eq("id", inboxId).maybeSingle();
+    const merged = { ...(row?.resolution || {}), ...patch };
+    await admin.from("webhook_inbox").update({ resolution: merged }).eq("id", inboxId);
+  } catch (e) { console.error("updateInboxResolution failed", e); }
+}
+
 // Group/supergroup post inside a topic — try to attach it to a pending intent.
 // v3.14.29: persist topic message event for teacher statistics. Best-effort, never throws.
 async function recordGroupMessageEvent(admin: any, msg: any) {
@@ -2438,15 +2525,8 @@ async function recordGroupMessageEvent(admin: any, msg: any) {
   const tgUserId: number = msg.from.id;
   if (!chatId || !threadId || !messageId || !tgUserId) return;
 
-  // Resolve group: telegram_group_url contains "/c/{stripped}/" derived from chat_id
-  const stripped = String(chatId).replace(/^-100/, "");
-  const needle = `/c/${stripped}/`;
-  const { data: groupRows } = await admin
-    .from("groups")
-    .select("id, telegram_group_url")
-    .ilike("telegram_group_url", `%${needle}%`)
-    .limit(1);
-  const groupId = groupRows?.[0]?.id || null;
+  // v3.14.33: use multi-pattern resolver (groups.telegram_group_url is invite-link only)
+  const { groupId } = await resolveGroupFromChatId(admin, chatId);
   if (!groupId) return; // unknown group, skip
 
   // Resolve module via topic mapping
@@ -2644,28 +2724,51 @@ function hwTeacherBody(studentName: string, groupName: string, moduleName: strin
 }
 
 // v3.14.32: auto-detect homework submission from any topic message — no /vazifalar intent needed.
-async function autoDetectHomeworkSubmission(admin: any, msg: any) {
+async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: number | null = null) {
+  const res: Record<string, any> = { homework_detector_fired: true };
   try {
     const chatType = msg.chat?.type;
-    if (chatType !== "supergroup" && chatType !== "group") return;
-    if (!msg.is_topic_message || !msg.message_thread_id) return;
-    if (!msg.from || msg.from.is_bot) return;
+    res.chat_type_seen = chatType;
+    if (chatType !== "supergroup" && chatType !== "group") {
+      res.skip_reason = "not_group_chat";
+      await updateInboxResolution(admin, inboxId, res);
+      return;
+    }
+    if (!msg.is_topic_message || !msg.message_thread_id) {
+      res.skip_reason = "not_topic_message";
+      await updateInboxResolution(admin, inboxId, res);
+      return;
+    }
+    if (!msg.from || msg.from.is_bot) {
+      res.skip_reason = "from_bot_or_missing";
+      await updateInboxResolution(admin, inboxId, res);
+      return;
+    }
     const chatId: number = msg.chat.id;
     const threadId: number = msg.message_thread_id;
     const messageId: number = msg.message_id;
     const tgUserId: number = msg.from.id;
 
-    // Resolve group via /c/{stripped}/ in telegram_group_url
-    const stripped = String(chatId).replace(/^-100/, "");
-    const needle = `/c/${stripped}/`;
-    const { data: groupRows } = await admin
+    // v3.14.33: multi-pattern resolver. Old code only checked groups.telegram_group_url
+    // which stores invite links (https://t.me/+xxxx) — never matched, always silent fail.
+    const { groupId, pattern } = await resolveGroupFromChatId(admin, chatId);
+    res.resolved_chat_to_group_id = groupId;
+    res.group_resolver_pattern = pattern;
+    if (!groupId) {
+      res.skip_reason = "no_group";
+      await updateInboxResolution(admin, inboxId, res);
+      console.log("homework_event_skipped", JSON.stringify({ reason: "no_group", chat_id: chatId, thread_id: threadId }));
+      return;
+    }
+    const { data: groupFull } = await admin
       .from("groups")
       .select("id, name, teacher_id")
-      .ilike("telegram_group_url", `%${needle}%`)
-      .limit(1);
-    const group = groupRows?.[0];
+      .eq("id", groupId)
+      .maybeSingle();
+    const group = groupFull;
     if (!group) {
-      console.log("homework_event_skipped", JSON.stringify({ reason: "no_group", chat_id: chatId, thread_id: threadId }));
+      res.skip_reason = "group_row_missing";
+      await updateInboxResolution(admin, inboxId, res);
       return;
     }
 
@@ -2677,10 +2780,13 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any) {
       .eq("telegram_topic_id", threadId)
       .maybeSingle();
     if (!topicRow?.module_id) {
+      res.skip_reason = "no_module_for_topic";
+      await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "no_module_for_topic", group_id: group.id, thread_id: threadId }));
       return;
     }
     const moduleId = topicRow.module_id;
+    res.resolved_thread_to_module_id = moduleId;
 
     // Find active assignment for this module (latest task_number)
     const { data: asg } = await admin
@@ -2692,17 +2798,23 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any) {
       .limit(1)
       .maybeSingle();
     if (!asg) {
+      res.skip_reason = "no_active_assignment";
+      await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "no_active_assignment", module_id: moduleId }));
       return;
     }
+    res.matched_assignment_id = asg.id;
 
     // Resolve student profile (telegram_id first, username fallback w/ backfill)
     const tgUsername = (msg.from.username || "").toLowerCase();
     const profile = await resolveProfileForTelegramUser(admin, tgUserId, tgUsername, "bot");
     if (!profile) {
+      res.skip_reason = "unregistered_student";
+      await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "unregistered_student", telegram_id: tgUserId, username: tgUsername }));
       return;
     }
+    res.resolved_profile_id = profile.id;
 
     console.log("homework_event", JSON.stringify({
       chat_id: chatId, thread_id: threadId, resolved_group: group.id,
@@ -2719,6 +2831,8 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any) {
     else if (msg.voice) { fileId = msg.voice.file_id; kind = "voice"; }
     else if (msg.video_note) { fileId = msg.video_note.file_id; kind = "video_note"; }
     else if (!msg.text && !msg.caption) {
+      res.skip_reason = "no_content";
+      await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "no_content", message_id: messageId }));
       return;
     }
@@ -2734,6 +2848,8 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any) {
       .eq("assignment_id", asg.id)
       .maybeSingle();
     if (existing && existing.score != null) {
+      res.skip_reason = "already_graded";
+      await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "already_graded", submission_id: existing.id }));
       return;
     }
@@ -2752,7 +2868,13 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any) {
       }, { onConflict: "user_id,assignment_id" })
       .select("id")
       .maybeSingle();
-    if (upErr) { console.error("homework_event_skipped upsert_err", upErr); return; }
+    if (upErr) {
+      res.skip_reason = "upsert_err";
+      res.upsert_err = String(upErr.message || upErr);
+      await updateInboxResolution(admin, inboxId, res);
+      console.error("homework_event_skipped upsert_err", upErr);
+      return;
+    }
     const submissionId = upserted?.id;
 
     // React ✅ in-thread
@@ -2762,26 +2884,38 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any) {
     const nowMs = Date.now();
 
     // Student confirmation DM (1/day per assignment)
+    res.student_dm_sent = false;
     const lastConfirm = studentConfirmDedupe.get(dedupeKey) || 0;
     if (profile.telegram_id && nowMs - lastConfirm > STUDENT_CONFIRM_TTL_MS) {
       studentConfirmDedupe.set(dedupeKey, nowMs);
       const loc: Locale = normLocale(profile.preferred_locale);
       try {
         await sendMessage(Number(profile.telegram_id), HW_STUDENT_CONFIRM[loc]);
+        res.student_dm_sent = true;
       } catch (e) {
+        res.student_dm_error = String(e);
         console.log("student_dm_unreachable", JSON.stringify({ profile_id: profile.id, err: String(e) }));
       }
+    } else if (!profile.telegram_id) {
+      res.student_dm_error = "no_telegram_id_on_profile";
+    } else {
+      res.student_dm_error = "deduped";
     }
 
     // Teacher DM (1 per 5 min per student+assignment)
+    res.teacher_dm_sent = false;
     const lastTeacherDm = teacherDmDedupe.get(dedupeKey) || 0;
     if (nowMs - lastTeacherDm < TEACHER_DM_TTL_MS) {
+      res.teacher_dm_error = "deduped";
+      await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "teacher_dm_dedupe", key: dedupeKey }));
       return;
     }
     teacherDmDedupe.set(dedupeKey, nowMs);
 
     if (!group.teacher_id) {
+      res.teacher_dm_error = "no_teacher_assigned";
+      await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "no_teacher_assigned", group_id: group.id }));
       return;
     }
@@ -2791,10 +2925,14 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any) {
       .eq("id", group.teacher_id)
       .maybeSingle();
     if (!teacher?.telegram_id) {
+      res.teacher_dm_error = "teacher_no_telegram";
+      await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "teacher_no_telegram", teacher_id: group.teacher_id }));
       return;
     }
     if (teacher.notifications_enabled === false) {
+      res.teacher_dm_error = "teacher_notifications_disabled";
+      await updateInboxResolution(admin, inboxId, res);
       console.log("homework_event_skipped", JSON.stringify({ reason: "teacher_notifications_disabled", teacher_id: teacher.id }));
       return;
     }
@@ -2810,9 +2948,13 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any) {
     ];
     try {
       await sendMessage(Number(teacher.telegram_id), body, { inline_keyboard: inlineKb });
+      res.teacher_dm_sent = true;
     } catch (e) {
+      res.teacher_dm_error = String(e);
       console.log("teacher_dm_unreachable", JSON.stringify({ teacher_id: teacher.id, err: String(e) }));
     }
+
+    await updateInboxResolution(admin, inboxId, res);
 
     // Audit
     try {
@@ -2826,6 +2968,9 @@ async function autoDetectHomeworkSubmission(admin: any, msg: any) {
       });
     } catch { /* ignore */ }
   } catch (e) {
+    res.skip_reason = "exception";
+    res.exception = String(e);
+    await updateInboxResolution(admin, inboxId, res);
     console.error("autoDetectHomeworkSubmission error", e);
   }
 }
@@ -3189,6 +3334,9 @@ Deno.serve(async (req) => {
     }));
   } catch (_e) { /* noop */ }
 
+  // v3.14.33: persist EVERY incoming update to webhook_inbox (best-effort, never fails request).
+  const inboxId = await logWebhookInbox(admin, update);
+
   try {
     // Treat both message and channel_post as inbound for group topics (forum supergroups can deliver either)
     const inbound = update.message || update.channel_post;
@@ -3200,7 +3348,10 @@ Deno.serve(async (req) => {
         // v3.14.29: passively record topic messages for Statistika analytics.
         try { await recordGroupMessageEvent(admin, msg); } catch (e) { console.error("recordGroupMessageEvent failed", e); }
         // v3.14.32: auto-detect homework submission (no /vazifalar intent required).
-        try { await autoDetectHomeworkSubmission(admin, msg); } catch (e) { console.error("autoDetectHomeworkSubmission failed", e); }
+        try { await autoDetectHomeworkSubmission(admin, msg, inboxId); } catch (e) {
+          console.error("autoDetectHomeworkSubmission failed", e);
+          await updateInboxResolution(admin, inboxId, { skip_reason: "outer_exception", outer_exception: String(e) });
+        }
         // Legacy intent-based flow (backward compat for /vazifalar → 📤 Topshirish).
         await handleGroupTopicMessage(admin, msg);
         return new Response("ok", { status: 200, headers: corsHeaders });
