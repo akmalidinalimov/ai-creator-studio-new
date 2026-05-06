@@ -2712,9 +2712,9 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       try { await sendMessage(profile.telegram_id, t.hwReceived(mn, tn)); } catch (_e) {}
     }
 
-    // Queue teacher DM (handles RBAC, throttling, quiet hours)
+    // Queue teacher DM (handles RBAC, throttling, quiet hours) + immediate send
     const subId = upserted?.id;
-    await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId, moduleId);
+    await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId, intent.assignment_id, moduleId);
 
     // Invalidate any cached "stats" for the student so next /galaba is fresh
     cacheInvalidateUser(profile.id);
