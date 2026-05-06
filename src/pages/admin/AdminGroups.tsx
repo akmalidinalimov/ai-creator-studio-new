@@ -112,6 +112,17 @@ export default function AdminGroups() {
       tmap[gg.id] = { configured: gg.homework_topic_url ? 1 : 0, total: 1 };
     });
     setTopics(tmap);
+
+    // Per-module homework submission counts per group
+    const { data: hw } = await supabase.rpc("admin_group_module_submissions" as any, {});
+    const hmap: Record<string, Array<{ module_id: string; position: number; title: string; submitted: number; total: number }>> = {};
+    ((hw as any[]) || []).forEach((r) => {
+      const arr = hmap[r.group_id] || [];
+      arr.push({ module_id: r.module_id, position: r.module_position, title: r.module_title, submitted: r.submitted_count || 0, total: r.total_students || 0 });
+      hmap[r.group_id] = arr;
+    });
+    Object.keys(hmap).forEach((k) => hmap[k].sort((a, b) => a.position - b.position));
+    setHwMods(hmap);
     setLoading(false);
   };
 
