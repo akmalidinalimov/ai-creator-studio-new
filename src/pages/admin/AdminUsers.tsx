@@ -269,7 +269,7 @@ export default function AdminUsers() {
 
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = search.trim().toLowerCase().replace(/^@/, "");
     return users.filter((u) => {
       if (statusFilter !== "all" && u.status !== statusFilter) return false;
       if (roleFilter !== "all") {
