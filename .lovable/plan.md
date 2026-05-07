@@ -1,31 +1,71 @@
-## Problem
+## Root cause
 
-Currently any post in the homework topic triggers a submission + teacher DM, because the webhook calls **`autoDetectHomeworkSubmission`** on every group topic message. This function (added in v3.14.32) intentionally bypasses the intent flow — it picks the most recent active assignment from `groups.homework_topic_id` and attributes the post to it, with no requirement that the student first go through the bot.
+In `handleGroupTopicMessage` (supabase/functions/telegram-bot-webhook/index.ts, ~line 2634), the intent lookup is:
 
-The bot already has a proper intent-based flow:
-- Student opens bot → **"Mini vazifalarim"** → picks module → taps **📤 Topshirish**
-- That creates a row in `bot_homework_intents` (user_id + chat + thread + assignment, with `expires_at`)
-- `handleGroupTopicMessage` only acts on a topic post when a matching, non-expired intent exists for that user
+```ts
+let q = admin.from("bot_homework_intents")
+  .eq("telegram_chat_id", chatId)
+  .eq("telegram_thread_id", threadId)
+  .gt("expires_at", nowIso)
+  .order("created_at", { ascending: false }).limit(1);
+if (profile) q = q.eq("user_id", profile.id);   // ← only filters when profile is found
+```
 
-We just need to stop the auto-detect path and rely solely on the intent-gated path.
+The fallback "match by topic alone" was meant only for Telegram's anonymous-admin proxy bot (`fromId === 1087968824`). But it actually fires for **anyone whose Telegram id is not linked to a profile** — a teacher chatting in the topic, a guest, or any student whose `profiles.telegram_id` isn't set.
 
-## Fix (single file: `supabase/functions/telegram-bot-webhook/index.ts`)
+Result: while student A has an active intent, if user B posts in the same topic and B has no profile match, the query returns A's intent. The webhook then:
+1. Creates/updates a `homework_submissions` row for student A,
+2. Stores `telegram_message_id` / `telegram_message_url` pointing to **B's message**,
+3. Sends the teacher a DM whose "📌 Topikga o'tish" button links to B's chat instead of A's upload.
 
-1. **Remove the auto-detect call** in the group/supergroup branch of the webhook handler (~line 3674). Only `handleGroupTopicMessage(admin, msg)` runs.
-2. **Keep `recordGroupMessageEvent`** (analytics) untouched — it does not create submissions.
-3. **Keep the `autoDetectHomeworkSubmission` function defined** (dead code) for now so we can re-enable easily if needed; just no caller. Add a `// v3.14.35: disabled — intent-only flow` comment.
-4. Bump the version banner comment at the top of the file to `v3.14.35`.
+This is what the user is seeing: "the image link is not the same."
 
-No DB migration, no schema change, no UI change. Frontend untouched.
+A second, smaller contributor: when a student sends an album (multi-photo media_group), the first message consumes & deletes the intent, so albums are unaffected by interleaving — but only the first photo's link is stored. The user confirmed that's the desired behavior (one link to the first message).
+
+## Fix (single file, surgical)
+
+`supabase/functions/telegram-bot-webhook/index.ts` — `handleGroupTopicMessage` only.
+
+1. **Tighten the intent match.** Require an identified profile in all non-anonymous cases. Only fall back to "topic-only match" when `isAnon === true` (Telegram's anonymous-admin bot id).
+
+   ```ts
+   let q = admin.from("bot_homework_intents")
+     .select("...")
+     .eq("telegram_chat_id", chatId)
+     .eq("telegram_thread_id", threadId)
+     .gt("expires_at", nowIso)
+     .order("created_at", { ascending: false }).limit(1);
+
+   if (isAnon) {
+     // anonymous admin proxy — match by topic alone (legitimate use)
+   } else {
+     if (!profile) {
+       console.log("hw:group:unknown-sender-ignored", { fromId, chatId, threadId, messageId });
+       return; // do NOT attribute B's message to A
+     }
+     q = q.eq("user_id", profile.id);
+   }
+   ```
+
+2. **Defensive check before upsert.** After resolving the intent, if `!isAnon && intent.user_id !== profile.id`, log `hw:group:intent-user-mismatch` and bail. Belt-and-suspenders against future regressions.
+
+3. **Bump version banner** at the top of the file to `v3.14.36`.
+
+No DB changes, no schema changes, no UI changes. `notifyTeachersOfSubmission` and the deep-link builder (`buildMessageLink`) are already correct — they just need to receive the right `messageId`.
 
 ## Behavior after fix
 
-- Student posts in topic without using bot → **silent**, no submission row, no teacher DM. (Will log `hw:group:no-matching-intent` in `handleGroupTopicMessage` — already does today.)
-- Student uses bot → "Mini vazifalarim" → picks module → 📤 Topshirish → posts in topic → submission created + ✅ reaction + student confirm DM + teacher DM (unchanged).
-- Intent expires (TTL already enforced by `expires_at`) → reverts to silent.
+- Student A taps 📤 Topshirish in bot → posts photo in topic → submission saved, link points to **A's** message, teacher DM correct. (unchanged happy path)
+- While A's intent is active, anyone else posts in the same topic (teacher, guest, unlinked user) → silently ignored, log `hw:group:unknown-sender-ignored` or `hw:group:no-matching-intent`. **A's submission is not overwritten and the link stays correct.**
+- Anonymous admin (`fromId === 1087968824`) posting "as the group" → still works via topic-only fallback (rare but supported).
+- Album from A → first photo's link is stored, intent consumed, rest are silently ignored (matches desired outcome).
 
 ## Verification
 
-1. From a non-onboarded chat, post text in the homework topic → no submission row created, no teacher DM, log shows `hw:group:no-matching-intent`.
-2. From a registered student, go through bot flow → post → submission appears, teacher gets DM, ✅ reaction lands.
-3. Check `/admin/bot-debug` inbox: pre-fix rows showed `resolved_via=shared_topic`; post-fix unsolicited posts will show no resolution attempt from auto-detect (skipped entirely).
+1. **Reproduce pre-fix path manually via logs.** Pick a recent submission whose `telegram_message_url` differs from the student's actual upload — confirm the prior `hw:group:enter` log shows a `fromId` that is NOT in `profiles.telegram_id`.
+2. **Post-fix smoke test.**
+   - Student does the bot flow, then immediately posts in the topic. Have a second account (teacher / unlinked) post a chat message between the bot tap and the student's photo. Confirm:
+     - submission row's `telegram_message_id` matches student's photo,
+     - teacher DM "📌 Topikga o'tish" opens student's photo,
+     - logs show `hw:group:unknown-sender-ignored` for the interleaving message.
+3. **Regression check.** Plain chat in the homework topic with no active intent → still logs `hw:group:no-matching-intent`, no submission created, no teacher DM (per the previous fix).
