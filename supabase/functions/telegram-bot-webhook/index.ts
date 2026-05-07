@@ -2653,8 +2653,9 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       profile = await findProfileByTelegramId(admin, fromId);
     }
 
-    // Find a non-expired matching intent for this topic.
-    // If we know the user, scope by user_id; otherwise (anonymous admin post) match by topic alone — the most recent intent in this exact topic wins.
+    // v3.14.36: Strict intent matching. Only fall back to topic-only match for Telegram's
+    // anonymous-admin proxy bot. For any other unidentified sender, IGNORE — otherwise an
+    // unrelated chat message in the topic would overwrite the active student's submission link.
     const nowIso = new Date().toISOString();
     let q = admin
       .from("bot_homework_intents")
@@ -2664,7 +2665,15 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       .gt("expires_at", nowIso)
       .order("created_at", { ascending: false })
       .limit(1);
-    if (profile) q = q.eq("user_id", profile.id);
+    if (isAnon) {
+      // anonymous admin proxy — match by topic alone (legitimate use)
+    } else {
+      if (!profile) {
+        console.log("hw:group:unknown-sender-ignored", JSON.stringify({ fromId, chatId, threadId, messageId }));
+        return;
+      }
+      q = q.eq("user_id", profile.id);
+    }
     const { data: intents, error: intentErr } = await q;
     if (intentErr) console.error("hw:group:intent-query-err", intentErr);
     const intent = (intents && intents[0]) as any;
