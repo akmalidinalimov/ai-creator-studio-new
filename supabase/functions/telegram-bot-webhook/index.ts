@@ -3670,12 +3670,11 @@ Deno.serve(async (req) => {
       if (chatType === "supergroup" || chatType === "group" || chatType === "channel") {
         // v3.14.29: passively record topic messages for Statistika analytics.
         try { await recordGroupMessageEvent(admin, msg); } catch (e) { console.error("recordGroupMessageEvent failed", e); }
-        // v3.14.32: auto-detect homework submission (no /vazifalar intent required).
-        try { await autoDetectHomeworkSubmission(admin, msg, inboxId); } catch (e) {
-          console.error("autoDetectHomeworkSubmission failed", e);
-          await updateInboxResolution(admin, inboxId, { skip_reason: "outer_exception", outer_exception: String(e) });
-        }
-        // Legacy intent-based flow (backward compat for /vazifalar → 📤 Topshirish).
+        // v3.14.35: auto-detect disabled — intent-only flow.
+        // Posts in the homework topic only count as submissions when the student
+        // first goes through the bot: Mini vazifalarim → module → 📤 Topshirish
+        // (which creates a bot_homework_intents row consumed by handleGroupTopicMessage).
+        await updateInboxResolution(admin, inboxId, { skip_reason: "intent_only_mode", homework_detector_fired: false });
         await handleGroupTopicMessage(admin, msg);
         return new Response("ok", { status: 200, headers: corsHeaders });
       }
