@@ -682,7 +682,7 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
   };
 
   const filtered = useMemo(() => {
-    const s = search.trim().toLowerCase();
+    const s = search.trim().toLowerCase().replace(/^@/, "");
     const sorted = [...students].sort((a, b) =>
       ((a.name || "") + " " + (a.last_name || "")).localeCompare((b.name || "") + " " + (b.last_name || ""))
     );
