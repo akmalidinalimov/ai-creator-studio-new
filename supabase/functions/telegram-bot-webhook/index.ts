@@ -2695,6 +2695,11 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
         return;
       }
     }
+    // v3.14.36: Defensive — never attribute a message to a user other than the intent owner.
+    if (!isAnon && intent.user_id !== profile.id) {
+      console.log("hw:group:intent-user-mismatch", JSON.stringify({ intent_user: intent.user_id, sender_user: profile.id, chatId, threadId, messageId }));
+      return;
+    }
     // Extract media
     let fileId: string | null = null;
     let kind = "text";
