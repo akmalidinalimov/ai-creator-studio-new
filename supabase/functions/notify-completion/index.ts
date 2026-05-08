@@ -134,41 +134,6 @@ Deno.serve(async (req) => {
       const text = interpolate(tpl.body, { first_name: firstName || fullName, full_name: fullName, course_title: course?.title || "AI Creators" });
       await tg("sendMessage", { chat_id: chatId, text, parse_mode: "HTML" });
       await logNotif(admin, user_id, "course_complete", { lesson_id, course_id: module.course_id });
-
-      const baseUrl = Deno.env.get("SUPABASE_URL");
-      // PDF certificate
-      try {
-        const certResp = await fetch(`${baseUrl}/functions/v1/generate-certificate`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id, course_id: module.course_id }),
-        });
-        if (certResp.ok) {
-          const bytes = new Uint8Array(await certResp.arrayBuffer());
-          const fd = new FormData();
-          fd.append("chat_id", String(chatId));
-          fd.append("caption", "AI Creators — Sertifikat");
-          fd.append("document", new Blob([bytes], { type: "application/pdf" }), `AI-Creators-Certificate-${fullName.replace(/\s+/g, "-")}.pdf`);
-          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, { method: "POST", body: fd });
-        }
-      } catch (e) { console.error("certificate dispatch failed", e); }
-
-      // 1080x1080 shareable PNG
-      try {
-        const shareResp = await fetch(`${baseUrl}/functions/v1/generate-share-image`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id, course_id: module.course_id, locale }),
-        });
-        if (shareResp.ok) {
-          const bytes = new Uint8Array(await shareResp.arrayBuffer());
-          const fd = new FormData();
-          fd.append("chat_id", String(chatId));
-          fd.append("caption", SHARE_CAPTION[locale]);
-          fd.append("reply_markup", JSON.stringify({ inline_keyboard: [[{ text: tpl.button_label || "📤 Share", callback_data: "share_intent" }]] }));
-          fd.append("photo", new Blob([bytes], { type: "image/png" }), `AI-Creators-Share-${fullName.replace(/\s+/g, "-")}.png`);
-          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, { method: "POST", body: fd });
-        }
-      } catch (e) { console.error("share image dispatch failed", e); }
-
       return new Response("ok", { status: 200, headers: corsHeaders });
     }
 
