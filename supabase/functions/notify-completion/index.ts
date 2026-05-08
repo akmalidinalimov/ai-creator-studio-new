@@ -65,12 +65,6 @@ function interpolate(s: string, vars: Record<string, string | number>): string {
   return s.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => String(vars[k] ?? ""));
 }
 
-const SHARE_CAPTION: Record<Locale, string> = {
-  uz: "Sertifikatingiz va ulashish uchun rasm tayyor!",
-  ru: "Ваш сертификат и картинка для шаринга готовы!",
-  en: "Your certificate and shareable image are ready!",
-};
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405, headers: corsHeaders });
@@ -166,6 +160,33 @@ Deno.serve(async (req) => {
         reply_markup: inline.length ? { inline_keyboard: inline } : undefined,
       });
       await logNotif(admin, user_id, "module_complete", { module_id: module.id, lesson_id });
+
+      // Generate per-module shareable image and send to Telegram
+      try {
+        const baseUrl = Deno.env.get("SUPABASE_URL");
+        const shareResp = await fetch(`${baseUrl}/functions/v1/generate-module-share-image`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({ user_id, module_id: module.id }),
+        });
+        if (shareResp.ok) {
+          const json = await shareResp.json();
+          if (json?.image_url) {
+            await tg("sendPhoto", {
+              chat_id: chatId,
+              photo: json.image_url,
+              caption: json.caption || `Modul ${module.position + 1} tamomlandi! Instagram'da @aicreators_uz ni tag qiling 🎉`,
+            });
+          }
+        } else {
+          console.error("module-share generation failed", shareResp.status, await shareResp.text());
+        }
+      } catch (e) {
+        console.error("module-share dispatch failed", e);
+      }
       return new Response("ok", { status: 200, headers: corsHeaders });
     }
 
