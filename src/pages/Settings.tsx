@@ -171,8 +171,6 @@ export default function Settings() {
           <Button onClick={save}>{t("settings.saveProfile")}</Button>
         </Card>
 
-        <CertificateSection />
-
         <HomeworkProfileSection />
 
         <Card className="p-5 space-y-4 shadow-soft">
