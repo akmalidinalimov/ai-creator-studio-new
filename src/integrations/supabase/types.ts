@@ -575,48 +575,6 @@ export type Database = {
         }
         Relationships: []
       }
-      certificates: {
-        Row: {
-          course_name: string
-          created_at: string
-          id: string
-          issued_at: string
-          pdf_url: string | null
-          profile_id: string
-          revoked_at: string | null
-          revoked_by: string | null
-          serial_no: string
-          student_full_name: string
-          verification_token: string
-        }
-        Insert: {
-          course_name?: string
-          created_at?: string
-          id?: string
-          issued_at?: string
-          pdf_url?: string | null
-          profile_id: string
-          revoked_at?: string | null
-          revoked_by?: string | null
-          serial_no: string
-          student_full_name: string
-          verification_token?: string
-        }
-        Update: {
-          course_name?: string
-          created_at?: string
-          id?: string
-          issued_at?: string
-          pdf_url?: string | null
-          profile_id?: string
-          revoked_at?: string | null
-          revoked_by?: string | null
-          serial_no?: string
-          student_full_name?: string
-          verification_token?: string
-        }
-        Relationships: []
-      }
       courses: {
         Row: {
           ai_knowledge_paths: string[] | null
@@ -1474,6 +1432,36 @@ export type Database = {
           kind?: string
           success?: boolean
           user_agent?: string | null
+        }
+        Relationships: []
+      }
+      module_celebrations: {
+        Row: {
+          caption: string | null
+          created_at: string
+          id: string
+          image_url: string | null
+          module_id: string
+          seen_at: string | null
+          user_id: string
+        }
+        Insert: {
+          caption?: string | null
+          created_at?: string
+          id?: string
+          image_url?: string | null
+          module_id: string
+          seen_at?: string | null
+          user_id: string
+        }
+        Update: {
+          caption?: string | null
+          created_at?: string
+          id?: string
+          image_url?: string | null
+          module_id?: string
+          seen_at?: string | null
+          user_id?: string
         }
         Relationships: []
       }
