@@ -65,12 +65,6 @@ function interpolate(s: string, vars: Record<string, string | number>): string {
   return s.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => String(vars[k] ?? ""));
 }
 
-const SHARE_CAPTION: Record<Locale, string> = {
-  uz: "Sertifikatingiz va ulashish uchun rasm tayyor!",
-  ru: "Ваш сертификат и картинка для шаринга готовы!",
-  en: "Your certificate and shareable image are ready!",
-};
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405, headers: corsHeaders });
@@ -134,41 +128,6 @@ Deno.serve(async (req) => {
       const text = interpolate(tpl.body, { first_name: firstName || fullName, full_name: fullName, course_title: course?.title || "AI Creators" });
       await tg("sendMessage", { chat_id: chatId, text, parse_mode: "HTML" });
       await logNotif(admin, user_id, "course_complete", { lesson_id, course_id: module.course_id });
-
-      const baseUrl = Deno.env.get("SUPABASE_URL");
-      // PDF certificate
-      try {
-        const certResp = await fetch(`${baseUrl}/functions/v1/generate-certificate`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id, course_id: module.course_id }),
-        });
-        if (certResp.ok) {
-          const bytes = new Uint8Array(await certResp.arrayBuffer());
-          const fd = new FormData();
-          fd.append("chat_id", String(chatId));
-          fd.append("caption", "AI Creators — Sertifikat");
-          fd.append("document", new Blob([bytes], { type: "application/pdf" }), `AI-Creators-Certificate-${fullName.replace(/\s+/g, "-")}.pdf`);
-          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, { method: "POST", body: fd });
-        }
-      } catch (e) { console.error("certificate dispatch failed", e); }
-
-      // 1080x1080 shareable PNG
-      try {
-        const shareResp = await fetch(`${baseUrl}/functions/v1/generate-share-image`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id, course_id: module.course_id, locale }),
-        });
-        if (shareResp.ok) {
-          const bytes = new Uint8Array(await shareResp.arrayBuffer());
-          const fd = new FormData();
-          fd.append("chat_id", String(chatId));
-          fd.append("caption", SHARE_CAPTION[locale]);
-          fd.append("reply_markup", JSON.stringify({ inline_keyboard: [[{ text: tpl.button_label || "📤 Share", callback_data: "share_intent" }]] }));
-          fd.append("photo", new Blob([bytes], { type: "image/png" }), `AI-Creators-Share-${fullName.replace(/\s+/g, "-")}.png`);
-          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, { method: "POST", body: fd });
-        }
-      } catch (e) { console.error("share image dispatch failed", e); }
-
       return new Response("ok", { status: 200, headers: corsHeaders });
     }
 
@@ -201,6 +160,33 @@ Deno.serve(async (req) => {
         reply_markup: inline.length ? { inline_keyboard: inline } : undefined,
       });
       await logNotif(admin, user_id, "module_complete", { module_id: module.id, lesson_id });
+
+      // Generate per-module shareable image and send to Telegram
+      try {
+        const baseUrl = Deno.env.get("SUPABASE_URL");
+        const shareResp = await fetch(`${baseUrl}/functions/v1/generate-module-share-image`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({ user_id, module_id: module.id }),
+        });
+        if (shareResp.ok) {
+          const json = await shareResp.json();
+          if (json?.image_url) {
+            await tg("sendPhoto", {
+              chat_id: chatId,
+              photo: json.image_url,
+              caption: json.caption || `Modul ${module.position + 1} tamomlandi! Instagram'da @aicreators_uz ni tag qiling 🎉`,
+            });
+          }
+        } else {
+          console.error("module-share generation failed", shareResp.status, await shareResp.text());
+        }
+      } catch (e) {
+        console.error("module-share dispatch failed", e);
+      }
       return new Response("ok", { status: 200, headers: corsHeaders });
     }
 

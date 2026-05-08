@@ -16,7 +16,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { SUPPORTED_LANGUAGES, type LanguageCode } from "@/i18n";
 import { HomeworkProfileSection } from "@/components/HomeworkProfileSection";
 import { NudgePreferencesCard } from "@/components/NudgePreferencesCard";
-import { CertificateSection } from "@/components/CertificateSection";
+
 
 interface AuthEvent {
   id: string;
@@ -170,8 +170,6 @@ export default function Settings() {
           <div className="space-y-1.5"><Label>{t("settings.weeklyGoal")}</Label><Input type="number" value={goal} onChange={(e) => setGoal(parseInt(e.target.value) || 0)} /></div>
           <Button onClick={save}>{t("settings.saveProfile")}</Button>
         </Card>
-
-        <CertificateSection />
 
         <HomeworkProfileSection />
 

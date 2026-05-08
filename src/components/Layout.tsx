@@ -51,7 +51,7 @@ export const TopNav = () => {
   const boshqaruvLinks = isAdmin ? [
     { to: "/admin/homework", label: "📝 Vazifalar" },
     { to: "/teacher/homework", label: "📜 Bahalar tarixi" },
-    { to: "/admin/certificates", label: "🏆 Sertifikatlar" },
+    
     { to: "/admin/reengagement", label: "🎯 Reaktivatsiya" },
     { to: "/admin/nudges", label: "🔔 Smart eslatmalar" },
     { to: "/admin/analytics", label: "📈 Chuqur tahlillar" },
@@ -141,9 +141,6 @@ export const TopNav = () => {
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link to="/admin/nudges"><Bell className="mr-2 h-4 w-4" /> 🔔 Smart eslatmalar</Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link to="/admin/certificates"><Shield className="mr-2 h-4 w-4" /> 🏆 Sertifikatlar</Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link to="/admin/settings"><Settings className="mr-2 h-4 w-4" /> {t("nav.settings")}</Link>
