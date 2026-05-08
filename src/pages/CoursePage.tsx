@@ -105,7 +105,7 @@ export default function CoursePage() {
             {nextLesson && (
               <Button asChild className="w-full mt-5"><Link to={`/lesson/${courseId}/${nextLesson.id}`}><PlayCircle className="h-4 w-4" />{t("coursePage.continue")}</Link></Button>
             )}
-            {pct === 100 && <Button asChild variant="outline" className="w-full mt-3"><Link to={`/certificate/${courseId}`}>{t("coursePage.viewCertificate")}</Link></Button>}
+            
           </Card>
         </aside>
       </div>

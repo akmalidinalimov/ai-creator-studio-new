@@ -16,7 +16,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { SUPPORTED_LANGUAGES, type LanguageCode } from "@/i18n";
 import { HomeworkProfileSection } from "@/components/HomeworkProfileSection";
 import { NudgePreferencesCard } from "@/components/NudgePreferencesCard";
-import { CertificateSection } from "@/components/CertificateSection";
+
 
 interface AuthEvent {
   id: string;

@@ -51,7 +51,7 @@ export const TopNav = () => {
   const boshqaruvLinks = isAdmin ? [
     { to: "/admin/homework", label: "📝 Vazifalar" },
     { to: "/teacher/homework", label: "📜 Bahalar tarixi" },
-    { to: "/admin/certificates", label: "🏆 Sertifikatlar" },
+    
     { to: "/admin/reengagement", label: "🎯 Reaktivatsiya" },
     { to: "/admin/nudges", label: "🔔 Smart eslatmalar" },
     { to: "/admin/analytics", label: "📈 Chuqur tahlillar" },
