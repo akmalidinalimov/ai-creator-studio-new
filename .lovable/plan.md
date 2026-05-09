@@ -1,58 +1,87 @@
 ## Goal
 
-Make Telegram homework buttons clear for students. Replace cryptic `M1 — title` and `V1.S1 — title` labels with module-number-based labels that scale automatically as new modules are added.
+Make it easy for teachers to track submissions per student. Replace the chronological "📑 Baholar" (recent grades) view with a roster-first browser: students → modules → grades.
 
-## Changes
+All changes in `supabase/functions/telegram-bot-webhook/index.ts`. Telegram-only; no DB schema, no web UI.
 
-All edits are in `supabase/functions/telegram-bot-webhook/index.ts` (Telegram bot, no UI). Logic, callback data, routing, and submission flow stay exactly the same — only the button text changes.
+## New flow
 
-### 1. Top-level `/vazifalar` module buttons (line ~1164)
+### Level 1 — Student roster (replaces `/baholar`)
 
-Currently:
+Tapping `📑 Baholar` (renamed to `👥 Talabalar`) shows all students in the teacher's active group, paginated 10/page.
+
+Button label per student:
+- `@username` if `profiles.telegram_username` exists
+- otherwise `First Last` (full name fallback)
+- suffix `· N` = total submissions count (graded + pending) so teachers see who's active at a glance
+
+Sort: most submissions first, then alphabetical.
+
+Admins see all students across all groups (same as today's grading scope).
+
+### Level 2 — Per-student module list
+
+Tapping a student shows one row per module they have submitted to:
+
 ```
-📝 M1 — <module title>
-```
+👤 @username (Aziza Karimova)
 
-New:
-```
-📝 1-MODUL VAZIFASI
-```
+📦 1-modul — 1 topshirildi · 8/10
+📦 2-modul — 1 topshirildi · ⏳ baholanmagan
+📦 3-modul — 3 topshirildi · 7/10, 9/10, ⏳
 
-The number comes from `m.position + 1` (already computed), so newly added modules automatically render `4-MODUL VAZIFASI`, `5-MODUL VAZIFASI`, etc. The module title is dropped from the button (already shown in the message body above).
-
-### 2. Per-SAP buttons after tapping a module (line ~3328)
-
-Currently:
-```
-📤 V1.S1 — <title>
-📤 V1.S2 — <title>
-📤 V1.S3 — <title>
-```
-
-New (numbered sequentially within the module by SAP order):
-```
-📤 Vazifa 1 — <title>
-📤 Vazifa 2 — <title>
-📤 Vazifa 3 — <title>
+↩️ Talabalar ro'yxati
 ```
 
-For a module with no SAPs (single standalone task), only one button is shown: `📤 Vazifa 1 — <title>` — same flow as before.
+Rules per module row:
+- "N topshirildi" = count of submissions (leaves) for that module by this student
+- After `·` show each leaf's score in submission order: `8/10`, `9/10`, or `⏳` for ungraded
+- If a module has only one task (no SAPs), it collapses to a single score
+- Modules with zero submissions are hidden
+- Order by `module.position` ascending
 
-The header message stays:
-```
-📝 M{n} — {moduleTitle}
+Each module row is a tappable button → drills to Level 3.
 
-Qaysi vazifani topshirasiz?
-```
+### Level 3 — Submission detail (per module)
 
-### 3. Scope guarantees
+Reuses the existing `renderStudentBreakdown` flow scoped to one module: lists each leaf (V1, V1.S1, V1.S2…) with score, feedback, and a "Grade" button for ungraded ones. Back button returns to Level 2.
 
-- No DB schema or callback-data changes (`hw:mod:<moduleId>`, `hw:start:<assignmentId>` unchanged).
-- Submission detection, grading flow, teacher notifications, and the in-app `HomeworkProfileSection` are not touched.
-- Behavior for any future N-th module is automatic from `module.position`.
+## Callback data
+
+New namespace `tr:` (teacher roster) to avoid clashing with `gs:` (existing grading picker):
+- `tr:list:<page>` — roster page
+- `tr:stu:<userId>` — Level 2 module list for a student
+- `tr:mod:<userId>:<moduleId>` — Level 3 submission detail
+
+Existing `gs:` callbacks remain for the "📝 Baholash" flow (no change).
+
+## Code touchpoints
+
+1. **Locale strings** (uz/ru/en blocks ~lines 162/339/508): rename `tKbGraded` from `📑 Baholar` to `👥 Talabalar` / `Студенты` / `Students`. Add new strings: `rosterTitle`, `rosterEmpty`, `rosterStudentRow(name, n)`, `studentModulesTitle(name)`, `moduleSubRow(mn, count, scores)`, `backToRoster`.
+2. **Keyboard mapping** (~line 748): `/baholar` text-button now routes to new `renderTeacherRoster` instead of `handleGradingCommand` "scored" branch.
+3. **Remove** the `/baholar` recent-grades branch in `handleGradingCommand` (~lines 1946–1962). Keep `/grades` slash-command alias pointing to the new roster too.
+4. **Add** `renderTeacherRoster(admin, chatId, graderId, locale, isAdmin, page, groupId)`:
+   - Reuse `gradingScopeIds` to get student IDs for the teacher's active group (or all for admin).
+   - Query `profiles` for `id, name, last_name, telegram_username` of those IDs.
+   - Query `homework_submissions` filtered to those user IDs, group by `user_id` for total counts.
+   - Build paginated inline keyboard.
+5. **Add** `renderStudentModules(admin, chatId, studentId, locale, …)`:
+   - Load student's submissions joined with `homework_assignments(module_id, task_number, sap_number, parent_id, max_score)`.
+   - Group by `module_id`; for each module fetch `modules.position, title`.
+   - Format each row with submitted count + ordered score list (`score/max` or `⏳`).
+6. **Add** `renderStudentModuleDetail(admin, chatId, studentId, moduleId, …)` — thin wrapper around the existing per-leaf rendering used in `renderStudentBreakdown`, filtered to one module.
+7. **Callback router** (where `gs:` is dispatched): add `tr:list|stu|mod` cases.
+
+## Out of scope
+
+- No change to the `📝 Baholash` (grading queue) flow.
+- No change to student-facing buttons or web UI.
+- No DB migrations — `profiles.telegram_username` already exists.
 
 ## Verification
 
-- Manual smoke test in Telegram: open `/vazifalar` → confirm buttons read `1-MODUL VAZIFASI`, `2-MODUL VAZIFASI`, `3-MODUL VAZIFASI`.
-- Tap `3-MODUL VAZIFASI` → confirm three buttons `Vazifa 1/2/3` appear and each opens the correct submission intent.
-- Tap a single-task module → confirm one `Vazifa 1` button still works end-to-end.
+1. As a teacher with a group: tap `👥 Talabalar` → roster shows students with `@username` (or full name) and submission counts; pagination works at 11+ students.
+2. Tap a student → module rows render in module order, only modules with submissions appear, scores list matches DB.
+3. Tap a module row → existing per-leaf detail renders; "Grade" still works on ungraded leaves.
+4. As admin: roster shows all students across groups.
+5. Empty group → friendly "no students" message; student with zero submissions → not in roster.
