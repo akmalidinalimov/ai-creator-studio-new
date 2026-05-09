@@ -38,6 +38,29 @@ export default function LessonPage() {
   const [chatLoading, setChatLoading] = useState(false);
   const [protectionSettings, setProtectionSettings] = useState<any | undefined>(undefined);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [bunnyResolved, setBunnyResolved] = useState<{ lib: string; guid: string } | null>(null);
+
+  // Fallback: if a Bunny lesson was saved with only a bare GUID, resolve the
+  // library ID server-side (lesson-video-url prepends BUNNY_LIBRARY_ID).
+  useEffect(() => {
+    if (!lessonId || !lesson) return;
+    if (lesson.video_provider !== "bunny") { setBunnyResolved(null); return; }
+    const raw: string = lesson.provider_video_id || lesson.video_url || "";
+    if (!raw || raw.includes("/")) { setBunnyResolved(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await supabase.functions.invoke("lesson-video-url", { body: { lessonId } });
+        const url: string | undefined = data?.url;
+        const m = url?.match(/iframe\.mediadelivery\.net\/embed\/(\d+)\/([0-9a-f-]{36})/i);
+        if (!cancelled && m) setBunnyResolved({ lib: m[1], guid: m[2] });
+      } catch (e) {
+        console.error("bunny resolve failed", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [lessonId, lesson?.video_provider, lesson?.provider_video_id, lesson?.video_url]);
+
 
   // Load protection settings
   useEffect(() => {
@@ -226,7 +249,9 @@ export default function LessonPage() {
 
   const provider = lesson.video_provider || "upload";
   const bunnyRaw: string = lesson.provider_video_id || lesson.video_url || "";
-  const [bunnyLib, bunnyGuid] = bunnyRaw.includes("/") ? bunnyRaw.split("/") : ["", ""];
+  const bunnyDirect = bunnyRaw.includes("/") ? bunnyRaw.split("/") : ["", ""];
+  const bunnyLib = bunnyDirect[0] || bunnyResolved?.lib || "";
+  const bunnyGuid = bunnyDirect[1] || bunnyResolved?.guid || "";
 
   const renderPlayer = () => {
     if (provider === "bunny") {

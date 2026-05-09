@@ -283,7 +283,7 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
                 <Input
                   value={lesson.provider_video_id || ""}
                   onChange={(e) => setLesson((l: any) => ({ ...l, provider_video_id: e.target.value }))}
-                  onBlur={(e) => {
+                  onBlur={async (e) => {
                     let v = e.target.value.trim();
                     if (lesson.video_provider === "youtube") {
                       const m = v.match(/(?:v=|youtu\.be\/|embed\/)([\w-]{6,})/);
@@ -295,7 +295,7 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
                     }
                     if (lesson.video_provider === "bunny") {
                       // Accept "<lib>/<guid>", bare GUID, iframe.mediadelivery.net/embed/<lib>/<guid>,
-                      // or vz-XXX.b-cdn.net/<guid>/playlist.m3u8 — server fills in the library if missing.
+                      // or vz-XXX.b-cdn.net/<guid>/playlist.m3u8.
                       const embedM = v.match(/iframe\.mediadelivery\.net\/(?:embed|play)\/(\d+)\/([0-9a-f-]{36})/i);
                       if (embedM) v = `${embedM[1]}/${embedM[2]}`;
                       else {
@@ -306,7 +306,28 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
                           if (guidM) v = guidM[1];
                         }
                       }
+                      // Normalize bare GUID -> "<libraryId>/<guid>" by asking the server.
+                      if (/^[0-9a-f-]{36}$/i.test(v)) {
+                        try {
+                          const { data: { session } } = await supabase.auth.getSession();
+                          const r = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/bunny-upload-init`, {
+                            method: "POST",
+                            headers: {
+                              "Content-Type": "application/json",
+                              Authorization: `Bearer ${session?.access_token || ""}`,
+                            },
+                            body: JSON.stringify({ action: "config" }),
+                          });
+                          if (r.ok) {
+                            const j = await r.json();
+                            if (j?.libraryId) v = `${j.libraryId}/${v}`;
+                          }
+                        } catch (err) {
+                          console.error("bunny config fetch failed", err);
+                        }
+                      }
                     }
+                    setLesson((l: any) => ({ ...l, provider_video_id: v }));
                     update({ provider_video_id: v });
                   }}
                   placeholder={
