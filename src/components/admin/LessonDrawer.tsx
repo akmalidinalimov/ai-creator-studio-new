@@ -268,7 +268,7 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
             <TabsContent value="embed" className="space-y-3">
               <div className="space-y-1.5">
                 <Label>{t("admin.lessonDrawer.provider")}</Label>
-                <Select value={lesson.video_provider === "upload" ? "youtube" : lesson.video_provider} onValueChange={(v) => update({ video_provider: v })}>
+                <Select value={(lesson.video_provider && lesson.video_provider !== "upload") ? lesson.video_provider : "youtube"} onValueChange={(v) => update({ video_provider: v, provider_video_id: null, video_storage_path: null, video_url: null })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="youtube">YouTube</SelectItem>
