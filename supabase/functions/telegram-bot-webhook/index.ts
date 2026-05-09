@@ -3675,7 +3675,7 @@ async function handleCallback(admin: any, cq: any) {
     }
     return;
   }
-  if ((data.startsWith("gs:list:") || data.startsWith("gs:pick:") || data.startsWith("gs:open:")) && chatId) {
+  if ((data.startsWith("gs:list:") || data.startsWith("gs:pick:") || data.startsWith("gs:open:") || data.startsWith("tr:")) && chatId) {
     const profile = await findProfileByTelegramId(admin, tgId);
     if (!profile) { await answerCallback(cq.id); return; }
     const persona = await getPersona(admin, profile.id);
@@ -3697,6 +3697,16 @@ async function handleCallback(admin: any, cq: any) {
     } else if (data.startsWith("gs:open:")) {
       const subId = data.slice("gs:open:".length);
       await startGradingFlow(admin, chatId, tgId, profile.id, subId, locale, isAdmin);
+    } else if (data.startsWith("tr:list:")) {
+      const page = parseInt(data.slice("tr:list:".length), 10) || 0;
+      await renderTeacherRoster(admin, chatId, profile.id, locale, isAdmin, page, groupIdScope);
+    } else if (data.startsWith("tr:stu:")) {
+      const sid = data.slice("tr:stu:".length);
+      await renderStudentModules(admin, chatId, profile.id, sid, locale, isAdmin);
+    } else if (data.startsWith("tr:mod:")) {
+      const rest = data.slice("tr:mod:".length);
+      const [sid, mid] = rest.split(":");
+      if (sid && mid) await renderStudentModuleDetail(admin, chatId, profile.id, sid, mid, locale, isAdmin);
     }
     return;
   }
