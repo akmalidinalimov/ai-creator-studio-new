@@ -130,11 +130,29 @@ export function HomeworkSection({ lessonId }: Props) {
         <div className="border-t pt-3">
           <div className="text-xs font-semibold text-muted-foreground mb-1">Sizning natijangiz</div>
           {s?.score != null ? (
-            <div className="space-y-1">
+            <div className="space-y-2">
               <Badge className="bg-green-600 text-white">✅ {s.score}/{leaf.max_score}</Badge>
               {s.score_feedback && (
                 <div className="text-sm whitespace-pre-wrap mt-1">"{s.score_feedback}"</div>
               )}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={async () => {
+                  const ok = window.confirm("Vazifani qayta topshirmoqchimisiz? Oldingi natija arxivlanadi.");
+                  if (!ok) return;
+                  const { error } = await supabase.rpc("start_homework_resubmission", { p_submission_id: s.id });
+                  if (error) { alert(error.message); return; }
+                  setSubsByAssign((prev) => {
+                    const m = { ...prev };
+                    delete m[leaf.id];
+                    return m;
+                  });
+                  if (topicUrl) window.open(topicUrl, "_blank", "noopener,noreferrer");
+                }}
+              >
+                🔁 Qayta topshirish
+              </Button>
             </div>
           ) : (
             <div className="text-sm text-muted-foreground">⏳ Hali baholanmagan</div>
