@@ -147,6 +147,49 @@ export default function AdminBunnyDiagnostics() {
             )}
           </Card>
         )}
+
+        <div className="pt-4">
+          <h2 className="text-lg font-semibold tracking-tight">Migrate Storage videos → Bunny</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Lessons whose video was uploaded to Supabase Storage instead of Bunny. Click migrate to copy each into your Bunny library and update the lesson.
+          </p>
+        </div>
+        <Card className="p-5 space-y-3">
+          {pending.length === 0 && (
+            <div className="text-sm text-muted-foreground">No pending lessons. All uploads are already on Bunny. 🎉</div>
+          )}
+          {pending.length > 0 && (
+            <>
+              <div className="flex items-center justify-between">
+                <div className="text-sm">{pending.length} lesson(s) pending</div>
+                <Button size="sm" onClick={migrateAll} disabled={!!migratingId}>
+                  {migratingId ? "Migrating…" : "Migrate all"}
+                </Button>
+              </div>
+              <div className="divide-y">
+                {pending.map((p) => (
+                  <div key={p.id} className="py-3 flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate">{p.title}</div>
+                      <div className="text-[11px] text-muted-foreground font-mono truncate">{p.video_storage_path}</div>
+                      {migrateLog[p.id] && (
+                        <div className="text-[11px] mt-1">{migrateLog[p.id]}</div>
+                      )}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => migrateOne(p.id)}
+                      disabled={migratingId === p.id || (!!migratingId && migratingId !== p.id)}
+                    >
+                      {migratingId === p.id ? "Migrating…" : "Migrate"}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </Card>
       </div>
     </PageShell>
   );
