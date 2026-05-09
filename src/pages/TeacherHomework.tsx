@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 
 interface Row {
@@ -20,46 +21,112 @@ interface Row {
   user_name: string; user_group: string | null; assignment_title: string; max_score: number;
 }
 
+interface Group { id: string; name: string; course_id: string | null; }
+interface Student { id: string; name: string | null; last_name: string | null; group_id: string | null; }
+interface ModuleRow { id: string; title: string; position: number; course_id: string; }
+interface Assignment { id: string; module_id: string; task_number: number; sap_number: number | null; parent_id: string | null; max_score: number; title: string; }
+
+const ALL = "__ALL__";
+
 export default function TeacherHomework() {
   const { user, role } = useAuth();
+  const isAdmin = role === "admin";
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState<string>("");
   const [pending, setPending] = useState<Row[]>([]);
   const [scored, setScored] = useState<Row[]>([]);
   const [open, setOpen] = useState<Row | null>(null);
-  const [scope, setScope] = useState<string[] | null>(null); // user_ids in scope, null = all (admin)
+  const [drawerRows, setDrawerRows] = useState<Row[] | null>(null);
+  const [drawerTitle, setDrawerTitle] = useState<string>("");
 
+  // Matrix state
+  const [students, setStudents] = useState<Student[]>([]);
+  const [modules, setModules] = useState<ModuleRow[]>([]);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [submissions, setSubmissions] = useState<any[]>([]);
+  const [groupNameMap, setGroupNameMap] = useState<Map<string, string>>(new Map());
+
+  // Load groups for the selector
   useEffect(() => {
     (async () => {
-      if (role === "teacher" && user) {
-        const { data: gs } = await supabase.from("groups").select("id").eq("teacher_id", user.id);
-        const gIds = (gs || []).map((g: any) => g.id);
-        if (gIds.length === 0) { setScope([]); return; }
-        const { data: ps } = await supabase.from("profiles").select("id").in("group_id", gIds);
-        setScope((ps || []).map((p: any) => p.id));
-      } else {
-        setScope(null);
-      }
+      if (!user) return;
+      let q = supabase.from("groups").select("id, name, course_id").order("name");
+      if (!isAdmin) q = q.eq("teacher_id", user.id);
+      const { data } = await q;
+      const gs = (data || []) as Group[];
+      setGroups(gs);
+      setGroupNameMap(new Map(gs.map((g) => [g.id, g.name])));
+      if (gs.length && !selectedGroup) setSelectedGroup(isAdmin ? ALL : gs[0].id);
+      if (!gs.length && isAdmin) setSelectedGroup(ALL);
     })();
-  }, [user, role]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, isAdmin]);
+
+  // Compute scope (student user_ids) from selected group
+  const [scopeIds, setScopeIds] = useState<string[] | null>(null);
+  useEffect(() => {
+    (async () => {
+      if (!user || !selectedGroup) return;
+      let pq = supabase.from("profiles").select("id, name, last_name, group_id");
+      if (selectedGroup === ALL) {
+        if (!isAdmin) {
+          // Teacher in ALL shouldn't happen, but guard
+          const gIds = groups.map((g) => g.id);
+          if (!gIds.length) { setStudents([]); setScopeIds([]); return; }
+          pq = pq.in("group_id", gIds);
+        }
+      } else {
+        pq = pq.eq("group_id", selectedGroup);
+      }
+      const { data } = await pq;
+      const sts = (data || []) as Student[];
+      sts.sort((a, b) => (a.last_name || a.name || "").localeCompare(b.last_name || b.name || ""));
+      setStudents(sts);
+      setScopeIds(sts.map((s) => s.id));
+    })();
+  }, [selectedGroup, user, isAdmin, groups]);
+
+  // Load modules + assignments based on group's course (or all if admin/ALL)
+  useEffect(() => {
+    (async () => {
+      let courseIds: string[] | null = null;
+      if (selectedGroup && selectedGroup !== ALL) {
+        const g = groups.find((x) => x.id === selectedGroup);
+        if (g?.course_id) courseIds = [g.course_id];
+      }
+      let mq = supabase.from("modules").select("id, title, position, course_id").order("position");
+      if (courseIds) mq = mq.in("course_id", courseIds);
+      const { data: mods } = await mq;
+      const modList = (mods || []) as ModuleRow[];
+      setModules(modList);
+      if (!modList.length) { setAssignments([]); return; }
+      const { data: asgns } = await supabase
+        .from("homework_assignments")
+        .select("id, module_id, task_number, sap_number, parent_id, max_score, title")
+        .in("module_id", modList.map((m) => m.id))
+        .eq("is_active", true);
+      setAssignments((asgns || []) as Assignment[]);
+    })();
+  }, [selectedGroup, groups]);
 
   const load = async () => {
-    if (scope === undefined) return;
-    let q = supabase.from("homework_submissions").select("*");
-    if (scope) {
-      if (scope.length === 0) { setPending([]); setScored([]); return; }
-      q = q.in("user_id", scope);
-    }
-    const { data: subs } = await q.order("submitted_at", { ascending: false });
+    if (scopeIds === null) return;
+    if (scopeIds.length === 0) { setPending([]); setScored([]); setSubmissions([]); return; }
+    const { data: subs } = await supabase
+      .from("homework_submissions")
+      .select("*")
+      .in("user_id", scopeIds)
+      .order("submitted_at", { ascending: false });
     const all = (subs || []) as any[];
+    setSubmissions(all);
     if (!all.length) { setPending([]); setScored([]); return; }
-    const aIds = Array.from(new Set(all.map(s => s.assignment_id)));
-    const uIds = Array.from(new Set(all.map(s => s.user_id)));
-    const [{ data: assigns }, { data: profs }, { data: groups }] = await Promise.all([
+    const aIds = Array.from(new Set(all.map((s) => s.assignment_id)));
+    const uIds = Array.from(new Set(all.map((s) => s.user_id)));
+    const [{ data: assigns }, { data: profs }] = await Promise.all([
       supabase.from("homework_assignments").select("id, title, max_score, task_number, sap_number, parent_id").in("id", aIds),
       supabase.from("profiles").select("id, name, last_name, group_id").in("id", uIds),
-      supabase.from("groups").select("id, name"),
     ]);
     const aMap = new Map((assigns || []).map((a: any) => [a.id, a]));
-    // Fetch parents for SAPs to render label "V2.S1 — title"
     const parentIds = Array.from(new Set((assigns || []).map((a: any) => a.parent_id).filter(Boolean)));
     let parentMap = new Map<string, any>();
     if (parentIds.length) {
@@ -67,7 +134,6 @@ export default function TeacherHomework() {
       parentMap = new Map((parents || []).map((p: any) => [p.id, p]));
     }
     const pMap = new Map((profs || []).map((p: any) => [p.id, p]));
-    const gMap = new Map((groups || []).map((g: any) => [g.id, g.name]));
     const enriched: Row[] = all.map((s: any) => {
       const a: any = aMap.get(s.assignment_id) || {};
       const p: any = pMap.get(s.user_id) || {};
@@ -83,13 +149,13 @@ export default function TeacherHomework() {
         assignment_title: label,
         max_score: a.max_score || 10,
         user_name: [p.name, p.last_name].filter(Boolean).join(" ") || "—",
-        user_group: p.group_id ? (gMap.get(p.group_id) as string) : null,
+        user_group: p.group_id ? (groupNameMap.get(p.group_id) as string) : null,
       };
     });
-    setPending(enriched.filter(r => r.score == null));
-    setScored(enriched.filter(r => r.score != null));
+    setPending(enriched.filter((r) => r.score == null));
+    setScored(enriched.filter((r) => r.score != null));
   };
-  useEffect(() => { load(); }, [scope]);
+  useEffect(() => { load(); }, [scopeIds]);
 
   const saveScore = async (id: string, score: number, feedback: string) => {
     const max = open?.max_score || 10;
@@ -98,7 +164,7 @@ export default function TeacherHomework() {
       score, score_feedback: feedback || null, scored_by: user?.id, scored_at: new Date().toISOString(),
     }).eq("id", id);
     if (error) toast.error(error.message);
-    else { toast.success("Baholandi"); setOpen(null); load(); }
+    else { toast.success("Baholandi"); setOpen(null); setDrawerRows(null); load(); }
   };
 
   const reset = async (id: string) => {
@@ -106,20 +172,105 @@ export default function TeacherHomework() {
       score: null, scored_by: null, scored_at: null,
     }).eq("id", id);
     if (error) toast.error(error.message);
-    else { toast.success("Talabaga qaytarildi"); setOpen(null); load(); }
+    else { toast.success("Talabaga qaytarildi"); setOpen(null); setDrawerRows(null); load(); }
+  };
+
+  // Build matrix lookup: user_id -> module_id -> ordered submissions
+  const matrix = useMemo(() => {
+    const asgnById = new Map(assignments.map((a) => [a.id, a]));
+    const m = new Map<string, Map<string, any[]>>();
+    for (const s of submissions) {
+      const a = asgnById.get(s.assignment_id);
+      if (!a) continue;
+      if (!m.has(s.user_id)) m.set(s.user_id, new Map());
+      const sub = m.get(s.user_id)!;
+      if (!sub.has(a.module_id)) sub.set(a.module_id, []);
+      sub.get(a.module_id)!.push(s);
+    }
+    // sort each cell by task_number, sap_number, submitted_at
+    for (const sub of m.values()) {
+      for (const arr of sub.values()) {
+        arr.sort((x, y) => {
+          const ax = asgnById.get(x.assignment_id)!;
+          const ay = asgnById.get(y.assignment_id)!;
+          if (ax.task_number !== ay.task_number) return ax.task_number - ay.task_number;
+          const sx = ax.sap_number ?? -1;
+          const sy = ay.sap_number ?? -1;
+          if (sx !== sy) return sx - sy;
+          return new Date(x.submitted_at).getTime() - new Date(y.submitted_at).getTime();
+        });
+      }
+    }
+    return m;
+  }, [submissions, assignments]);
+
+  const openCell = (studentId: string, moduleId: string) => {
+    const cell = matrix.get(studentId)?.get(moduleId) || [];
+    if (!cell.length) return;
+    const asgnById = new Map(assignments.map((a) => [a.id, a]));
+    const parentIds = Array.from(new Set(assignments.map((a) => a.parent_id).filter(Boolean) as string[]));
+    const parentMap = new Map(assignments.filter((a) => parentIds.includes(a.id)).map((a) => [a.id, a]));
+    const student = students.find((s) => s.id === studentId);
+    const userName = [student?.name, student?.last_name].filter(Boolean).join(" ") || "—";
+    const moduleTitle = modules.find((m) => m.id === moduleId)?.title || "Module";
+
+    const rows: Row[] = cell.map((s: any) => {
+      const a = asgnById.get(s.assignment_id)!;
+      let label = a.title || "";
+      if (a.parent_id) {
+        const par: any = parentMap.get(a.parent_id) || {};
+        label = `V${par.task_number ?? "?"}.S${a.sap_number ?? "?"} — ${a.title || ""}`;
+      } else if (a.task_number) {
+        label = `V${a.task_number} — ${a.title || ""}`;
+      }
+      return {
+        ...s,
+        assignment_title: label,
+        max_score: a.max_score || 10,
+        user_name: userName,
+        user_group: student?.group_id ? (groupNameMap.get(student.group_id) as string) : null,
+      };
+    });
+    setDrawerTitle(`${userName} — ${moduleTitle}`);
+    setDrawerRows(rows);
   };
 
   return (
     <PageShell>
-      <div className="max-w-5xl space-y-5">
-        <h1 className="text-3xl font-semibold tracking-tight">📝 Uy vazifalari</h1>
-        <Tabs defaultValue="pending">
+      <div className="max-w-6xl space-y-5">
+        <div className="flex items-end justify-between gap-4 flex-wrap">
+          <h1 className="text-3xl font-semibold tracking-tight">📝 Uy vazifalari</h1>
+          <div className="flex items-center gap-2">
+            <Label className="text-sm text-muted-foreground">Guruh</Label>
+            <Select value={selectedGroup} onValueChange={setSelectedGroup}>
+              <SelectTrigger className="w-[220px]"><SelectValue placeholder="Guruhni tanlang" /></SelectTrigger>
+              <SelectContent>
+                {isAdmin && <SelectItem value={ALL}>Barcha guruhlar</SelectItem>}
+                {groups.map((g) => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <Tabs defaultValue="students">
           <TabsList>
+            <TabsTrigger value="students">👥 Talabalar ({students.length})</TabsTrigger>
             <TabsTrigger value="pending">Kutilmoqda ({pending.length})</TabsTrigger>
             <TabsTrigger value="scored">Baholangan ({scored.length})</TabsTrigger>
           </TabsList>
-          <TabsContent value="pending"><Table rows={pending} onOpen={setOpen} /></TabsContent>
-          <TabsContent value="scored"><Table rows={scored} onOpen={setOpen} scored /></TabsContent>
+          <TabsContent value="students">
+            <StudentMatrix
+              students={students}
+              modules={modules}
+              assignments={assignments}
+              matrix={matrix}
+              showGroup={selectedGroup === ALL}
+              groupNameMap={groupNameMap}
+              onCellClick={openCell}
+            />
+          </TabsContent>
+          <TabsContent value="pending"><FlatTable rows={pending} onOpen={setOpen} /></TabsContent>
+          <TabsContent value="scored"><FlatTable rows={scored} onOpen={setOpen} scored /></TabsContent>
         </Tabs>
       </div>
 
@@ -128,12 +279,134 @@ export default function TeacherHomework() {
           {open && <Drawer row={open} onSave={saveScore} onReset={reset} />}
         </SheetContent>
       </Sheet>
+
+      <Sheet open={!!drawerRows} onOpenChange={(o) => !o && setDrawerRows(null)}>
+        <SheetContent side="right" className="w-full sm:max-w-xl overflow-y-auto">
+          {drawerRows && (
+            <>
+              <SheetHeader><SheetTitle>{drawerTitle}</SheetTitle></SheetHeader>
+              <div className="space-y-3 mt-4">
+                {drawerRows.map((r) => (
+                  <Card key={r.id} className="p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-medium text-sm">{r.assignment_title}</div>
+                      <div className="text-xs tabular-nums">
+                        {r.score != null ? <span className="font-semibold">{r.score}/{r.max_score}</span> : <span className="text-muted-foreground">⏳ baholanmagan</span>}
+                      </div>
+                    </div>
+                    <Button size="sm" variant="outline" onClick={() => setOpen(r)}>Ko'rish / baholash</Button>
+                  </Card>
+                ))}
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
     </PageShell>
   );
 }
 
-function Table({ rows, onOpen, scored }: { rows: Row[]; onOpen: (r: Row) => void; scored?: boolean }) {
-  if (!rows.length) return <Card className="p-8 text-center text-muted-foreground">Baholash uchun vazifa yo'q. Bot orqali talabalarni baholang.</Card>;
+function StudentMatrix({
+  students, modules, assignments, matrix, showGroup, groupNameMap, onCellClick,
+}: {
+  students: Student[]; modules: ModuleRow[]; assignments: Assignment[];
+  matrix: Map<string, Map<string, any[]>>;
+  showGroup: boolean; groupNameMap: Map<string, string>;
+  onCellClick: (studentId: string, moduleId: string) => void;
+}) {
+  // leaves per module: a leaf is a SAP if any exist for the task, otherwise the parent task itself
+  const leavesByModule = useMemo(() => {
+    const m = new Map<string, Assignment[]>();
+    for (const mod of modules) {
+      const inMod = assignments.filter((a) => a.module_id === mod.id);
+      const saps = inMod.filter((a) => a.parent_id);
+      const tasks = inMod.filter((a) => !a.parent_id);
+      const leaves: Assignment[] = [];
+      for (const t of tasks) {
+        const childSaps = saps.filter((s) => s.parent_id === t.id);
+        if (childSaps.length) leaves.push(...childSaps);
+        else leaves.push(t);
+      }
+      leaves.sort((a, b) => (a.task_number - b.task_number) || ((a.sap_number ?? -1) - (b.sap_number ?? -1)));
+      m.set(mod.id, leaves);
+    }
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modules, assignments]);
+
+  if (!students.length) {
+    return <Card className="p-8 text-center text-muted-foreground">Bu guruhda talabalar yo'q.</Card>;
+  }
+  if (!modules.length) {
+    return <Card className="p-8 text-center text-muted-foreground">Modullar topilmadi.</Card>;
+  }
+
+  return (
+    <Card className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-muted/40 text-xs text-muted-foreground">
+          <tr>
+            <th className="text-left px-3 py-2 sticky left-0 bg-muted/40 z-10">Talaba</th>
+            {showGroup && <th className="text-left px-3 py-2">Guruh</th>}
+            {modules.map((m) => (
+              <th key={m.id} className="text-left px-3 py-2 whitespace-nowrap">{m.position}-modul</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {students.map((s) => {
+            const name = [s.name, s.last_name].filter(Boolean).join(" ") || "—";
+            return (
+              <tr key={s.id} className="border-t">
+                <td className="px-3 py-2.5 sticky left-0 bg-background font-medium">{name}</td>
+                {showGroup && <td className="px-3 py-2.5 text-muted-foreground">{s.group_id ? groupNameMap.get(s.group_id) : "—"}</td>}
+                {modules.map((m) => {
+                  const cell = matrix.get(s.id)?.get(m.id) || [];
+                  const leaves = leavesByModule.get(m.id) || [];
+                  return (
+                    <td key={m.id} className="px-3 py-2.5">
+                      <Cell cell={cell} leaves={leaves} onClick={() => onCellClick(s.id, m.id)} />
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
+function Cell({ cell, leaves, onClick }: { cell: any[]; leaves: Assignment[]; onClick: () => void }) {
+  if (!cell.length) return <span className="text-muted-foreground">— topshirilmagan</span>;
+  const isMulti = leaves.length > 1;
+  const allGraded = cell.every((s) => s.score != null);
+  const anyGraded = cell.some((s) => s.score != null);
+  const status = allGraded ? "✅" : anyGraded ? "🟡" : "⏳";
+  const totalMax = leaves.reduce((sum, l) => sum + (l.max_score || 10), 0);
+
+  let body: string;
+  if (isMulti) {
+    body = cell.map((s) => (s.score != null ? `${s.score}` : "⏳")).join(", ");
+  } else {
+    const max = cell[0].max_score || leaves[0]?.max_score || 10;
+    body = cell[0].score != null ? `${cell[0].score}/${max}` : `⏳/${max}`;
+  }
+  return (
+    <button
+      onClick={onClick}
+      className="text-left hover:bg-muted/50 px-2 py-1 rounded transition-colors tabular-nums"
+      title={isMulti ? `Jami: ${totalMax}` : undefined}
+    >
+      <span className="mr-1">{status}</span>
+      <span>{body}</span>
+    </button>
+  );
+}
+
+function FlatTable({ rows, onOpen, scored }: { rows: Row[]; onOpen: (r: Row) => void; scored?: boolean }) {
+  if (!rows.length) return <Card className="p-8 text-center text-muted-foreground">Baholash uchun vazifa yo'q.</Card>;
   return (
     <Card className="overflow-x-auto">
       <table className="w-full text-sm">
