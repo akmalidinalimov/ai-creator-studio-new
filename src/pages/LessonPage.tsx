@@ -38,6 +38,7 @@ export default function LessonPage() {
   const [chatLoading, setChatLoading] = useState(false);
   const [protectionSettings, setProtectionSettings] = useState<any | undefined>(undefined);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [bunnyResolved, setBunnyResolved] = useState<{ lib: string; guid: string } | null>(null);
 
   // Load protection settings
   useEffect(() => {
