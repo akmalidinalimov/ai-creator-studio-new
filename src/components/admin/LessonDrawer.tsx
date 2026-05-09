@@ -21,6 +21,8 @@ const MAX_INLINE_UPLOAD = 10 * 1024 * 1024 * 1024; // 10 GB
 export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
   const { t } = useTranslation();
   const [lesson, setLesson] = useState<any>(null);
+  const [tab, setTab] = useState<"upload" | "embed">("upload");
+  const tabInitRef = useRef(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ pct: number; mbps: number; etaSec: number; fileName: string } | null>(null);
