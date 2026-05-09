@@ -283,12 +283,26 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
                       const m = v.match(/vimeo\.com\/(\d+)/);
                       if (m) v = m[1];
                     }
+                    if (lesson.video_provider === "bunny") {
+                      // Accept "<lib>/<guid>", bare GUID, iframe.mediadelivery.net/embed/<lib>/<guid>,
+                      // or vz-XXX.b-cdn.net/<guid>/playlist.m3u8 — server fills in the library if missing.
+                      const embedM = v.match(/iframe\.mediadelivery\.net\/(?:embed|play)\/(\d+)\/([0-9a-f-]{36})/i);
+                      if (embedM) v = `${embedM[1]}/${embedM[2]}`;
+                      else {
+                        const cdnM = v.match(/b-cdn\.net\/([0-9a-f-]{36})/i);
+                        if (cdnM) v = cdnM[1];
+                        else {
+                          const guidM = v.match(/^([0-9a-f-]{36})$/i);
+                          if (guidM) v = guidM[1];
+                        }
+                      }
+                    }
                     update({ provider_video_id: v });
                   }}
                   placeholder={
                     lesson.video_provider === "youtube" ? "dQw4w9WgXcQ or full URL"
                     : lesson.video_provider === "vimeo" ? "123456789 or full URL"
-                    : lesson.video_provider === "bunny" ? "<library_id>/<video_guid>"
+                    : lesson.video_provider === "bunny" ? "Video GUID, <library>/<guid>, or full Bunny URL"
                     : "Mux Playback ID"
                   }
                 />
