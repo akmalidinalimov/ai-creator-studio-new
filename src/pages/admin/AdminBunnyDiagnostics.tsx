@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { PageShell } from "@/components/Layout";
@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+
+type PendingLesson = { id: string; title: string; video_storage_path: string };
 
 export default function AdminBunnyDiagnostics() {
   const { t } = useTranslation();
@@ -17,6 +19,54 @@ export default function AdminBunnyDiagnostics() {
   const [headStatus, setHeadStatus] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Migration state
+  const [pending, setPending] = useState<PendingLesson[]>([]);
+  const [migratingId, setMigratingId] = useState<string | null>(null);
+  const [migrateLog, setMigrateLog] = useState<Record<string, string>>({});
+
+  const loadPending = async () => {
+    const { data, error } = await supabase
+      .from("lessons")
+      .select("id, title, video_storage_path")
+      .eq("video_provider", "upload")
+      .not("video_storage_path", "is", null)
+      .order("title", { ascending: true });
+    if (error) { toast.error(error.message); return; }
+    setPending((data || []) as PendingLesson[]);
+  };
+
+  useEffect(() => { loadPending(); }, []);
+
+  const migrateOne = async (id: string) => {
+    setMigratingId(id);
+    setMigrateLog((m) => ({ ...m, [id]: "Migrating…" }));
+    try {
+      const { data, error } = await supabase.functions.invoke("migrate-storage-to-bunny", {
+        body: { lesson_id: id },
+      });
+      if (error) throw new Error(error.message);
+      if ((data as any)?.error) throw new Error((data as any).error);
+      const { libraryId: lib, videoId } = data as any;
+      setMigrateLog((m) => ({ ...m, [id]: `✅ Migrated → ${lib}/${videoId}` }));
+      toast.success("Lesson migrated to Bunny");
+      await loadPending();
+    } catch (e) {
+      const msg = (e as Error).message;
+      setMigrateLog((m) => ({ ...m, [id]: `❌ ${msg}` }));
+      toast.error(msg);
+    } finally {
+      setMigratingId(null);
+    }
+  };
+
+  const migrateAll = async () => {
+    for (const p of pending) {
+      // eslint-disable-next-line no-await-in-loop
+      await migrateOne(p.id);
+    }
+  };
+
 
   const run = async () => {
     setLoading(true);
@@ -97,6 +147,49 @@ export default function AdminBunnyDiagnostics() {
             )}
           </Card>
         )}
+
+        <div className="pt-4">
+          <h2 className="text-lg font-semibold tracking-tight">Migrate Storage videos → Bunny</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Lessons whose video was uploaded to Supabase Storage instead of Bunny. Click migrate to copy each into your Bunny library and update the lesson.
+          </p>
+        </div>
+        <Card className="p-5 space-y-3">
+          {pending.length === 0 && (
+            <div className="text-sm text-muted-foreground">No pending lessons. All uploads are already on Bunny. 🎉</div>
+          )}
+          {pending.length > 0 && (
+            <>
+              <div className="flex items-center justify-between">
+                <div className="text-sm">{pending.length} lesson(s) pending</div>
+                <Button size="sm" onClick={migrateAll} disabled={!!migratingId}>
+                  {migratingId ? "Migrating…" : "Migrate all"}
+                </Button>
+              </div>
+              <div className="divide-y">
+                {pending.map((p) => (
+                  <div key={p.id} className="py-3 flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate">{p.title}</div>
+                      <div className="text-[11px] text-muted-foreground font-mono truncate">{p.video_storage_path}</div>
+                      {migrateLog[p.id] && (
+                        <div className="text-[11px] mt-1">{migrateLog[p.id]}</div>
+                      )}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => migrateOne(p.id)}
+                      disabled={migratingId === p.id || (!!migratingId && migratingId !== p.id)}
+                    >
+                      {migratingId === p.id ? "Migrating…" : "Migrate"}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </Card>
       </div>
     </PageShell>
   );
