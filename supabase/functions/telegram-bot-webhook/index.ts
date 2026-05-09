@@ -417,6 +417,12 @@ const T = {
     hwIntentNoGroup: "Вам не назначена группа. Свяжитесь с преподавателем.",
     hwIntentBtnGoTopic: "📌 Перейти в топик",
     hwIntentAlreadyScored: "Это задание уже оценено ✅",
+    hwResubAsk: (sc: number, mx: number, fb: string) =>
+      `📊 Ваш предыдущий результат: <b>${sc}/${mx}</b>${fb ? `\nКомментарий: "${csvEscapeHtml(fb)}"` : ""}\n\nХотите отправить заново?`,
+    hwResubYes: "✅ Да, отправить заново",
+    hwResubNo: "❌ Нет",
+    hwResubCancelled: "OK 👍 Прежний результат сохранится.",
+    hwResubError: "❌ Не удалось начать пересдачу. Попробуйте позже.",
     hwReceived: (mn: number, tn: number) =>
       `✅ Задание принято · Модуль ${mn} · З${tn}\nКак только преподаватель оценит — пришлю результат.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
