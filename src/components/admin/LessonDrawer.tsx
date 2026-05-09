@@ -34,18 +34,20 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
 
   useEffect(() => { load(); }, [load]);
 
-  const update = async (patch: any) => {
-    setLesson((l: any) => ({ ...l, ...patch }));
-    const { error } = await supabase.from("lessons").update(patch).eq("id", lessonId);
-    if (error) toast.error(error.message);
-  };
-
-  // ===== Bunny Stream direct upload (v2.1) =====
-  const startBunnyUpload = async (file: File) => {
-    setBunnyUploading(true);
-    setBunnyProgress({ pct: 0, mbps: 0, fileName: file.name });
+  // ===== Unified Bunny upload (replaces old Storage upload) =====
+  const onDrop = async (files: File[]) => {
+    if (!files[0]) return;
+    const file = files[0];
+    if (file.size > MAX_INLINE_UPLOAD) {
+      toast.error(t("admin.lessonDrawer.fileTooLarge"));
+      return;
+    }
+    setUploading(true);
+    cancelRef.current.aborted = false;
+    setUploadProgress({ pct: 0, mbps: 0, etaSec: 0, fileName: file.name });
     const startTs = Date.now();
     try {
+      // 1) Init Bunny upload (creates Bunny video, returns TUS auth)
       const { data: sess } = await supabase.auth.getSession();
       const r = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/bunny-upload-init`, {
         method: "POST",
@@ -57,10 +59,11 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
       });
       const init = await r.json();
       if (!r.ok || !init?.videoId) {
-        throw new Error(init?.error || `Init failed (${r.status})`);
+        throw new Error(init?.error || `Bunny init failed (${r.status})`);
       }
       const { videoId, libraryId, authorization_signature, authorization_expire } = init;
 
+      // 2) TUS upload directly to Bunny
       await new Promise<void>((resolve, reject) => {
         const upload = new tus.Upload(file, {
           endpoint: "https://video.bunnycdn.com/tusupload",
@@ -71,93 +74,28 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
             VideoId: videoId,
             LibraryId: String(libraryId),
           },
-          metadata: {
-            filetype: file.type || "video/mp4",
-            title: file.name,
-          },
+          metadata: { filetype: file.type || "video/mp4", title: file.name },
           chunkSize: 50 * 1024 * 1024,
           onError: (err) => reject(err),
           onProgress: (loaded, total) => {
             const elapsed = (Date.now() - startTs) / 1000;
             const mb = loaded / (1024 * 1024);
             const mbps = elapsed > 0 ? mb / elapsed : 0;
-            setBunnyProgress({
+            const etaSec = mbps > 0 ? (total - loaded) / (1024 * 1024) / mbps : 0;
+            setUploadProgress({
               pct: Math.round((loaded / total) * 100),
               mbps,
+              etaSec,
               fileName: file.name,
             });
           },
           onSuccess: () => resolve(),
         });
-        bunnyTusRef.current = upload;
+        tusRef.current = upload;
         upload.start();
       });
 
-      await update({
-        video_provider: "bunny",
-        provider_video_id: `${libraryId}/${videoId}`,
-        video_url: null,
-        video_storage_path: null,
-      });
-      toast.success(t("admin.lessonDrawer.bunnyUploadedToast"));
-      onChanged();
-    } catch (e: any) {
-      console.error("bunny upload failed", e);
-      toast.error(e?.message || t("admin.lessonDrawer.bunnyUploadFailed"));
-    } finally {
-      setBunnyUploading(false);
-      setBunnyProgress(null);
-      bunnyTusRef.current = null;
-      if (bunnyFileInputRef.current) bunnyFileInputRef.current.value = "";
-    }
-  };
-
-  const cancelBunnyUpload = () => {
-    bunnyTusRef.current?.abort();
-    setBunnyUploading(false);
-    setBunnyProgress(null);
-  };
-
-  const onDrop = async (files: File[]) => {
-    if (!files[0]) return;
-    const file = files[0];
-    if (file.size > MAX_INLINE_UPLOAD) {
-      toast.error(t("admin.lessonDrawer.fileTooLarge"));
-      return;
-    }
-    setUploading(true);
-    cancelRef.current.aborted = false;
-    setUploadProgress({ pct: 0, mbps: 0, etaSec: 0, fileName: file.name });
-    try {
-      const ext = file.name.split(".").pop() || "mp4";
-      const path = `${lessonId}/video-${Date.now()}.${ext}`;
-      // Use signed upload URL for direct browser->storage upload (no edge function)
-      const { data: signed, error: signErr } = await supabase.storage.from("lesson-videos").createSignedUploadUrl(path);
-      if (signErr) throw signErr;
-
-      const xhr = new XMLHttpRequest();
-      const start = Date.now();
-      const promise = new Promise<void>((resolve, reject) => {
-        xhr.open("PUT", signed.signedUrl, true);
-        xhr.setRequestHeader("Content-Type", file.type || "video/mp4");
-        xhr.setRequestHeader("x-upsert", "true");
-        xhr.upload.onprogress = (e) => {
-          if (!e.lengthComputable) return;
-          const elapsed = (Date.now() - start) / 1000;
-          const mb = e.loaded / (1024 * 1024);
-          const mbps = elapsed > 0 ? mb / elapsed : 0;
-          const etaSec = mbps > 0 ? (e.total - e.loaded) / (1024 * 1024) / mbps : 0;
-          setUploadProgress({ pct: Math.round((e.loaded / e.total) * 100), mbps, etaSec, fileName: file.name });
-        };
-        xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`Upload failed (${xhr.status})`));
-        xhr.onerror = () => reject(new Error("Network error"));
-        xhr.onabort = () => reject(new Error("Upload cancelled"));
-        (cancelRef.current as any).xhr = xhr;
-        xhr.send(file);
-      });
-      await promise;
-
-      // Capture duration and thumbnail
+      // 3) Capture duration + thumbnail client-side
       const blobUrl = URL.createObjectURL(file);
       const v = document.createElement("video");
       v.preload = "metadata";
@@ -182,7 +120,7 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
       });
       URL.revokeObjectURL(blobUrl);
 
-      let thumbnail_path: string | null = null;
+      let thumbnail_path: string | null = lesson?.thumbnail_path || null;
       if (meta.thumb) {
         const tpath = `${lessonId}/thumb-${Date.now()}.jpg`;
         const { error: tErr } = await supabase.storage.from("lesson-thumbs").upload(tpath, meta.thumb, {
@@ -192,27 +130,29 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
       }
 
       await update({
-        video_provider: "upload",
-        video_storage_path: path,
+        video_provider: "bunny",
+        provider_video_id: `${libraryId}/${videoId}`,
         video_url: null,
-        provider_video_id: null,
+        video_storage_path: null,
         duration_seconds: meta.duration || lesson?.duration_seconds || 0,
-        thumbnail_path: thumbnail_path || lesson?.thumbnail_path || null,
+        thumbnail_path,
       });
 
       toast.success(t("admin.lessonDrawer.uploadedToast"));
       onChanged();
     } catch (e: any) {
+      console.error("bunny upload failed", e);
       if (!cancelRef.current.aborted) toast.error(e?.message || t("admin.lessonDrawer.uploadFailed"));
     } finally {
       setUploading(false);
       setUploadProgress(null);
+      tusRef.current = null;
     }
   };
 
   const cancelUpload = () => {
     cancelRef.current.aborted = true;
-    (cancelRef.current as any).xhr?.abort?.();
+    tusRef.current?.abort();
   };
 
   const removeVideo = async () => {
