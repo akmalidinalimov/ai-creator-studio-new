@@ -227,6 +227,9 @@ export default function LessonPage() {
 
   const provider = lesson.video_provider || "upload";
   const bunnyRaw: string = lesson.provider_video_id || lesson.video_url || "";
+  const bunnyDirect = bunnyRaw.includes("/") ? bunnyRaw.split("/") : ["", ""];
+  const bunnyLib = bunnyDirect[0] || bunnyResolved?.lib || "";
+  const bunnyGuid = bunnyDirect[1] || bunnyResolved?.guid || "";
 
   const renderPlayer = () => {
     if (provider === "bunny") {
