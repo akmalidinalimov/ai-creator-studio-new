@@ -152,6 +152,7 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
         duration_seconds: meta.duration || lesson?.duration_seconds || 0,
         thumbnail_path,
       });
+      setTab("upload");
 
       toast.success(t("admin.lessonDrawer.uploadedToast"));
       onChanged();
