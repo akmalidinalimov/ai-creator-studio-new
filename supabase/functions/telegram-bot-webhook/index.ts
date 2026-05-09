@@ -787,9 +787,11 @@ function buttonTextToCommand(text: string): string | null {
     if (t.tKbBroadcast && trimmed === t.tKbBroadcast) return "/tbroadcast";
     if (t.tKbSettings && trimmed === t.tKbSettings) return "/sozlamalar";
     if (t.tKbGrade && trimmed === t.tKbGrade) return "/baholash";
-    if (t.tKbGraded && trimmed === t.tKbGraded) return "/baholar";
     if (t.tKbHealth && trimmed === t.tKbHealth) return "/thealth";
-    if (t.tKbHomework && trimmed === t.tKbHomework) return "/thomework";
+    // "📝 Vazifalar" now opens the student roster (formerly the "👥 Talabalar" flow).
+    if (t.tKbHomework && trimmed === t.tKbHomework) return "/baholar";
+    // Back-compat: old "👥 Talabalar" label still routes to the same flow.
+    if (t.tKbGraded && trimmed === t.tKbGraded) return "/baholar";
   }
   return null;
 }
