@@ -1201,9 +1201,14 @@ async function buildHomeworkMessage(
       }
       lines.push("");
 
-      // One button per module (expands to per-SAP buttons via hw:mod callback).
-      if (groupId && topic && ungraded.length > 0) {
-        buttons.push([{ text: `📝 ${m.position + 1}-MODUL VAZIFASI`, callback_data: `hw:mod:${m.mid}` }]);
+      // One button per module (expands to per-leaf buttons via hw:mod callback).
+      // Always shown when group+topic exist, so students can resubmit graded work.
+      if (groupId && topic) {
+        const allGraded = ungraded.length === 0;
+        const label = allGraded
+          ? `📝 ${m.position + 1}-MODUL VAZIFASI · qayta topshirish`
+          : `📝 ${m.position + 1}-MODUL VAZIFASI`;
+        buttons.push([{ text: label, callback_data: `hw:mod:${m.mid}` }]);
       }
     }
   } catch (e) {
