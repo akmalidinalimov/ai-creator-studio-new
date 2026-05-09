@@ -207,7 +207,7 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
             <Textarea value={lesson.description || ""} onChange={(e) => setLesson((l: any) => ({ ...l, description: e.target.value }))} onBlur={(e) => update({ description: e.target.value })} rows={3} />
           </div>
 
-          <Tabs value={(lesson.video_provider === "upload" || (lesson.video_provider === "bunny" && lesson.provider_video_id && !lesson.video_storage_path && false)) ? "upload" : (lesson.video_provider === "bunny" && lesson.provider_video_id ? "upload" : "embed")} onValueChange={(v) => v === "upload" ? update({ video_provider: "upload", provider_video_id: null }) : update({ video_provider: "youtube" })}>
+          <Tabs value={(lesson.video_provider === "upload" || (lesson.video_provider === "bunny" && lesson.provider_video_id)) ? "upload" : "embed"} onValueChange={(v) => v === "upload" ? update({ video_provider: "upload", provider_video_id: null }) : update({ video_provider: "youtube", provider_video_id: null, video_storage_path: null })}>
             <TabsList className="w-full">
               <TabsTrigger value="upload" className="flex-1">{t("admin.lessonDrawer.uploadVideo")}</TabsTrigger>
               <TabsTrigger value="embed" className="flex-1">{t("admin.lessonDrawer.embedUrl")}</TabsTrigger>
