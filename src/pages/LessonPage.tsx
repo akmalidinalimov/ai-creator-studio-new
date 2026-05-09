@@ -226,7 +226,6 @@ export default function LessonPage() {
 
   const provider = lesson.video_provider || "upload";
   const bunnyRaw: string = lesson.provider_video_id || lesson.video_url || "";
-  const [bunnyLib, bunnyGuid] = bunnyRaw.includes("/") ? bunnyRaw.split("/") : ["", ""];
 
   const renderPlayer = () => {
     if (provider === "bunny") {
