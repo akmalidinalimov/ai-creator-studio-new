@@ -334,6 +334,13 @@ function StudentMatrix({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modules, assignments]);
 
+  if (!students.length) {
+    return <Card className="p-8 text-center text-muted-foreground">Bu guruhda talabalar yo'q.</Card>;
+  }
+  if (!modules.length) {
+    return <Card className="p-8 text-center text-muted-foreground">Modullar topilmadi.</Card>;
+  }
+
   return (
     <Card className="overflow-x-auto">
       <table className="w-full text-sm">
