@@ -1776,6 +1776,42 @@ export type Database = {
           },
         ]
       }
+      progress_audit: {
+        Row: {
+          after: Json | null
+          before: Json | null
+          changed_at: string
+          db_user: string
+          id: string
+          op: string
+          row_id: string | null
+          table_name: string
+          user_id: string | null
+        }
+        Insert: {
+          after?: Json | null
+          before?: Json | null
+          changed_at?: string
+          db_user?: string
+          id?: string
+          op: string
+          row_id?: string | null
+          table_name: string
+          user_id?: string | null
+        }
+        Update: {
+          after?: Json | null
+          before?: Json | null
+          changed_at?: string
+          db_user?: string
+          id?: string
+          op?: string
+          row_id?: string | null
+          table_name?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       quiz_attempts: {
         Row: {
           answers: Json
