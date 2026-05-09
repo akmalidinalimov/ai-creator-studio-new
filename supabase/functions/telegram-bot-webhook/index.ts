@@ -159,7 +159,15 @@ const T = {
     tKbSettings: "⚙️ Sozlamalar",
     tKbHomework: "📝 Vazifalar",
     tKbGrade: "📝 Baholash",
-    tKbGraded: "📑 Baholar",
+    tKbGraded: "👥 Talabalar",
+    rosterTitle: "👥 <b>Talabalar</b>\nTalabani tanlang:",
+    rosterEmpty: "Guruhda talaba topilmadi.",
+    rosterStudentRow: (name: string, n: number) => `${name} · ${n}`,
+    studentModulesTitle: (name: string) => `👤 <b>${csvEscapeHtml(name)}</b>\n\nModul bo'yicha topshiriqlar:`,
+    studentModulesEmpty: "Bu talaba hali hech narsa topshirmagan.",
+    moduleRowBtn: (mn: number, count: number, scores: string) => `📦 ${mn}-modul — ${count} topshirildi · ${scores}`,
+    backToRoster: "↩️ Talabalar ro'yxati",
+    scorePending: "⏳",
     tKbHealth: "🩺 Guruh holati",
     tHealthOpenSite: "🌐 Saytda batafsil",
     tHealthEmpty: "Sizga hali guruh biriktirilmagan.",
@@ -336,7 +344,15 @@ const T = {
     tKbSettings: "⚙️ Настройки",
     tKbHomework: "📝 Задания",
     tKbGrade: "📝 Оценить",
-    tKbGraded: "📑 Оценки",
+    tKbGraded: "👥 Студенты",
+    rosterTitle: "👥 <b>Студенты</b>\nВыберите студента:",
+    rosterEmpty: "В группе нет студентов.",
+    rosterStudentRow: (name: string, n: number) => `${name} · ${n}`,
+    studentModulesTitle: (name: string) => `👤 <b>${csvEscapeHtml(name)}</b>\n\nСдачи по модулям:`,
+    studentModulesEmpty: "Студент пока ничего не сдавал.",
+    moduleRowBtn: (mn: number, count: number, scores: string) => `📦 Модуль ${mn} — сдано ${count} · ${scores}`,
+    backToRoster: "↩️ К списку студентов",
+    scorePending: "⏳",
     tKbHealth: "🩺 Состояние группы",
     tHealthOpenSite: "🌐 Подробнее на сайте",
     tHealthEmpty: "К вам пока не прикреплена группа.",
@@ -505,7 +521,15 @@ const T = {
     tKbSettings: "⚙️ Settings",
     tKbHomework: "📝 Homework",
     tKbGrade: "📝 Grade",
-    tKbGraded: "📑 Grades",
+    tKbGraded: "👥 Students",
+    rosterTitle: "👥 <b>Students</b>\nPick a student:",
+    rosterEmpty: "No students in this group.",
+    rosterStudentRow: (name: string, n: number) => `${name} · ${n}`,
+    studentModulesTitle: (name: string) => `👤 <b>${csvEscapeHtml(name)}</b>\n\nSubmissions by module:`,
+    studentModulesEmpty: "This student hasn't submitted anything yet.",
+    moduleRowBtn: (mn: number, count: number, scores: string) => `📦 Module ${mn} — ${count} submitted · ${scores}`,
+    backToRoster: "↩️ Back to students",
+    scorePending: "⏳",
     tKbHealth: "🩺 Group health",
     tHealthOpenSite: "🌐 Open dashboard",
     tHealthEmpty: "No group is assigned to you yet.",
@@ -1943,21 +1967,8 @@ async function handleGradingCommand(
     return true;
   }
 
-  if (cmd === "/baholar" || cmd === "/grades") {
-    const items = await loadGradingSubmissions(admin, graderId, isAdmin, { scored: true, limit: 10, groupId });
-    if (!items.length) {
-      await sendWithKeyboard(chatId, `${t.gradedRecent}\n\n${t.gradedNone}`, locale, isAdmin, isAdmin ? "admin" : "teacher");
-      return true;
-    }
-    const lines = [t.gradedRecent, ""];
-    items.forEach((s: any, i: number) => {
-      const name = [s.profile?.name, s.profile?.last_name].filter(Boolean).join(" ") || "—";
-      const tn = s.assignment?.task_number ? ` #${s.assignment.task_number}` : "";
-      const title = `${s.assignment?.title || "—"}${tn}`;
-      const mx = s.assignment?.max_score || 10;
-      lines.push(t.gradedItem(i + 1, csvEscapeHtml(name), csvEscapeHtml(title), s.score, mx));
-    });
-    await sendWithKeyboard(chatId, lines.join("\n"), locale, isAdmin, isAdmin ? "admin" : "teacher");
+  if (cmd === "/baholar" || cmd === "/grades" || cmd === "/talabalar" || cmd === "/students") {
+    await renderTeacherRoster(admin, chatId, graderId, locale, isAdmin, 0, groupId);
     return true;
   }
 
@@ -2069,6 +2080,169 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
     lines.push("");
   }
   buttons.push([{ text: t.gradeBackList, callback_data: "gs:list:0" }]);
+  await sendMessage(chatId, lines.join("\n"), { inline_keyboard: buttons });
+}
+
+// =================== TEACHER ROSTER (students -> modules -> detail) ===================
+
+const ROSTER_PAGE_SIZE = 10;
+
+async function renderTeacherRoster(
+  admin: any, chatId: number, graderId: string, locale: Locale, isAdmin: boolean, page: number, groupId?: string | null,
+) {
+  const t = T[locale] as any;
+  const ids = await gradingScopeIds(admin, graderId, isAdmin, groupId);
+  if (ids && ids.length === 0) {
+    await sendWithKeyboard(chatId, t.rosterEmpty, locale, isAdmin, isAdmin ? "admin" : "teacher");
+    return;
+  }
+  // Roster = all students in scope (even those with zero submissions, so teacher sees who's idle).
+  let pq = admin.from("profiles").select("id, name, last_name, telegram_username").is("archived_at", null);
+  if (ids) pq = pq.in("id", ids);
+  const { data: profs } = await pq;
+  const profList = ((profs || []) as any[]);
+  if (!profList.length) {
+    await sendWithKeyboard(chatId, t.rosterEmpty, locale, isAdmin, isAdmin ? "admin" : "teacher");
+    return;
+  }
+
+  // Submission counts per student (any score state).
+  const userIds = profList.map((p) => p.id);
+  const { data: subs } = await admin.from("homework_submissions").select("user_id").in("user_id", userIds);
+  const counts = new Map<string, number>();
+  for (const s of (subs || []) as any[]) counts.set(s.user_id, (counts.get(s.user_id) || 0) + 1);
+
+  const rows = profList.map((p) => {
+    const handle = (p.telegram_username || "").toString().trim();
+    const fullName = [p.name, p.last_name].filter(Boolean).join(" ") || "—";
+    const label = handle ? `@${handle}` : fullName;
+    return { id: p.id, label, n: counts.get(p.id) || 0, sortName: fullName.toLowerCase() };
+  }).sort((a, b) => (b.n - a.n) || a.sortName.localeCompare(b.sortName));
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / ROSTER_PAGE_SIZE));
+  const pageIdx = Math.min(Math.max(0, page), totalPages - 1);
+  const slice = rows.slice(pageIdx * ROSTER_PAGE_SIZE, (pageIdx + 1) * ROSTER_PAGE_SIZE);
+
+  const buttons: any[][] = slice.map((r) => [{
+    text: t.rosterStudentRow(r.label, r.n).slice(0, 60),
+    callback_data: `tr:stu:${r.id}`,
+  }]);
+  const nav: any[] = [];
+  if (pageIdx > 0) nav.push({ text: t.gradePrevPage, callback_data: `tr:list:${pageIdx - 1}` });
+  if (pageIdx < totalPages - 1) nav.push({ text: t.gradeNextPage, callback_data: `tr:list:${pageIdx + 1}` });
+  if (nav.length) buttons.push(nav);
+
+  await sendMessage(chatId, t.rosterTitle, { inline_keyboard: buttons });
+  await sendKeyboardHint(chatId, locale, isAdmin, isAdmin ? "admin" : "teacher");
+}
+
+async function renderStudentModules(
+  admin: any, chatId: number, graderId: string, studentId: string, locale: Locale, isAdmin: boolean,
+) {
+  const t = T[locale] as any;
+  const ids = await gradingScopeIds(admin, graderId, isAdmin);
+  if (ids && !ids.includes(studentId)) {
+    await sendMessage(chatId, t.gradeNotFound);
+    return;
+  }
+  const [{ data: prof }, { data: subs }] = await Promise.all([
+    admin.from("profiles").select("name, last_name, telegram_username").eq("id", studentId).maybeSingle(),
+    admin.from("homework_submissions").select("id, assignment_id, score, submitted_at").eq("user_id", studentId).order("submitted_at", { ascending: true }),
+  ]);
+  const fullName = [prof?.name, prof?.last_name].filter(Boolean).join(" ") || "—";
+  const handle = (prof?.telegram_username || "").toString().trim();
+  const headerName = handle ? `@${handle} (${fullName})` : fullName;
+
+  const list = (subs || []) as any[];
+  if (!list.length) {
+    await sendMessage(chatId, `${t.studentModulesTitle(headerName)}\n\n${t.studentModulesEmpty}`, {
+      inline_keyboard: [[{ text: t.backToRoster, callback_data: "tr:list:0" }]],
+    });
+    return;
+  }
+  const aIds = Array.from(new Set(list.map((s) => s.assignment_id)));
+  const { data: assigns } = await admin
+    .from("homework_assignments")
+    .select("id, max_score, module_id, modules(position)")
+    .in("id", aIds);
+  const aMap = new Map(((assigns || []) as any[]).map((a: any) => [a.id, a]));
+
+  const byModule = new Map<string, { mPos: number; mid: string; items: { score: number | null; max: number }[] }>();
+  for (const s of list) {
+    const a: any = aMap.get(s.assignment_id);
+    if (!a) continue;
+    const key = a.module_id;
+    if (!byModule.has(key)) byModule.set(key, { mPos: a.modules?.position ?? 0, mid: key, items: [] });
+    byModule.get(key)!.items.push({ score: s.score, max: a.max_score || 10 });
+  }
+  const modules = Array.from(byModule.values()).sort((x, y) => x.mPos - y.mPos);
+
+  const buttons: any[][] = modules.map((m) => {
+    const scoresStr = m.items
+      .map((it) => it.score == null ? t.scorePending : `${it.score}/${it.max}`)
+      .join(", ");
+    return [{
+      text: t.moduleRowBtn(m.mPos + 1, m.items.length, scoresStr).slice(0, 60),
+      callback_data: `tr:mod:${studentId}:${m.mid}`,
+    }];
+  });
+  buttons.push([{ text: t.backToRoster, callback_data: "tr:list:0" }]);
+  await sendMessage(chatId, t.studentModulesTitle(headerName), { inline_keyboard: buttons });
+}
+
+async function renderStudentModuleDetail(
+  admin: any, chatId: number, graderId: string, studentId: string, moduleId: string, locale: Locale, isAdmin: boolean,
+) {
+  const t = T[locale] as any;
+  const ids = await gradingScopeIds(admin, graderId, isAdmin);
+  if (ids && !ids.includes(studentId)) {
+    await sendMessage(chatId, t.gradeNotFound);
+    return;
+  }
+  const [{ data: prof }, { data: mod }] = await Promise.all([
+    admin.from("profiles").select("name, last_name, telegram_username, group_id").eq("id", studentId).maybeSingle(),
+    admin.from("modules").select("position, title").eq("id", moduleId).maybeSingle(),
+  ]);
+  const fullName = [prof?.name, prof?.last_name].filter(Boolean).join(" ") || "—";
+  const handle = (prof?.telegram_username || "").toString().trim();
+  const headerName = handle ? `@${handle} (${fullName})` : fullName;
+  const mPos = (mod?.position ?? 0) + 1;
+
+  const { data: assigns } = await admin
+    .from("homework_assignments")
+    .select("id, title, max_score, task_number, sap_number, parent_id")
+    .eq("module_id", moduleId);
+  const aIds = ((assigns || []) as any[]).map((a: any) => a.id);
+  const aMap = new Map(((assigns || []) as any[]).map((a: any) => [a.id, a]));
+  const { data: subs } = aIds.length
+    ? await admin.from("homework_submissions")
+        .select("id, assignment_id, score, score_feedback, submitted_at, telegram_message_url")
+        .eq("user_id", studentId).in("assignment_id", aIds).order("submitted_at", { ascending: true })
+    : { data: [] as any[] };
+
+  const list = (subs || []) as any[];
+  const lines = [`👤 <b>${csvEscapeHtml(headerName)}</b>`, `📦 <b>${mPos}-modul — ${csvEscapeHtml(mod?.title || "—")}</b>`, ""];
+  const buttons: any[][] = [];
+  if (!list.length) {
+    lines.push(t.studentModulesEmpty);
+  } else {
+    for (const s of list) {
+      const a: any = aMap.get(s.assignment_id);
+      if (!a) continue;
+      const tn = a.task_number || 1;
+      const label = a.parent_id ? `V${tn}.S${a.sap_number ?? "?"}` : `V${tn}`;
+      const scoreStr = s.score == null ? `⏳ ${t.scorePending || ""}`.trim() : `<b>${s.score}/${a.max_score || 10}</b>`;
+      lines.push(`• ${label} — ${csvEscapeHtml(a.title || "")} · ${scoreStr}`);
+      if (s.score_feedback) lines.push(`   💬 ${csvEscapeHtml(s.score_feedback)}`);
+      if (s.score == null) {
+        buttons.push([{ text: `📝 ${label} — baholash`.slice(0, 60), callback_data: `gs:open:${s.id}` }]);
+      }
+      if (s.telegram_message_url) {
+        buttons.push([{ text: t.gradeOpenSubmissionBtn(tn), url: s.telegram_message_url }]);
+      }
+    }
+  }
+  buttons.push([{ text: t.backToRoster, callback_data: `tr:stu:${studentId}` }]);
   await sendMessage(chatId, lines.join("\n"), { inline_keyboard: buttons });
 }
 
@@ -3501,7 +3675,7 @@ async function handleCallback(admin: any, cq: any) {
     }
     return;
   }
-  if ((data.startsWith("gs:list:") || data.startsWith("gs:pick:") || data.startsWith("gs:open:")) && chatId) {
+  if ((data.startsWith("gs:list:") || data.startsWith("gs:pick:") || data.startsWith("gs:open:") || data.startsWith("tr:")) && chatId) {
     const profile = await findProfileByTelegramId(admin, tgId);
     if (!profile) { await answerCallback(cq.id); return; }
     const persona = await getPersona(admin, profile.id);
@@ -3523,6 +3697,16 @@ async function handleCallback(admin: any, cq: any) {
     } else if (data.startsWith("gs:open:")) {
       const subId = data.slice("gs:open:".length);
       await startGradingFlow(admin, chatId, tgId, profile.id, subId, locale, isAdmin);
+    } else if (data.startsWith("tr:list:")) {
+      const page = parseInt(data.slice("tr:list:".length), 10) || 0;
+      await renderTeacherRoster(admin, chatId, profile.id, locale, isAdmin, page, groupIdScope);
+    } else if (data.startsWith("tr:stu:")) {
+      const sid = data.slice("tr:stu:".length);
+      await renderStudentModules(admin, chatId, profile.id, sid, locale, isAdmin);
+    } else if (data.startsWith("tr:mod:")) {
+      const rest = data.slice("tr:mod:".length);
+      const [sid, mid] = rest.split(":");
+      if (sid && mid) await renderStudentModuleDetail(admin, chatId, profile.id, sid, mid, locale, isAdmin);
     }
     return;
   }
