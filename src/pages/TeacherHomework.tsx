@@ -314,12 +314,6 @@ function StudentMatrix({
   showGroup: boolean; groupNameMap: Map<string, string>;
   onCellClick: (studentId: string, moduleId: string) => void;
 }) {
-  if (!students.length) {
-    return <Card className="p-8 text-center text-muted-foreground">Bu guruhda talabalar yo'q.</Card>;
-  }
-  if (!modules.length) {
-    return <Card className="p-8 text-center text-muted-foreground">Modullar topilmadi.</Card>;
-  }
   // leaves per module: a leaf is a SAP if any exist for the task, otherwise the parent task itself
   const leavesByModule = useMemo(() => {
     const m = new Map<string, Assignment[]>();
