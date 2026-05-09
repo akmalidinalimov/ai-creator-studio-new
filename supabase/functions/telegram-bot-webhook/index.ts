@@ -600,6 +600,12 @@ const T = {
     hwIntentNoGroup: "You are not assigned to a group. Please contact your teacher.",
     hwIntentBtnGoTopic: "📌 Open topic",
     hwIntentAlreadyScored: "This task has already been graded ✅",
+    hwResubAsk: (sc: number, mx: number, fb: string) =>
+      `📊 Your previous result: <b>${sc}/${mx}</b>${fb ? `\nFeedback: "${csvEscapeHtml(fb)}"` : ""}\n\nDo you want to resubmit?`,
+    hwResubYes: "✅ Yes, resubmit",
+    hwResubNo: "❌ No",
+    hwResubCancelled: "OK 👍 Your previous score is kept.",
+    hwResubError: "❌ Could not start resubmission. Please try again later.",
     hwReceived: (mn: number, tn: number) =>
       `✅ Submission received · Module ${mn} · T${tn}\nYou'll get the result once your teacher grades it.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
