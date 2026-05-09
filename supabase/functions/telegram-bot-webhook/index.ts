@@ -2219,8 +2219,6 @@ async function renderStudentModules(
   });
   buttons.push([{ text: t.backToRoster, callback_data: "tr:list:0" }]);
   await sendMessage(chatId, lines.join("\n"), { inline_keyboard: buttons });
-  buttons.push([{ text: t.backToRoster, callback_data: "tr:list:0" }]);
-  await sendMessage(chatId, t.studentModulesTitle(headerName), { inline_keyboard: buttons });
 }
 
 async function renderStudentModuleDetail(
