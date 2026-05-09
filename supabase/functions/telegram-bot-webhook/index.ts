@@ -3321,9 +3321,10 @@ async function handleCallback(admin: any, cq: any) {
       const s: any = subMap.get(a.id);
       return !(s && s.score != null);
     });
+    let seq = 0;
     for (const a of ungraded) {
-      const parentTn = a.parent_id ? (parentTaskNum.get(a.parent_id) || 1) : (a.task_number || 1);
-      const tnLabel = a.parent_id ? `V${parentTn}.S${a.sap_number ?? "?"}` : `V${parentTn}`;
+      seq++;
+      const tnLabel = `Vazifa ${a.sap_number ?? seq}`;
       const title = (a.title || "").slice(0, 30);
       buttons.push([{ text: `📤 ${tnLabel} — ${title}`, callback_data: `hw:start:${a.id}` }]);
     }
