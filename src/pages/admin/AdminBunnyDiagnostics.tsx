@@ -67,11 +67,6 @@ export default function AdminBunnyDiagnostics() {
     }
   };
 
-  const [signedUrl, setSignedUrl] = useState<string | null>(null);
-  const [expires, setExpires] = useState<number | null>(null);
-  const [headStatus, setHeadStatus] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
 
   const run = async () => {
     setLoading(true);
