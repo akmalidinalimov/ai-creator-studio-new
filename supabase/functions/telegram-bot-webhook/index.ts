@@ -2246,7 +2246,7 @@ async function renderStudentModuleDetail(
   await sendMessage(chatId, lines.join("\n"), { inline_keyboard: buttons });
 }
 
-
+async function tgIdFromUserId(admin: any, userId: string): Promise<number | null> {
   const { data } = await admin.from("profiles").select("telegram_id").eq("id", userId).maybeSingle();
   return data?.telegram_id ?? null;
 }
