@@ -669,7 +669,7 @@ function getAdminKeyboard(locale: Locale) {
   return {
     keyboard: [
       [{ text: t.adminKbAnalytics }],
-      [{ text: t.tKbGrade }, { text: t.tKbGraded }],
+      [{ text: t.tKbGrade }, { text: t.tKbHomework }],
       [{ text: t.adminKbInactive3 }, { text: t.adminKbInactive7 }],
       [{ text: t.adminKbNever }, { text: t.adminKbNew }],
       [{ text: t.adminKbStudentMode }, { text: t.kbLang }],
@@ -683,11 +683,10 @@ function getTeacherKeyboard(locale: Locale) {
   const t = T[locale] as any;
   return {
     keyboard: [
-      [{ text: t.tKbGrade }, { text: t.tKbGraded }],
-      [{ text: t.tKbStats }, { text: t.tKbHomework }],
+      [{ text: t.tKbGrade }, { text: t.tKbHomework }],
+      [{ text: t.tKbStats }, { text: t.tKbTop }],
       [{ text: t.tKbStudents }, { text: t.tKbInactive }],
-      [{ text: t.tKbTop }, { text: t.tKbBroadcast }],
-      [{ text: t.tKbSettings }, { text: t.kbLang }],
+      [{ text: t.tKbBroadcast }, { text: t.tKbSettings }],
       [{ text: t.kbLang }],
     ],
     resize_keyboard: true,
@@ -787,9 +786,11 @@ function buttonTextToCommand(text: string): string | null {
     if (t.tKbBroadcast && trimmed === t.tKbBroadcast) return "/tbroadcast";
     if (t.tKbSettings && trimmed === t.tKbSettings) return "/sozlamalar";
     if (t.tKbGrade && trimmed === t.tKbGrade) return "/baholash";
-    if (t.tKbGraded && trimmed === t.tKbGraded) return "/baholar";
     if (t.tKbHealth && trimmed === t.tKbHealth) return "/thealth";
-    if (t.tKbHomework && trimmed === t.tKbHomework) return "/thomework";
+    // "📝 Vazifalar" now opens the student roster (formerly the "👥 Talabalar" flow).
+    if (t.tKbHomework && trimmed === t.tKbHomework) return "/baholar";
+    // Back-compat: old "👥 Talabalar" label still routes to the same flow.
+    if (t.tKbGraded && trimmed === t.tKbGraded) return "/baholar";
   }
   return null;
 }
@@ -2190,27 +2191,34 @@ async function renderStudentModules(
     .in("id", aIds);
   const aMap = new Map(((assigns || []) as any[]).map((a: any) => [a.id, a]));
 
-  const byModule = new Map<string, { mPos: number; mid: string; items: { score: number | null; max: number }[] }>();
+  const byModule = new Map<string, { mPos: number; mid: string; latest: number; items: { score: number | null; max: number }[] }>();
   for (const s of list) {
     const a: any = aMap.get(s.assignment_id);
     if (!a) continue;
     const key = a.module_id;
-    if (!byModule.has(key)) byModule.set(key, { mPos: a.modules?.position ?? 0, mid: key, items: [] });
-    byModule.get(key)!.items.push({ score: s.score, max: a.max_score || 10 });
+    if (!byModule.has(key)) byModule.set(key, { mPos: a.modules?.position ?? 0, mid: key, latest: 0, items: [] });
+    const bucket = byModule.get(key)!;
+    bucket.items.push({ score: s.score, max: a.max_score || 10 });
+    const ts = s.submitted_at ? new Date(s.submitted_at).getTime() : 0;
+    if (ts > bucket.latest) bucket.latest = ts;
   }
   const modules = Array.from(byModule.values()).sort((x, y) => x.mPos - y.mPos);
 
+  const fmtDate = (ms: number) => ms ? new Date(ms).toISOString().slice(0, 10) : "";
+  const lines = [t.studentModulesTitle(headerName), ""];
   const buttons: any[][] = modules.map((m) => {
     const scoresStr = m.items
       .map((it) => it.score == null ? t.scorePending : `${it.score}/${it.max}`)
       .join(", ");
+    const dateStr = fmtDate(m.latest);
+    lines.push(`📦 <b>${m.mPos + 1}-MODUL</b> — ${m.items.length} ta · ${csvEscapeHtml(scoresStr)}${dateStr ? ` · 📅 ${dateStr}` : ""}`);
     return [{
-      text: t.moduleRowBtn(m.mPos + 1, m.items.length, scoresStr).slice(0, 60),
+      text: `${m.mPos + 1}-MODUL · ${m.items.length} ta · ${scoresStr}${dateStr ? ` · ${dateStr}` : ""}`.slice(0, 60),
       callback_data: `tr:mod:${studentId}:${m.mid}`,
     }];
   });
   buttons.push([{ text: t.backToRoster, callback_data: "tr:list:0" }]);
-  await sendMessage(chatId, t.studentModulesTitle(headerName), { inline_keyboard: buttons });
+  await sendMessage(chatId, lines.join("\n"), { inline_keyboard: buttons });
 }
 
 async function renderStudentModuleDetail(
@@ -2255,7 +2263,8 @@ async function renderStudentModuleDetail(
       const tn = a.task_number || 1;
       const label = a.parent_id ? `V${tn}.S${a.sap_number ?? "?"}` : `V${tn}`;
       const scoreStr = s.score == null ? `⏳ ${t.scorePending || ""}`.trim() : `<b>${s.score}/${a.max_score || 10}</b>`;
-      lines.push(`• ${label} — ${csvEscapeHtml(a.title || "")} · ${scoreStr}`);
+      const dateStr = s.submitted_at ? new Date(s.submitted_at).toISOString().slice(0, 10) : "";
+      lines.push(`• ${label} — ${csvEscapeHtml(a.title || "")}${dateStr ? ` · 📅 ${dateStr}` : ""} · ${scoreStr}`);
       if (s.score_feedback) lines.push(`   💬 ${csvEscapeHtml(s.score_feedback)}`);
       if (s.score == null) {
         buttons.push([{ text: `📝 ${label} — baholash`.slice(0, 60), callback_data: `gs:open:${s.id}` }]);

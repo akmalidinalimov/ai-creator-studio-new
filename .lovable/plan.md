@@ -1,47 +1,64 @@
 ## Goal
-Fix the Telegram resubmission error and update two strings in the homework module flow.
 
-## Root cause of "Qayta topshirish boshlab bo'lmadi"
-`start_homework_resubmission` requires `auth.uid()` to be non-null and to match the row's user (or be teacher/admin). The Telegram bot calls it with the **service-role** Supabase client, where `auth.uid()` is NULL → the function raises `not_authenticated` → bot shows the error toast.
+In the teacher's Telegram bot keyboard, remove the **👥 Talabalar** button and move its functionality (the student roster → modules → grades drill-down) onto the existing **📝 Vazifalar** button. Also surface submission dates clearly in the drill-down view.
+
+## Current state (verified in `supabase/functions/telegram-bot-webhook/index.ts`)
+
+- **📝 Vazifalar** (`tKbHomework`) → maps to `/thomework` → calls RPC `admin_group_module_submissions` and shows per-module submitted/not-submitted aggregate buttons (lines 792, 1793–1825).
+- **👥 Talabalar** (`tKbGraded`) → maps to `/baholar` → `renderTeacherRoster` → `tr:stu:<id>` → `renderStudentModules` → `tr:mod:<student>:<module>` → `renderStudentModuleDetail` (lines 790, 1993–1996, 2113–2270). This is the flow the user likes.
+- Teacher keyboard has both on row 1 and row 2 (lines 686–687).
 
 ## Changes
 
-### 1. Database migration — fix the RPC
-Replace `start_homework_resubmission` so service-role callers (the bot) bypass the per-user auth check, while web callers (students/teachers) keep the same authorization rules:
+### 1. Teacher keyboard — remove "Talabalar", keep "Vazifalar"
+File: `supabase/functions/telegram-bot-webhook/index.ts`, function `getTeacherKeyboard` (lines 682–696).
 
-```sql
--- inside the function, replace the auth block:
-IF auth.role() = 'service_role' THEN
-  -- bot/edge-function context: trust the caller
-  NULL;
-ELSE
-  IF v_caller IS NULL THEN RAISE EXCEPTION 'not_authenticated'; END IF;
-  IF v_caller <> v_row.user_id
-     AND NOT public.has_role(v_caller, 'teacher'::app_role)
-     AND NOT public.has_role(v_caller, 'admin'::app_role) THEN
-    RAISE EXCEPTION 'not_authorized';
-  END IF;
-END IF;
+Replace:
 ```
+[{ text: t.tKbGrade }, { text: t.tKbGraded }],
+[{ text: t.tKbStats }, { text: t.tKbHomework }],
+```
+with:
+```
+[{ text: t.tKbGrade }, { text: t.tKbHomework }],
+[{ text: t.tKbStats }, { text: t.tKbTop }],
+```
+(and drop the now-duplicate `tKbTop` row below to keep layout clean — final row order: Grade+Homework, Stats+Top, Students+Inactive, Broadcast+Settings, Lang).
 
-Everything else (snapshot → archive → clear score → bump `attempt_number` → audit log) stays the same. `homework_submissions_guard` already permits the clear because `attempt_number` increases.
+Admin keyboard (line 672) also references `tKbGraded`; replace with `tKbHomework` so admins keep access to the same roster flow when in teacher mode.
 
-### 2. Telegram bot strings (`supabase/functions/telegram-bot-webhook/index.ts`)
-At the module-task list (around line 3531):
-- Header: `📝 M${modulePos} — ${moduleTitle}` → `📝 ${modulePos}-MODUL — ${moduleTitle}`
-- Body: `Qaysi vazifani topshirasiz?` → `Vazifani qayta topshirish uchun, pastdagi tugmalardan birini bosib, topshiring`
+### 2. Reroute "📝 Vazifalar" → roster flow
+File: same, button-to-command resolver (lines 770–800).
 
-(No other locales touched; this view is Uzbek-only today.)
+Change:
+```ts
+if (t.tKbHomework && trimmed === t.tKbHomework) return "/thomework";
+```
+to:
+```ts
+if (t.tKbHomework && trimmed === t.tKbHomework) return "/baholar";
+```
+Remove the `tKbGraded` resolver line (790) since the button is gone.
 
-### 3. Resubmission flow (no code change needed — verify only)
-After `hw:resub_yes` succeeds, the bot already calls `startHomeworkIntent(...)`, which is the exact same path used for first-time submissions:
-- shows the topic deeplink button → student uploads in the group topic → existing auto-detect path inserts a fresh `homework_submissions` row update + sends the student a "Vazifa qabul qilindi" confirmation + notifies teachers via `notify-homework-submission`.
+`/thomework` command handler (lines 1793–1825) stays in the file (still reachable via typed slash command) but is no longer wired to a keyboard button. No deletions needed — keeps backward compatibility.
 
-So once the RPC stops erroring, resubmission rides on the existing, working pipeline — no duplicate notification logic to add.
+### 3. Improve drill-down: show submission dates + latest grade per module
+File: same, `renderStudentModules` (lines 2162–2214) and `renderStudentModuleDetail` (lines 2216–2270).
 
-## Files touched
-- `supabase/migrations/<new>.sql` — replace `start_homework_resubmission`
-- `supabase/functions/telegram-bot-webhook/index.ts` — two-line copy change at the module task list
+- In `renderStudentModules`: also select `submitted_at` and aggregate the **latest** `submitted_at` per module. Append it to the module-row button label or to a header line so the teacher sees "M1 — 2 ta · 8/10, 7/10 · 02-May".
+- In `renderStudentModuleDetail`: prepend each task line with the formatted submission date, e.g. `• V1 — Title · 02-May 14:30 · 8/10`. Use existing `csvEscapeHtml` and a small `formatDate(submitted_at, locale)` helper (Tashkent offset already used elsewhere — reuse `formatTashkentDate` if present, otherwise inline `new Date(...).toISOString().slice(0,10)`).
+
+No DB / RLS / RPC changes required — `homework_submissions.submitted_at` is already selected.
+
+### 4. No schema, RLS, or web UI changes
+Web `TeacherHomework.tsx` is untouched — this is bot-only.
 
 ## Out of scope
-No changes to `homework_submissions_guard`, RLS, web UI (`HomeworkSection.tsx`, `TeacherHomework.tsx`), grading logic, or notification edge functions.
+
+- `/thomework` aggregate view (kept reachable by typing the command, just unbound from the keyboard).
+- Localization of new date strings beyond what's already in `T[locale]`.
+- Resubmission flow, grading flow, notifications — unchanged.
+
+## Files touched
+
+- `supabase/functions/telegram-bot-webhook/index.ts` (keyboard rows, button resolver, two render functions).
