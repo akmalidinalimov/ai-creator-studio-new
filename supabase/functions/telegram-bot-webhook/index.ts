@@ -2263,7 +2263,8 @@ async function renderStudentModuleDetail(
       const tn = a.task_number || 1;
       const label = a.parent_id ? `V${tn}.S${a.sap_number ?? "?"}` : `V${tn}`;
       const scoreStr = s.score == null ? `⏳ ${t.scorePending || ""}`.trim() : `<b>${s.score}/${a.max_score || 10}</b>`;
-      lines.push(`• ${label} — ${csvEscapeHtml(a.title || "")} · ${scoreStr}`);
+      const dateStr = s.submitted_at ? new Date(s.submitted_at).toISOString().slice(0, 10) : "";
+      lines.push(`• ${label} — ${csvEscapeHtml(a.title || "")}${dateStr ? ` · 📅 ${dateStr}` : ""} · ${scoreStr}`);
       if (s.score_feedback) lines.push(`   💬 ${csvEscapeHtml(s.score_feedback)}`);
       if (s.score == null) {
         buttons.push([{ text: `📝 ${label} — baholash`.slice(0, 60), callback_data: `gs:open:${s.id}` }]);
