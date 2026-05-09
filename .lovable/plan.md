@@ -1,64 +1,49 @@
-## Goal
+## Why your videos aren't in Bunny
 
-In the teacher's Telegram bot keyboard, remove the **👥 Talabalar** button and move its functionality (the student roster → modules → grades drill-down) onto the existing **📝 Vazifalar** button. Also surface submission dates clearly in the drill-down view.
+`LessonDrawer` has two upload paths:
 
-## Current state (verified in `supabase/functions/telegram-bot-webhook/index.ts`)
+- **"Upload Video" tab** → uploads to Supabase Storage bucket `lesson-videos` and saves `video_provider='upload'`. **Never touches Bunny.**
+- **"Embed" tab → Bunny Stream (HLS)** → uses TUS direct upload to `video.bunnycdn.com` via the existing `bunny-upload-init` edge function.
 
-- **📝 Vazifalar** (`tKbHomework`) → maps to `/thomework` → calls RPC `admin_group_module_submissions` and shows per-module submitted/not-submitted aggregate buttons (lines 792, 1793–1825).
-- **👥 Talabalar** (`tKbGraded`) → maps to `/baholar` → `renderTeacherRoster` → `tr:stu:<id>` → `renderStudentModules` → `tr:mod:<student>:<module>` → `renderStudentModuleDetail` (lines 790, 1993–1996, 2113–2270). This is the flow the user likes.
-- Teacher keyboard has both on row 1 and row 2 (lines 686–687).
+Recent uploads went through path #1, so they're sitting in Supabase Storage, not your Bunny library. 4 lessons are currently in this state (all the 4.x-MODUL Claude lessons).
 
-## Changes
+## Plan
 
-### 1. Teacher keyboard — remove "Talabalar", keep "Vazifalar"
-File: `supabase/functions/telegram-bot-webhook/index.ts`, function `getTeacherKeyboard` (lines 682–696).
+### 1. Make the "Upload Video" tab upload to Bunny
 
-Replace:
-```
-[{ text: t.tKbGrade }, { text: t.tKbGraded }],
-[{ text: t.tKbStats }, { text: t.tKbHomework }],
-```
-with:
-```
-[{ text: t.tKbGrade }, { text: t.tKbHomework }],
-[{ text: t.tKbStats }, { text: t.tKbTop }],
-```
-(and drop the now-duplicate `tKbTop` row below to keep layout clean — final row order: Grade+Homework, Stats+Top, Students+Inactive, Broadcast+Settings, Lang).
+Rewire `onDrop` in `src/components/admin/LessonDrawer.tsx` to reuse the existing Bunny TUS flow (`bunny-upload-init` + `tus.Upload` to `video.bunnycdn.com`). On success save:
+- `video_provider: 'bunny'`
+- `provider_video_id: '<libraryId>/<videoGuid>'`
+- clear `video_storage_path`
 
-Admin keyboard (line 672) also references `tKbGraded`; replace with `tKbHomework` so admins keep access to the same roster flow when in teacher mode.
+Remove the now-redundant separate "Bunny Stream (HLS)" upload UI in the Embed tab (keep the embed text field for pasting an existing `<library>/<guid>`). Keep duration/thumbnail capture client-side as today.
 
-### 2. Reroute "📝 Vazifalar" → roster flow
-File: same, button-to-command resolver (lines 770–800).
+If `bunny-upload-init` returns an error (Bunny not configured), surface a clear toast — no fallback to Storage.
 
-Change:
-```ts
-if (t.tKbHomework && trimmed === t.tKbHomework) return "/thomework";
-```
-to:
-```ts
-if (t.tKbHomework && trimmed === t.tKbHomework) return "/baholar";
-```
-Remove the `tKbGraded` resolver line (790) since the button is gone.
+### 2. One-time migration of the 4 existing videos
 
-`/thomework` command handler (lines 1793–1825) stays in the file (still reachable via typed slash command) but is no longer wired to a keyboard button. No deletions needed — keeps backward compatibility.
+Add a new edge function `migrate-storage-to-bunny` (admin-only) that for each lesson with `video_provider='upload'`:
 
-### 3. Improve drill-down: show submission dates + latest grade per module
-File: same, `renderStudentModules` (lines 2162–2214) and `renderStudentModuleDetail` (lines 2216–2270).
+1. Generates a signed download URL from `lesson-videos`.
+2. Creates a Bunny video via `POST /library/{lib}/videos`.
+3. Streams the file to Bunny via `PUT /library/{lib}/videos/{guid}` (server-to-server fetch, no browser limits).
+4. Updates the lesson row: `video_provider='bunny'`, `provider_video_id='{lib}/{guid}'`, clears `video_storage_path`.
+5. Deletes the original object from `lesson-videos` storage.
 
-- In `renderStudentModules`: also select `submitted_at` and aggregate the **latest** `submitted_at` per module. Append it to the module-row button label or to a header line so the teacher sees "M1 — 2 ta · 8/10, 7/10 · 02-May".
-- In `renderStudentModuleDetail`: prepend each task line with the formatted submission date, e.g. `• V1 — Title · 02-May 14:30 · 8/10`. Use existing `csvEscapeHtml` and a small `formatDate(submitted_at, locale)` helper (Tashkent offset already used elsewhere — reuse `formatTashkentDate` if present, otherwise inline `new Date(...).toISOString().slice(0,10)`).
+Add a small admin-only button on `AdminBunnyDiagnostics` (or a new tile on `AdminCourses`) that lists the 4 affected lessons and a "Migrate to Bunny" action which invokes the function per lesson and shows progress.
 
-No DB / RLS / RPC changes required — `homework_submissions.submitted_at` is already selected.
+Because uploading 4 large MP4s server-side may exceed a single edge-function timeout, the function processes **one lesson per invocation** (lesson_id in body) and returns the new GUID; the UI loops one-at-a-time.
 
-### 4. No schema, RLS, or web UI changes
-Web `TeacherHomework.tsx` is untouched — this is bot-only.
+### 3. No schema changes
 
-## Out of scope
+Lessons table already supports `provider_video_id`; existing `lesson-video-url` edge function already handles `video_provider='bunny'`. No DB migration needed.
 
-- `/thomework` aggregate view (kept reachable by typing the command, just unbound from the keyboard).
-- Localization of new date strings beyond what's already in `T[locale]`.
-- Resubmission flow, grading flow, notifications — unchanged.
+### Files touched
 
-## Files touched
+- `src/components/admin/LessonDrawer.tsx` — replace Storage upload with Bunny TUS upload; trim Embed-tab Bunny uploader.
+- `supabase/functions/migrate-storage-to-bunny/index.ts` — new admin-only one-shot migration function.
+- New small admin UI section (in `AdminBunnyDiagnostics.tsx` or similar) to trigger migration for the 4 pending lessons.
 
-- `supabase/functions/telegram-bot-webhook/index.ts` (keyboard rows, button resolver, two render functions).
+### Requires
+
+`BUNNY_LIBRARY_ID` and `BUNNY_API_KEY` secrets must be set (already used by `bunny-upload-init`). I'll verify before implementing.
