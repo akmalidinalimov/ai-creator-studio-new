@@ -34,6 +34,12 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
 
   useEffect(() => { load(); }, [load]);
 
+  const update = async (patch: any) => {
+    setLesson((l: any) => ({ ...l, ...patch }));
+    const { error } = await supabase.from("lessons").update(patch).eq("id", lessonId);
+    if (error) toast.error(error.message);
+  };
+
   // ===== Unified Bunny upload (replaces old Storage upload) =====
   const onDrop = async (files: File[]) => {
     if (!files[0]) return;
