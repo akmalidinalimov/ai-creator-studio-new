@@ -3528,7 +3528,7 @@ async function handleCallback(admin: any, cq: any) {
         buttons.push([{ text: `📤 ${tnLabel} — ${title}`, callback_data: `hw:start:${a.id}` }]);
       }
     }
-    await sendMessage(chatId, `📝 M${modulePos} — ${moduleTitle}\n\nQaysi vazifani topshirasiz?`, { inline_keyboard: buttons });
+    await sendMessage(chatId, `📝 ${modulePos}-MODUL — ${moduleTitle}\n\nVazifani qayta topshirish uchun, pastdagi tugmalardan birini bosib, topshiring`, { inline_keyboard: buttons });
     return;
   }
 
