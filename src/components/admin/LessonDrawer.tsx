@@ -25,11 +25,7 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ pct: number; mbps: number; etaSec: number; fileName: string } | null>(null);
   const cancelRef = useRef<{ aborted: boolean }>({ aborted: false });
-  // Bunny direct upload (v2.1)
-  const [bunnyUploading, setBunnyUploading] = useState(false);
-  const [bunnyProgress, setBunnyProgress] = useState<{ pct: number; mbps: number; fileName: string } | null>(null);
-  const bunnyTusRef = useRef<tus.Upload | null>(null);
-  const bunnyFileInputRef = useRef<HTMLInputElement | null>(null);
+  const tusRef = useRef<tus.Upload | null>(null);
 
   const load = useCallback(async () => {
     const { data } = await supabase.from("lessons").select("*").eq("id", lessonId).maybeSingle();
