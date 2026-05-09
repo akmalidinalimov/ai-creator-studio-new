@@ -1,63 +1,79 @@
-# Investigation: "Student progress wiped overnight"
+## Goal
+Allow students (and teachers acting on their behalf) to resubmit a homework that has already been graded. Single source of truth per (student, assignment): one row, latest grade wins, history preserved. All downstream views (matrix, leaderboard, profile, bot stats) use the latest grade automatically because they already key off `homework_submissions.score`.
 
-## TL;DR — checked the DB, no progress was wiped
+## 1. Database
 
-Before changing anything I read the actual production data and every code path that writes to progress tables. **No student progress has been deleted or reset.** The reports are almost certainly a *display / wrong-account* issue, not data loss. I want to confirm with one or two real student accounts before adding fixes.
+Migration on `homework_submissions`:
+- Add `attempt_number int NOT NULL DEFAULT 1`
+- Add `previous_attempts jsonb NOT NULL DEFAULT '[]'::jsonb` — array of `{score, score_feedback, scored_by, scored_at, submitted_at, telegram_message_url, attempt_number}`
+- Helper `public.start_homework_resubmission(p_submission_id uuid)` (SECURITY DEFINER, validates `auth.uid() = user_id` OR `has_role(auth.uid(),'teacher'/'admin')`):
+  1. push current attempt snapshot into `previous_attempts`
+  2. increment `attempt_number`
+  3. clear `score`, `score_feedback`, `scored_by`, `scored_at`, `is_late`
+  4. update `submitted_at = now()`
+  5. insert `progress_audit` row `op = 'RESUBMIT'`
 
-## What I checked (read-only)
+Adjust `homework_submissions_guard` trigger: allow `OLD.score IS NOT NULL → NEW.score IS NULL` **only when** `NEW.attempt_number > OLD.attempt_number` (signals a real resubmission). All other clear attempts still log + reinstate as today.
 
-**1. Code paths that write to `lesson_progress`** — only two exist, both safe:
+RLS update on `homework_submissions`:
+- Keep existing owner update (score IS NULL).
+- The resubmission flow goes through `start_homework_resubmission` RPC (security definer), so RLS doesn't need to be widened for normal users.
 
-- `LessonPage.tsx` → `supabase.rpc("track_video_progress", …)` and an `upsert` on lesson end / "Mark complete". Both only ever set `completed_at` to a value, never to `NULL`.
-- The `track_video_progress` SQL function uses
-  `SET completed_at = COALESCE(completed_at, now_ts)` — once a lesson is completed, that timestamp is preserved on every subsequent tick. It is structurally impossible for replaying a lesson to un-complete it.
+No changes to `score` column type, leaderboard cache, `vw_module_homework_score`, or matrix queries — they all already read the live `score`.
 
-**2. Code paths that DELETE from progress tables** — none.
-`rg "delete|truncate|reset"` across `supabase/functions/**` and `src/**` finds zero deletes against `lesson_progress`, `homework_submissions`, `quiz_attempts`, or `module_celebrations`. The only deletes are: `bot_homework_intents` (transient state), `login_attempts` (rate-limit cache), and merging duplicate auth users in `admin-merge-duplicates`.
+## 2. Telegram bot (`supabase/functions/telegram-bot-webhook/index.ts`)
 
-**3. Cron jobs** — `streak-rollover`, `cron-engagement`, `leaderboard-recalc`, `weekly-digest`, `detect-and-nudge` all read progress, none write/delete.
+### `hw:mod:{moduleId}` handler (around line 3466)
+Today it filters out graded leaves. Change to render **all** leaves with state-aware labels:
+- Ungraded, no submission → `📤 Vazifa N — title`  → `hw:start:{id}` (today's flow)
+- Ungraded, submitted → `⏳ Vazifa N — kutilmoqda`  → `hw:start:{id}` (today's flow)
+- Graded → `🔁 Vazifa N — N/M ball — qayta topshirish` → `hw:resub_ask:{id}`
 
-**4. Recent migrations (last 7 days)** — none touch `lesson_progress`, `homework_submissions`, or `enrollments` schema. The most recent change was adding `module_celebrations` and dropping the old `certificates` table (unrelated to progress).
+Remove the "all graded" early return so the module button always opens.
 
-**5. Live data check:**
+### New callback `hw:resub_ask:{assignmentId}`
+- Look up the existing submission for this user+assignment.
+- Send: `« Sizning oldingi natijangiz: {score}/{max}{feedback}\n\nQayta topshirmoqchimisiz? »`
+- Inline keyboard: `[ ✅ Ha, qayta topshiraman → hw:resub_yes:{id} ]  [ ❌ Yo'q → hw:resub_no:{id} ]`
+- Localize for uz/ru/en (3 new strings in `T`).
 
-- `lesson_progress`: 3,605 rows, **3,220 with `completed_at` still set**, latest `updated_at` = today 08:42 UTC. Hourly write volume is steady (no mass-update spike).
-- Students whose completed lessons belong to a course they are not enrolled in: **0**.
-- Users with duplicate `enrollments`: **0**.
+### New callback `hw:resub_no`
+- Acknowledge and close: "OK, oldingi natija saqlanadi."
 
-So the underlying progress is intact for every student in the database.
+### New callback `hw:resub_yes:{assignmentId}`
+- Call `start_homework_resubmission(submission_id)` via service role.
+- Then run the existing `startHomeworkIntent(...)` so the student is sent to the topic with the standard "send the file in this topic" instructions and 10-minute intent window.
+- From this point on: the existing `handleGroupTopicMessage` upsert path runs unchanged. Because the row was just cleared, the upsert update is a normal score-null→score-null write (trigger no-ops).
 
-## Most likely real cause
+### Submission confirmation + teacher notify
+No change needed — same `t.hwReceived(...)` DM to student, same `notifyTeachersOfSubmission(...)` queue. Teacher gets a fresh DM identifying it as attempt #N (we'll suffix `(qayta topshirish #${attempt_number})` in `homework_teacher_dm_queue.assignment_title` so the existing notify-homework-submission function shows it without further code changes).
 
-Because the data is fine but the *user experience* is "I'm back at module 1", the candidates are:
+### `/vazifalar` overview (`buildHomeworkMessage`, line ~1186)
+Today shows the module button only when `ungraded.length > 0`. Change to always show the button when `groupId && topic`, with a label that flips to `📝 N-MODUL VAZIFASI · qayta topshirish mumkin` if all leaves are graded. This satisfies "module-homework button must remain visible".
 
-1. **Logged into a different account.** A student who reaches the platform via a different magic-link / a re-issued invite / a different email lands on a fresh profile that genuinely has zero progress. The merge-duplicates function exists precisely because this happens.
-2. **Telegram bot showed a different profile.** If the student's `telegram_user_id` got linked to a second profile (e.g. they tapped a fresh deep-link from another account), `/vazifalar` would render that other profile's empty state.
-3. **Dashboard showed a different course.** `Dashboard.tsx` lists per-enrollment progress; if a new course/enrollment was added, the new card legitimately shows 0% and can read as "wiped".
+### Module average / `/galaba` / leaderboard
+These read `score` directly — no code change needed; they recompute on next access. We keep `cacheInvalidateUser(profile.id)` in the resubmit path.
 
-None of these are bugs that touch stored progress, but #1 and #2 are user-visible regressions worth hardening.
+## 3. Web app
 
-## Plan
+### Student — `src/components/lesson/HomeworkSection.tsx`
+Inside `renderLeaf`, when `s?.score != null`, in addition to showing the score, render a small `Resubmit` button:
+- Calls `supabase.rpc('start_homework_resubmission', { p_submission_id: s.id })`.
+- On success: refresh local state, show toast "Vazifa qayta topshirishga tayyor — Telegram topikka yangi javobni jo'nating" and a deep link button to the existing `topicUrl`.
 
-### Step 1 — Confirm with one real case (no code change yet)
-Ask the user (out of band) for **the Telegram username or email of one affected student**. I'll then run a single read-only query (`profiles` + `lesson_progress` + `enrollments` + `telegram_user_id` history) to show exactly what that student's data looks like. This will tell us instantly whether it's a duplicate-account / wrong-profile issue or something else, and will save us from changing code blindly.
+### Teacher — `src/pages/TeacherHomework.tsx` cell drawer
+For each graded submission row in the side sheet, add a "Request resubmission" action:
+- Calls the same RPC (teachers/admins are authorized inside the function).
+- Refreshes the matrix; the cell flips back to ⏳ pending.
+- Optionally DMs the student via existing notify path (out of scope for v1; the student will see it in `/vazifalar`).
 
-### Step 2 — Defensive safeguards (only after Step 1 confirms)
+## 4. Out of scope (explicit)
+- No change to grading UI flow, scoring math, Telegram-topic auto-detect, or any other notification template.
+- No schema change to leaderboard, module_celebrations, or vw_module_homework_score.
+- No backfill — existing rows get `attempt_number = 1`, `previous_attempts = []`.
 
-These are cheap and worth adding regardless, because they make any future regression *impossible* and *observable*:
-
-- **DB trigger `lesson_progress_protect_completion`** on `BEFORE UPDATE`: if `OLD.completed_at IS NOT NULL` and `NEW.completed_at IS NULL`, force `NEW.completed_at = OLD.completed_at`. Same idea for `homework_submissions.score`: never let a non-null `score` be replaced by `NULL`. Pure safety net — current code does not try to do this, so the trigger is a no-op in normal flow.
-- **Audit table `progress_audit`** (id, user_id, table_name, row_id, op, before, after, changed_at). Triggered on any DELETE or "completed_at cleared" / "score cleared" UPDATE on `lesson_progress` and `homework_submissions`. Lets us prove, with a row-level log, that no destructive write happened.
-- **Duplicate-profile guard in the Telegram bot:** when `telegram_user_id` resolution finds **>1** profile, log `bot:profile:duplicate {telegram_id, profile_ids}` and prefer the profile with the most recent `lesson_progress.updated_at` instead of silently using the newest profile row. (Read the chat history once — if duplicates show up here, that's the real fix.)
-
-### Step 3 — Tiny UI clarification on Dashboard
-If a student has multiple enrollments, label the 0% card with the course title prominently and add a "Continue your other course" link to the one with progress. This removes the "wait, where did my progress go?" reaction when a new course is added.
-
-## Out of scope
-
-- No changes to grading, the homework matrix view we just built, or the Telegram graded-students button.
-- No schema migrations on `lesson_progress`/`homework_submissions` columns themselves — only triggers + an audit table.
-
-## What I need from you
-
-A single Telegram username (or email) of a student who reported this. With that I can either: (a) prove it was a wrong-account/duplicate-profile situation and we go straight to Step 2, or (b) find a real bug if one exists, in which case the plan changes.
+## Files touched
+- `supabase/migrations/<new>.sql` — columns, trigger update, RPC
+- `supabase/functions/telegram-bot-webhook/index.ts` — module-button rendering, 3 new callbacks, 3 new locale strings, attempt-tagged title for queue
+- `src/components/lesson/HomeworkSection.tsx` — Resubmit button
+- `src/pages/TeacherHomework.tsx` — Request-resubmission action in cell drawer
