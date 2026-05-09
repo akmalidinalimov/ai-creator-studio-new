@@ -88,6 +88,15 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
+  // Lightweight config branch: returns the configured library ID so the
+  // admin UI can normalize a bare GUID into "<lib>/<guid>" before saving.
+  if (body?.action === "config") {
+    return new Response(
+      JSON.stringify({ libraryId: BUNNY_LIBRARY_ID }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
   const lessonId = String(body?.lesson_id || "").trim();
   const filename = String(body?.filename || "").trim() || "video.mp4";
   if (!lessonId) {
