@@ -1161,7 +1161,7 @@ async function buildHomeworkMessage(
 
       // One button per module (expands to per-SAP buttons via hw:mod callback).
       if (groupId && topic && ungraded.length > 0) {
-        buttons.push([{ text: `📝 M${m.position + 1} — ${(m.title || "").slice(0, 40)}`, callback_data: `hw:mod:${m.mid}` }]);
+        buttons.push([{ text: `📝 ${m.position + 1}-MODUL VAZIFASI`, callback_data: `hw:mod:${m.mid}` }]);
       }
     }
   } catch (e) {
