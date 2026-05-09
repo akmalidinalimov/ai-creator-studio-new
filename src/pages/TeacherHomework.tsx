@@ -168,11 +168,9 @@ export default function TeacherHomework() {
   };
 
   const reset = async (id: string) => {
-    const { error } = await supabase.from("homework_submissions").update({
-      score: null, scored_by: null, scored_at: null,
-    }).eq("id", id);
+    const { error } = await supabase.rpc("start_homework_resubmission", { p_submission_id: id });
     if (error) toast.error(error.message);
-    else { toast.success("Talabaga qaytarildi"); setOpen(null); setDrawerRows(null); load(); }
+    else { toast.success("Talabaga qayta topshirish uchun qaytarildi"); setOpen(null); setDrawerRows(null); load(); }
   };
 
   // Build matrix lookup: user_id -> module_id -> ordered submissions
