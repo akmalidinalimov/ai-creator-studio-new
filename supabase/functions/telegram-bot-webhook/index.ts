@@ -234,6 +234,12 @@ const T = {
     hwIntentNoGroup: "Sizga guruh biriktirilmagan. Ustozingiz bilan bog'laning.",
     hwIntentBtnGoTopic: "📌 Topikga o'tish",
     hwIntentAlreadyScored: "Bu vazifa allaqachon baholangan ✅",
+    hwResubAsk: (sc: number, mx: number, fb: string) =>
+      `📊 Sizning oldingi natijangiz: <b>${sc}/${mx}</b>${fb ? `\nIzoh: "${csvEscapeHtml(fb)}"` : ""}\n\nQayta topshirmoqchimisiz?`,
+    hwResubYes: "✅ Ha, qayta topshiraman",
+    hwResubNo: "❌ Yo'q",
+    hwResubCancelled: "OK 👍 Oldingi natija saqlanadi.",
+    hwResubError: "❌ Qayta topshirishni boshlab bo'lmadi. Keyinroq urinib ko'ring.",
     hwReceived: (mn: number, tn: number) =>
       `✅ Vazifangiz qabul qilindi · Modul ${mn} · V${tn}\nUstoz baholaganidan keyin natija keladi.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
