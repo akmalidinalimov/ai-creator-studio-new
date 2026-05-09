@@ -335,6 +335,28 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
         </div>
         <div className="border-t px-5 py-3 flex justify-end gap-2">
           <Button variant="outline" onClick={onClose}>{t("admin.lessonDrawer.close")}</Button>
+          <Button
+            onClick={async () => {
+              setSaving(true);
+              const { error } = await supabase.from("lessons").update({
+                title: lesson.title,
+                description: lesson.description,
+                video_provider: lesson.video_provider,
+                provider_video_id: lesson.provider_video_id,
+                duration_seconds: lesson.duration_seconds || 0,
+                transcript: lesson.transcript,
+                published: lesson.published,
+              }).eq("id", lessonId);
+              setSaving(false);
+              if (error) { toast.error(error.message); return; }
+              toast.success(t("admin.lessonDrawer.savedToast", { defaultValue: "Saqlandi" }));
+              onChanged();
+            }}
+            disabled={saving}
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+            {t("admin.lessonDrawer.save", { defaultValue: "Saqlash" })}
+          </Button>
         </div>
       </SheetContent>
     </Sheet>
