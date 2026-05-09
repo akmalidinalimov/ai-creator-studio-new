@@ -1967,21 +1967,8 @@ async function handleGradingCommand(
     return true;
   }
 
-  if (cmd === "/baholar" || cmd === "/grades") {
-    const items = await loadGradingSubmissions(admin, graderId, isAdmin, { scored: true, limit: 10, groupId });
-    if (!items.length) {
-      await sendWithKeyboard(chatId, `${t.gradedRecent}\n\n${t.gradedNone}`, locale, isAdmin, isAdmin ? "admin" : "teacher");
-      return true;
-    }
-    const lines = [t.gradedRecent, ""];
-    items.forEach((s: any, i: number) => {
-      const name = [s.profile?.name, s.profile?.last_name].filter(Boolean).join(" ") || "—";
-      const tn = s.assignment?.task_number ? ` #${s.assignment.task_number}` : "";
-      const title = `${s.assignment?.title || "—"}${tn}`;
-      const mx = s.assignment?.max_score || 10;
-      lines.push(t.gradedItem(i + 1, csvEscapeHtml(name), csvEscapeHtml(title), s.score, mx));
-    });
-    await sendWithKeyboard(chatId, lines.join("\n"), locale, isAdmin, isAdmin ? "admin" : "teacher");
+  if (cmd === "/baholar" || cmd === "/grades" || cmd === "/talabalar" || cmd === "/students") {
+    await renderTeacherRoster(admin, chatId, graderId, locale, isAdmin, 0, groupId);
     return true;
   }
 
