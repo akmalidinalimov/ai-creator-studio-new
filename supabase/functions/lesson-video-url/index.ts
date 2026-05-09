@@ -63,8 +63,13 @@ Deno.serve(async (req) => {
         break;
       }
       case "bunny": {
-        // provider_video_id format expected: "<library_id>/<video_guid>"
-        const id = lesson.provider_video_id ?? "";
+        // provider_video_id format expected: "<library_id>/<video_guid>".
+        // If only the GUID was pasted, prepend the configured BUNNY_LIBRARY_ID.
+        let id = (lesson.provider_video_id ?? "").trim();
+        if (id && !id.includes("/")) {
+          const lib = Deno.env.get("BUNNY_LIBRARY_ID") || "";
+          if (lib) id = `${lib}/${id}`;
+        }
         url = `https://iframe.mediadelivery.net/embed/${id}`;
         kind = "iframe";
         break;

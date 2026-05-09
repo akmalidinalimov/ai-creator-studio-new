@@ -283,12 +283,26 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
                       const m = v.match(/vimeo\.com\/(\d+)/);
                       if (m) v = m[1];
                     }
+                    if (lesson.video_provider === "bunny") {
+                      // Accept "<lib>/<guid>", bare GUID, iframe.mediadelivery.net/embed/<lib>/<guid>,
+                      // or vz-XXX.b-cdn.net/<guid>/playlist.m3u8 — server fills in the library if missing.
+                      const embedM = v.match(/iframe\.mediadelivery\.net\/(?:embed|play)\/(\d+)\/([0-9a-f-]{36})/i);
+                      if (embedM) v = `${embedM[1]}/${embedM[2]}`;
+                      else {
+                        const cdnM = v.match(/b-cdn\.net\/([0-9a-f-]{36})/i);
+                        if (cdnM) v = cdnM[1];
+                        else {
+                          const guidM = v.match(/^([0-9a-f-]{36})$/i);
+                          if (guidM) v = guidM[1];
+                        }
+                      }
+                    }
                     update({ provider_video_id: v });
                   }}
                   placeholder={
                     lesson.video_provider === "youtube" ? "dQw4w9WgXcQ or full URL"
                     : lesson.video_provider === "vimeo" ? "123456789 or full URL"
-                    : lesson.video_provider === "bunny" ? "<library_id>/<video_guid>"
+                    : lesson.video_provider === "bunny" ? "Video GUID, <library>/<guid>, or full Bunny URL"
                     : "Mux Playback ID"
                   }
                 />
@@ -321,6 +335,28 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
         </div>
         <div className="border-t px-5 py-3 flex justify-end gap-2">
           <Button variant="outline" onClick={onClose}>{t("admin.lessonDrawer.close")}</Button>
+          <Button
+            onClick={async () => {
+              setSaving(true);
+              const { error } = await supabase.from("lessons").update({
+                title: lesson.title,
+                description: lesson.description,
+                video_provider: lesson.video_provider,
+                provider_video_id: lesson.provider_video_id,
+                duration_seconds: lesson.duration_seconds || 0,
+                transcript: lesson.transcript,
+                published: lesson.published,
+              }).eq("id", lessonId);
+              setSaving(false);
+              if (error) { toast.error(error.message); return; }
+              toast.success(t("admin.lessonDrawer.savedToast", { defaultValue: "Saqlandi" }));
+              onChanged();
+            }}
+            disabled={saving}
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+            {t("admin.lessonDrawer.save", { defaultValue: "Saqlash" })}
+          </Button>
         </div>
       </SheetContent>
     </Sheet>
