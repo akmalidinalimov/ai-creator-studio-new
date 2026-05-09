@@ -35,13 +35,9 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
     if (data && !tabInitRef.current) {
       tabInitRef.current = true;
       const p = data.video_provider;
-      // "embed" tab when an external provider is selected; otherwise "upload" (covers null/upload/bunny-uploaded)
-      if (p === "youtube" || p === "vimeo" || p === "mux" || (p === "bunny" && !data.video_storage_path && data.provider_video_id && !data.thumbnail_path)) {
-        // bunny via embed (no thumbnail captured) → embed tab
-        setTab(p === "bunny" ? "embed" : "embed");
-      } else {
-        setTab("upload");
-      }
+      // Embed tab for external URL providers; Upload tab for direct uploads (incl. bunny uploads with stored thumbnail).
+      const isUploaded = p === "upload" || (p === "bunny" && !!data.thumbnail_path);
+      setTab(isUploaded || !p ? "upload" : "embed");
     }
   }, [lessonId]);
 
