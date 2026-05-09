@@ -21,6 +21,8 @@ const MAX_INLINE_UPLOAD = 10 * 1024 * 1024 * 1024; // 10 GB
 export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
   const { t } = useTranslation();
   const [lesson, setLesson] = useState<any>(null);
+  const [tab, setTab] = useState<"upload" | "embed">("upload");
+  const tabInitRef = useRef(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ pct: number; mbps: number; etaSec: number; fileName: string } | null>(null);
@@ -30,6 +32,13 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
   const load = useCallback(async () => {
     const { data } = await supabase.from("lessons").select("*").eq("id", lessonId).maybeSingle();
     setLesson(data);
+    if (data && !tabInitRef.current) {
+      tabInitRef.current = true;
+      const p = data.video_provider;
+      // Embed tab for external URL providers; Upload tab for direct uploads (incl. bunny uploads with stored thumbnail).
+      const isUploaded = p === "upload" || (p === "bunny" && !!data.thumbnail_path);
+      setTab(isUploaded || !p ? "upload" : "embed");
+    }
   }, [lessonId]);
 
   useEffect(() => { load(); }, [load]);
@@ -143,6 +152,7 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
         duration_seconds: meta.duration || lesson?.duration_seconds || 0,
         thumbnail_path,
       });
+      setTab("upload");
 
       toast.success(t("admin.lessonDrawer.uploadedToast"));
       onChanged();
@@ -207,7 +217,7 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
             <Textarea value={lesson.description || ""} onChange={(e) => setLesson((l: any) => ({ ...l, description: e.target.value }))} onBlur={(e) => update({ description: e.target.value })} rows={3} />
           </div>
 
-          <Tabs value={(lesson.video_provider === "upload" || (lesson.video_provider === "bunny" && lesson.provider_video_id)) ? "upload" : "embed"} onValueChange={(v) => v === "upload" ? update({ video_provider: "upload", provider_video_id: null }) : update({ video_provider: "youtube", provider_video_id: null, video_storage_path: null })}>
+          <Tabs value={tab} onValueChange={(v) => setTab(v as "upload" | "embed")}>
             <TabsList className="w-full">
               <TabsTrigger value="upload" className="flex-1">{t("admin.lessonDrawer.uploadVideo")}</TabsTrigger>
               <TabsTrigger value="embed" className="flex-1">{t("admin.lessonDrawer.embedUrl")}</TabsTrigger>
@@ -258,7 +268,7 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
             <TabsContent value="embed" className="space-y-3">
               <div className="space-y-1.5">
                 <Label>{t("admin.lessonDrawer.provider")}</Label>
-                <Select value={lesson.video_provider === "upload" ? "youtube" : lesson.video_provider} onValueChange={(v) => update({ video_provider: v })}>
+                <Select value={(lesson.video_provider && lesson.video_provider !== "upload") ? lesson.video_provider : "youtube"} onValueChange={(v) => update({ video_provider: v, provider_video_id: null, video_storage_path: null, video_url: null })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="youtube">YouTube</SelectItem>

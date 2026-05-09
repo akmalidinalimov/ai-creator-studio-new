@@ -1,49 +1,51 @@
-## Why your videos aren't in Bunny
+# Fix Bunny URL embed in Lesson editor
 
-`LessonDrawer` has two upload paths:
+## What's broken
 
-- **"Upload Video" tab** → uploads to Supabase Storage bucket `lesson-videos` and saves `video_provider='upload'`. **Never touches Bunny.**
-- **"Embed" tab → Bunny Stream (HLS)** → uses TUS direct upload to `video.bunnycdn.com` via the existing `bunny-upload-init` edge function.
+I reproduced the issue in code and confirmed in the database. Lessons 3.1 and 3.2 are saved as `video_provider = 'youtube'` with an empty `provider_video_id` even though you typed Bunny + a GUID. Lesson 3.3 saved correctly. Two bugs in `src/components/admin/LessonDrawer.tsx` cause this:
 
-Recent uploads went through path #1, so they're sitting in Supabase Storage, not your Bunny library. 4 lessons are currently in this state (all the 4.x-MODUL Claude lessons).
+### Bug 1 — Tab auto-switching wipes the provider
+The `<Tabs>` `value` is computed from the saved data:
+```
+value = (provider === "upload" || (provider === "bunny" && provider_video_id)) ? "upload" : "embed"
+```
+So the moment a Bunny GUID is saved, the UI jumps from "URL orqali joylash" back to "Video yuklash". That's the "interface jumped to upload view" you saw.
 
-## Plan
+### Bug 2 — Switching tabs resets the provider to YouTube
+The Tabs `onValueChange` runs:
+```
+v === "upload"  → update({ video_provider: "upload",   provider_video_id: null })
+v === "embed"   → update({ video_provider: "youtube",  provider_video_id: null, video_storage_path: null })
+```
+When Bug 1 force-switches the tab back to "upload", this writes `video_provider = "upload"` and clears `provider_video_id`. Then when you switch back to "URL orqali joylash" manually, it overwrites with `youtube` and clears the ID again. That's exactly the row state we see for 3.1 and 3.2.
 
-### 1. Make the "Upload Video" tab upload to Bunny
+A third smaller issue: the provider `<Select>` calls `update({ video_provider: v })` but does not clear `provider_video_id`, so a stale ID from a different provider can linger.
 
-Rewire `onDrop` in `src/components/admin/LessonDrawer.tsx` to reuse the existing Bunny TUS flow (`bunny-upload-init` + `tus.Upload` to `video.bunnycdn.com`). On success save:
-- `video_provider: 'bunny'`
-- `provider_video_id: '<libraryId>/<videoGuid>'`
-- clear `video_storage_path`
+## Fix
 
-Remove the now-redundant separate "Bunny Stream (HLS)" upload UI in the Embed tab (keep the embed text field for pasting an existing `<library>/<guid>`). Keep duration/thumbnail capture client-side as today.
+Edit only `src/components/admin/LessonDrawer.tsx`:
 
-If `bunny-upload-init` returns an error (Bunny not configured), surface a clear toast — no fallback to Storage.
+1. **Decouple the active tab from saved data.** Add local state `const [tab, setTab] = useState<"upload" | "embed">(...)` initialised from the lesson once on load: `embed` when `video_provider` is one of `youtube | vimeo | mux | bunny`, otherwise `upload`. Use it as `<Tabs value={tab} onValueChange={setTab}>`. Switching tabs no longer writes to the database.
 
-### 2. One-time migration of the 4 existing videos
+2. **Don't mutate provider on tab switch.** Remove the `update({ video_provider: ... })` calls from `onValueChange`. The provider is only changed by the explicit `<Select>` in the embed tab, or by a successful Bunny upload in the upload tab.
 
-Add a new edge function `migrate-storage-to-bunny` (admin-only) that for each lesson with `video_provider='upload'`:
+3. **After a successful Bunny upload, force `tab = "upload"`** so the "Video uploaded" card stays visible (current behaviour, just driven by local state now).
 
-1. Generates a signed download URL from `lesson-videos`.
-2. Creates a Bunny video via `POST /library/{lib}/videos`.
-3. Streams the file to Bunny via `PUT /library/{lib}/videos/{guid}` (server-to-server fetch, no browser limits).
-4. Updates the lesson row: `video_provider='bunny'`, `provider_video_id='{lib}/{guid}'`, clears `video_storage_path`.
-5. Deletes the original object from `lesson-videos` storage.
+4. **Provider Select cleans stale id.** When the user changes provider in the embed tab, call `update({ video_provider: v, provider_video_id: null, video_storage_path: null, video_url: null })` so old IDs from a different provider can't leak into playback.
 
-Add a small admin-only button on `AdminBunnyDiagnostics` (or a new tile on `AdminCourses`) that lists the 4 affected lessons and a "Migrate to Bunny" action which invokes the function per lesson and shows progress.
+5. **Bunny embed onBlur stays as-is** (already accepts bare GUID, `<lib>/<guid>`, `iframe.mediadelivery.net/...`, `vz-*.b-cdn.net/...`). The edge function `lesson-video-url` already prepends `BUNNY_LIBRARY_ID` for bare GUIDs, so playback will work.
 
-Because uploading 4 large MP4s server-side may exceed a single edge-function timeout, the function processes **one lesson per invocation** (lesson_id in body) and returns the new GUID; the UI loops one-at-a-time.
+6. **Re-save 3.1 and 3.2.** After the fix is in, you re-open each lesson, choose Bunny, paste the GUID, and Save — the row will then carry `video_provider='bunny'` and the GUID, and the player resolves through `lesson-video-url` exactly like 3.3 does today.
 
-### 3. No schema changes
+## Verification
 
-Lessons table already supports `provider_video_id`; existing `lesson-video-url` edge function already handles `video_provider='bunny'`. No DB migration needed.
+- Open lesson 3.1 → embed tab stays selected, provider stays "Bunny", GUID stays in the input after Save.
+- DB row shows `video_provider='bunny'`, `provider_video_id='<guid>'`.
+- Student-facing player loads the Bunny iframe and the "Bu dars uchun video mavjud emas" message disappears.
+- Switching between Upload and URL tabs no longer mutates the saved provider or clears the GUID.
 
-### Files touched
+## Files touched
 
-- `src/components/admin/LessonDrawer.tsx` — replace Storage upload with Bunny TUS upload; trim Embed-tab Bunny uploader.
-- `supabase/functions/migrate-storage-to-bunny/index.ts` — new admin-only one-shot migration function.
-- New small admin UI section (in `AdminBunnyDiagnostics.tsx` or similar) to trigger migration for the 4 pending lessons.
+- `src/components/admin/LessonDrawer.tsx` (only)
 
-### Requires
-
-`BUNNY_LIBRARY_ID` and `BUNNY_API_KEY` secrets must be set (already used by `bunny-upload-init`). I'll verify before implementing.
+No schema or edge-function changes required.
