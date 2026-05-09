@@ -946,9 +946,11 @@ export type Database = {
       homework_submissions: {
         Row: {
           assignment_id: string
+          attempt_number: number
           created_at: string
           id: string
           is_late: boolean
+          previous_attempts: Json
           score: number | null
           score_feedback: string | null
           scored_at: string | null
@@ -968,9 +970,11 @@ export type Database = {
         }
         Insert: {
           assignment_id: string
+          attempt_number?: number
           created_at?: string
           id?: string
           is_late?: boolean
+          previous_attempts?: Json
           score?: number | null
           score_feedback?: string | null
           scored_at?: string | null
@@ -990,9 +994,11 @@ export type Database = {
         }
         Update: {
           assignment_id?: string
+          attempt_number?: number
           created_at?: string
           id?: string
           is_late?: boolean
+          previous_attempts?: Json
           score?: number | null
           score_feedback?: string | null
           scored_at?: string | null
@@ -2662,6 +2668,39 @@ export type Database = {
           name: string
           telegram_username: string
         }[]
+      }
+      start_homework_resubmission: {
+        Args: { p_submission_id: string }
+        Returns: {
+          assignment_id: string
+          attempt_number: number
+          created_at: string
+          id: string
+          is_late: boolean
+          previous_attempts: Json
+          score: number | null
+          score_feedback: string | null
+          scored_at: string | null
+          scored_by: string | null
+          source: string
+          submitted_at: string
+          submitted_image_url: string | null
+          submitted_text: string
+          telegram_chat_id: number | null
+          telegram_file_id: string | null
+          telegram_file_kind: string | null
+          telegram_message_id: number | null
+          telegram_message_url: string | null
+          telegram_thread_id: number | null
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "homework_submissions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       teacher_group_statistics:
         | { Args: { p_group_id: string }; Returns: Json }

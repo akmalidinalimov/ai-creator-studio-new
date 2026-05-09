@@ -234,6 +234,12 @@ const T = {
     hwIntentNoGroup: "Sizga guruh biriktirilmagan. Ustozingiz bilan bog'laning.",
     hwIntentBtnGoTopic: "📌 Topikga o'tish",
     hwIntentAlreadyScored: "Bu vazifa allaqachon baholangan ✅",
+    hwResubAsk: (sc: number, mx: number, fb: string) =>
+      `📊 Sizning oldingi natijangiz: <b>${sc}/${mx}</b>${fb ? `\nIzoh: "${csvEscapeHtml(fb)}"` : ""}\n\nQayta topshirmoqchimisiz?`,
+    hwResubYes: "✅ Ha, qayta topshiraman",
+    hwResubNo: "❌ Yo'q",
+    hwResubCancelled: "OK 👍 Oldingi natija saqlanadi.",
+    hwResubError: "❌ Qayta topshirishni boshlab bo'lmadi. Keyinroq urinib ko'ring.",
     hwReceived: (mn: number, tn: number) =>
       `✅ Vazifangiz qabul qilindi · Modul ${mn} · V${tn}\nUstoz baholaganidan keyin natija keladi.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
@@ -411,6 +417,12 @@ const T = {
     hwIntentNoGroup: "Вам не назначена группа. Свяжитесь с преподавателем.",
     hwIntentBtnGoTopic: "📌 Перейти в топик",
     hwIntentAlreadyScored: "Это задание уже оценено ✅",
+    hwResubAsk: (sc: number, mx: number, fb: string) =>
+      `📊 Ваш предыдущий результат: <b>${sc}/${mx}</b>${fb ? `\nКомментарий: "${csvEscapeHtml(fb)}"` : ""}\n\nХотите отправить заново?`,
+    hwResubYes: "✅ Да, отправить заново",
+    hwResubNo: "❌ Нет",
+    hwResubCancelled: "OK 👍 Прежний результат сохранится.",
+    hwResubError: "❌ Не удалось начать пересдачу. Попробуйте позже.",
     hwReceived: (mn: number, tn: number) =>
       `✅ Задание принято · Модуль ${mn} · З${tn}\nКак только преподаватель оценит — пришлю результат.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
@@ -588,6 +600,12 @@ const T = {
     hwIntentNoGroup: "You are not assigned to a group. Please contact your teacher.",
     hwIntentBtnGoTopic: "📌 Open topic",
     hwIntentAlreadyScored: "This task has already been graded ✅",
+    hwResubAsk: (sc: number, mx: number, fb: string) =>
+      `📊 Your previous result: <b>${sc}/${mx}</b>${fb ? `\nFeedback: "${csvEscapeHtml(fb)}"` : ""}\n\nDo you want to resubmit?`,
+    hwResubYes: "✅ Yes, resubmit",
+    hwResubNo: "❌ No",
+    hwResubCancelled: "OK 👍 Your previous score is kept.",
+    hwResubError: "❌ Could not start resubmission. Please try again later.",
     hwReceived: (mn: number, tn: number) =>
       `✅ Submission received · Module ${mn} · T${tn}\nYou'll get the result once your teacher grades it.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
@@ -1183,9 +1201,14 @@ async function buildHomeworkMessage(
       }
       lines.push("");
 
-      // One button per module (expands to per-SAP buttons via hw:mod callback).
-      if (groupId && topic && ungraded.length > 0) {
-        buttons.push([{ text: `📝 ${m.position + 1}-MODUL VAZIFASI`, callback_data: `hw:mod:${m.mid}` }]);
+      // One button per module (expands to per-leaf buttons via hw:mod callback).
+      // Always shown when group+topic exist, so students can resubmit graded work.
+      if (groupId && topic) {
+        const allGraded = ungraded.length === 0;
+        const label = allGraded
+          ? `📝 ${m.position + 1}-MODUL VAZIFASI · qayta topshirish`
+          : `📝 ${m.position + 1}-MODUL VAZIFASI`;
+        buttons.push([{ text: label, callback_data: `hw:mod:${m.mid}` }]);
       }
     }
   } catch (e) {
@@ -3484,27 +3507,26 @@ async function handleCallback(admin: any, cq: any) {
     const leafIds = leaves.map((a) => a.id);
     const { data: subs } = await admin
       .from("homework_submissions")
-      .select("assignment_id, score")
+      .select("id, assignment_id, score")
       .eq("user_id", profile.id)
       .in("assignment_id", leafIds);
     const subMap = new Map((subs || []).map((s: any) => [s.assignment_id, s]));
     const modulePos = (list[0]?.modules?.position ?? 0) + 1;
     const moduleTitle = list[0]?.modules?.title || "";
     const buttons: any[][] = [];
-    const ungraded = leaves.filter((a) => {
-      const s: any = subMap.get(a.id);
-      return !(s && s.score != null);
-    });
     let seq = 0;
-    for (const a of ungraded) {
+    for (const a of leaves) {
       seq++;
-      const tnLabel = `Vazifa ${a.sap_number ?? seq}`;
+      const tnLabel = `Vazifa ${a.sap_number ?? a.task_number ?? seq}`;
       const title = (a.title || "").slice(0, 30);
-      buttons.push([{ text: `📤 ${tnLabel} — ${title}`, callback_data: `hw:start:${a.id}` }]);
-    }
-    if (!buttons.length) {
-      await sendMessage(chatId, `✅ M${modulePos} — barcha vazifalar baholangan.`);
-      return;
+      const s: any = subMap.get(a.id);
+      if (s && s.score != null) {
+        buttons.push([{ text: `🔁 ${tnLabel} — ${s.score}/${a.max_score} — qayta topshirish`, callback_data: `hw:resub_ask:${a.id}` }]);
+      } else if (s) {
+        buttons.push([{ text: `⏳ ${tnLabel} — kutilmoqda`, callback_data: `hw:start:${a.id}` }]);
+      } else {
+        buttons.push([{ text: `📤 ${tnLabel} — ${title}`, callback_data: `hw:start:${a.id}` }]);
+      }
     }
     await sendMessage(chatId, `📝 M${modulePos} — ${moduleTitle}\n\nQaysi vazifani topshirasiz?`, { inline_keyboard: buttons });
     return;
@@ -3520,6 +3542,73 @@ async function handleCallback(admin: any, cq: any) {
     await startHomeworkIntent(admin, chatId, profile, locale, assignmentId);
     return;
   }
+
+  // Student tapped "🔁 qayta topshirish" — confirm with Yes/No before resetting score.
+  if (data.startsWith("hw:resub_ask:") && chatId) {
+    const assignmentId = data.slice("hw:resub_ask:".length);
+    const profile = await findProfileByTelegramId(admin, tgId);
+    if (!profile) { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(profile.preferred_locale);
+    const t = T[locale] as any;
+    await answerCallback(cq.id);
+    const { data: a } = await admin
+      .from("homework_assignments")
+      .select("id, max_score")
+      .eq("id", assignmentId).maybeSingle();
+    const { data: sub } = await admin
+      .from("homework_submissions")
+      .select("id, score, score_feedback")
+      .eq("user_id", profile.id).eq("assignment_id", assignmentId)
+      .maybeSingle();
+    if (!a || !sub || sub.score == null) {
+      await sendMessage(chatId, t.gradeNotFound);
+      return;
+    }
+    await sendMessage(chatId, t.hwResubAsk(sub.score, a.max_score, sub.score_feedback || ""), {
+      inline_keyboard: [[
+        { text: t.hwResubYes, callback_data: `hw:resub_yes:${assignmentId}` },
+        { text: t.hwResubNo, callback_data: `hw:resub_no:${assignmentId}` },
+      ]],
+    });
+    return;
+  }
+
+  if (data.startsWith("hw:resub_no:") && chatId) {
+    const profile = await findProfileByTelegramId(admin, tgId);
+    const locale: Locale = normLocale(profile?.preferred_locale);
+    const t = T[locale] as any;
+    await answerCallback(cq.id, "OK");
+    await sendMessage(chatId, t.hwResubCancelled);
+    return;
+  }
+
+  if (data.startsWith("hw:resub_yes:") && chatId) {
+    const assignmentId = data.slice("hw:resub_yes:".length);
+    const profile = await findProfileByTelegramId(admin, tgId);
+    if (!profile) { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(profile.preferred_locale);
+    const t = T[locale] as any;
+    await answerCallback(cq.id);
+    const { data: sub } = await admin
+      .from("homework_submissions")
+      .select("id")
+      .eq("user_id", profile.id).eq("assignment_id", assignmentId)
+      .maybeSingle();
+    if (!sub?.id) {
+      await sendMessage(chatId, t.gradeNotFound);
+      return;
+    }
+    const { error: rpcErr } = await admin.rpc("start_homework_resubmission", { p_submission_id: sub.id });
+    if (rpcErr) {
+      console.error("start_homework_resubmission failed", rpcErr);
+      await sendMessage(chatId, t.hwResubError);
+      return;
+    }
+    cacheInvalidateUser(profile.id);
+    await startHomeworkIntent(admin, chatId, profile, locale, assignmentId);
+    return;
+  }
+
 
   // v3.14.32: teacher taps "🎯 Baholash" on auto-detected submission DM.
   if (data.startsWith("grade_task:") && chatId) {
