@@ -647,6 +647,8 @@ export default function AdminDashboard() {
           </div>
         </div>
 
+        <InactiveStudentsList rows={inactive3List} />
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <ChartCard title={t("admin.dashboard.charts.dailyLogins")}>
             <ResponsiveContainer width="100%" height={240}>
