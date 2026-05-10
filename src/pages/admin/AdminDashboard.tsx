@@ -57,6 +57,7 @@ export default function AdminDashboard() {
   const [inactive3List, setInactive3List] = useState<any[]>([]);
   const [inactive7List, setInactive7List] = useState<any[]>([]);
   const [inactiveOpen, setInactiveOpen] = useState<null | 3 | 7>(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [dailyLogins, setDailyLogins] = useState<{ day: string; count: number }[]>([]);
   const [dau, setDau] = useState<{ day: string; count: number }[]>([]);
   const [lessonsPerDay, setLessonsPerDay] = useState<{ day: string; count: number }[]>([]);
