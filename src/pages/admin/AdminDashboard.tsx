@@ -547,14 +547,25 @@ export default function AdminDashboard() {
             <h1 className="text-3xl font-semibold tracking-tight">{activeTeacherGroup ? activeTeacherGroup.name : t("admin.dashboard.title")}</h1>
             <p className="text-muted-foreground mt-1">{t("admin.dashboard.subtitle")}</p>
           </div>
-          <Select value={courseId} onValueChange={setCourseId}>
-            <SelectTrigger className="w-[260px]"><SelectValue placeholder={t("admin.dashboard.selectCourse")} /></SelectTrigger>
-            <SelectContent>
-              {courses.map((c) => (
-                <SelectItem key={c.id} value={c.id}>{c.title}{!c.published && t("admin.dashboard.draftSuffix")}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex items-center gap-2">
+            {lastUpdatedAt && (
+              <span className="text-xs text-muted-foreground hidden sm:inline">
+                {t("admin.dashboard.lastUpdated", { defaultValue: "Yangilangan" })}: {lastUpdatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </span>
+            )}
+            <Button variant="outline" size="sm" onClick={load} disabled={loading}>
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+              {t("admin.dashboard.refresh", { defaultValue: "Yangilash" })}
+            </Button>
+            <Select value={courseId} onValueChange={setCourseId}>
+              <SelectTrigger className="w-[260px]"><SelectValue placeholder={t("admin.dashboard.selectCourse")} /></SelectTrigger>
+              <SelectContent>
+                {courses.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>{c.title}{!c.published && t("admin.dashboard.draftSuffix")}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         {noGroups && (
