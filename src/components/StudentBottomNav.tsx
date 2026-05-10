@@ -20,7 +20,7 @@ export function StudentBottomNav() {
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       aria-label="Student navigation"
     >
-      <div className="grid grid-cols-4 h-14">
+      <div className="grid grid-cols-5 h-14">
         {tabs.map((t) => {
           const active = t.match(loc.pathname);
           const Icon = t.icon;
