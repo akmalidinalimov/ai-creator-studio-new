@@ -102,12 +102,25 @@ export const BunnyVideoPlayer = forwardRef<BunnyPlayerHandle, Props>(function Bu
         });
 
         // Throttled tick: every 5s while playing, push a progress update.
+        // Also auto-fire `ended` when we're within 5s of the known duration —
+        // Bunny's iframe `ended` event is unreliable across origins, so this
+        // ensures completion is recorded even if it never fires.
         interval = window.setInterval(() => {
           const now = Date.now();
           if (now - lastTickRef.current < 4500) return;
           if (lastTimeRef.current <= 0) return;
           lastTickRef.current = now;
           onTimeUpdate?.(lastTimeRef.current, durationRef.current || 0);
+          if (
+            !endedFiredRef.current &&
+            durationRef.current > 0 &&
+            lastTimeRef.current >= durationRef.current - 5
+          ) {
+            endedFiredRef.current = true;
+            const dur = durationRef.current;
+            onTimeUpdate?.(dur, dur);
+            onEnded?.();
+          }
         }, 5000);
       })
       .catch((err) => {

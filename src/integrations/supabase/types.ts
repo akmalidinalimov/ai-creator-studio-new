@@ -2449,7 +2449,6 @@ export type Database = {
           target: number
         }[]
       }
-      generate_certificate_serial: { Args: never; Returns: string }
       get_public_setting: { Args: { _key: string }; Returns: Json }
       get_setting: { Args: { _key: string }; Returns: Json }
       get_settings: {
@@ -2476,10 +2475,6 @@ export type Database = {
       homework_pending_count_for_user: {
         Args: { _uid: string }
         Returns: number
-      }
-      issue_certificate_if_eligible: {
-        Args: { _profile_id: string }
-        Returns: string
       }
       leaderboard_my_rank: {
         Args: { uid: string }

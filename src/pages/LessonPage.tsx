@@ -117,9 +117,30 @@ export default function LessonPage() {
         p_lesson_id: lessonId, p_current_time: cur, p_duration: dur, p_delta_seconds: delta,
       });
       if ((data as any)?.completed) setCompleted((s) => new Set(s).add(lessonId));
+      // Near-end fallback: mark complete if we're within 5s of the end.
+      if (dur > 0 && cur >= dur - 5) {
+        await supabase.from("lesson_progress").upsert({
+          user_id: user.id, lesson_id: lessonId, completed_at: new Date().toISOString(),
+        }, { onConflict: "user_id,lesson_id" });
+        setCompleted((s) => new Set(s).add(lessonId));
+      }
     }, 5000);
     return () => clearInterval(id);
   }, [user, lessonId]);
+
+  // Native <video> "ended" listener — mirrors the Bunny onEnded path.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !user || !lessonId) return;
+    const handler = async () => {
+      await supabase.from("lesson_progress").upsert({
+        user_id: user.id, lesson_id: lessonId, completed_at: new Date().toISOString(),
+      }, { onConflict: "user_id,lesson_id" });
+      setCompleted((s) => new Set(s).add(lessonId));
+    };
+    v.addEventListener("ended", handler);
+    return () => v.removeEventListener("ended", handler);
+  }, [user, lessonId, lesson]);
 
   // Bunny progress callback (player.js timeupdate ~every 5s + ended)
   const lastBunnyTickRef = useRef<number>(0);
