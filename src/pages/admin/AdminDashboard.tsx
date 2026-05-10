@@ -17,6 +17,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { WeeklyDigestTile } from "@/components/admin/WeeklyDigestTile";
 import { AnalyticsTiles } from "@/components/admin/AnalyticsTiles";
 import { TeacherLoginAnalytics } from "@/components/admin/TeacherLoginAnalytics";
+import { InactiveStudentsList } from "@/components/admin/InactiveStudentsList";
 
 const PALETTE = [
   "hsl(var(--primary))",
