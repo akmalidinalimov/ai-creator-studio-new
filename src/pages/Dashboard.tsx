@@ -87,6 +87,12 @@ export default function Dashboard() {
 
         <EngagementTiles />
 
+        <div className="flex justify-end">
+          <Button asChild variant="outline" size="sm">
+            <Link to="/activity">{t("dashboard.viewFullHistory")} <ArrowRight className="h-4 w-4" /></Link>
+          </Button>
+        </div>
+
         {loading ? (
           <div className="grid md:grid-cols-2 gap-4">
             {[0, 1].map((i) => <Skeleton key={i} className="h-48 rounded-xl" />)}

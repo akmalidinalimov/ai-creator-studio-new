@@ -89,7 +89,8 @@
     "continueLearning": "Continue learning",
     "review": "Review",
     "coursePage": "Course page",
-    "there": "there"
+    "there": "there",
+    "viewFullHistory": "View full history"
   },
   "course": {
     "modules": "Modules",
@@ -1009,5 +1010,26 @@
   "modules": {
     "progress_title": "Module progress",
     "not_started": "Not started"
+  },
+  "activity": {
+    "title": "My activity",
+    "subtitle": "All of your activity: videos watched, homework, daily study, and logins.",
+    "totalWatch": "Total watch time",
+    "lessonsCompleted": "Lessons completed",
+    "homework": "Homework",
+    "avgScore": "Avg score",
+    "noneScored": "None scored yet",
+    "streak": "Current streak",
+    "longest": "Longest",
+    "last90Days": "Last 90 days activity",
+    "videosWatched": "Videos watched",
+    "noVideos": "No videos watched yet.",
+    "homeworkHistory": "Homework history",
+    "noHomework": "No homework submitted yet.",
+    "late": "Late",
+    "pending": "Pending",
+    "badgesEarned": "Badges earned",
+    "recentLogins": "Recent logins (30 days)",
+    "noLogins": "No login records."
   }
 }

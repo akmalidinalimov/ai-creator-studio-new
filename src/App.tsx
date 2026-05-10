@@ -33,6 +33,7 @@ import Landing from "./pages/Landing";
 import AuthMagicLink from "./pages/AuthMagicLink";
 import Leaderboard from "./pages/Leaderboard";
 import Badges from "./pages/Badges";
+import MyActivity from "./pages/MyActivity";
 
 
 // Lazy-load admin pages (code-split)
@@ -93,6 +94,7 @@ const App = () => (
             <Route path="/settings" element={<RequireAuth><Settings /></RequireAuth>} />
             <Route path="/leaderboard" element={<RequireAuth><Leaderboard /></RequireAuth>} />
             <Route path="/badges" element={<RequireAuth><Badges /></RequireAuth>} />
+            <Route path="/activity" element={<RequireAuth><MyActivity /></RequireAuth>} />
 
             <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
             <Route path="/teacher" element={<TeacherDashboardRedirect />} />
