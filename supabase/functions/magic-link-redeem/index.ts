@@ -63,13 +63,13 @@ Deno.serve(async (req) => {
       });
     }
     if (row.used_at) {
-      return new Response(JSON.stringify({ error: "already_used" }), {
+      return new Response(JSON.stringify({ error: "used", message: "This link has already been used. Open the bot and tap the button again to get a fresh one." }), {
         status: 410,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
     if (new Date(row.expires_at).getTime() < Date.now()) {
-      return new Response(JSON.stringify({ error: "expired" }), {
+      return new Response(JSON.stringify({ error: "expired", message: "This bot link has expired. Open the bot and tap the button again to get a fresh one." }), {
         status: 410,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });

@@ -811,13 +811,12 @@ async function createMagicLink(
   purpose: string,
   target_path?: string,
 ): Promise<string> {
-  // Reuse non-expired link created within last 5 minutes for same (user, purpose, target_path)
+  // Reuse non-expired, unused link for same (user, purpose, target_path) — links live 7 days.
   try {
-    const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString();
     let q = admin.from("telegram_magic_links")
       .select("token, expires_at, target_path")
       .eq("user_id", user_id).eq("purpose", purpose)
-      .gte("created_at", fiveMinAgo).is("used_at", null)
+      .is("used_at", null)
       .order("created_at", { ascending: false }).limit(1);
     const { data: existing } = await q;
     const row = existing?.[0];
@@ -826,9 +825,10 @@ async function createMagicLink(
     }
   } catch (_e) { /* fall through to insert */ }
   const token = randomToken(32);
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString();
   const { error } = await admin
     .from("telegram_magic_links")
-    .insert({ token, user_id, purpose, target_path });
+    .insert({ token, user_id, purpose, target_path, expires_at: expiresAt });
   if (error) throw error;
   return `${SITE_URL}/auth/magic?t=${token}`;
 }

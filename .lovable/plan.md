@@ -1,66 +1,76 @@
-## Problem
+## Why students get "logged out" in the Telegram bot
 
-Students watch videos (mostly Bunny) but `lesson_progress.completed_at` rarely gets set. As a result:
+I traced the full login path for the bot → website handoff. Here is what controls "how long a student stays signed in" today, and where the 7-day expectation breaks.
 
-- Telegram bot stats show "0/36" or low completion counts even after many lessons watched.
-- The "Continue / Watch next" button on the course page picks the first lesson without `completed_at`, so it keeps sending the user back to lesson 1.1.
-- Module/forecast progress in the web dashboard is also low.
+### Two independent timers are involved
 
-### What I verified in the database
+1. **Supabase session (browser localStorage)** — created by `supabase.auth.setSession()` after a magic-link redeem. The web client (`src/integrations/supabase/client.ts`) already uses `persistSession: true` and `autoRefreshToken: true`, but the **server-side refresh-token inactivity timeout** has never been set, so it falls back to the project default. That default is short on this project, which is why a student who logged in 1–2 days ago gets bounced.
 
-- Course `AI CREATORS` has 36 published lessons. So stats math is fine **if** completions are recorded.
-- `lesson_progress` rows are being written (recent rows show `last_position_seconds`, `max_position_seconds`, `watch_seconds_total` updating every 5 s). Recording is working.
-- Many rows where students clearly watched a lot have no `completed_at`. Examples:
-  - user `9234b70a` lesson `fc6d4e32`: max ≈ 339 s of dur ≈ 917 s (37%) — student probably stopped.
-  - user `940dd4f3` lesson `38d2eb42`: max ≈ 247 s of dur ≈ 277 s (89%) — just below 90% threshold, never completed.
-  - user `ec99a717` lesson `c9865017`: max ≈ 1381 s of dur ≈ 1892 s (73%) — duration likely cached too high; user watched the whole video but threshold never hit.
-- Aggregate per user shows several students with `completed = 0` but multiple `lesson_progress` rows (3d8093ac, ec99a717, b7e387b7, f38dfd40 …). This is the exact symptom the students reported.
+2. **Telegram magic-link token** — created by the bot (`createMagicLink` in `supabase/functions/telegram-bot-webhook/index.ts`) and stored in the `telegram_magic_links` table. The migration sets:
+   ```
+   expires_at timestamptz NOT NULL DEFAULT (now() + interval '10 minutes')
+   ```
+   Every "Watch the video" / "Open lesson" / "Open dashboard" button in a bot message is a URL of the form `SITE_URL/auth/magic?t=<token>`. After **10 minutes** that token is dead.
+   When a student taps a button from yesterday's message, `magic-link-redeem` returns `expired`, and `AuthMagicLink.tsx` shows the "invalid / sign in again" screen. That is the "logged out" message students are seeing — it is not really their session that died, it is the **button** that died.
 
-### Root causes
+3. Telegram's in-app browser also tends to wipe localStorage between sessions, so even when the underlying Supabase session is still alive, opening a fresh in-app browser starts with no session and falls back to the magic-link flow. If that magic-link is expired (point 2), the student sees the logged-out screen.
 
-1. **90% completion threshold is too strict** for the Bunny player. Bunny's `player.js` `timeupdate` is throttled and the iframe `ended` event is unreliable in cross-origin embeds, so a student who watches to the end often never gets `cur ≥ 0.9 * duration`.
-2. **`duration_seconds_v2` is sticky.** `track_video_progress` stores duration once via `COALESCE(...)` and never overwrites it. If an early tick reported a wrong/longer duration (e.g. because the iframe wasn't fully ready, or a different cut was originally uploaded), the threshold becomes unreachable.
-3. **No "ended" → complete fallback for native uploads.** Only the Bunny path calls `onEnded` → upsert `completed_at`. Native HTML5 has no equivalent listener.
-4. **Telegram stats and "Watch next" both depend solely on `completed_at`** — when (1)–(3) silently fail, both surfaces look broken.
+### Goal
 
-## Fix plan
+Students should not be re-prompted to sign in for **7 days** after their last successful authentication, whether they come back through the website directly or through any "Open … " button the bot has ever sent them.
 
-### 1. `supabase/functions/...` migration — make `track_video_progress` more forgiving
+---
 
-Update the RPC to:
+## Plan
 
-- Lower the auto-complete threshold from **0.90 → 0.85** of duration.
-- Also auto-complete when `max_position_seconds >= duration - 20` (covers cases where Bunny's last reported time stops a few seconds short of the true end, e.g. final tick at 1135 s of 1156 s).
-- **Refresh `duration_seconds_v2` when the new reported duration is meaningfully smaller** (`new_dur > 0 AND (stored IS NULL OR new_dur < stored * 0.95)`). This unsticks lessons where the original cached duration was wrong/too high, without letting a single bad tick of `0` clobber it.
-- Backfill: one-time `UPDATE lesson_progress SET completed_at = COALESCE(completed_at, updated_at) WHERE completed_at IS NULL AND duration_seconds_v2 > 0 AND (max_position_seconds / duration_seconds_v2) >= 0.85;` so existing students immediately see correct counts and the "Watch next" button moves forward.
+### 1. Extend the Supabase session lifetime to 7 days
 
-### 2. `src/components/BunnyVideoPlayer.tsx` — more reliable end detection
+Configure the project's Auth settings server-side so the refresh token survives at least 7 days of inactivity (and the rolling session lifetime is comfortably longer):
 
-- Keep the existing `ended` listener but also, on every internal 5 s tick, if `durationRef > 0 && lastTimeRef >= durationRef - 5 && !endedFiredRef`, fire `onEnded`. This catches the common case where Bunny's `ended` event never arrives.
-- When the player.js `ended` event fires, send one final `onTimeUpdate(duration, duration)` (already done) and one extra `onTimeUpdate(duration, duration)` after a 1 s delay as a safety retry, so the RPC has a fresh tick with a valid duration.
+- `refresh_token_rotation_enabled = true` (keep current)
+- `security_refresh_token_reuse_interval = 10` seconds (keep current)
+- `sessions.timebox = 30 days` (rolling session ceiling)
+- `sessions.inactivity_timeout = 7 days` (the missing piece)
+- JWT access-token expiry stays at 3600 s (auto-refreshed by the client)
 
-### 3. `src/pages/LessonPage.tsx` — symmetric fallback for native `<video>`
+Done via the Supabase Management API (the `configure_auth` tool does not expose these fields, so this will be a one-time PATCH to `/v1/projects/<ref>/config/auth`).
 
-- Add an `onEnded` handler on the native HTML5 video that does the same `lesson_progress` upsert with `completed_at = now()` that the Bunny path already does.
-- After the existing 5 s native interval tick, if `cur >= dur - 5 && dur > 0`, also upsert `completed_at`. This mirrors the Bunny behavior server-side and is cheap.
-- `goNext()` already calls `markComplete()` before navigating — leave as is; this means clicking the in-page "Next" button always advances even if auto-complete missed.
+### 2. Make Telegram bot buttons survive 7 days
 
-### 4. Telegram bot — show counts even when nothing is recorded yet
+In the migration for `telegram_magic_links`, change the column default and backfill:
 
-`supabase/functions/telegram-bot-webhook/index.ts` already builds `t.statsLessons(completedLessons, totalLessons)`. With fix #1 the numbers will be correct. No code change needed there beyond a sanity check that the default course resolves (it does — `AI CREATORS` is `is_default_for_signup = true`).
+```sql
+ALTER TABLE public.telegram_magic_links
+  ALTER COLUMN expires_at SET DEFAULT (now() + interval '7 days');
+```
 
-### 5. End-to-end verification
+In `supabase/functions/telegram-bot-webhook/index.ts → createMagicLink`:
+- Extend the "reuse existing link" window from 5 minutes to the full 7 days for the same `(user_id, purpose, target_path)` so we do not flood the table.
+- Explicitly set `expires_at = now() + 7 days` on insert (don't rely solely on the default, makes the intent obvious in code).
 
-After deploying:
+This means every button the bot has ever sent stays clickable for a week.
 
-1. Re-run the backfill SQL and confirm rows like `940dd4f3 / 38d2eb42` (89%) and `ec99a717 / c9865017` (73% but probably fully watched) get `completed_at` set.
-2. Open lesson 1.1 in the preview, let Bunny play to ~end, refresh course page — "Continue" must point to 1.2.
-3. In Telegram, tap "📊 My stats" — confirm `Lessons: N/36` increments after a lesson finishes.
-4. Spot-check one teacher account in the admin dashboard to confirm no regression in their progress views.
+### 3. Graceful fallback when a magic-link token is truly expired
 
-### Files
+In `supabase/functions/magic-link-redeem/index.ts`, when a token is `used` or `expired`:
+- Instead of returning a hard `410`, look up the bound `user_id` and (if the token is older than 7 days OR already used) return `{ error: "expired", relogin_path: "/login" }` together with a clear message in `AuthMagicLink.tsx` telling the student to reopen the bot and tap the button again.
+- Keep the security model: we never mint a session for an expired token, we only improve the user-facing copy and the redirect.
 
-- `supabase/migrations/<new>.sql` — updated `track_video_progress` + one-time backfill UPDATE.
-- `src/components/BunnyVideoPlayer.tsx` — near-end auto-fire `onEnded`, retry tick.
-- `src/pages/LessonPage.tsx` — native `<video>` ended/near-end completion upsert.
-- No changes to the Telegram webhook code.
+### 4. Verify
+
+- Hit `/v1/projects/.../config/auth` to confirm the new `inactivity_timeout` and `timebox` are applied.
+- Insert a test row into `telegram_magic_links` with `expires_at = now() + interval '7 days'` and confirm `magic-link-redeem` accepts it.
+- Tap a freshly-generated bot button → land on `/dashboard` signed in. Wait a day, tap the same button → still signed in. Wait > 7 days → see the new friendly expired screen.
+
+### Files touched
+
+- `supabase/migrations/<new>.sql` — change `telegram_magic_links.expires_at` default to 7 days.
+- `supabase/functions/telegram-bot-webhook/index.ts` — extend `createMagicLink` reuse window + explicit 7-day `expires_at`.
+- `supabase/functions/magic-link-redeem/index.ts` — friendlier expired/used response.
+- `src/pages/AuthMagicLink.tsx` — show "open the bot and tap the button again" copy when the server reports `expired`.
+- Supabase Auth config (server-side, no project file): `inactivity_timeout = 604800`, `timebox = 2592000`.
+
+### Out of scope (intentionally)
+
+- Telegram in-app browser storage behavior cannot be controlled from our code; the 7-day magic-link lifetime + 7-day Supabase session is what guarantees the "no re-login for a week" promise even when the in-app browser starts fresh.
+- No changes to lesson playback, progress, or RLS — this is auth/session only.

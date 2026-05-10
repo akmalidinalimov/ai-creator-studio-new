@@ -28,7 +28,7 @@ export default function AuthMagicLink() {
         });
         const data = await r.json();
         if (!r.ok || !data?.session) {
-          if (!cancelled) setError(t("authMagic.invalid"));
+          if (!cancelled) setError(data?.message || t("authMagic.invalid"));
           return;
         }
         const { error: setErr } = await supabase.auth.setSession({
