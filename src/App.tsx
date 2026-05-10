@@ -33,6 +33,7 @@ import Landing from "./pages/Landing";
 import AuthMagicLink from "./pages/AuthMagicLink";
 import Leaderboard from "./pages/Leaderboard";
 import Badges from "./pages/Badges";
+import MyActivity from "./pages/MyActivity";
 
 
 // Lazy-load admin pages (code-split)
