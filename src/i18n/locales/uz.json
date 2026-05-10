@@ -89,7 +89,8 @@
     "continueLearning": "Davom etish",
     "review": "Ko'rib chiqish",
     "coursePage": "Kurs sahifasi",
-    "there": "do'stim"
+    "there": "do'stim",
+    "viewFullHistory": "Tarixni ko'rish"
   },
   "course": {
     "modules": "Modullar",
@@ -1009,5 +1010,26 @@
   "modules": {
     "progress_title": "Modullar bo'yicha taraqqiyot",
     "not_started": "Hali boshlanmadi"
+  },
+  "activity": {
+    "title": "Mening statistikam",
+    "subtitle": "Hamma faoliyatingiz: videolar, vazifalar, kunlik mashg'ulot va kirishlar.",
+    "totalWatch": "Jami ko'rilgan vaqt",
+    "lessonsCompleted": "Tugatilgan darslar",
+    "homework": "Topshiriqlar",
+    "avgScore": "O'rtacha ball",
+    "noneScored": "Hali baholanmagan",
+    "streak": "Joriy seriya",
+    "longest": "Eng uzun",
+    "last90Days": "So'nggi 90 kun faoliyati",
+    "videosWatched": "Ko'rilgan videolar",
+    "noVideos": "Hali video ko'rilmagan.",
+    "homeworkHistory": "Topshiriqlar tarixi",
+    "noHomework": "Hali topshiriq yuborilmagan.",
+    "late": "Kech",
+    "pending": "Kutilmoqda",
+    "badgesEarned": "Qo'lga kiritilgan nishonlar",
+    "recentLogins": "So'nggi kirishlar (30 kun)",
+    "noLogins": "Kirish yozuvi yo'q."
   }
 }

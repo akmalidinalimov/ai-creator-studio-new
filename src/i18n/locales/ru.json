@@ -89,7 +89,8 @@
     "continueLearning": "Продолжить",
     "review": "Повторить",
     "coursePage": "Страница курса",
-    "there": "друг"
+    "there": "друг",
+    "viewFullHistory": "Посмотреть историю"
   },
   "course": {
     "modules": "Модули",
@@ -1009,5 +1010,26 @@
   "modules": {
     "progress_title": "Прогресс по модулям",
     "not_started": "Не начато"
+  },
+  "activity": {
+    "title": "Моя статистика",
+    "subtitle": "Вся ваша активность: видео, задания, ежедневные занятия и входы.",
+    "totalWatch": "Всего просмотрено",
+    "lessonsCompleted": "Пройдено уроков",
+    "homework": "Задания",
+    "avgScore": "Средний балл",
+    "noneScored": "Ещё не оценено",
+    "streak": "Текущая серия",
+    "longest": "Рекорд",
+    "last90Days": "Активность за 90 дней",
+    "videosWatched": "Просмотренные видео",
+    "noVideos": "Видео ещё не просмотрены.",
+    "homeworkHistory": "История заданий",
+    "noHomework": "Заданий пока нет.",
+    "late": "Поздно",
+    "pending": "Ожидает",
+    "badgesEarned": "Полученные значки",
+    "recentLogins": "Недавние входы (30 дней)",
+    "noLogins": "Записей о входах нет."
   }
 }
