@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ResponsiveContainer, AreaChart, Area, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import { toast } from "sonner";
-import { Users as UsersIcon, LogIn, Activity, Trophy, Shield, UserCheck, UserX, Download, ArrowUpDown, Moon, MoonStar } from "lucide-react";
+import { Users as UsersIcon, LogIn, Activity, Trophy, Shield, UserCheck, UserX, Download, ArrowUpDown, Moon, MoonStar, RefreshCw } from "lucide-react";
 import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Link, useSearchParams, useNavigate } from "react-router-dom";
@@ -17,6 +17,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { WeeklyDigestTile } from "@/components/admin/WeeklyDigestTile";
 import { AnalyticsTiles } from "@/components/admin/AnalyticsTiles";
 import { TeacherLoginAnalytics } from "@/components/admin/TeacherLoginAnalytics";
+import { InactiveStudentsList } from "@/components/admin/InactiveStudentsList";
 
 const PALETTE = [
   "hsl(var(--primary))",
@@ -56,6 +57,7 @@ export default function AdminDashboard() {
   const [inactive3List, setInactive3List] = useState<any[]>([]);
   const [inactive7List, setInactive7List] = useState<any[]>([]);
   const [inactiveOpen, setInactiveOpen] = useState<null | 3 | 7>(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [dailyLogins, setDailyLogins] = useState<{ day: string; count: number }[]>([]);
   const [dau, setDau] = useState<{ day: string; count: number }[]>([]);
   const [lessonsPerDay, setLessonsPerDay] = useState<{ day: string; count: number }[]>([]);
@@ -458,6 +460,7 @@ export default function AdminDashboard() {
     } catch (e: any) {
       toast.error(e.message || t("admin.dashboard.loadFailed"));
     } finally {
+      setLastUpdatedAt(new Date());
       setLoading(false);
     }
   };
@@ -544,14 +547,25 @@ export default function AdminDashboard() {
             <h1 className="text-3xl font-semibold tracking-tight">{activeTeacherGroup ? activeTeacherGroup.name : t("admin.dashboard.title")}</h1>
             <p className="text-muted-foreground mt-1">{t("admin.dashboard.subtitle")}</p>
           </div>
-          <Select value={courseId} onValueChange={setCourseId}>
-            <SelectTrigger className="w-[260px]"><SelectValue placeholder={t("admin.dashboard.selectCourse")} /></SelectTrigger>
-            <SelectContent>
-              {courses.map((c) => (
-                <SelectItem key={c.id} value={c.id}>{c.title}{!c.published && t("admin.dashboard.draftSuffix")}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex items-center gap-2">
+            {lastUpdatedAt && (
+              <span className="text-xs text-muted-foreground hidden sm:inline">
+                {t("admin.dashboard.lastUpdated", { defaultValue: "Yangilangan" })}: {lastUpdatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </span>
+            )}
+            <Button variant="outline" size="sm" onClick={load} disabled={loading}>
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+              {t("admin.dashboard.refresh", { defaultValue: "Yangilash" })}
+            </Button>
+            <Select value={courseId} onValueChange={setCourseId}>
+              <SelectTrigger className="w-[260px]"><SelectValue placeholder={t("admin.dashboard.selectCourse")} /></SelectTrigger>
+              <SelectContent>
+                {courses.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>{c.title}{!c.published && t("admin.dashboard.draftSuffix")}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         {noGroups && (
@@ -632,6 +646,8 @@ export default function AdminDashboard() {
             )}
           </div>
         </div>
+
+        <InactiveStudentsList rows={inactive3List} />
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <ChartCard title={t("admin.dashboard.charts.dailyLogins")}>
