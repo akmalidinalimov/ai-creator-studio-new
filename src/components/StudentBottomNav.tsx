@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { Home, Trophy, User, Award } from "lucide-react";
+import { Home, Trophy, User, Award, BarChart3 } from "lucide-react";
 
 export function StudentBottomNav() {
   const loc = useLocation();
@@ -8,6 +8,7 @@ export function StudentBottomNav() {
 
   const tabs = [
     { to: "/dashboard", label: "Dars", icon: Home, match: (p: string) => p === "/dashboard" },
+    { to: "/activity", label: "Statistika", icon: BarChart3, match: (p: string) => p.startsWith("/activity") },
     { to: "/badges", label: "Nishon", icon: Award, match: (p: string) => p.startsWith("/badges") },
     { to: "/leaderboard", label: "Reyting", icon: Trophy, match: (p: string) => p.startsWith("/leaderboard") },
     { to: "/settings", label: "Profil", icon: User, match: (p: string) => p.startsWith("/settings") },
