@@ -460,6 +460,7 @@ export default function AdminDashboard() {
     } catch (e: any) {
       toast.error(e.message || t("admin.dashboard.loadFailed"));
     } finally {
+      setLastUpdatedAt(new Date());
       setLoading(false);
     }
   };
