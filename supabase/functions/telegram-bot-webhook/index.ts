@@ -476,7 +476,7 @@ const T = {
     statsStreak: (c: number, b: number) => `🔥 Streak: <b>${c} days</b> (best: ${b})`,
     statsStreakNone: "🔥 Streak: not started yet",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Today's goal: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
-    statsHomework: (s: number, tot: number, avg: string) => `📝 Homework: <b>${s}/${tot}</b> (avg ${avg}/10)`,
+    statsHomework: (sub: number, totalLeaves: number, earned: number, maxTotal: number, avg: string) => `📝 Homework: <b>${sub}/${totalLeaves}</b> submitted · ${earned}/${maxTotal} pts (avg ${avg}/10)`,
     statsHomeworkNone: "📝 Homework: nothing submitted yet",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Ranking: <b>#${r}</b> of ${tot} students (activity score ${sc}/100)`,
     statsRankingNone: "🏆 Ranking: not ranked yet (need activity — watch at least 1 lesson)",
