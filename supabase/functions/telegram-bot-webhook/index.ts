@@ -96,11 +96,11 @@ const T = {
     kbStreakOld: "📊 Statistikam",
     kbCertOld: "🎓 Sertifikat",
     statsTitle: "📊 <b>Statistikam</b>",
-    statsLessons: (d: number, tot: number) => `📚 Darslar: <b>${d}/${tot}</b> ko'rilgan`,
+    statsLessons: (d: number, tot: number, watch: string) => `📚 Darslar: <b>${d}/${tot}</b> ko'rilgan${watch ? ` · ${watch} jami` : ""}`,
     statsStreak: (c: number, b: number) => `🔥 Streak: <b>${c} kun</b> (eng yaxshisi: ${b})`,
     statsStreakNone: "🔥 Streak: hali boshlanmadi",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Bugungi maqsad: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
-    statsHomework: (s: number, tot: number, avg: string) => `📝 Uy vazifalari: <b>${s}/${tot}</b> (o'rtacha ${avg}/10)`,
+    statsHomework: (sub: number, totalLeaves: number, earned: number, maxTotal: number, avg: string) => `📝 Uy vazifalari: <b>${sub}/${totalLeaves}</b> topshirildi · ${earned}/${maxTotal} ball (o'rtacha ${avg}/10)`,
     statsHomeworkNone: "📝 Uy vazifalari: hali topshirilmadi",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Reyting: <b>${r}-o'rin</b> / ${tot} talaba (faollik bali ${sc}/100)`,
     statsRankingNone: "🏆 Reyting: hali sanalmadi (faollik kerak — kamida 1 ta dars ko'ring)",
@@ -289,11 +289,11 @@ const T = {
     kbStreakOld: "📊 Моя статистика",
     kbCertOld: "🎓 Сертификат",
     statsTitle: "📊 <b>Моя статистика</b>",
-    statsLessons: (d: number, tot: number) => `📚 Уроки: <b>${d}/${tot}</b> просмотрено`,
+    statsLessons: (d: number, tot: number, watch: string) => `📚 Уроки: <b>${d}/${tot}</b> просмотрено${watch ? ` · ${watch} всего` : ""}`,
     statsStreak: (c: number, b: number) => `🔥 Стрик: <b>${c} дн.</b> (рекорд: ${b})`,
     statsStreakNone: "🔥 Стрик: ещё не начат",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Цель на сегодня: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
-    statsHomework: (s: number, tot: number, avg: string) => `📝 Домашка: <b>${s}/${tot}</b> (средняя ${avg}/10)`,
+    statsHomework: (sub: number, totalLeaves: number, earned: number, maxTotal: number, avg: string) => `📝 Домашка: <b>${sub}/${totalLeaves}</b> сдано · ${earned}/${maxTotal} баллов (средняя ${avg}/10)`,
     statsHomeworkNone: "📝 Домашка: ещё не сдавали",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Рейтинг: <b>${r} место</b> / ${tot} студентов (балл активности ${sc}/100)`,
     statsRankingNone: "🏆 Рейтинг: пока не учтён (нужна активность — посмотрите хотя бы 1 урок)",
@@ -472,11 +472,11 @@ const T = {
     kbStreakOld: "📊 My stats",
     kbCertOld: "🎓 Certificate",
     statsTitle: "📊 <b>My stats</b>",
-    statsLessons: (d: number, tot: number) => `📚 Lessons: <b>${d}/${tot}</b> watched`,
+    statsLessons: (d: number, tot: number, watch: string) => `📚 Lessons: <b>${d}/${tot}</b> watched${watch ? ` · ${watch} total` : ""}`,
     statsStreak: (c: number, b: number) => `🔥 Streak: <b>${c} days</b> (best: ${b})`,
     statsStreakNone: "🔥 Streak: not started yet",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Today's goal: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
-    statsHomework: (s: number, tot: number, avg: string) => `📝 Homework: <b>${s}/${tot}</b> (avg ${avg}/10)`,
+    statsHomework: (sub: number, totalLeaves: number, earned: number, maxTotal: number, avg: string) => `📝 Homework: <b>${sub}/${totalLeaves}</b> submitted · ${earned}/${maxTotal} pts (avg ${avg}/10)`,
     statsHomeworkNone: "📝 Homework: nothing submitted yet",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Ranking: <b>#${r}</b> of ${tot} students (activity score ${sc}/100)`,
     statsRankingNone: "🏆 Ranking: not ranked yet (need activity — watch at least 1 lesson)",
@@ -1042,6 +1042,15 @@ async function computeStats(admin: any, userId: string) {
   };
 }
 
+function fmtWatchDuration(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds || 0));
+  if (s < 60) return "";
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
 async function buildStatsMessage(admin: any, userId: string, locale: Locale): Promise<string> {
   const t = T[locale] as any;
   const lines: string[] = [t.statsTitle, ""];
@@ -1061,9 +1070,19 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     }
     const totalLessons = lessonIds.length;
 
+    // Refresh leaderboard cache if older than 1 hour, so ranking line is current.
+    try {
+      const { data: lbAge } = await admin
+        .from("leaderboard_cache").select("computed_at").order("computed_at", { ascending: false }).limit(1).maybeSingle();
+      const ageMs = lbAge?.computed_at ? Date.now() - new Date(lbAge.computed_at).getTime() : Infinity;
+      if (ageMs > 60 * 60 * 1000) {
+        await admin.rpc("recalc_leaderboard");
+      }
+    } catch (_e) { /* best-effort */ }
+
     const [
       progressRes, streakRes, todayRes, hwAssignsRes, hwSubsRes,
-      lbRes, totalStudentsRes, badgesEarnedRes, badgesTotalRes, prefRes,
+      lbRes, totalStudentsRes, badgesEarnedRes, badgesTotalRes, prefRes, watchRes,
     ] = await Promise.all([
       lessonIds.length
         ? admin.from("lesson_progress").select("lesson_id, completed_at").eq("user_id", userId).in("lesson_id", lessonIds).not("completed_at", "is", null)
@@ -1077,10 +1096,12 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
       admin.from("user_badges").select("badge_id", { count: "exact", head: true }).eq("user_id", userId),
       admin.from("badges").select("id", { count: "exact", head: true }),
       admin.from("profiles").select("weekly_goal_lessons").eq("id", userId).maybeSingle(),
+      admin.from("daily_watch_summary").select("total_seconds").eq("user_id", userId),
     ]);
 
     const completedLessons = (progressRes.data || []).length;
-    lines.push(t.statsLessons(completedLessons, totalLessons));
+    const totalWatchSeconds = (watchRes.data || []).reduce((acc: number, r: any) => acc + Number(r.total_seconds || 0), 0);
+    lines.push(t.statsLessons(completedLessons, totalLessons, fmtWatchDuration(totalWatchSeconds)));
 
     const sk = streakRes.data;
     if (sk && (sk.current_streak || sk.longest_streak)) {
@@ -1124,7 +1145,7 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
       lines.push(t.statsHomeworkNone);
     } else {
       const avg = (earned / maxTotal * 10).toFixed(1);
-      lines.push(t.statsHomework(earned, maxTotal, avg));
+      lines.push(t.statsHomework(scoredCount, leaves.length, earned, maxTotal, avg));
     }
 
     const lb = lbRes.data;

@@ -1,59 +1,92 @@
 ## Goal
 
-Fix the "📝 Uy vazifalari" line in the Telegram `/Statistikam` message so it reflects the **real maximum points** across all active homework leaves and so that **resubmissions don't erase the previously earned grade** until the teacher re-grades.
+Make the student `/Statistikam` (📊 Statistikam) numbers in the Telegram bot correct and unambiguous, and make sure the ranking line is fresh. Verify the teacher `/tstats` view is also correct (no fix needed if it already is).
 
-## Current behavior (bug)
+## What's actually wrong (root cause analysis)
 
-In `supabase/functions/telegram-bot-webhook/index.ts` (`buildStatsMessage`, lines ~1064–1110):
+I checked the live database against the code in `supabase/functions/telegram-bot-webhook/index.ts → buildStatsMessage`:
 
-- `subs.length` = number of submission rows the student has → currently shown as the numerator ("4")
-- `hwTotalRes.count` = number of `homework_assignments` rows (including parent containers like Module 3, plus its 3 SAPs) → shown as denominator ("6")
-- Average is computed from `vw_module_homework_score.avg_score_normalized`, which **only counts rows where `score IS NOT NULL`**. When a student resubmits, `start_homework_resubmission` sets `score = NULL` and pushes the old score into `previous_attempts`, so that homework instantly drops out of the average.
+1. **Lessons line: `📚 Darslar: 11/36 ko'rilgan`**
+   - `36` is correct: there are exactly 36 published lessons in the default course "AI CREATORS" (4 modules).
+   - `11` comes from `lesson_progress.completed_at IS NOT NULL` for that user. This is set by `track_video_progress` when the watched fraction crosses the completion threshold, plus a near-end fallback at `currentTime >= duration - 5s`, plus the manual "Mark complete" button.
+   - The student's perception ("I didn't watch 11") is almost certainly because lessons get auto-completed when the player reaches the end (incl. quick scrubs to the end, autoplay through next videos, or earlier sessions they forgot). The number itself is what the database actually records.
+   - **Fix:** add real evidence next to the count so the student trusts it: total minutes watched (from `daily_watch_summary.total_seconds`), e.g. `📚 Darslar: 11/36 ko'rilgan · 2h 14m jami`. No data change.
 
-## Target behavior
+2. **Homework line: `📝 Uy vazifalari: 18/50 (o'rtacha 3.6/10)`**
+   - This is the **biggest source of confusion**. Today the numerator/denominator are *points*, not assignment counts. A student naturally reads "18 of 50 homeworks". Real numbers from DB: 6 active homework rows, 1 is a parent container (Module 3), so **5 leaves** with `max_score=10` each → max 50 points. That matches what the bot shows.
+   - **Fix:** show both axes explicitly:
+     `📝 Uy vazifalari: 4/5 topshirildi · 18/50 ball (o'rtacha 3.6/10)`
+     where `submitted = leaves with effective_score != null` and `total leaves = 5`. Effective score keeps the existing fallback to `previous_attempts[last]` so a resubmission in flight doesn't drop the grade.
 
-Line should read:
-`📝 Uy vazifalari: <earned>/<max_total> (o'rtacha <avg>/10)`
+3. **Ranking line: `📊 Reyting: #X / N · Y ball`**
+   - `leaderboard_cache.computed_at` is **2 days stale** (last `recalc_leaderboard()` was 2026-05-10). So rank, score, lessons_30d, minutes_30d, and current_streak shown to students are all out-of-date.
+   - **Fix (two parts):**
+     - On every `/Statistikam` call, if `leaderboard_cache.computed_at` is older than 1 hour, call `admin.rpc("recalc_leaderboard")` once before reading the user's row. Cheap (single RPC) and bounded.
+     - Add a daily cron (via existing `pg_cron` + `pg_net`) that hits the existing `leaderboard-recalc` edge function at 00:10 Tashkent time so the cache stays fresh even when no one opens stats. Use `supabase--insert` (not migration) since it carries the project-specific function URL and anon key.
 
-where, computed over **leaf** assignments only (a leaf = an assignment with no children — same definition `vw_module_homework_score` already uses):
+4. **Daily goal / streak / badges lines** — already read live from `streaks`, `lesson_progress`, `user_badges`, `badges`. No bug.
 
-- `max_total` = sum of `max_score` over every active leaf (e.g. M1=10 + M2=10 + M3.S1=10 + M3.S2=10 + M3.S3=10 = 50).
-- `earned` = sum of the student's **effective score** per leaf, where effective score is:
-  1. `homework_submissions.score` if not null, else
-  2. the most recent `previous_attempts[].score` if any, else
-  3. nothing (leaf not counted toward earned, but still in `max_total`).
-- `avg` = `round(earned / max_total * 10, 1)` (one decimal). If no scores yet → use the existing "hali topshirilmadi" line.
-
-This guarantees: (a) the denominator reflects the true maximum any student could earn, and (b) resubmissions keep the previously awarded grade visible until the teacher posts a new score.
+5. **Teacher `/tstats`** — calls `teacher_group_statistics(p_group_id, p_caller_profile_id)` RPC, which is computed live (messages today/7d/30d, active students, pending homework count, avg module score). I'll spot-check the RPC output but plan to leave it alone unless it returns visibly wrong numbers. No change planned to teacher side beyond what was already done in the previous loop (inactive students list).
 
 ## Changes
 
-### 1. Edge function — `supabase/functions/telegram-bot-webhook/index.ts`
+### A. `supabase/functions/telegram-bot-webhook/index.ts`
 
-In `buildStatsMessage`:
+1. **Translation strings** (`T.uz`, `T.ru`, `T.en`):
+   - `statsLessons(d, tot, mins)` → `"📚 Darslar: <b>${d}/${tot}</b> ko'rilgan · ${fmtDuration(mins)} jami"` (and ru/en equivalents).
+   - Replace `statsHomework(s, tot, avg)` with `statsHomework(submitted, totalLeaves, earned, maxTotal, avg)` →
+     `"📝 Uy vazifalari: <b>${submitted}/${totalLeaves}</b> topshirildi · ${earned}/${maxTotal} ball (o'rtacha ${avg}/10)"`.
+   - Keep `statsHomeworkNone` for "nothing graded yet".
 
-- Replace the `hwSubRes` / `hwTotalRes` queries with a single fetch of active leaves and the student's submissions:
-  - `homework_assignments` where `is_active = true`, selecting `id, max_score, parent_id` (we'll filter to leaves in JS using the same rule as `computeLeaves` / the view).
-  - `homework_submissions` for `user_id = userId`, selecting `assignment_id, score, previous_attempts`.
-- Compute `max_total = Σ leaf.max_score`.
-- Compute `earned = Σ effective_score(leaf)` using the fallback to `previous_attempts` described above (pick the last entry's `score` since `start_homework_resubmission` appends).
-- Drop the `vw_module_homework_score` query — no longer needed for this line.
-- Update the `statsHomework` template strings in `T.uz` / `T.ru` / `T.en` from
-  `"📝 Uy vazifalari: <b>${s}/${tot}</b> (o'rtacha ${avg}/10)"` to a points-based version, e.g.
-  `"📝 Uy vazifalari: <b>${earned}/${max}</b> (o'rtacha ${avg}/10)"`.
-  Keep `statsHomeworkNone` for the case where no leaf has any effective score.
+2. **`buildStatsMessage`** (around lines 1045–1141):
+   - Add `daily_watch_summary` aggregate fetch: `SELECT COALESCE(SUM(total_seconds),0) FROM daily_watch_summary WHERE user_id = :uid`. Pass total minutes into `statsLessons`.
+   - In the leaves loop, also count `submittedLeaves` (leaves whose effective score is not null) and pass both `(submittedLeaves, leaves.length, earned, maxTotal, avg)` into `statsHomework`.
+   - Right before the parallel fetch, add a freshness check + refresh:
+     ```ts
+     const { data: lbAge } = await admin
+       .from("leaderboard_cache").select("computed_at").limit(1).maybeSingle();
+     if (!lbAge || Date.now() - new Date(lbAge.computed_at).getTime() > 60 * 60 * 1000) {
+       await admin.rpc("recalc_leaderboard"); // fire-and-await, cheap
+     }
+     ```
 
-### 2. No DB migration required
+3. Small helper `fmtDuration(seconds)` → `"2h 14m"` / `"45m"` / `"—"`.
 
-`previous_attempts` already stores prior scores as JSON snapshots, and the view stays untouched (other UI surfaces still use it). All logic lives in the bot edge function.
+### B. Schedule daily leaderboard refresh
 
-### 3. Out of scope (confirm before touching)
+Use `supabase--insert` (NOT migration; carries project-specific URL + anon key) to register a `pg_cron` job:
 
-- The website's `HomeworkProfileSection` ("📝 Uy vazifalari" card on the profile page) uses a different per-module average; not part of this request.
-- Teacher dashboard tiles — unchanged.
+```sql
+select cron.schedule(
+  'leaderboard-recalc-daily',
+  '10 19 * * *', -- 00:10 Tashkent (UTC+5)
+  $$
+  select net.http_post(
+    url := 'https://wpdztrijasgmxgliwddr.supabase.co/functions/v1/leaderboard-recalc',
+    headers := '{"Content-Type":"application/json","apikey":"<anon key>"}'::jsonb,
+    body := '{}'::jsonb
+  );
+  $$
+);
+```
 
-## Technical notes
+(`pg_cron` and `pg_net` are already enabled — other crons in this project use them.)
 
-- Leaf detection mirrors the existing helper `computeLeaves` in `supabase/functions/telegram-bot-webhook/homework-routing.ts` and the `vw_module_homework_score` CTE: an assignment is a leaf iff no other active assignment has it as `parent_id`.
-- `previous_attempts` is appended in chronological order by `start_homework_resubmission` (`COALESCE(previous_attempts, '[]') || v_snapshot`), so the last element is the most recent prior grade — that's what we surface during the in-flight resubmission window.
-- After deploy, verify with the screenshot's user: graded M1 V1, M2 V2 (8/10), and one resubmitted task should yield something like `8/50 · 1.6/10` until the teacher re-grades, then jump back up.
+### C. No DB schema changes
+
+Everything else is read-only against existing tables.
+
+## Out of scope
+
+- Changing how `track_video_progress` decides "completed". The current rule is intentional and shared with the website's progress UI; redefining it would make web and bot disagree.
+- Reworking the teacher `/tstats` numbers (they come from a live RPC and match the DB). If the user reports a specific teacher number that's wrong, I'll fix it as a follow-up.
+- The website's `MyActivity` page and `HomeworkProfileSection` already show points correctly per module; they don't have the same labeling bug.
+
+## Verification after deploy
+
+- Run `/Statistikam` as a sample student in Telegram. Expect:
+  - Lessons line shows `X/36` with a real "Yh Ym jami" suffix.
+  - Homework line shows both `submitted/total` and `earned/max points`.
+  - Ranking line uses a `computed_at` within the last hour.
+- Re-check `select max(computed_at) from leaderboard_cache;` — should be within minutes of the test.
+- Confirm one teacher `/tstats` matches a manual count of last-7-day messages in `group_message_events`.
