@@ -1062,7 +1062,7 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     const totalLessons = lessonIds.length;
 
     const [
-      progressRes, streakRes, todayRes, hwSubRes, hwTotalRes,
+      progressRes, streakRes, todayRes, hwAssignsRes, hwSubsRes,
       lbRes, totalStudentsRes, badgesEarnedRes, badgesTotalRes, prefRes,
     ] = await Promise.all([
       lessonIds.length
@@ -1070,8 +1070,8 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
         : Promise.resolve({ data: [] as any[] }),
       admin.from("streaks").select("current_streak, longest_streak").eq("user_id", userId).maybeSingle(),
       admin.from("lesson_progress").select("completed_at").eq("user_id", userId).gte("completed_at", new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z").toISOString()).not("completed_at", "is", null),
-      admin.from("homework_submissions").select("score").eq("user_id", userId),
-      admin.from("homework_assignments").select("id", { count: "exact", head: true }),
+      admin.from("homework_assignments").select("id, max_score, parent_id, is_active").eq("is_active", true),
+      admin.from("homework_submissions").select("assignment_id, score, previous_attempts").eq("user_id", userId),
       admin.from("leaderboard_cache").select("rank, score").eq("user_id", userId).maybeSingle(),
       admin.from("leaderboard_cache").select("user_id", { count: "exact", head: true }),
       admin.from("user_badges").select("badge_id", { count: "exact", head: true }).eq("user_id", userId),
@@ -1094,19 +1094,37 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     const dailyTarget = Math.max(1, Math.round(weeklyGoal / 7));
     lines.push(t.statsDailyGoal(todayDone, dailyTarget, todayDone >= dailyTarget));
 
-    const subs = hwSubRes.data || [];
-    const hwTotal = hwTotalRes.count || 0;
-    if (subs.length === 0) {
+    // Points-based homework total: leaves only (no parent containers).
+    // Effective score per leaf = current score, else most recent previous_attempts score (resubmission in flight).
+    const allAssigns = (hwAssignsRes.data || []) as any[];
+    const parentIdsWithChildren = new Set(allAssigns.filter((a) => a.parent_id).map((a) => a.parent_id));
+    const leaves = allAssigns.filter((a) => a.parent_id || !parentIdsWithChildren.has(a.id));
+    const subMap = new Map((hwSubsRes.data || []).map((s: any) => [s.assignment_id, s]));
+    let earned = 0;
+    let maxTotal = 0;
+    let scoredCount = 0;
+    for (const leaf of leaves) {
+      maxTotal += Number(leaf.max_score) || 0;
+      const s: any = subMap.get(leaf.id);
+      let eff: number | null = null;
+      if (s) {
+        if (s.score != null) {
+          eff = Number(s.score);
+        } else if (Array.isArray(s.previous_attempts) && s.previous_attempts.length) {
+          const last = s.previous_attempts[s.previous_attempts.length - 1];
+          if (last && last.score != null) eff = Number(last.score);
+        }
+      }
+      if (eff != null && Number.isFinite(eff)) {
+        earned += eff;
+        scoredCount++;
+      }
+    }
+    if (scoredCount === 0 || maxTotal === 0) {
       lines.push(t.statsHomeworkNone);
     } else {
-      // Use normalized per-module average (0–10) from vw_module_homework_score
-      const { data: vw } = await admin
-        .from("vw_module_homework_score" as any)
-        .select("avg_score_normalized")
-        .eq("profile_id", userId);
-      const vals = (vw || []).map((r: any) => Number(r.avg_score_normalized)).filter((n: number) => Number.isFinite(n));
-      const avg = vals.length ? (vals.reduce((a: number, b: number) => a + b, 0) / vals.length).toFixed(1) : "—";
-      lines.push(t.statsHomework(subs.length, hwTotal, avg));
+      const avg = (earned / maxTotal * 10).toFixed(1);
+      lines.push(t.statsHomework(earned, maxTotal, avg));
     }
 
     const lb = lbRes.data;

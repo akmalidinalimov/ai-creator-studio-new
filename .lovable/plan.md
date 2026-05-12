@@ -1,79 +1,59 @@
 ## Goal
 
-Surface every piece of historical data we already have. Today the tables hold all the raw events (3,920 lesson_progress rows, 1,108 daily_watch_summary rows, 261 homework submissions, 15,602 auth events, all going back to 2026‑04‑28), but a few derived/cache tables are stale and there is no place for a student to see their own historical activity. Fix the stale caches once, give students a real "My activity" page, and confirm teacher stats render the same data without a "today only" feel.
+Fix the "📝 Uy vazifalari" line in the Telegram `/Statistikam` message so it reflects the **real maximum points** across all active homework leaves and so that **resubmissions don't erase the previously earned grade** until the teacher re-grades.
 
-## What's actually missing
+## Current behavior (bug)
 
-After auditing the DB:
+In `supabase/functions/telegram-bot-webhook/index.ts` (`buildStatsMessage`, lines ~1064–1110):
 
-- **`leaderboard_cache`** is **5 days stale** (last `computed_at` = 2026‑05‑05). The `recalc_leaderboard` job hasn't run lately, so the Leaderboard page shows old ranks/scores. → needs one recalc + scheduled refresh.
-- **`streaks`**: every active user already has a row (0 missing). No backfill needed; just verify the cron still ticks.
-- **`daily_watch_summary`** date range matches `lesson_progress` (both start 2026‑04‑28). Nothing to backfill, but the per‑user totals are higher than `lesson_progress.watch_seconds_total` due to the join in `cron-engagement` — this is existing behaviour, not a bug we need to "fix" now.
-- **Student "My activity" view does not exist.** Today the student dashboard shows weekly bars + module progress + engagement tiles, but there is no historical timeline of "videos I watched, homework I submitted, badges I earned, lessons I completed". This is what the user is asking for.
-- **Teacher dashboard** already loads from live RPCs (we verified last loop). The new `InactiveStudentsList` is in place. We just need to confirm nothing is hard‑capping to "today" and add a small "lifetime totals" strip so teachers can see we are not starting fresh.
+- `subs.length` = number of submission rows the student has → currently shown as the numerator ("4")
+- `hwTotalRes.count` = number of `homework_assignments` rows (including parent containers like Module 3, plus its 3 SAPs) → shown as denominator ("6")
+- Average is computed from `vw_module_homework_score.avg_score_normalized`, which **only counts rows where `score IS NOT NULL`**. When a student resubmits, `start_homework_resubmission` sets `score = NULL` and pushes the old score into `previous_attempts`, so that homework instantly drops out of the average.
+
+## Target behavior
+
+Line should read:
+`📝 Uy vazifalari: <earned>/<max_total> (o'rtacha <avg>/10)`
+
+where, computed over **leaf** assignments only (a leaf = an assignment with no children — same definition `vw_module_homework_score` already uses):
+
+- `max_total` = sum of `max_score` over every active leaf (e.g. M1=10 + M2=10 + M3.S1=10 + M3.S2=10 + M3.S3=10 = 50).
+- `earned` = sum of the student's **effective score** per leaf, where effective score is:
+  1. `homework_submissions.score` if not null, else
+  2. the most recent `previous_attempts[].score` if any, else
+  3. nothing (leaf not counted toward earned, but still in `max_total`).
+- `avg` = `round(earned / max_total * 10, 1)` (one decimal). If no scores yet → use the existing "hali topshirilmadi" line.
+
+This guarantees: (a) the denominator reflects the true maximum any student could earn, and (b) resubmissions keep the previously awarded grade visible until the teacher posts a new score.
 
 ## Changes
 
-### 1. One‑time backfill / recompute (no schema changes)
+### 1. Edge function — `supabase/functions/telegram-bot-webhook/index.ts`
 
-Run via existing functions, no new tables:
+In `buildStatsMessage`:
 
-- `select recalc_leaderboard();` — refreshes ranks, `lessons_30d`, `minutes_30d` from current `lesson_progress` + `streaks`.
-- `select update_streak_for_user();` sweep for any user whose `last_active_date` < today but who has a `lesson_progress.updated_at` today (catches anyone the trigger missed).
-- Spot‑check `daily_watch_summary` for users who have `lesson_progress.watch_seconds_total > 0` but no row — backfill from `lesson_progress` grouped by `DATE(updated_at)` if any are found.
+- Replace the `hwSubRes` / `hwTotalRes` queries with a single fetch of active leaves and the student's submissions:
+  - `homework_assignments` where `is_active = true`, selecting `id, max_score, parent_id` (we'll filter to leaves in JS using the same rule as `computeLeaves` / the view).
+  - `homework_submissions` for `user_id = userId`, selecting `assignment_id, score, previous_attempts`.
+- Compute `max_total = Σ leaf.max_score`.
+- Compute `earned = Σ effective_score(leaf)` using the fallback to `previous_attempts` described above (pick the last entry's `score` since `start_homework_resubmission` appends).
+- Drop the `vw_module_homework_score` query — no longer needed for this line.
+- Update the `statsHomework` template strings in `T.uz` / `T.ru` / `T.en` from
+  `"📝 Uy vazifalari: <b>${s}/${tot}</b> (o'rtacha ${avg}/10)"` to a points-based version, e.g.
+  `"📝 Uy vazifalari: <b>${earned}/${max}</b> (o'rtacha ${avg}/10)"`.
+  Keep `statsHomeworkNone` for the case where no leaf has any effective score.
 
-These are insert/update operations, executed via the insert tool. No migration.
+### 2. No DB migration required
 
-### 2. New student page: **My Activity** (`/activity`)
+`previous_attempts` already stores prior scores as JSON snapshots, and the view stays untouched (other UI surfaces still use it). All logic lives in the bot edge function.
 
-A single scrollable page that pulls everything we already have for the signed‑in user and renders it as a unified timeline + summary.
+### 3. Out of scope (confirm before touching)
 
-Top "Lifetime totals" strip (4 tiles):
-- Total watch time (sum of `lesson_progress.watch_seconds_total`)
-- Lessons completed (count `completed_at not null`)
-- Homework submitted / scored / avg score (`homework_submissions`)
-- Current streak / longest streak (`streaks`)
+- The website's `HomeworkProfileSection` ("📝 Uy vazifalari" card on the profile page) uses a different per-module average; not part of this request.
+- Teacher dashboard tiles — unchanged.
 
-Sections below:
-- **Videos watched** — table grouped by course → module → lesson, columns: lesson title, last watched (`updated_at`), watch time, completed ✓. Sorted newest first. Reuses `lesson_progress` joined to `lessons/modules/courses`.
-- **Homework history** — list of submissions, columns: module, task #, submitted at, score, late?, link to the Telegram message if present. From `homework_submissions`.
-- **Badges earned** — chips from `user_badges` if present, else hide.
-- **Daily activity (last 90 days)** — heatmap‑style strip from `daily_watch_summary`.
-- **Login history (last 30 days)** — small list from `auth_events` where `event = 'login'`.
+## Technical notes
 
-Add a "Statistics" / "My activity" link in `StudentBottomNav` and a button on the dashboard ("View full history →").
-
-### 3. Teacher dashboard: confirm + small "lifetime" strip
-
-On `AdminDashboard.tsx`, above the existing 30‑day tiles, add a 4‑tile **Lifetime** row scoped to the teacher's group(s):
-- Total students, total lessons completed (all‑time), total watch hours (all‑time), total homework submitted.
-
-Sourced by extending `staff_recent_lesson_progress` callsites to also fetch lifetime aggregates (or one new RPC `staff_lifetime_totals(_group_id)` — single SELECT, no new tables). Pick the RPC route to keep RLS clean.
-
-Confirm (no behaviour change unless broken):
-- Existing tiles are not silently filtering to "today" — they already use `>= now() - interval '30 days'`, fine.
-- `inactive3List`, `TeacherLoginAnalytics`, `InactiveStudentsList` reload on group change.
-
-### 4. Keep the caches fresh
-
-- Verify `cron-engagement` (writes `daily_watch_summary` + bumps streaks) and `leaderboard-recalc` are scheduled. If `pg_cron` schedules are missing, add them in a migration:
-  - `cron-engagement` every 15 min
-  - `leaderboard-recalc` every hour
-- This is the only migration in scope, and only if the schedules are actually missing.
-
-## Out of scope
-
-- No changes to `lesson_progress`, `homework_submissions`, `auth_events` schemas.
-- No new badge logic.
-- No teacher‑side per‑student deep dive page (existing group pages cover this).
-
-## Files
-
-- New: `src/pages/MyActivity.tsx`, `src/components/activity/*` (lifetime tiles, video table, homework list, heatmap, login list).
-- Edited: `src/App.tsx` (route), `src/components/StudentBottomNav.tsx` (link), `src/pages/Dashboard.tsx` (link), `src/pages/admin/AdminDashboard.tsx` (lifetime strip), `src/i18n/locales/{uz,ru,en}.json`.
-- Possibly new: one RPC `staff_lifetime_totals` + one migration scheduling the two crons (only if not already scheduled).
-
-## Open questions
-
-1. Should "My Activity" be reachable from the bottom nav (replacing/adding to current items), or only from a dashboard button?
-2. Lifetime totals on the teacher dashboard — do you want them per‑group (filtered by the current group dropdown) or always across all the teacher's groups?
+- Leaf detection mirrors the existing helper `computeLeaves` in `supabase/functions/telegram-bot-webhook/homework-routing.ts` and the `vw_module_homework_score` CTE: an assignment is a leaf iff no other active assignment has it as `parent_id`.
+- `previous_attempts` is appended in chronological order by `start_homework_resubmission` (`COALESCE(previous_attempts, '[]') || v_snapshot`), so the last element is the most recent prior grade — that's what we surface during the in-flight resubmission window.
+- After deploy, verify with the screenshot's user: graded M1 V1, M2 V2 (8/10), and one resubmitted task should yield something like `8/50 · 1.6/10` until the teacher re-grades, then jump back up.
