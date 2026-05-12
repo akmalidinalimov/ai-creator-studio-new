@@ -100,7 +100,7 @@ const T = {
     statsStreak: (c: number, b: number) => `🔥 Streak: <b>${c} kun</b> (eng yaxshisi: ${b})`,
     statsStreakNone: "🔥 Streak: hali boshlanmadi",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Bugungi maqsad: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
-    statsHomework: (sub: number, totalLeaves: number, earned: number, maxTotal: number, avg: string) => `📝 Uy vazifalari: <b>${sub}/${totalLeaves}</b> topshirildi · ${earned}/${maxTotal} ball (o'rtacha ${avg}/10)`,
+    statsHomework: (sub: number, totalLeaves: number, earned: number, maxTotal: number) => `📝 Uy vazifalari: <b>${sub}/${totalLeaves}</b> topshirildi · ${earned}/${maxTotal} ball`,
     statsHomeworkNone: "📝 Uy vazifalari: hali topshirilmadi",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Reyting: <b>${r}-o'rin</b> / ${tot} talaba (faollik bali ${sc}/100)`,
     statsRankingNone: "🏆 Reyting: hali sanalmadi (faollik kerak — kamida 1 ta dars ko'ring)",
