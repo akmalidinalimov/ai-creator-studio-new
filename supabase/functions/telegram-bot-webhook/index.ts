@@ -1145,7 +1145,7 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
       lines.push(t.statsHomeworkNone);
     } else {
       const avg = (earned / maxTotal * 10).toFixed(1);
-      lines.push(t.statsHomework(earned, maxTotal, avg));
+      lines.push(t.statsHomework(scoredCount, leaves.length, earned, maxTotal, avg));
     }
 
     const lb = lbRes.data;
