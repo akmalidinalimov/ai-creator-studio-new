@@ -96,7 +96,7 @@ const T = {
     kbStreakOld: "📊 Statistikam",
     kbCertOld: "🎓 Sertifikat",
     statsTitle: "📊 <b>Statistikam</b>",
-    statsLessons: (d: number, tot: number) => `📚 Darslar: <b>${d}/${tot}</b> ko'rilgan`,
+    statsLessons: (d: number, tot: number, watch: string) => `📚 Darslar: <b>${d}/${tot}</b> ko'rilgan${watch ? ` · ${watch} jami` : ""}`,
     statsStreak: (c: number, b: number) => `🔥 Streak: <b>${c} kun</b> (eng yaxshisi: ${b})`,
     statsStreakNone: "🔥 Streak: hali boshlanmadi",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Bugungi maqsad: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
