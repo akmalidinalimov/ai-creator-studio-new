@@ -472,7 +472,7 @@ const T = {
     kbStreakOld: "📊 My stats",
     kbCertOld: "🎓 Certificate",
     statsTitle: "📊 <b>My stats</b>",
-    statsLessons: (d: number, tot: number) => `📚 Lessons: <b>${d}/${tot}</b> watched`,
+    statsLessons: (d: number, tot: number, watch: string) => `📚 Lessons: <b>${d}/${tot}</b> watched${watch ? ` · ${watch} total` : ""}`,
     statsStreak: (c: number, b: number) => `🔥 Streak: <b>${c} days</b> (best: ${b})`,
     statsStreakNone: "🔥 Streak: not started yet",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Today's goal: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
