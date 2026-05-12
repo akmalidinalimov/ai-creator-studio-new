@@ -1042,6 +1042,15 @@ async function computeStats(admin: any, userId: string) {
   };
 }
 
+function fmtWatchDuration(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds || 0));
+  if (s < 60) return "";
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
 async function buildStatsMessage(admin: any, userId: string, locale: Locale): Promise<string> {
   const t = T[locale] as any;
   const lines: string[] = [t.statsTitle, ""];
