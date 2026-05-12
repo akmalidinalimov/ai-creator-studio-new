@@ -1070,9 +1070,19 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     }
     const totalLessons = lessonIds.length;
 
+    // Refresh leaderboard cache if older than 1 hour, so ranking line is current.
+    try {
+      const { data: lbAge } = await admin
+        .from("leaderboard_cache").select("computed_at").order("computed_at", { ascending: false }).limit(1).maybeSingle();
+      const ageMs = lbAge?.computed_at ? Date.now() - new Date(lbAge.computed_at).getTime() : Infinity;
+      if (ageMs > 60 * 60 * 1000) {
+        await admin.rpc("recalc_leaderboard");
+      }
+    } catch (_e) { /* best-effort */ }
+
     const [
       progressRes, streakRes, todayRes, hwAssignsRes, hwSubsRes,
-      lbRes, totalStudentsRes, badgesEarnedRes, badgesTotalRes, prefRes,
+      lbRes, totalStudentsRes, badgesEarnedRes, badgesTotalRes, prefRes, watchRes,
     ] = await Promise.all([
       lessonIds.length
         ? admin.from("lesson_progress").select("lesson_id, completed_at").eq("user_id", userId).in("lesson_id", lessonIds).not("completed_at", "is", null)
@@ -1086,10 +1096,12 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
       admin.from("user_badges").select("badge_id", { count: "exact", head: true }).eq("user_id", userId),
       admin.from("badges").select("id", { count: "exact", head: true }),
       admin.from("profiles").select("weekly_goal_lessons").eq("id", userId).maybeSingle(),
+      admin.from("daily_watch_summary").select("total_seconds").eq("user_id", userId),
     ]);
 
     const completedLessons = (progressRes.data || []).length;
-    lines.push(t.statsLessons(completedLessons, totalLessons));
+    const totalWatchSeconds = (watchRes.data || []).reduce((acc: number, r: any) => acc + Number(r.total_seconds || 0), 0);
+    lines.push(t.statsLessons(completedLessons, totalLessons, fmtWatchDuration(totalWatchSeconds)));
 
     const sk = streakRes.data;
     if (sk && (sk.current_streak || sk.longest_streak)) {
