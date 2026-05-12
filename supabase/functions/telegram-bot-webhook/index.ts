@@ -289,7 +289,7 @@ const T = {
     kbStreakOld: "📊 Моя статистика",
     kbCertOld: "🎓 Сертификат",
     statsTitle: "📊 <b>Моя статистика</b>",
-    statsLessons: (d: number, tot: number) => `📚 Уроки: <b>${d}/${tot}</b> просмотрено`,
+    statsLessons: (d: number, tot: number, watch: string) => `📚 Уроки: <b>${d}/${tot}</b> просмотрено${watch ? ` · ${watch} всего` : ""}`,
     statsStreak: (c: number, b: number) => `🔥 Стрик: <b>${c} дн.</b> (рекорд: ${b})`,
     statsStreakNone: "🔥 Стрик: ещё не начат",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Цель на сегодня: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
