@@ -293,7 +293,7 @@ const T = {
     statsStreak: (c: number, b: number) => `🔥 Стрик: <b>${c} дн.</b> (рекорд: ${b})`,
     statsStreakNone: "🔥 Стрик: ещё не начат",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Цель на сегодня: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
-    statsHomework: (s: number, tot: number, avg: string) => `📝 Домашка: <b>${s}/${tot}</b> (средняя ${avg}/10)`,
+    statsHomework: (sub: number, totalLeaves: number, earned: number, maxTotal: number, avg: string) => `📝 Домашка: <b>${sub}/${totalLeaves}</b> сдано · ${earned}/${maxTotal} баллов (средняя ${avg}/10)`,
     statsHomeworkNone: "📝 Домашка: ещё не сдавали",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Рейтинг: <b>${r} место</b> / ${tot} студентов (балл активности ${sc}/100)`,
     statsRankingNone: "🏆 Рейтинг: пока не учтён (нужна активность — посмотрите хотя бы 1 урок)",
