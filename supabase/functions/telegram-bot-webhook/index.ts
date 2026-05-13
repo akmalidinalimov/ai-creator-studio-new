@@ -168,6 +168,19 @@ const T = {
     moduleRowBtn: (mn: number, count: number, scores: string) => `📦 ${mn}-modul — ${count} topshirildi · ${scores}`,
     backToRoster: "↩️ Talabalar ro'yxati",
     scorePending: "⏳",
+    thmTitle: "📝 <b>Modullar bo'yicha vazifalar</b>\nModulni tanlang:",
+    thmEmpty: "Sizga hali kurs va guruh biriktirilmagan.",
+    thmModuleRow: (pos: number, title: string, sub: number, total: number) =>
+      `📦 ${pos}-modul · ${title} — ✅ ${sub}/${total}`.slice(0, 60),
+    thmSubmittedTitle: (pos: number, title: string) =>
+      `✅ <b>${pos}-modul — ${csvEscapeHtml(title)}</b>\nTopshirganlar:`,
+    thmMissingTitle: (pos: number, title: string) =>
+      `❌ <b>${pos}-modul — ${csvEscapeHtml(title)}</b>\nTopshirmaganlar:`,
+    thmNoneSubmitted: "Hech kim topshirmagan.",
+    thmNoneMissing: "🎉 Hammasi topshirgan.",
+    thmBackToList: "↩️ Modullar ro'yxati",
+    thmStudentLine: (handle: string, name: string) =>
+      `• ${handle ? `@${handle}` : ""}${handle && name ? ` (${name})` : name}`.trim(),
     tKbHealth: "🩺 Guruh holati",
     tHealthOpenSite: "🌐 Saytda batafsil",
     tHealthEmpty: "Sizga hali guruh biriktirilmagan.",
