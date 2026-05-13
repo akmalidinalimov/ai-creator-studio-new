@@ -826,9 +826,9 @@ function buttonTextToCommand(text: string): string | null {
     if (t.tKbSettings && trimmed === t.tKbSettings) return "/sozlamalar";
     if (t.tKbGrade && trimmed === t.tKbGrade) return "/baholash";
     if (t.tKbHealth && trimmed === t.tKbHealth) return "/thealth";
-    // "📝 Vazifalar" now opens the student roster (formerly the "👥 Talabalar" flow).
-    if (t.tKbHomework && trimmed === t.tKbHomework) return "/baholar";
-    // Back-compat: old "👥 Talabalar" label still routes to the same flow.
+    // "📝 Vazifalar" opens module-grouped homework view.
+    if (t.tKbHomework && trimmed === t.tKbHomework) return "/modulvazifalar";
+    // Back-compat: old "👥 Talabalar" label still routes to the student roster.
     if (t.tKbGraded && trimmed === t.tKbGraded) return "/baholar";
   }
   return null;
