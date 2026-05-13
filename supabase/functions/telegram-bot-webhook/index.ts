@@ -102,7 +102,7 @@ const T = {
     statsStreakNone: "🔥 Streak: hali boshlanmadi",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Bugungi maqsad: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Uy vazifalari: <b>${sub}/${totalLeaves}</b> ta topshirildi${scored ? ` (${scored} ta baholangan)` : ""}`,
-    statsHomeworkPoints: (earned: number, maxScored: number, avg10: number) => `🎯 Ball: <b>${earned}/${maxScored}</b> · O'rtacha <b>${avg10}/10</b>`,
+    statsHomeworkPoints: (earned: number, maxTotal: number) => `🎯 Ball: <b>${earned}/${maxTotal}</b>`,
     statsHomeworkNone: "📝 Uy vazifalari: hali topshirilmadi",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Reyting: <b>${r}-o'rin</b> / ${tot} talaba (faollik bali ${sc}/100)`,
     statsRankingNone: "🏆 Reyting: hali sanalmadi (faollik kerak — kamida 1 ta dars ko'ring)",
@@ -309,7 +309,7 @@ const T = {
     statsStreakNone: "🔥 Стрик: ещё не начат",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Цель на сегодня: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Домашка: <b>${sub}/${totalLeaves}</b> сдано${scored ? ` (${scored} оценено)` : ""}`,
-    statsHomeworkPoints: (earned: number, maxScored: number, avg10: number) => `🎯 Баллы: <b>${earned}/${maxScored}</b> · Среднее <b>${avg10}/10</b>`,
+    statsHomeworkPoints: (earned: number, maxTotal: number) => `🎯 Баллы: <b>${earned}/${maxTotal}</b>`,
     statsHomeworkNone: "📝 Домашка: ещё не сдавали",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Рейтинг: <b>${r} место</b> / ${tot} студентов (балл активности ${sc}/100)`,
     statsRankingNone: "🏆 Рейтинг: пока не учтён (нужна активность — посмотрите хотя бы 1 урок)",
@@ -506,7 +506,7 @@ const T = {
     statsStreakNone: "🔥 Streak: not started yet",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Today's goal: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Homework: <b>${sub}/${totalLeaves}</b> submitted${scored ? ` (${scored} graded)` : ""}`,
-    statsHomeworkPoints: (earned: number, maxScored: number, avg10: number) => `🎯 Score: <b>${earned}/${maxScored}</b> · Avg <b>${avg10}/10</b>`,
+    statsHomeworkPoints: (earned: number, maxTotal: number) => `🎯 Score: <b>${earned}/${maxTotal}</b>`,
     statsHomeworkNone: "📝 Homework: nothing submitted yet",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Ranking: <b>#${r}</b> of ${tot} students (activity score ${sc}/100)`,
     statsRankingNone: "🏆 Ranking: not ranked yet (need activity — watch at least 1 lesson)",
@@ -1194,8 +1194,8 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
       lines.push(t.statsHomeworkNone);
     } else {
       lines.push(t.statsHomework(summary.submittedCount, summary.totalLeaves, summary.scoredCount));
-      if (summary.scoredCount > 0 && summary.maxScored > 0 && summary.avg10 != null) {
-        lines.push(t.statsHomeworkPoints(summary.earned, summary.maxScored, summary.avg10));
+      if (summary.maxTotal > 0) {
+        lines.push(t.statsHomeworkPoints(summary.earned, summary.maxTotal));
       }
     }
 

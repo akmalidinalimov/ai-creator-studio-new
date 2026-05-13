@@ -35,7 +35,7 @@ export function HomeworkProfileSection() {
   const { user } = useAuth();
   const [mods, setMods] = useState<ModuleAgg[]>([]);
   const [open, setOpen] = useState<Record<string, boolean>>({});
-  const [overall, setOverall] = useState<{ submitted: number; total: number; scored: number; earned: number; maxScored: number; avg10: number | null } | null>(null);
+  const [overall, setOverall] = useState<{ submitted: number; total: number; scored: number; earned: number; maxTotal: number } | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -122,8 +122,7 @@ export function HomeworkProfileSection() {
         total: summary.totalLeaves,
         scored: summary.scoredCount,
         earned: summary.earned,
-        maxScored: summary.maxScored,
-        avg10: summary.avg10,
+        maxTotal: summary.maxTotal,
       });
     })();
   }, [user]);
@@ -138,10 +137,9 @@ export function HomeworkProfileSection() {
               Topshirildi: <span className="font-semibold">{overall.submitted}/{overall.total}</span>
               {overall.scored > 0 && <span className="text-muted-foreground"> · {overall.scored} baholandi</span>}
             </div>
-            {overall.avg10 != null && (
+            {overall.maxTotal > 0 && (
               <div>
-                Ball: <span className="font-semibold">{overall.earned}/{overall.maxScored}</span>
-                <span className="text-muted-foreground"> · O'rtacha {overall.avg10}/10</span>
+                Ball: <span className="font-semibold">{overall.earned}/{overall.maxTotal}</span>
               </div>
             )}
           </div>
