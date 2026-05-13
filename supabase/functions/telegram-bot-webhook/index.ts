@@ -4085,7 +4085,7 @@ async function handleCallback(admin: any, cq: any) {
     }
     return;
   }
-  if ((data.startsWith("gs:list:") || data.startsWith("gs:pick:") || data.startsWith("gs:open:") || data.startsWith("tr:")) && chatId) {
+  if ((data.startsWith("gs:list:") || data.startsWith("gs:pick:") || data.startsWith("gs:open:") || data.startsWith("tr:") || data.startsWith("thm:")) && chatId) {
     const profile = await findProfileByTelegramId(admin, tgId);
     if (!profile) { await answerCallback(cq.id); return; }
     const persona = await getPersona(admin, profile.id);
