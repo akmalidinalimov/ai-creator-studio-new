@@ -956,6 +956,28 @@ async function getDefaultCourseId(admin: any): Promise<string | null> {
   return data?.id ?? null;
 }
 
+// Resolve which course(s) "belong" to a student for stats purposes:
+//   1. profile.group_id -> groups.course_id (preferred)
+//   2. enrollments table
+//   3. fallback to platform default course
+async function getCourseIdsForUser(admin: any, userId: string): Promise<string[]> {
+  try {
+    const { data: prof } = await admin
+      .from("profiles").select("group_id").eq("id", userId).maybeSingle();
+    if (prof?.group_id) {
+      const { data: g } = await admin
+        .from("groups").select("course_id").eq("id", prof.group_id).maybeSingle();
+      if (g?.course_id) return [g.course_id];
+    }
+    const { data: enr } = await admin
+      .from("enrollments").select("course_id").eq("user_id", userId);
+    const ids = (enr || []).map((r: any) => r.course_id).filter(Boolean);
+    if (ids.length) return Array.from(new Set(ids));
+  } catch (_e) { /* fall through */ }
+  const def = await getDefaultCourseId(admin);
+  return def ? [def] : [];
+}
+
 async function resolveProfileForTelegramUser(
   admin: any,
   tgId: number,
