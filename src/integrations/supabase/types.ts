@@ -953,6 +953,7 @@ export type Database = {
           previous_attempts: Json
           score: number | null
           score_feedback: string | null
+          score_is_stale: boolean
           scored_at: string | null
           scored_by: string | null
           source: string
@@ -977,6 +978,7 @@ export type Database = {
           previous_attempts?: Json
           score?: number | null
           score_feedback?: string | null
+          score_is_stale?: boolean
           scored_at?: string | null
           scored_by?: string | null
           source?: string
@@ -1001,6 +1003,7 @@ export type Database = {
           previous_attempts?: Json
           score?: number | null
           score_feedback?: string | null
+          score_is_stale?: boolean
           scored_at?: string | null
           scored_by?: string | null
           source?: string
@@ -2675,6 +2678,7 @@ export type Database = {
           previous_attempts: Json
           score: number | null
           score_feedback: string | null
+          score_is_stale: boolean
           scored_at: string | null
           scored_by: string | null
           source: string

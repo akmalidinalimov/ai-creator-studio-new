@@ -162,6 +162,7 @@ export default function TeacherHomework() {
     if (!Number.isFinite(score) || score < 0 || score > max) { toast.error(`Bal 0–${max} bo'lishi kerak`); return; }
     const { error } = await supabase.from("homework_submissions").update({
       score, score_feedback: feedback || null, scored_by: user?.id, scored_at: new Date().toISOString(),
+      score_is_stale: false,
     }).eq("id", id);
     if (error) toast.error(error.message);
     else { toast.success("Baholandi"); setOpen(null); setDrawerRows(null); load(); }

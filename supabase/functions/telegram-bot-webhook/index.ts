@@ -2,6 +2,7 @@
 // Verifies X-Telegram-Bot-Api-Secret-Token, then dispatches commands.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { computeLeaves, pickNextLeaf } from "./homework-routing.ts";
+import { effectiveLeafGrades, summarizeHomework } from "./homework-stats.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -100,7 +101,8 @@ const T = {
     statsStreak: (c: number, b: number) => `🔥 Streak: <b>${c} kun</b> (eng yaxshisi: ${b})`,
     statsStreakNone: "🔥 Streak: hali boshlanmadi",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Bugungi maqsad: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
-    statsHomework: (sub: number, totalLeaves: number, earned: number, maxTotal: number) => `📝 Uy vazifalari: <b>${sub}/${totalLeaves}</b> topshirildi · ${earned}/${maxTotal} ball`,
+    statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Uy vazifalari: <b>${sub}/${totalLeaves}</b> ta topshirildi${scored ? ` (${scored} ta baholangan)` : ""}`,
+    statsHomeworkPoints: (earned: number, maxScored: number, avg10: number) => `🎯 Ball: <b>${earned}/${maxScored}</b> · O'rtacha <b>${avg10}/10</b>`,
     statsHomeworkNone: "📝 Uy vazifalari: hali topshirilmadi",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Reyting: <b>${r}-o'rin</b> / ${tot} talaba (faollik bali ${sc}/100)`,
     statsRankingNone: "🏆 Reyting: hali sanalmadi (faollik kerak — kamida 1 ta dars ko'ring)",
@@ -306,7 +308,8 @@ const T = {
     statsStreak: (c: number, b: number) => `🔥 Стрик: <b>${c} дн.</b> (рекорд: ${b})`,
     statsStreakNone: "🔥 Стрик: ещё не начат",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Цель на сегодня: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
-    statsHomework: (sub: number, totalLeaves: number, earned: number, maxTotal: number) => `📝 Домашка: <b>${sub}/${totalLeaves}</b> сдано · ${earned}/${maxTotal} баллов`,
+    statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Домашка: <b>${sub}/${totalLeaves}</b> сдано${scored ? ` (${scored} оценено)` : ""}`,
+    statsHomeworkPoints: (earned: number, maxScored: number, avg10: number) => `🎯 Баллы: <b>${earned}/${maxScored}</b> · Среднее <b>${avg10}/10</b>`,
     statsHomeworkNone: "📝 Домашка: ещё не сдавали",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Рейтинг: <b>${r} место</b> / ${tot} студентов (балл активности ${sc}/100)`,
     statsRankingNone: "🏆 Рейтинг: пока не учтён (нужна активность — посмотрите хотя бы 1 урок)",
@@ -502,7 +505,8 @@ const T = {
     statsStreak: (c: number, b: number) => `🔥 Streak: <b>${c} days</b> (best: ${b})`,
     statsStreakNone: "🔥 Streak: not started yet",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Today's goal: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
-    statsHomework: (sub: number, totalLeaves: number, earned: number, maxTotal: number) => `📝 Homework: <b>${sub}/${totalLeaves}</b> submitted · ${earned}/${maxTotal} pts`,
+    statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Homework: <b>${sub}/${totalLeaves}</b> submitted${scored ? ` (${scored} graded)` : ""}`,
+    statsHomeworkPoints: (earned: number, maxScored: number, avg10: number) => `🎯 Score: <b>${earned}/${maxScored}</b> · Avg <b>${avg10}/10</b>`,
     statsHomeworkNone: "📝 Homework: nothing submitted yet",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Ranking: <b>#${r}</b> of ${tot} students (activity score ${sc}/100)`,
     statsRankingNone: "🏆 Ranking: not ranked yet (need activity — watch at least 1 lesson)",
@@ -952,6 +956,28 @@ async function getDefaultCourseId(admin: any): Promise<string | null> {
   return data?.id ?? null;
 }
 
+// Resolve which course(s) "belong" to a student for stats purposes:
+//   1. profile.group_id -> groups.course_id (preferred)
+//   2. enrollments table
+//   3. fallback to platform default course
+async function getCourseIdsForUser(admin: any, userId: string): Promise<string[]> {
+  try {
+    const { data: prof } = await admin
+      .from("profiles").select("group_id").eq("id", userId).maybeSingle();
+    if (prof?.group_id) {
+      const { data: g } = await admin
+        .from("groups").select("course_id").eq("id", prof.group_id).maybeSingle();
+      if (g?.course_id) return [g.course_id];
+    }
+    const { data: enr } = await admin
+      .from("enrollments").select("course_id").eq("user_id", userId);
+    const ids = (enr || []).map((r: any) => r.course_id).filter(Boolean);
+    if (ids.length) return Array.from(new Set(ids));
+  } catch (_e) { /* fall through */ }
+  const def = await getDefaultCourseId(admin);
+  return def ? [def] : [];
+}
+
 async function resolveProfileForTelegramUser(
   admin: any,
   tgId: number,
@@ -1094,16 +1120,17 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
   const t = T[locale] as any;
   const lines: string[] = [t.statsTitle, ""];
   try {
-    const courseId = await getDefaultCourseId(admin);
+    const courseIds = await getCourseIdsForUser(admin, userId);
 
-    // Lessons total + completed
+    // Lessons total + completed (scoped to the student's course[s])
     let lessonIds: string[] = [];
-    if (courseId) {
-      const { data: ms } = await admin.from("modules").select("id").eq("course_id", courseId);
-      const mids = (ms || []).map((m: any) => m.id);
-      if (mids.length) {
+    let moduleIds: string[] = [];
+    if (courseIds.length) {
+      const { data: ms } = await admin.from("modules").select("id").in("course_id", courseIds);
+      moduleIds = (ms || []).map((m: any) => m.id);
+      if (moduleIds.length) {
         const { data: ls } = await admin
-          .from("lessons").select("id").in("module_id", mids).eq("published", true);
+          .from("lessons").select("id").in("module_id", moduleIds).eq("published", true);
         lessonIds = (ls || []).map((l: any) => l.id);
       }
     }
@@ -1128,8 +1155,10 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
         : Promise.resolve({ data: [] as any[] }),
       admin.from("streaks").select("current_streak, longest_streak").eq("user_id", userId).maybeSingle(),
       admin.from("lesson_progress").select("completed_at").eq("user_id", userId).gte("completed_at", new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z").toISOString()).not("completed_at", "is", null),
-      admin.from("homework_assignments").select("id, max_score, parent_id, is_active").eq("is_active", true),
-      admin.from("homework_submissions").select("assignment_id, score, previous_attempts").eq("user_id", userId),
+      moduleIds.length
+        ? admin.from("homework_assignments").select("id, max_score, parent_id, is_active").eq("is_active", true).in("module_id", moduleIds)
+        : Promise.resolve({ data: [] as any[] }),
+      admin.from("homework_submissions").select("assignment_id, score, score_feedback, scored_at, previous_attempts").eq("user_id", userId),
       admin.from("leaderboard_cache").select("rank, score").eq("user_id", userId).maybeSingle(),
       admin.from("leaderboard_cache").select("user_id", { count: "exact", head: true }),
       admin.from("user_badges").select("badge_id", { count: "exact", head: true }).eq("user_id", userId),
@@ -1154,36 +1183,20 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     const dailyTarget = Math.max(1, Math.round(weeklyGoal / 7));
     lines.push(t.statsDailyGoal(todayDone, dailyTarget, todayDone >= dailyTarget));
 
-    // Points-based homework total: leaves only (no parent containers).
-    // Effective score per leaf = current score, else most recent previous_attempts score (resubmission in flight).
+    // Homework: leaves only, with effective grade (current score ?? latest previous_attempts.score).
     const allAssigns = (hwAssignsRes.data || []) as any[];
     const parentIdsWithChildren = new Set(allAssigns.filter((a) => a.parent_id).map((a) => a.parent_id));
-    const leaves = allAssigns.filter((a) => a.parent_id || !parentIdsWithChildren.has(a.id));
-    const subMap = new Map((hwSubsRes.data || []).map((s: any) => [s.assignment_id, s]));
-    let earned = 0;
-    let maxTotal = 0;
-    let scoredCount = 0;
-    for (const leaf of leaves) {
-      maxTotal += Number(leaf.max_score) || 0;
-      const s: any = subMap.get(leaf.id);
-      let eff: number | null = null;
-      if (s) {
-        if (s.score != null) {
-          eff = Number(s.score);
-        } else if (Array.isArray(s.previous_attempts) && s.previous_attempts.length) {
-          const last = s.previous_attempts[s.previous_attempts.length - 1];
-          if (last && last.score != null) eff = Number(last.score);
-        }
-      }
-      if (eff != null && Number.isFinite(eff)) {
-        earned += eff;
-        scoredCount++;
-      }
-    }
-    if (scoredCount === 0 || maxTotal === 0) {
+    const leaves = allAssigns
+      .filter((a) => a.is_active !== false && (a.parent_id || !parentIdsWithChildren.has(a.id)))
+      .map((a) => ({ id: a.id, max_score: Number(a.max_score) || 0 }));
+    const summary = summarizeHomework(effectiveLeafGrades(leaves, (hwSubsRes.data || []) as any[]));
+    if (summary.totalLeaves === 0 || (summary.submittedCount === 0 && summary.scoredCount === 0)) {
       lines.push(t.statsHomeworkNone);
     } else {
-      lines.push(t.statsHomework(scoredCount, leaves.length, earned, maxTotal));
+      lines.push(t.statsHomework(summary.submittedCount, summary.totalLeaves, summary.scoredCount));
+      if (summary.scoredCount > 0 && summary.maxScored > 0 && summary.avg10 != null) {
+        lines.push(t.statsHomeworkPoints(summary.earned, summary.maxScored, summary.avg10));
+      }
     }
 
     const lb = lbRes.data;
