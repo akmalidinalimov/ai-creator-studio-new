@@ -122,8 +122,7 @@ export function HomeworkProfileSection() {
         total: summary.totalLeaves,
         scored: summary.scoredCount,
         earned: summary.earned,
-        maxScored: summary.maxScored,
-        avg10: summary.avg10,
+        maxTotal: summary.maxTotal,
       });
     })();
   }, [user]);
