@@ -67,7 +67,7 @@ export default function TeacherHomework() {
   useEffect(() => {
     (async () => {
       if (!user || !selectedGroup) return;
-      let pq = supabase.from("profiles").select("id, name, last_name, group_id");
+      let pq = supabase.from("profiles").select("id, name, last_name, group_id, telegram_username");
       if (selectedGroup === ALL) {
         if (!isAdmin) {
           // Teacher in ALL shouldn't happen, but guard
