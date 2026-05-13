@@ -250,12 +250,21 @@ export default function TeacherHomework() {
           </div>
         </div>
 
-        <Tabs defaultValue="students">
+        <Tabs defaultValue="modules">
           <TabsList>
+            <TabsTrigger value="modules">📦 Modul bo'yicha ({modules.length})</TabsTrigger>
             <TabsTrigger value="students">👥 Talabalar ({students.length})</TabsTrigger>
             <TabsTrigger value="pending">Kutilmoqda ({pending.length})</TabsTrigger>
             <TabsTrigger value="scored">Baholangan ({scored.length})</TabsTrigger>
           </TabsList>
+          <TabsContent value="modules">
+            <ModuleHomeworkView
+              students={students}
+              modules={modules}
+              assignments={assignments}
+              submissions={submissions}
+            />
+          </TabsContent>
           <TabsContent value="students">
             <StudentMatrix
               students={students}
