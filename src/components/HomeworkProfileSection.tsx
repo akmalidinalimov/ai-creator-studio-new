@@ -137,10 +137,9 @@ export function HomeworkProfileSection() {
               Topshirildi: <span className="font-semibold">{overall.submitted}/{overall.total}</span>
               {overall.scored > 0 && <span className="text-muted-foreground"> · {overall.scored} baholandi</span>}
             </div>
-            {overall.avg10 != null && (
+            {overall.maxTotal > 0 && (
               <div>
-                Ball: <span className="font-semibold">{overall.earned}/{overall.maxScored}</span>
-                <span className="text-muted-foreground"> · O'rtacha {overall.avg10}/10</span>
+                Ball: <span className="font-semibold">{overall.earned}/{overall.maxTotal}</span>
               </div>
             )}
           </div>
