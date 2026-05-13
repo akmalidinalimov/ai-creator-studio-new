@@ -2,6 +2,7 @@
 // Verifies X-Telegram-Bot-Api-Secret-Token, then dispatches commands.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { computeLeaves, pickNextLeaf } from "./homework-routing.ts";
+import { effectiveLeafGrades, summarizeHomework } from "./homework-stats.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
