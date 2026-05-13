@@ -486,3 +486,177 @@ function Drawer({ row, onSave, onReset }: { row: Row; onSave: (id: string, s: nu
     </>
   );
 }
+
+function ModuleHomeworkView({
+  students, modules, assignments, submissions,
+}: {
+  students: Student[];
+  modules: ModuleRow[];
+  assignments: Assignment[];
+  submissions: any[];
+}) {
+  const [openModuleId, setOpenModuleId] = useState<string | null>(null);
+
+  // assignment_id -> assignment
+  const aMap = useMemo(() => new Map(assignments.map((a) => [a.id, a])), [assignments]);
+
+  // Determine "leaf" assignments per module (parent without SAPs OR each SAP).
+  const leafIdsByModule = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    const parentIdsWithSap = new Set(assignments.filter((a) => a.parent_id).map((a) => a.parent_id as string));
+    for (const a of assignments) {
+      const isLeaf = a.parent_id !== null || !parentIdsWithSap.has(a.id);
+      if (!isLeaf) continue;
+      if (!m.has(a.module_id)) m.set(a.module_id, new Set());
+      m.get(a.module_id)!.add(a.id);
+    }
+    return m;
+  }, [assignments]);
+
+  // module_id -> user_id -> submissions[]
+  const subsByModuleUser = useMemo(() => {
+    const m = new Map<string, Map<string, any[]>>();
+    for (const s of submissions) {
+      const a = aMap.get(s.assignment_id);
+      if (!a) continue;
+      const leaves = leafIdsByModule.get(a.module_id);
+      if (!leaves || !leaves.has(a.id)) continue;
+      if (!m.has(a.module_id)) m.set(a.module_id, new Map());
+      const um = m.get(a.module_id)!;
+      if (!um.has(s.user_id)) um.set(s.user_id, []);
+      um.get(s.user_id)!.push(s);
+    }
+    return m;
+  }, [submissions, aMap, leafIdsByModule]);
+
+  const fmtName = (s: Student) => [s.name, s.last_name].filter(Boolean).join(" ") || "—";
+
+  const sortedModules = useMemo(
+    () => modules.slice().sort((a, b) => a.position - b.position),
+    [modules],
+  );
+
+  if (!sortedModules.length) {
+    return <Card className="p-6 text-sm text-muted-foreground">Modullar topilmadi.</Card>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {sortedModules.map((m) => {
+          const um = subsByModuleUser.get(m.id);
+          const submittedCount = um ? um.size : 0;
+          return (
+            <button
+              key={m.id}
+              onClick={() => setOpenModuleId(m.id)}
+              className="text-left rounded-lg border p-4 hover:bg-accent transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary">📦 {m.position + 1}-modul</Badge>
+              </div>
+              <div className="mt-1 font-medium truncate">{m.title}</div>
+              <div className="mt-2 text-xs text-muted-foreground">
+                ✅ Topshirgan: <b>{submittedCount}</b> / 👥 {students.length}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <Sheet open={!!openModuleId} onOpenChange={(o) => !o && setOpenModuleId(null)}>
+        <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto">
+          {openModuleId && (() => {
+            const mod = sortedModules.find((x) => x.id === openModuleId)!;
+            const um = subsByModuleUser.get(openModuleId) || new Map<string, any[]>();
+            const submittedStudents = students
+              .filter((s) => um.has(s.id))
+              .sort((a, b) => fmtName(a).localeCompare(fmtName(b)));
+            const missingStudents = students
+              .filter((s) => !um.has(s.id))
+              .sort((a, b) => fmtName(a).localeCompare(fmtName(b)));
+
+            const renderHandle = (s: Student) => {
+              const handle = (s.telegram_username || "").trim();
+              return handle
+                ? <a className="text-primary hover:underline" href={`https://t.me/${handle}`} target="_blank" rel="noreferrer">@{handle}</a>
+                : <span className="text-muted-foreground">—</span>;
+            };
+
+            return (
+              <>
+                <SheetHeader>
+                  <SheetTitle>📦 {mod.position + 1}-modul — {mod.title}</SheetTitle>
+                </SheetHeader>
+
+                <div className="mt-4 space-y-6">
+                  <section>
+                    <h3 className="font-semibold mb-2">✅ Topshirganlar ({submittedStudents.length})</h3>
+                    {submittedStudents.length === 0 ? (
+                      <div className="text-sm text-muted-foreground">Hech kim topshirmagan.</div>
+                    ) : (
+                      <div className="space-y-3">
+                        {submittedStudents.map((s) => {
+                          const subs = (um.get(s.id) || []).slice().sort((x: any, y: any) => {
+                            const ax: any = aMap.get(x.assignment_id);
+                            const ay: any = aMap.get(y.assignment_id);
+                            return (ax?.task_number || 0) - (ay?.task_number || 0);
+                          });
+                          return (
+                            <div key={s.id} className="rounded-md border p-3">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-medium">{fmtName(s)}</span>
+                                {renderHandle(s)}
+                              </div>
+                              <ul className="mt-2 space-y-1 text-sm">
+                                {subs.map((sub: any) => {
+                                  const a: any = aMap.get(sub.assignment_id) || {};
+                                  const tn = a.task_number || 1;
+                                  const lbl = a.parent_id ? `V${tn}.S${a.sap_number ?? "?"}` : `V${tn}`;
+                                  return (
+                                    <li key={sub.id} className="flex items-start gap-2">
+                                      <Badge variant="outline">{lbl}</Badge>
+                                      {sub.score == null ? (
+                                        <span className="text-muted-foreground">⏳ baholanmagan</span>
+                                      ) : (
+                                        <span className="font-medium">{sub.score}/{a.max_score || 10}</span>
+                                      )}
+                                      {sub.score_feedback && (
+                                        <span className="text-muted-foreground">— 💬 {sub.score_feedback}</span>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
+
+                  <section>
+                    <h3 className="font-semibold mb-2">❌ Topshirmaganlar ({missingStudents.length})</h3>
+                    {missingStudents.length === 0 ? (
+                      <div className="text-sm text-muted-foreground">🎉 Hammasi topshirgan.</div>
+                    ) : (
+                      <ul className="space-y-1 text-sm">
+                        {missingStudents.map((s) => (
+                          <li key={s.id} className="flex items-center gap-2">
+                            <span>{fmtName(s)}</span>
+                            {renderHandle(s)}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+                </div>
+              </>
+            );
+          })()}
+        </SheetContent>
+      </Sheet>
+    </div>
+  );
+}
+
