@@ -35,7 +35,7 @@ export function HomeworkProfileSection() {
   const { user } = useAuth();
   const [mods, setMods] = useState<ModuleAgg[]>([]);
   const [open, setOpen] = useState<Record<string, boolean>>({});
-  const [overall, setOverall] = useState<{ submitted: number; total: number; scored: number; earned: number; maxScored: number; avg10: number | null } | null>(null);
+  const [overall, setOverall] = useState<{ submitted: number; total: number; scored: number; earned: number; maxTotal: number } | null>(null);
 
   useEffect(() => {
     if (!user) return;
