@@ -2595,10 +2595,6 @@ async function thmSendChunked(chatId: number, header: string, lines: string[], f
 }
 
 
-  const { data } = await admin.from("profiles").select("telegram_id").eq("id", userId).maybeSingle();
-  return data?.telegram_id ?? null;
-}
-
 // Open a submission for grading: store conversation state and prompt for score.
 async function startGradingFlow(admin: any, chatId: number, graderTgId: number, graderId: string, submissionId: string, locale: Locale, isAdmin: boolean) {
   const t = T[locale] as any;
