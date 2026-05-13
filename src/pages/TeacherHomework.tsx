@@ -22,7 +22,7 @@ interface Row {
 }
 
 interface Group { id: string; name: string; course_id: string | null; }
-interface Student { id: string; name: string | null; last_name: string | null; group_id: string | null; }
+interface Student { id: string; name: string | null; last_name: string | null; group_id: string | null; telegram_username?: string | null; }
 interface ModuleRow { id: string; title: string; position: number; course_id: string; }
 interface Assignment { id: string; module_id: string; task_number: number; sap_number: number | null; parent_id: string | null; max_score: number; title: string; }
 
