@@ -2360,7 +2360,241 @@ async function renderStudentModuleDetail(
   await sendMessage(chatId, lines.join("\n"), { inline_keyboard: buttons });
 }
 
-async function tgIdFromUserId(admin: any, userId: string): Promise<number | null> {
+// =================== TEACHER MODULE-GROUPED HOMEWORK ===================
+
+const THM_MODULE_PAGE_SIZE = 10;
+const THM_STUDENT_CHUNK = 40;
+
+// Resolve which modules are visible to the grader: union of courses across owned groups
+// (or the active group). Admins see every module.
+async function thmListModules(
+  admin: any, graderId: string, isAdmin: boolean, groupId?: string | null,
+): Promise<{ id: string; position: number; title: string }[]> {
+  if (isAdmin) {
+    const { data } = await admin.from("modules").select("id, position, title").order("position", { ascending: true });
+    return ((data || []) as any[]);
+  }
+  let courseIds: string[] = [];
+  if (groupId) {
+    const { data: g } = await admin.from("groups").select("course_id").eq("id", groupId).maybeSingle();
+    if (g?.course_id) courseIds = [g.course_id];
+  } else {
+    const groups = await teacherGroups(admin, graderId);
+    if (!groups.length) return [];
+    const { data: gs } = await admin.from("groups").select("course_id").in("id", groups.map((x) => x.id));
+    courseIds = Array.from(new Set(((gs || []) as any[]).map((r) => r.course_id).filter(Boolean)));
+  }
+  if (!courseIds.length) return [];
+  const { data } = await admin.from("modules").select("id, position, title").in("course_id", courseIds).order("position", { ascending: true });
+  return ((data || []) as any[]);
+}
+
+async function renderTeacherModulePicker(
+  admin: any, chatId: number, graderId: string, locale: Locale, isAdmin: boolean, page: number, groupId?: string | null,
+) {
+  const t = T[locale] as any;
+  const studentIds = await gradingScopeIds(admin, graderId, isAdmin, groupId);
+  const modules = await thmListModules(admin, graderId, isAdmin, groupId);
+  if (!modules.length) {
+    await sendWithKeyboard(chatId, t.thmEmpty, locale, isAdmin, isAdmin ? "admin" : "teacher");
+    return;
+  }
+  // Total students in scope (admins: count distinct profiles attached to a group).
+  let totalStudents = 0;
+  if (isAdmin) {
+    const { count } = await admin.from("profiles").select("id", { count: "exact", head: true }).is("archived_at", null).not("group_id", "is", null);
+    totalStudents = count || 0;
+  } else {
+    totalStudents = (studentIds || []).length;
+  }
+
+  // Per-module submitted count (distinct user_id with any submission for that module's leaves).
+  const modIds = modules.map((m) => m.id);
+  const { data: assigns } = await admin
+    .from("homework_assignments")
+    .select("id, module_id, parent_id, task_number, sap_number, is_active")
+    .in("module_id", modIds);
+  const assignsByModule = new Map<string, any[]>();
+  for (const a of ((assigns || []) as any[])) {
+    if (!assignsByModule.has(a.module_id)) assignsByModule.set(a.module_id, []);
+    assignsByModule.get(a.module_id)!.push(a);
+  }
+  const allLeafIds: string[] = [];
+  const leafToModule = new Map<string, string>();
+  for (const m of modules) {
+    const arr = assignsByModule.get(m.id) || [];
+    const leaves = computeLeaves(arr);
+    for (const l of leaves) {
+      allLeafIds.push(l.id);
+      leafToModule.set(l.id, m.id);
+    }
+  }
+  const submittersByModule = new Map<string, Set<string>>();
+  if (allLeafIds.length) {
+    let sq = admin.from("homework_submissions").select("user_id, assignment_id").in("assignment_id", allLeafIds);
+    if (studentIds) sq = sq.in("user_id", studentIds);
+    const { data: subs } = await sq;
+    for (const s of ((subs || []) as any[])) {
+      const mid = leafToModule.get(s.assignment_id);
+      if (!mid) continue;
+      if (!submittersByModule.has(mid)) submittersByModule.set(mid, new Set());
+      submittersByModule.get(mid)!.add(s.user_id);
+    }
+  }
+
+  const totalPages = Math.max(1, Math.ceil(modules.length / THM_MODULE_PAGE_SIZE));
+  const pageIdx = Math.min(Math.max(0, page), totalPages - 1);
+  const slice = modules.slice(pageIdx * THM_MODULE_PAGE_SIZE, (pageIdx + 1) * THM_MODULE_PAGE_SIZE);
+
+  const buttons: any[][] = slice.map((m) => {
+    const sub = submittersByModule.get(m.id)?.size || 0;
+    return [{
+      text: t.thmModuleRow((m.position || 0) + 1, m.title || "", sub, totalStudents),
+      callback_data: `thm:mod:${m.id}`,
+    }];
+  });
+  const nav: any[] = [];
+  if (pageIdx > 0) nav.push({ text: t.gradePrevPage, callback_data: `thm:list:${pageIdx - 1}` });
+  if (pageIdx < totalPages - 1) nav.push({ text: t.gradeNextPage, callback_data: `thm:list:${pageIdx + 1}` });
+  if (nav.length) buttons.push(nav);
+
+  await sendMessage(chatId, t.thmTitle, { inline_keyboard: buttons });
+  await sendKeyboardHint(chatId, locale, isAdmin, isAdmin ? "admin" : "teacher");
+}
+
+async function renderTeacherModuleDetail(
+  admin: any, chatId: number, graderId: string, moduleId: string, locale: Locale, isAdmin: boolean, groupId?: string | null,
+) {
+  const t = T[locale] as any;
+  const studentIds = await gradingScopeIds(admin, graderId, isAdmin, groupId);
+
+  const { data: mod } = await admin.from("modules").select("id, position, title, course_id").eq("id", moduleId).maybeSingle();
+  if (!mod) { await sendMessage(chatId, t.gradeNotFound || "Not found"); return; }
+  const mPos = (mod.position || 0) + 1;
+
+  // Load profiles in scope
+  let pq = admin.from("profiles").select("id, name, last_name, telegram_username, telegram_id").is("archived_at", null);
+  if (studentIds) {
+    if (!studentIds.length) {
+      await sendMessage(chatId, t.thmEmpty);
+      return;
+    }
+    pq = pq.in("id", studentIds);
+  } else {
+    // Admin: bound to students in groups attached to this module's course
+    const { data: gs } = await admin.from("groups").select("id").eq("course_id", mod.course_id);
+    const gids = ((gs || []) as any[]).map((g) => g.id);
+    if (!gids.length) {
+      await sendMessage(chatId, t.thmEmpty);
+      return;
+    }
+    pq = pq.in("group_id", gids);
+  }
+  const { data: profs } = await pq;
+  const profMap = new Map(((profs || []) as any[]).map((p) => [p.id, p]));
+
+  // Load this module's leaf assignments
+  const { data: assigns } = await admin
+    .from("homework_assignments")
+    .select("id, max_score, task_number, sap_number, parent_id, is_active, title")
+    .eq("module_id", moduleId);
+  const aArr = ((assigns || []) as any[]);
+  const leaves = computeLeaves(aArr);
+  const aMap = new Map(aArr.map((a) => [a.id, a]));
+
+  // Submissions for the module
+  const leafIds = leaves.map((l) => l.id);
+  let subs: any[] = [];
+  if (leafIds.length) {
+    let sq = admin
+      .from("homework_submissions")
+      .select("user_id, assignment_id, score, score_feedback, submitted_at")
+      .in("assignment_id", leafIds);
+    if (studentIds) sq = sq.in("user_id", studentIds);
+    const { data } = await sq;
+    subs = (data || []) as any[];
+  }
+
+  // Group by user
+  const subsByUser = new Map<string, any[]>();
+  for (const s of subs) {
+    if (!subsByUser.has(s.user_id)) subsByUser.set(s.user_id, []);
+    subsByUser.get(s.user_id)!.push(s);
+  }
+
+  const fmtName = (p: any) => [p?.name, p?.last_name].filter(Boolean).join(" ") || "—";
+
+  // ----- Message A: submitted -----
+  const submittedHeader = t.thmSubmittedTitle(mPos, mod.title || "");
+  const submittedLines: string[] = [];
+  const submittedUsers = Array.from(subsByUser.keys())
+    .map((uid) => profMap.get(uid))
+    .filter(Boolean)
+    .sort((x: any, y: any) => fmtName(x).toLowerCase().localeCompare(fmtName(y).toLowerCase()));
+  if (!submittedUsers.length) {
+    submittedLines.push(t.thmNoneSubmitted);
+  } else {
+    for (const p of submittedUsers as any[]) {
+      const handle = (p.telegram_username || "").toString().trim();
+      const name = fmtName(p);
+      const head = handle ? `@${handle}${name && name !== "—" ? ` (${csvEscapeHtml(name)})` : ""}` : `<b>${csvEscapeHtml(name)}</b>`;
+      submittedLines.push(`• ${head}`);
+      const userSubs = (subsByUser.get(p.id) || []).slice().sort((a: any, b: any) =>
+        ((aMap.get(a.assignment_id) as any)?.task_number || 0) - ((aMap.get(b.assignment_id) as any)?.task_number || 0)
+      );
+      for (const s of userSubs) {
+        const a: any = aMap.get(s.assignment_id);
+        if (!a) continue;
+        const tn = a.task_number || 1;
+        const lbl = a.parent_id ? `V${tn}.S${a.sap_number ?? "?"}` : `V${tn}`;
+        const scoreStr = s.score == null ? `⏳ ${t.scorePending || ""}`.trim() : `<b>${s.score}/${a.max_score || 10}</b>`;
+        const fbStr = s.score_feedback ? ` · 💬 ${csvEscapeHtml(String(s.score_feedback))}` : "";
+        submittedLines.push(`   ${lbl} — ${scoreStr}${fbStr}`);
+      }
+    }
+  }
+
+  // Send (chunk if too long)
+  await thmSendChunked(chatId, submittedHeader, submittedLines, {
+    inline_keyboard: [[{ text: t.thmBackToList, callback_data: "thm:list:0" }]],
+  });
+
+  // ----- Message B: missing -----
+  const missingHeader = t.thmMissingTitle(mPos, mod.title || "");
+  const missingProfiles = Array.from(profMap.values())
+    .filter((p: any) => !subsByUser.has(p.id))
+    .sort((x: any, y: any) => fmtName(x).toLowerCase().localeCompare(fmtName(y).toLowerCase()));
+  const missingLines: string[] = [];
+  if (!missingProfiles.length) {
+    missingLines.push(t.thmNoneMissing);
+  } else {
+    for (const p of missingProfiles as any[]) {
+      const handle = (p.telegram_username || "").toString().trim();
+      const name = fmtName(p);
+      if (handle) missingLines.push(`• @${handle}${name && name !== "—" ? ` (${csvEscapeHtml(name)})` : ""}`);
+      else missingLines.push(`• <b>${csvEscapeHtml(name)}</b>`);
+    }
+  }
+  await thmSendChunked(chatId, missingHeader, missingLines, {
+    inline_keyboard: [[{ text: t.thmBackToList, callback_data: "thm:list:0" }]],
+  });
+}
+
+async function thmSendChunked(chatId: number, header: string, lines: string[], finalKeyboard: any) {
+  // Telegram messages cap ~4096 chars. Chunk by ~40 lines (~3.5KB) to be safe.
+  const chunks: string[][] = [];
+  for (let i = 0; i < lines.length; i += THM_STUDENT_CHUNK) {
+    chunks.push(lines.slice(i, i + THM_STUDENT_CHUNK));
+  }
+  if (!chunks.length) chunks.push([]);
+  for (let i = 0; i < chunks.length; i++) {
+    const isLast = i === chunks.length - 1;
+    const body = `${i === 0 ? header + "\n\n" : ""}${chunks[i].join("\n")}`;
+    await sendMessage(chatId, body, isLast ? finalKeyboard : undefined);
+  }
+}
+
+
   const { data } = await admin.from("profiles").select("telegram_id").eq("id", userId).maybeSingle();
   return data?.telegram_id ?? null;
 }
