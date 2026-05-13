@@ -2073,6 +2073,11 @@ async function handleGradingCommand(
     return true;
   }
 
+  if (cmd === "/modulvazifalar" || cmd === "/modhomework") {
+    await renderTeacherModulePicker(admin, chatId, graderId, locale, isAdmin, 0, groupId);
+    return true;
+  }
+
   return false;
 }
 
