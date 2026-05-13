@@ -1,74 +1,140 @@
 ## Goal
 
-Replace the teacher "📝 Vazifalar / Задания / Homework" entry (currently a flat student roster) with a **module-based view**, in both the Telegram bot and the web Teacher Homework page. Modules are read from the DB, so adding Module 8 automatically produces a new button.
+Make the "📊 Statistika" view (Telegram bot + web profile) reflect the **true historical** state of each student's lessons and homework. Specifically: never lose a grade or comment when a student resubmits, count only assignments that belong to the student's enrolled course, and show numbers that match what teachers actually awarded.
 
 ---
 
-## 1) Telegram bot (`supabase/functions/telegram-bot-webhook/index.ts`)
+## Problems found (audited against @alikhanova_team)
 
-### Flow
+1. **Course scope is global, not per-student.** `buildStatsMessage` and `buildHomeworkMessage` use `getDefaultCourseId()` (the platform-wide default course). Anyone in another group/course sees the wrong totals.
+2. **Resubmission wipes grades from view.** When a student resubmits, `homework_submissions.score` is reset to `NULL` and the old grade is pushed into `previous_attempts`. The bot stats code falls back to that array, but the **web profile (`HomeworkProfileSection`)**, **teacher module/list views**, and any other reader only look at the live `score` column — so historical 8/10 and 10/10 grades silently disappear from the displayed average.
+3. **Comments are sometimes lost on regrade.** Old `score_feedback` is preserved into `previous_attempts.score_feedback`, but the new submission row defaults to `score_feedback=NULL`, so the student sees a blank "comment" until the teacher re-comments. We will surface the most recent non-null comment (current → previous_attempts) wherever feedback is shown.
+4. **Homework "earned/max" wording confused the user.** The line `📝 Uy vazifalari: 2/5 topshirildi · 18/50 ball` reads as "18 out of 50 homeworks". Reword so each number is unambiguous and add the explicit average back as a single, clearly labelled line.
+5. **No backfill/audit job.** Nothing reconciles `homework_submissions` history; we'll add a one-off SQL recompute that does not mutate scores, only restores any `score`/`score_feedback` that was clobbered to NULL while a graded value still exists in `previous_attempts` for the **same `attempt_number`** (i.e. the resubmission was never actually re-graded — the old grade should stay visible).
 
-1. Teacher taps `📝 Vazifalar` (or runs `/baholar`).
-2. Bot replies with one inline button per module of the teacher's course (Module 1 … Module N), ordered by `modules.position`. Each button shows `📦 Modul X — <title> · ✅ a / 👥 b` where `a` = students who submitted at least one homework of that module, `b` = total students in scope.
-3. Tapping a module sends **two messages**:
-   - **Message A — "Topshirganlar"**: list of students in the teacher's scope who have at least one submission for that module. Each line = `@username (Full Name) — score/max · 💬 comment` per leaf assignment they submitted. If a submission is not yet graded, show `⏳ baholanmagan` instead of score.
-   - **Message B — "Topshirmaganlar"**: list of students in scope with **zero** submissions for that module. Each line = `@username (Full Name)` (or full name if no Telegram username). Includes a `📨 DM` button (Telegram deep link) when `telegram_id` is known so the teacher can contact them.
+> Out of scope (you confirmed): the lesson `completed_at` rule. We keep ≥85%-watched as-is. We will, however, expose a small admin diagnostic so you can see *which* lessons drove the count.
 
-### Scope
+---
 
-Reuse `gradingScopeIds(admin, graderId, isAdmin, groupId)` to bound students to the teacher's group(s). Modules come from the courses linked to those groups (`groups.course_id` → `modules`). Admins see all modules of all courses.
+## 1. Shared helper (single source of truth)
 
-### Implementation details
+Create `supabase/functions/telegram-bot-webhook/homework-stats.ts` (and re-export from a tiny `src/lib/homeworkStats.ts` for the web) with:
 
-- Replace the body of `/baholar` handling (line 2032) so it calls a new `renderTeacherModulePicker(...)` instead of `renderTeacherRoster(...)`. Keep `renderTeacherRoster` reachable via `/talabalar` only (backward-compatible alternative).
-- New functions:
-  - `renderTeacherModulePicker(admin, chatId, graderId, locale, isAdmin, groupId?)` — query modules for the teacher's course(s), counts submitted vs total students, renders inline buttons with callback `thm:mod:<moduleId>`.
-  - `renderModuleSubmittedList(admin, chatId, graderId, moduleId, locale, isAdmin, groupId?)` — sends Message A.
-  - `renderModuleMissingList(admin, chatId, graderId, moduleId, locale, isAdmin, groupId?)` — sends Message B with optional `tg://user?id=…` DM button.
-- New callback prefix `thm:mod:<moduleId>` — both list messages are sent in sequence; back button `thm:list` returns to the module picker.
-- New i18n keys (UZ/RU/EN): `teacherModulesTitle`, `teacherModuleRow(pos, title, submittedCount, totalCount)`, `teacherModSubmittedTitle(modPos)`, `teacherModMissingTitle(modPos)`, `teacherModNoneSubmitted`, `teacherModNoneMissing`, `teacherModBackToList`, `teacherModDmBtn`.
-- Pagination: if module count > 8, paginate (`thm:list:<page>`); same for student lists (split into chunks of ~30 per Telegram message; spill over via additional sends).
+```ts
+export type LeafEffective = {
+  assignment_id: string;
+  max_score: number;
+  effective_score: number | null;   // current score ?? latest previous_attempts.score
+  effective_feedback: string | null; // current feedback ?? latest previous_attempts.score_feedback
+  scored_at: string | null;
+  submitted: boolean;               // any submission exists (current or previous)
+};
 
-### Data queries per module click
+export function effectiveLeafGrades(
+  leaves: { id: string; max_score: number }[],
+  subs:  { assignment_id: string; score: number|null; score_feedback: string|null;
+           scored_at: string|null; previous_attempts: any[] }[],
+): LeafEffective[];
 
-```text
-assignments      = SELECT id, max_score, task_number, sap_number, parent_id
-                   FROM homework_assignments
-                   WHERE module_id = $1 AND is_active = true;
-leaves           = computeLeaves(assignments)   // existing helper
-scopeStudentIds  = gradingScopeIds(...)         // existing
-submissions      = SELECT user_id, assignment_id, score, score_feedback, submitted_at
-                   FROM homework_submissions
-                   WHERE assignment_id IN leaves AND user_id IN scopeStudentIds;
-profiles         = SELECT id, name, last_name, telegram_username, telegram_id
-                   FROM profiles WHERE id IN scopeStudentIds AND archived_at IS NULL;
+export function summarizeHomework(rows: LeafEffective[]) {
+  const totalLeaves = rows.length;
+  const submittedCount = rows.filter(r => r.submitted).length;
+  const scoredCount    = rows.filter(r => r.effective_score != null).length;
+  const earned         = rows.reduce((s,r) => s + (r.effective_score ?? 0), 0);
+  const maxTotal       = rows.reduce((s,r) => s + r.max_score, 0);
+  const avg10          = scoredCount ? +(earned / (scoredCount * 10) * 10).toFixed(1) : null;
+  return { totalLeaves, submittedCount, scoredCount, earned, maxTotal, avg10 };
+}
 ```
 
-Group submissions by `user_id` to build Message A; profiles with no submissions go to Message B.
+This replaces ad-hoc loops in `buildStatsMessage` (line 1157), `HomeworkProfileSection`, `TeacherHomework` module view, and `weekly-digest`.
 
----
+## 2. Per-student course scope
 
-## 2) Web platform (`src/pages/TeacherHomework.tsx`)
+Add `getCourseIdsForUser(admin, userId)`:
+1. Read `profiles.group_id` → `groups.course_id`. If found, return `[course_id]`.
+2. Else read `enrollments` for the user. Return all rows.
+3. Else fall back to `getDefaultCourseId()`.
 
-Add a new top-level tab **"Modul bo'yicha"** (next to the existing matrix/pending tabs). UI:
+Use it in:
+- `buildStatsMessage` (lessons total + homework leaves filter).
+- `buildHomeworkMessage`.
+- `weekly-digest` per-user totals.
+- `HomeworkProfileSection` (filter `homework_assignments` by `module.course_id IN (...)`).
 
-- A grid of module cards (auto from `modules` table). Each card shows module number, title, and `Topshirganlar X / Talabalar Y`.
-- Clicking a card opens a sheet with two collapsible sections mirroring the bot:
-  - **Topshirganlar** — table: Username · Full name · per-leaf `score/max` · comment.
-  - **Topshirmaganlar** — table: Username · Full name · `Telegram` button (deep link if `telegram_id` known).
-- Group selector at the top reuses existing `selectedGroup` state to bound the scope.
+Lesson-id list and assignment query are filtered by these course_ids so totals match what the student actually has.
 
-No new tables, RPCs, or migrations required — all data comes from existing tables (`modules`, `homework_assignments`, `homework_submissions`, `profiles`, `groups`).
+## 3. Bot stats wording (clearer + explicit average)
+
+Replace single homework line with two lines (UZ shown; same shape for RU/EN):
+
+```
+📝 Uy vazifalari: 2/5 ta topshirildi (3 ta baholandi)
+🎯 Ball: 26 / 50 · O'rtacha 8.7/10
+```
+
+If nothing scored yet → keep `statsHomeworkNone`. Update the three `T[locale].statsHomework` builders accordingly and the call site at line ~1186 to take the new `summarizeHomework` result.
+
+## 4. Persistence rules for grades and comments
+
+Tighten the resubmission path (currently in the bot and `notify-homework-submission`) so that when a new attempt is recorded:
+
+- Push the old `{score, score_feedback, scored_at, scored_by, attempt_number, submitted_at, telegram_message_url, is_late}` into `previous_attempts` (already done).
+- **Do not reset `score`/`score_feedback` to NULL until a teacher actually opens the new attempt.** Leave the previous grade in place, marked stale via a new flag `score_is_stale boolean default false` set to `true` on resubmission. Teachers' grading UI already overwrites both columns, so on regrade `score_is_stale` flips back to `false`. (Migration adds the column with a default; no destructive changes.)
+
+This way:
+- The student keeps seeing their last real grade and comment.
+- The teacher's grading queue still shows "needs review" via `score_is_stale = true` (we'll add a small badge).
+- The historical `previous_attempts` array stays intact for audit.
+
+## 5. Historical backfill (one-off, safe)
+
+Insert-only data migration (run via the data-update tool, not a schema migration):
+
+```sql
+UPDATE homework_submissions s
+SET score          = (s.previous_attempts->-1->>'score')::smallint,
+    score_feedback = COALESCE(s.score_feedback, s.previous_attempts->-1->>'score_feedback'),
+    scored_at      = COALESCE(s.scored_at,      (s.previous_attempts->-1->>'scored_at')::timestamptz)
+WHERE s.score IS NULL
+  AND jsonb_array_length(COALESCE(s.previous_attempts, '[]'::jsonb)) > 0
+  AND (s.previous_attempts->-1->>'score') IS NOT NULL;
+```
+
+This restores ~all displayed grades that resubmissions had blanked out. No grades are invented — we only resurrect a grade that already exists inside `previous_attempts`. Run before deploying the wording change so students see the corrected numbers immediately.
+
+After backfill, also recompute:
+
+- `leaderboard_cache` via existing `recalc_leaderboard()` RPC.
+- (If a homework total exists on the leaderboard score formula, it now sees the restored grades.)
+
+## 6. Web profile + teacher views consume the shared helper
+
+- `src/components/HomeworkProfileSection.tsx`: replace its inline aggregation with `summarizeHomework(effectiveLeafGrades(...))`. Show the same two-line summary at the top: `Topshirildi X/Y · Baholandi Z` and `Ball N/M · O'rtacha A/10`. Remove the existing per-module `avg_norm` parenthesis (you already asked us to drop the parenthesis form).
+- `src/pages/TeacherHomework.tsx` Module view: when listing per-leaf scores for each submitted student, display the **effective** score+comment (current ?? latest previous attempt) and tag stale rows with a "qayta yuborilgan" pill driven by `score_is_stale`.
+
+## 7. Verification
+
+- `psql` audit script (`scripts/audit_stats.mjs` — Node, read-only) that for a given `--username` prints: course scope used, lesson total + completed list, homework leaves with effective score/max/comment, computed `summarizeHomework` numbers — so you can compare against what the bot/web show. Run on @alikhanova_team to confirm before/after.
+- Add one Deno test in `supabase/functions/telegram-bot-webhook/homework-stats.test.ts` covering: current score wins, falls back to latest previous_attempts, ignores empty array, sums max correctly with mixed graded/ungraded leaves.
 
 ---
 
 ## Files touched
 
-- `supabase/functions/telegram-bot-webhook/index.ts` — i18n keys, new render functions, new callback prefix `thm:`, swap `/baholar` to call the module picker.
-- `src/pages/TeacherHomework.tsx` — new "Modul bo'yicha" tab + sheet.
-- `src/i18n/locales/{uz,ru,en}.json` — labels for the new tab and headings.
+- `supabase/functions/telegram-bot-webhook/homework-stats.ts` (new) + `homework-stats.test.ts` (new)
+- `supabase/functions/telegram-bot-webhook/index.ts` — i18n `statsHomework` rewrite, replace `buildStatsMessage` aggregation, add `getCourseIdsForUser`, swap in shared helper in `buildHomeworkMessage` too
+- `supabase/functions/notify-homework-submission/index.ts` — keep prior `score`/`score_feedback`, set `score_is_stale=true`
+- `supabase/functions/weekly-digest/index.ts` — use shared helper + per-user course scope
+- `src/lib/homeworkStats.ts` (new, mirrors helper)
+- `src/components/HomeworkProfileSection.tsx` — adopt helper, drop parenthesis avg, show two-line summary
+- `src/pages/TeacherHomework.tsx` — show effective score/comment + stale badge
+- DB schema migration: `ALTER TABLE homework_submissions ADD COLUMN score_is_stale boolean NOT NULL DEFAULT false;` (RLS unchanged, columns are additive)
+- Data migration (insert tool): the historical backfill `UPDATE` above + `SELECT recalc_leaderboard();`
+- `scripts/audit_stats.mjs` (new, dev-only)
 
 ## Out of scope
 
-- No DB schema changes.
-- No edits to grading flow itself (`gs:open`, score capture) — existing buttons still work and a `📝 Baholash` button can still be surfaced from the submitted list per ungraded submission.
+- Lesson `completed_at` rule (you said keep it).
+- Removing the client-side near-end auto-complete in `LessonPage.tsx` (separate decision).
+- Any change to teacher grading UX beyond surfacing the "stale" badge.
