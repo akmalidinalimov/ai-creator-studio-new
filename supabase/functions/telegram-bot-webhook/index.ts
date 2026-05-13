@@ -372,6 +372,19 @@ const T = {
     moduleRowBtn: (mn: number, count: number, scores: string) => `📦 Модуль ${mn} — сдано ${count} · ${scores}`,
     backToRoster: "↩️ К списку студентов",
     scorePending: "⏳",
+    thmTitle: "📝 <b>Задания по модулям</b>\nВыберите модуль:",
+    thmEmpty: "К вам пока не прикреплён курс или группа.",
+    thmModuleRow: (pos: number, title: string, sub: number, total: number) =>
+      `📦 Модуль ${pos} · ${title} — ✅ ${sub}/${total}`.slice(0, 60),
+    thmSubmittedTitle: (pos: number, title: string) =>
+      `✅ <b>Модуль ${pos} — ${csvEscapeHtml(title)}</b>\nСдали:`,
+    thmMissingTitle: (pos: number, title: string) =>
+      `❌ <b>Модуль ${pos} — ${csvEscapeHtml(title)}</b>\nНе сдали:`,
+    thmNoneSubmitted: "Никто не сдал.",
+    thmNoneMissing: "🎉 Все сдали.",
+    thmBackToList: "↩️ К списку модулей",
+    thmStudentLine: (handle: string, name: string) =>
+      `• ${handle ? `@${handle}` : ""}${handle && name ? ` (${name})` : name}`.trim(),
     tKbHealth: "🩺 Состояние группы",
     tHealthOpenSite: "🌐 Подробнее на сайте",
     tHealthEmpty: "К вам пока не прикреплена группа.",
