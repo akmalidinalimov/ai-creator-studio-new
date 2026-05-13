@@ -568,6 +568,19 @@ const T = {
     moduleRowBtn: (mn: number, count: number, scores: string) => `📦 Module ${mn} — ${count} submitted · ${scores}`,
     backToRoster: "↩️ Back to students",
     scorePending: "⏳",
+    thmTitle: "📝 <b>Homework by module</b>\nPick a module:",
+    thmEmpty: "No course or group is assigned to you yet.",
+    thmModuleRow: (pos: number, title: string, sub: number, total: number) =>
+      `📦 Module ${pos} · ${title} — ✅ ${sub}/${total}`.slice(0, 60),
+    thmSubmittedTitle: (pos: number, title: string) =>
+      `✅ <b>Module ${pos} — ${csvEscapeHtml(title)}</b>\nSubmitted:`,
+    thmMissingTitle: (pos: number, title: string) =>
+      `❌ <b>Module ${pos} — ${csvEscapeHtml(title)}</b>\nDid not submit:`,
+    thmNoneSubmitted: "Nobody submitted yet.",
+    thmNoneMissing: "🎉 Everyone submitted.",
+    thmBackToList: "↩️ Back to modules",
+    thmStudentLine: (handle: string, name: string) =>
+      `• ${handle ? `@${handle}` : ""}${handle && name ? ` (${name})` : name}`.trim(),
     tKbHealth: "🩺 Group health",
     tHealthOpenSite: "🌐 Open dashboard",
     tHealthEmpty: "No group is assigned to you yet.",
