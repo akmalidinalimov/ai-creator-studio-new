@@ -4117,6 +4117,12 @@ async function handleCallback(admin: any, cq: any) {
       const rest = data.slice("tr:mod:".length);
       const [sid, mid] = rest.split(":");
       if (sid && mid) await renderStudentModuleDetail(admin, chatId, profile.id, sid, mid, locale, isAdmin);
+    } else if (data.startsWith("thm:list:")) {
+      const page = parseInt(data.slice("thm:list:".length), 10) || 0;
+      await renderTeacherModulePicker(admin, chatId, profile.id, locale, isAdmin, page, groupIdScope);
+    } else if (data.startsWith("thm:mod:")) {
+      const mid = data.slice("thm:mod:".length);
+      if (mid) await renderTeacherModuleDetail(admin, chatId, profile.id, mid, locale, isAdmin, groupIdScope);
     }
     return;
   }
