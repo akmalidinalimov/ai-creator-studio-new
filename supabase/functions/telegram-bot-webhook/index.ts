@@ -1194,8 +1194,8 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
       lines.push(t.statsHomeworkNone);
     } else {
       lines.push(t.statsHomework(summary.submittedCount, summary.totalLeaves, summary.scoredCount));
-      if (summary.scoredCount > 0 && summary.maxScored > 0 && summary.avg10 != null) {
-        lines.push(t.statsHomeworkPoints(summary.earned, summary.maxScored, summary.avg10));
+      if (summary.maxTotal > 0) {
+        lines.push(t.statsHomeworkPoints(summary.earned, summary.maxTotal));
       }
     }
 
