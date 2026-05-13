@@ -309,7 +309,7 @@ const T = {
     statsStreakNone: "🔥 Стрик: ещё не начат",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Цель на сегодня: <b>${d}/${tar}</b>${ok ? " ✅" : ""}`,
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Домашка: <b>${sub}/${totalLeaves}</b> сдано${scored ? ` (${scored} оценено)` : ""}`,
-    statsHomeworkPoints: (earned: number, maxScored: number, avg10: number) => `🎯 Баллы: <b>${earned}/${maxScored}</b> · Среднее <b>${avg10}/10</b>`,
+    statsHomeworkPoints: (earned: number, maxTotal: number) => `🎯 Баллы: <b>${earned}/${maxTotal}</b>`,
     statsHomeworkNone: "📝 Домашка: ещё не сдавали",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Рейтинг: <b>${r} место</b> / ${tot} студентов (балл активности ${sc}/100)`,
     statsRankingNone: "🏆 Рейтинг: пока не учтён (нужна активность — посмотрите хотя бы 1 урок)",
