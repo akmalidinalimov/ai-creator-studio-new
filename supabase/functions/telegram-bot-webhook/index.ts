@@ -2981,13 +2981,13 @@ async function startHomeworkIntent(
     .maybeSingle();
   if (!a) { await sendMessage(chatId, t.gradeNotFound); return; }
 
-  // 2. Already graded? Block.
+  // 2. Already graded? Block — unless the score is stale (student already started a resubmission).
   const { data: existing } = await admin
     .from("homework_submissions")
-    .select("id, score")
+    .select("id, score, score_is_stale")
     .eq("user_id", profile.id).eq("assignment_id", assignmentId)
     .maybeSingle();
-  if (existing && existing.score != null) {
+  if (existing && existing.score != null && !existing.score_is_stale) {
     await sendMessage(chatId, t.hwIntentAlreadyScored);
     return;
   }
@@ -3268,6 +3268,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
         score_feedback: null,
         scored_by: null,
         scored_at: null,
+        score_is_stale: false,
         is_late: false,
         telegram_chat_id: chatId,
         telegram_thread_id: threadId,
