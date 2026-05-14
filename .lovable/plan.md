@@ -1,65 +1,74 @@
-## The bug
+## Issues found (single file: `supabase/functions/telegram-bot-webhook/index.ts`)
 
-`handleGroupTopicMessage` in `supabase/functions/telegram-bot-webhook/index.ts` already filters intents by `user_id = sender's profile.id` for normal posters — so a known student's random message in the topic cannot consume another student's pending intent.
+### 1. Teacher gets no notification on resubmission
 
-The remaining leak is the **anonymous-admin proxy** branch (lines 3199–3207, 3229–3233):
+`notifyTeachersOfSubmission` (lines ~3722-3730) throttles DMs:
 
 ```ts
-if (isAnon) {
-  // anonymous admin proxy — match by topic alone (legitimate use)
-} else {
-  if (!profile) { return; }
-  q = q.eq("user_id", profile.id);
-}
+// Throttle: skip if we already queued/sent a DM for this same student+assignment in the last 24h
+const since = new Date(Date.now() - 24*60*60*1000).toISOString();
+const { data: recent } = await admin.from("homework_teacher_dm_queue")
+  .select("id").eq("student_id", studentProfile.id).eq("assignment_id", assignmentId)
+  .gte("created_at", since).limit(1);
+if (recent && recent.length) return;
 ```
 
-When a teacher/admin posts in the topic "as the group" (Telegram's anonymous admin mode, sender id `1087968824`), the handler can't tell who actually sent it, so it falls back to "match the most recent active intent in this topic." That intent belongs to whichever student last tapped 📤 Topshirish — so the admin's message text/file/link gets stamped onto that student's `homework_submissions` row, the intent is consumed, and the student's later real submission no longer matches any intent.
+When a student resubmits within 24h (the common case), this hit silently swallows the new submission — teacher gets no DM, no link, nothing in the pending list. This matches the symptom the user reports.
 
-The user's symptom ("someone else posts → it is assigned to the homework link, every student should have their own") is exactly this anonymous-admin case (and is the only remaining unattributed-sender path).
+### 2. Feedback comment is truncated to 40 chars
 
-## Fix (single file: `supabase/functions/telegram-bot-webhook/index.ts`, `handleGroupTopicMessage` only)
+`hwTaskScored` (uz line 240, ru 437, en 634) renders feedback as:
 
-Drop the anonymous-admin fallback. A submission must come from the student themselves; if we can't identify the sender, we must not attach the message to anyone.
+```ts
+`   ✅ V${tn}: ${sc}/${mx}${fb ? ` — "${csvEscapeHtml(fb).slice(0, 40)}"` : ""}`
+```
 
-1. **Remove the `isAnon` branch** — always require an identified profile and always filter intents by `user_id = profile.id`. Anonymous-admin posts in the topic are silently ignored (logged for debugging).
+This is the listing the student sees in `/galaba` / per-module summary — long comments are cut off mid-sentence. The grading DM (`gradeStudentDM`) already shows the full comment; only this list view trims.
 
-   ```ts
-   if (!profile) {
-     console.log("hw:group:unknown-sender-ignored", { fromId, isAnon, chatId, threadId, messageId });
-     return;
-   }
-   q = q.eq("user_id", profile.id);
-   ```
+### 3. Submission link
 
-2. **Remove the now-dead "resolve profile from intent" block** (lines 3216–3228) — profile is always present past the guard above.
+Already correct after the prior `handleGroupTopicMessage` fix — every consumed intent writes `telegram_message_url` from the student's actual post. No change needed; the link will reach the teacher again once #1 is fixed.
 
-3. **Keep the existing defensive `intent.user_id !== profile.id` check** as belt-and-suspenders.
+## Fix
 
-4. **Tighten the message-type guard** (already mostly there): only consume the intent when the message carries actual submission content — `photo`, `document`, `video`, `voice`, `video_note`, or non-empty `text`/`caption`. A bare service message (e.g. forum-topic-edited, pin, join) must early-return *before* we touch the intent. Today the guard at line 3252 returns only when none of the media fields and no text exist, which is correct, but I'll also explicitly skip when `msg.text` and `msg.caption` are both empty/whitespace AND no fileId — same effect, just clearer.
+**A. Replace the 24h "any submission" throttle with a per-submission guard.**
 
-That's the entire fix. No DB migration, no other code paths touched.
+Throttle on `submission_id` instead of `student_id + assignment_id`. This still prevents accidental double-DM for the same submission row (e.g. webhook retries) but always lets a fresh resubmission through:
 
-## What this guarantees
+```ts
+const { data: recent } = await admin.from("homework_teacher_dm_queue")
+  .select("id").eq("submission_id", submissionId).limit(1);
+if (recent && recent.length) return;
+```
 
-- Only a message **from the student who created the intent** can consume that intent and become their submission link.
-- Admin/teacher messages in the topic (anonymous or identified) never overwrite a student's pending submission.
-- An unidentified sender (no profile match on `telegram_id`) never consumes any intent.
-- If the student never posts within the 10-minute TTL, the intent simply expires — no other person's message can claim it.
-- Existing resubmission flow, teacher-DM notifications, grading flow, and stats are untouched.
+Result: each new student post that calls `handleGroupTopicMessage` updates `homework_submissions` (same row, new `submitted_at`/`telegram_message_url`/`score_is_stale=false`) and queues a fresh teacher DM with the new topic link and "🎯 Baholash" button. The teacher's pending-grading list (from `tKbGrade` → ungraded query) automatically picks the row back up because the prior `score` was already cleared by the resubmit confirm flow (`hw:resub_yes` sets `score_is_stale=true`, and the upsert in `handleGroupTopicMessage` resets `score=null, scored_by=null, scored_at=null, score_is_stale=false`).
+
+**B. Stop trimming feedback in the task list.**
+
+Remove `.slice(0, 40)` from all three locale variants of `hwTaskScored` so the student sees the full comment. Telegram's 4096-char message cap still bounds the overall message; a single feedback string in practice is well under that.
+
+```ts
+// before
+hwTaskScored: (tn, sc, mx, fb) => `   ✅ V${tn}: ${sc}/${mx}${fb ? ` — "${csvEscapeHtml(fb).slice(0, 40)}"` : ""}`
+// after
+hwTaskScored: (tn, sc, mx, fb) => `   ✅ V${tn}: ${sc}/${mx}${fb ? `\n      💬 ${csvEscapeHtml(fb)}` : ""}`
+```
+
+(Move feedback to its own indented line so long text wraps cleanly under each task.)
 
 ## Out of scope
 
-- No changes to `startHomeworkIntent`, RPCs, web UI, grading, stats, or translations.
 - No DB migration.
-- The legitimate use case of a teacher posting "as the group" is preserved as a normal topic message — it just no longer auto-attaches to a student.
+- No changes to `handleGroupTopicMessage`, `startHomeworkIntent`, grading flow, RPCs, web UI, stats, translations beyond the three string templates above, or `notify-homework-submission` cron.
+- No changes to quiet-hours behavior, immediate-DM behavior, or audit logging.
 
 ## Verification
 
 1. Deploy `telegram-bot-webhook`.
-2. Student A: `/vazifalar` → 📤 Topshirish → tap topic link → **does not post**.
-3. Have a teacher post in the same topic (both as themselves and "as the group" via anonymous admin). Confirm:
-   - No `homework_submissions` row for Student A is updated.
-   - The intent row for Student A is still present (not consumed).
-   - Edge function logs show `hw:group:unknown-sender-ignored` (anon) or `hw:group:no-matching-intent` (other student).
-4. Student A then posts their real submission → it attaches correctly, intent is consumed, teacher gets the DM, link points to Student A's actual message.
-5. Repeat with two students A and B both holding open intents in the same topic — each student's own post resolves to their own intent.
+2. Student submits → teacher DM arrives with topic link + "🎯 Baholash" (unchanged).
+3. Teacher grades with a long (>40 char) comment → student opens `/vazifalar` → comment renders in full on its own line.
+4. Student taps 🔁 qayta topshirish → posts new file in topic → confirm:
+   - Student gets ✅ confirmation DM.
+   - Teacher gets a NEW DM with the NEW message link + Baholash button.
+   - Teacher's pending grading list shows the task again.
+   - Teacher grades → previous score is replaced (already covered by existing update path).
