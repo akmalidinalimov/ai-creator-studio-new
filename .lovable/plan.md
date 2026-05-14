@@ -1,55 +1,65 @@
-## Bug
+## The bug
 
-When a student taps **🔁 qayta topshirish** in the bot and confirms **Yes**, the bot:
+`handleGroupTopicMessage` in `supabase/functions/telegram-bot-webhook/index.ts` already filters intents by `user_id = sender's profile.id` for normal posters — so a known student's random message in the topic cannot consume another student's pending intent.
 
-1. Calls `start_homework_resubmission` RPC — which now (correctly) **preserves** the prior `score` / `score_feedback` and just sets `score_is_stale = true`.
-2. Then calls `startHomeworkIntent(...)` to open a fresh intent and point the student to the topic.
-3. `startHomeworkIntent` checks `homework_submissions.score IS NOT NULL` and bails out with **"Bu vazifa allaqachon baholangan ✅"**.
-
-So the resubmission RPC fires, but the user gets the "already graded" message instead of the topic link. Tapping Yes again repeats the same outcome (RPC is idempotent on the now-stale row).
-
-## Fix (telegram-bot-webhook/index.ts only)
-
-### 1. `startHomeworkIntent` — treat stale grades as resubmittable
-
-In the existing-submission check (around line 2985), select `score_is_stale` and skip the "already graded" block when `score_is_stale === true`. A stale score means the student already pressed "qayta topshirish" — they should be allowed to open a fresh intent.
+The remaining leak is the **anonymous-admin proxy** branch (lines 3199–3207, 3229–3233):
 
 ```ts
-const { data: existing } = await admin
-  .from("homework_submissions")
-  .select("id, score, score_is_stale")
-  .eq("user_id", profile.id).eq("assignment_id", assignmentId)
-  .maybeSingle();
-if (existing && existing.score != null && !existing.score_is_stale) {
-  await sendMessage(chatId, t.hwIntentAlreadyScored);
-  return;
+if (isAnon) {
+  // anonymous admin proxy — match by topic alone (legitimate use)
+} else {
+  if (!profile) { return; }
+  q = q.eq("user_id", profile.id);
 }
 ```
 
-### 2. Group-topic upsert — clear the stale flag on the new post
+When a teacher/admin posts in the topic "as the group" (Telegram's anonymous admin mode, sender id `1087968824`), the handler can't tell who actually sent it, so it falls back to "match the most recent active intent in this topic." That intent belongs to whichever student last tapped 📤 Topshirish — so the admin's message text/file/link gets stamped onto that student's `homework_submissions` row, the intent is consumed, and the student's later real submission no longer matches any intent.
 
-In `handleGroupTopicMessage` (around line 3260), when a new submission post lands and we reset `score`, `score_feedback`, `scored_by`, `scored_at` to null, also set `score_is_stale: false`. Without this, a row briefly looks "stale with no score" between submit and grade.
+The user's symptom ("someone else posts → it is assigned to the homework link, every student should have their own") is exactly this anonymous-admin case (and is the only remaining unattributed-sender path).
 
-Add to the upsert payload:
-```ts
-score_is_stale: false,
-```
+## Fix (single file: `supabase/functions/telegram-bot-webhook/index.ts`, `handleGroupTopicMessage` only)
 
-## What this fixes (matches user's spec)
+Drop the anonymous-admin fallback. A submission must come from the student themselves; if we can't identify the sender, we must not attach the message to anyone.
 
-- **Resubmit confirmation:** After tapping Yes, the bot now sends `hwIntentReady(...)` ("📌 Modul N topikga o'tish") instead of "already graded". That is the confirmation the student should receive.
-- **Teacher notification on resubmission:** Already wired — when the student posts the new file/text in the topic, `handleGroupTopicMessage` calls `notifyTeachersOfSubmission(...)` exactly as for first submissions. No change needed.
-- **Grade replacement:** Already wired — the topic upsert clears `score/score_feedback/scored_by/scored_at`, and the teacher grading flow writes the new score (and `TeacherHomework.tsx` resets `score_is_stale = false`). The prior grade is preserved in `previous_attempts` for history; the *current* score becomes the new one.
+1. **Remove the `isAnon` branch** — always require an identified profile and always filter intents by `user_id = profile.id`. Anonymous-admin posts in the topic are silently ignored (logged for debugging).
+
+   ```ts
+   if (!profile) {
+     console.log("hw:group:unknown-sender-ignored", { fromId, isAnon, chatId, threadId, messageId });
+     return;
+   }
+   q = q.eq("user_id", profile.id);
+   ```
+
+2. **Remove the now-dead "resolve profile from intent" block** (lines 3216–3228) — profile is always present past the guard above.
+
+3. **Keep the existing defensive `intent.user_id !== profile.id` check** as belt-and-suspenders.
+
+4. **Tighten the message-type guard** (already mostly there): only consume the intent when the message carries actual submission content — `photo`, `document`, `video`, `voice`, `video_note`, or non-empty `text`/`caption`. A bare service message (e.g. forum-topic-edited, pin, join) must early-return *before* we touch the intent. Today the guard at line 3252 returns only when none of the media fields and no text exist, which is correct, but I'll also explicitly skip when `msg.text` and `msg.caption` are both empty/whitespace AND no fileId — same effect, just clearer.
+
+That's the entire fix. No DB migration, no other code paths touched.
+
+## What this guarantees
+
+- Only a message **from the student who created the intent** can consume that intent and become their submission link.
+- Admin/teacher messages in the topic (anonymous or identified) never overwrite a student's pending submission.
+- An unidentified sender (no profile match on `telegram_id`) never consumes any intent.
+- If the student never posts within the 10-minute TTL, the intent simply expires — no other person's message can claim it.
+- Existing resubmission flow, teacher-DM notifications, grading flow, and stats are untouched.
 
 ## Out of scope
 
-- No DB migrations.
-- No changes to web UI, RPC, grading flow, stats, or any non-homework-resubmission code path.
-- No translation string changes.
+- No changes to `startHomeworkIntent`, RPCs, web UI, grading, stats, or translations.
+- No DB migration.
+- The legitimate use case of a teacher posting "as the group" is preserved as a normal topic message — it just no longer auto-attaches to a student.
 
 ## Verification
 
-- Deploy `telegram-bot-webhook`.
-- As a graded student: `/vazifalar` → tap "🔁 qayta topshirish" → tap **Ha** → expect "📌 Modul N topikga o'tish" link (no "already graded" message).
-- Post a new file/text in the topic → student gets "✅ qabul qilindi" DM, teacher gets "🔁 qayta topshirildi"-style DM via existing `notifyTeachersOfSubmission`.
-- Teacher grades → new score replaces old; old snapshot retained in `previous_attempts`.
+1. Deploy `telegram-bot-webhook`.
+2. Student A: `/vazifalar` → 📤 Topshirish → tap topic link → **does not post**.
+3. Have a teacher post in the same topic (both as themselves and "as the group" via anonymous admin). Confirm:
+   - No `homework_submissions` row for Student A is updated.
+   - The intent row for Student A is still present (not consumed).
+   - Edge function logs show `hw:group:unknown-sender-ignored` (anon) or `hw:group:no-matching-intent` (other student).
+4. Student A then posts their real submission → it attaches correctly, intent is consumed, teacher gets the DM, link points to Student A's actual message.
+5. Repeat with two students A and B both holding open intents in the same topic — each student's own post resolves to their own intent.
