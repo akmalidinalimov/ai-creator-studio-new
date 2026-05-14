@@ -237,7 +237,7 @@ const T = {
     btnSiteDetail: "📖 Saytda batafsil",
     btnTopicGo: (n: number) => `📌 Modul ${n} topikga`,
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Modul ${n} — ${csvEscapeHtml(title)}</b> (${taskCount} ta)`,
-    hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ V${tn}: ${sc}/${mx}${fb ? ` — "${csvEscapeHtml(fb).slice(0, 40)}"` : ""}`,
+    hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ V${tn}: ${sc}/${mx}${fb ? `\n      💬 ${csvEscapeHtml(fb)}` : ""}`,
     hwTaskUnscored: (tn: number) => `   ⏳ V${tn}: hali baholanmagan`,
     hwSubmitHint: (mn: number, tn: number) => `   👇 Topshirish uchun pastdagi "📤 Topshirish — M${mn}·V${tn}" tugmasini bosing.`,
     hwModuleAllDone: "   ✅ Bu modul vazifalari topshirilgan.",
@@ -434,7 +434,7 @@ const T = {
     btnSiteDetail: "📖 Подробнее на сайте",
     btnTopicGo: (n: number) => `📌 Топик модуля ${n}`,
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Модуль ${n} — ${csvEscapeHtml(title)}</b> (${taskCount})`,
-    hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ З${tn}: ${sc}/${mx}${fb ? ` — "${csvEscapeHtml(fb).slice(0, 40)}"` : ""}`,
+    hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ З${tn}: ${sc}/${mx}${fb ? `\n      💬 ${csvEscapeHtml(fb)}` : ""}`,
     hwTaskUnscored: (tn: number) => `   ⏳ З${tn}: ещё не оценено`,
     hwSubmitHint: (mn: number, tn: number) => `   👇 Нажмите кнопку ниже "📤 Сдать — М${mn}·З${tn}".`,
     hwModuleAllDone: "   ✅ Задания этого модуля сданы.",
@@ -631,7 +631,7 @@ const T = {
     btnSiteDetail: "📖 Open on site",
     btnTopicGo: (n: number) => `📌 Module ${n} topic`,
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Module ${n} — ${csvEscapeHtml(title)}</b> (${taskCount})`,
-    hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ T${tn}: ${sc}/${mx}${fb ? ` — "${csvEscapeHtml(fb).slice(0, 40)}"` : ""}`,
+    hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ T${tn}: ${sc}/${mx}${fb ? `\n      💬 ${csvEscapeHtml(fb)}` : ""}`,
     hwTaskUnscored: (tn: number) => `   ⏳ T${tn}: not graded yet`,
     hwSubmitHint: (mn: number, tn: number) => `   👇 Tap "📤 Submit — M${mn}·T${tn}" below.`,
     hwModuleAllDone: "   ✅ All tasks for this module submitted.",
@@ -3718,16 +3718,15 @@ async function notifyTeachersOfSubmission(
       return;
     }
 
-    // Throttle: skip if we already queued/sent a DM for this same student+assignment in the last 24h
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // Throttle: only dedupe DMs for the EXACT same submission row (e.g. webhook retries).
+    // Resubmissions reuse the submission row but get a fresh telegram_message_url + reset score,
+    // so they must always queue a new DM — see plan v3.14.38.
     const { data: recent } = await admin
       .from("homework_teacher_dm_queue")
-      .select("id")
-      .eq("student_id", studentProfile.id)
-      .eq("assignment_id", assignmentId)
-      .gte("created_at", since)
-      .limit(1);
-    if (recent && recent.length) return;
+      .select("id, message_url")
+      .eq("submission_id", submissionId)
+      .limit(5);
+    if (recent && recent.some((r: any) => r.message_url === messageUrl)) return;
 
     // Quiet hours 22:00–08:00 Tashkent
     const now = new Date();
