@@ -3239,6 +3239,19 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     const messageUrl = buildMessageLink(chatId, threadId, messageId);
     const submittedText = (msg.caption || msg.text || "").slice(0, 4000);
 
+    // v3.14.39: bump attempt_number on every consumed-intent post so the
+    // homework_submissions_guard trigger permits clearing a previously-set
+    // score. Without this bump, a resubmission post is silently rolled back
+    // to keep the old score, hiding the new attempt from the teacher's
+    // pending list (both /galaba and the web dashboard filter by score IS NULL).
+    const { data: existingSub } = await admin
+      .from("homework_submissions")
+      .select("attempt_number")
+      .eq("user_id", profile.id)
+      .eq("assignment_id", intent.assignment_id)
+      .maybeSingle();
+    const nextAttempt = ((existingSub?.attempt_number as number | null) ?? 0) + 1;
+
     // Upsert submission. Unique key (user_id, assignment_id) — idempotent.
     const { data: upserted, error: upErr } = await admin
       .from("homework_submissions")
@@ -3247,6 +3260,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
         assignment_id: intent.assignment_id,
         submitted_text: submittedText,
         submitted_at: new Date().toISOString(),
+        attempt_number: nextAttempt,
         score: null,
         score_feedback: null,
         scored_by: null,
