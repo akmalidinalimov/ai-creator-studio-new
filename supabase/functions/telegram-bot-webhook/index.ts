@@ -434,7 +434,7 @@ const T = {
     btnSiteDetail: "📖 Подробнее на сайте",
     btnTopicGo: (n: number) => `📌 Топик модуля ${n}`,
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Модуль ${n} — ${csvEscapeHtml(title)}</b> (${taskCount})`,
-    hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ З${tn}: ${sc}/${mx}${fb ? ` — "${csvEscapeHtml(fb).slice(0, 40)}"` : ""}`,
+    hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ З${tn}: ${sc}/${mx}${fb ? `\n      💬 ${csvEscapeHtml(fb)}` : ""}`,
     hwTaskUnscored: (tn: number) => `   ⏳ З${tn}: ещё не оценено`,
     hwSubmitHint: (mn: number, tn: number) => `   👇 Нажмите кнопку ниже "📤 Сдать — М${mn}·З${tn}".`,
     hwModuleAllDone: "   ✅ Задания этого модуля сданы.",
