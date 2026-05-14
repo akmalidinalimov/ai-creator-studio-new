@@ -2752,7 +2752,7 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
         const title = `${a?.title || ""}${tn}`;
         try {
           const url = await createMagicLink(admin, sub.user_id, "login", "/profile");
-          await sendMessage(stu.telegram_id, tt.gradeStudentDM(csvEscapeHtml(title), score, max, csvEscapeHtml(feedback || "")), {
+          await sendLongMessage(stu.telegram_id, tt.gradeStudentDM(csvEscapeHtml(title), score, max, csvEscapeHtml(feedback || "")), {
             inline_keyboard: [[{ text: tt.btnSiteOpen, url }]],
           });
         } catch (e) {
