@@ -693,6 +693,31 @@ async function sendMessage(chatId: number, text: string, reply_markup?: unknown)
   });
 }
 
+// Telegram caps single sendMessage at 4096 chars. Split on line/word boundaries
+// so long teacher feedback (>4096) is delivered in full instead of failing or
+// being truncated. The reply_markup is attached only to the LAST chunk so the
+// inline buttons stay with the final message the user sees.
+async function sendLongMessage(chatId: number, text: string, reply_markup?: unknown) {
+  const MAX = 3900; // leave headroom for HTML entities + parse_mode safety
+  if (text.length <= MAX) return sendMessage(chatId, text, reply_markup);
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > MAX) {
+    let cut = remaining.lastIndexOf("\n", MAX);
+    if (cut < MAX * 0.5) cut = remaining.lastIndexOf(" ", MAX);
+    if (cut < MAX * 0.5) cut = MAX;
+    chunks.push(remaining.slice(0, cut));
+    remaining = remaining.slice(cut).replace(/^[\n ]+/, "");
+  }
+  if (remaining.length) chunks.push(remaining);
+  let last: any;
+  for (let i = 0; i < chunks.length; i++) {
+    const isLast = i === chunks.length - 1;
+    last = await sendMessage(chatId, chunks[i], isLast ? reply_markup : undefined);
+  }
+  return last;
+}
+
 function getMainKeyboard(locale: Locale) {
   const t = T[locale];
   return {
@@ -2727,7 +2752,7 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
         const title = `${a?.title || ""}${tn}`;
         try {
           const url = await createMagicLink(admin, sub.user_id, "login", "/profile");
-          await sendMessage(stu.telegram_id, tt.gradeStudentDM(csvEscapeHtml(title), score, max, csvEscapeHtml(feedback || "")), {
+          await sendLongMessage(stu.telegram_id, tt.gradeStudentDM(csvEscapeHtml(title), score, max, csvEscapeHtml(feedback || "")), {
             inline_keyboard: [[{ text: tt.btnSiteOpen, url }]],
           });
         } catch (e) {
