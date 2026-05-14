@@ -631,7 +631,7 @@ const T = {
     btnSiteDetail: "📖 Open on site",
     btnTopicGo: (n: number) => `📌 Module ${n} topic`,
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Module ${n} — ${csvEscapeHtml(title)}</b> (${taskCount})`,
-    hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ T${tn}: ${sc}/${mx}${fb ? ` — "${csvEscapeHtml(fb).slice(0, 40)}"` : ""}`,
+    hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ T${tn}: ${sc}/${mx}${fb ? `\n      💬 ${csvEscapeHtml(fb)}` : ""}`,
     hwTaskUnscored: (tn: number) => `   ⏳ T${tn}: not graded yet`,
     hwSubmitHint: (mn: number, tn: number) => `   👇 Tap "📤 Submit — M${mn}·T${tn}" below.`,
     hwModuleAllDone: "   ✅ All tasks for this module submitted.",
