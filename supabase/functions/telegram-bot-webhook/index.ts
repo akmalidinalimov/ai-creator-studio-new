@@ -3268,6 +3268,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
         score_feedback: null,
         scored_by: null,
         scored_at: null,
+        score_is_stale: false,
         is_late: false,
         telegram_chat_id: chatId,
         telegram_thread_id: threadId,
