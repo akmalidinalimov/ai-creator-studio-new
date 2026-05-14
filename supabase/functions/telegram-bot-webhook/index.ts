@@ -3184,50 +3184,33 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       profile = await findProfileByTelegramId(admin, fromId);
     }
 
-    // v3.14.36: Strict intent matching. Only fall back to topic-only match for Telegram's
-    // anonymous-admin proxy bot. For any other unidentified sender, IGNORE — otherwise an
-    // unrelated chat message in the topic would overwrite the active student's submission link.
+    // v3.14.37: Strict per-student attribution. A submission can ONLY be created
+    // by the same student who opened the intent. Anonymous-admin proxy posts and
+    // any unidentified sender are ignored — otherwise an admin/teacher message
+    // (or any other person's post) in the topic would overwrite the active
+    // student's pending submission link.
+    if (!profile) {
+      console.log("hw:group:unknown-sender-ignored", JSON.stringify({ fromId, isAnon, chatId, threadId, messageId }));
+      return;
+    }
     const nowIso = new Date().toISOString();
-    let q = admin
+    const { data: intents, error: intentErr } = await admin
       .from("bot_homework_intents")
       .select("id, user_id, assignment_id, module_id, group_id")
       .eq("telegram_chat_id", chatId)
       .eq("telegram_thread_id", threadId)
+      .eq("user_id", profile.id)
       .gt("expires_at", nowIso)
       .order("created_at", { ascending: false })
       .limit(1);
-    if (isAnon) {
-      // anonymous admin proxy — match by topic alone (legitimate use)
-    } else {
-      if (!profile) {
-        console.log("hw:group:unknown-sender-ignored", JSON.stringify({ fromId, chatId, threadId, messageId }));
-        return;
-      }
-      q = q.eq("user_id", profile.id);
-    }
-    const { data: intents, error: intentErr } = await q;
     if (intentErr) console.error("hw:group:intent-query-err", intentErr);
     const intent = (intents && intents[0]) as any;
     if (!intent) {
-      console.log("hw:group:no-matching-intent", JSON.stringify({ user_id: profile?.id, chatId, threadId, isAnon }));
-      return; // silent — no pending submission for this topic
+      console.log("hw:group:no-matching-intent", JSON.stringify({ user_id: profile.id, chatId, threadId }));
+      return; // silent — no pending submission for this student in this topic
     }
-
-    // If we didn't have a profile (anonymous post), resolve it from the intent
-    if (!profile) {
-      const { data: p } = await admin
-        .from("profiles")
-        .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id")
-        .eq("id", intent.user_id)
-        .maybeSingle();
-      profile = p;
-      if (!profile) {
-        console.log("hw:group:intent-user-not-found", intent.user_id);
-        return;
-      }
-    }
-    // v3.14.36: Defensive — never attribute a message to a user other than the intent owner.
-    if (!isAnon && intent.user_id !== profile.id) {
+    // Defensive — never attribute a message to a user other than the intent owner.
+    if (intent.user_id !== profile.id) {
       console.log("hw:group:intent-user-mismatch", JSON.stringify({ intent_user: intent.user_id, sender_user: profile.id, chatId, threadId, messageId }));
       return;
     }
