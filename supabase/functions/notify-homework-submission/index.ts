@@ -87,10 +87,12 @@ Deno.serve(async (req) => {
         parse_mode: "HTML",
         reply_markup: { inline_keyboard: [buttons] },
       });
-      if (!resp.ok) {
-        const errTxt = await resp.text().catch(() => "");
+      let okBody: any = null;
+      try { okBody = await resp.clone().json(); } catch { /* ignore */ }
+      if (!resp.ok || !okBody?.ok) {
+        const errTxt = okBody ? JSON.stringify(okBody) : await resp.text().catch(() => "");
         console.error("hw teacher dm fail", row.id, resp.status, errTxt);
-        await markSent(`tg_${resp.status}`);
+        await markSent(`tg_${resp.status}_${String(errTxt).slice(0, 120)}`);
         skipped++;
       } else {
         await markSent();
