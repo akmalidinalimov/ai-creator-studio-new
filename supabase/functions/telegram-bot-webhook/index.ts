@@ -3047,18 +3047,14 @@ async function startHomeworkIntent(
     return;
   }
 
-  // 3. Resolve student group + topic
+  // 3. Resolve student group + topic (per-module override → group shared topic)
   if (!profile.group_id) { await sendMessage(chatId, t.hwIntentNoGroup); return; }
-  const { data: gmt } = await admin
-    .from("group_module_topics")
-    .select("telegram_topic_url")
-    .eq("group_id", profile.group_id).eq("module_id", a.module_id)
-    .maybeSingle();
-  const topicUrl = gmt?.telegram_topic_url;
+  const { url: topicUrl } = await resolveModuleTopicUrl(admin, profile.group_id, a.module_id);
   if (!topicUrl) { await sendMessage(chatId, t.hwIntentNoTopic); return; }
 
   const parsed = parseTopicUrl(topicUrl);
   if (!parsed) { await sendMessage(chatId, t.hwIntentNoTopic); return; }
+
 
   // 4. Upsert intent (10 min TTL)
   const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
