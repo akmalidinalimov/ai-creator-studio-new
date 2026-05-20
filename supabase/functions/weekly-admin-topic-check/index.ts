@@ -32,20 +32,26 @@ Deno.serve(async (req) => {
     const { data: modules } = courseIds.length
       ? await admin.from("modules").select("id, title, position, course_id").in("course_id", courseIds)
       : { data: [] };
-    const { data: groups } = await admin.from("groups").select("id, name, course_id");
+    const { data: groups } = await admin.from("groups").select("id, name, course_id, homework_topic_url");
     const { data: topics } = await admin.from("group_module_topics").select("group_id, module_id");
 
     const tset = new Set((topics || []).map((t: any) => `${t.group_id}::${t.module_id}`));
+    const sharedByGroup = new Map<string, string | null>(
+      ((groups || []) as any[]).map((g: any) => [g.id, g.homework_topic_url || null]),
+    );
     type Missing = { groupName: string; moduleTitle: string; modulePos: number };
     const missing: Missing[] = [];
     for (const g of (groups || []) as any[]) {
       const mods = (modules || []).filter((m: any) => m.course_id === g.course_id);
       for (const m of mods as any[]) {
-        if (!tset.has(`${g.id}::${m.id}`)) {
+        const hasPerModule = tset.has(`${g.id}::${m.id}`);
+        const hasShared = !!sharedByGroup.get(g.id);
+        if (!hasPerModule && !hasShared) {
           missing.push({ groupName: g.name, moduleTitle: m.title, modulePos: m.position });
         }
       }
     }
+
 
     // Admin recipients
     const { data: roles } = await admin.from("user_roles").select("user_id").eq("role", "admin");

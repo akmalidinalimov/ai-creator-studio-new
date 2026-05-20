@@ -1271,14 +1271,25 @@ async function buildHomeworkMessage(
 
     const aIds = list.map((a) => a.id);
     const moduleIds = Array.from(new Set(list.map((a) => a.module_id)));
-    const [{ data: subs }, { data: topics }] = await Promise.all([
+    const [{ data: subs }, { data: topics }, { data: groupRow }] = await Promise.all([
       admin.from("homework_submissions").select("assignment_id, score, score_feedback").eq("user_id", userId).in("assignment_id", aIds),
       groupId
         ? admin.from("group_module_topics").select("module_id, telegram_topic_url").eq("group_id", groupId).in("module_id", moduleIds)
         : Promise.resolve({ data: [] }),
+      groupId
+        ? admin.from("groups").select("homework_topic_url").eq("id", groupId).maybeSingle()
+        : Promise.resolve({ data: null }),
     ]);
     const subMap = new Map((subs || []).map((s: any) => [s.assignment_id, s]));
-    const topicMap = new Map((topics || []).map((tp: any) => [tp.module_id, tp.telegram_topic_url]));
+    const sharedTopicUrl: string | null = (groupRow as any)?.homework_topic_url || null;
+    const topicMap = new Map<string, string>();
+    for (const tp of (topics || []) as any[]) {
+      if (tp.telegram_topic_url) topicMap.set(tp.module_id, tp.telegram_topic_url);
+    }
+    if (sharedTopicUrl) {
+      for (const mid of moduleIds) if (!topicMap.has(mid)) topicMap.set(mid, sharedTopicUrl);
+    }
+
 
     // Group by module
     const byModule = new Map<string, any[]>();
@@ -2192,7 +2203,18 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
   const topicsRes = prof?.group_id && moduleIds.length
     ? await admin.from("group_module_topics").select("module_id, telegram_topic_url").eq("group_id", prof.group_id).in("module_id", moduleIds)
     : { data: [] as any[] };
-  const topicMap = new Map(((topicsRes.data || []) as any[]).map((tp: any) => [tp.module_id, tp.telegram_topic_url]));
+  const groupTopicRes = prof?.group_id
+    ? await admin.from("groups").select("homework_topic_url").eq("id", prof.group_id).maybeSingle()
+    : { data: null as any };
+  const sharedTopicUrl: string | null = (groupTopicRes.data as any)?.homework_topic_url || null;
+  const topicMap = new Map<string, string>();
+  for (const tp of ((topicsRes.data || []) as any[])) {
+    if (tp.telegram_topic_url) topicMap.set(tp.module_id, tp.telegram_topic_url);
+  }
+  if (sharedTopicUrl) {
+    for (const mid of moduleIds) if (!topicMap.has(mid)) topicMap.set(mid, sharedTopicUrl);
+  }
+
 
   const byModule = new Map<string, { mPos: number; mTitle: string; mid: string; items: any[] }>();
   for (const s of list) {
@@ -2974,6 +2996,36 @@ function parseTopicUrl(url: string): { chatId: number; threadId: number } | null
   }
 }
 
+// Resolve the submission topic URL for a (group, module) pair.
+// Per-module override in `group_module_topics` wins; otherwise fall back to
+// the group's shared `homework_topic_url` (Admin → Groups setting).
+async function resolveModuleTopicUrl(
+  admin: any,
+  groupId: string | null | undefined,
+  moduleId: string,
+): Promise<{ url: string | null; source: "per_module" | "shared" | null }> {
+  if (!groupId) return { url: null, source: null };
+  try {
+    const { data: gmt } = await admin
+      .from("group_module_topics")
+      .select("telegram_topic_url")
+      .eq("group_id", groupId).eq("module_id", moduleId)
+      .maybeSingle();
+    if (gmt?.telegram_topic_url) return { url: gmt.telegram_topic_url, source: "per_module" };
+  } catch (_e) { /* fall through */ }
+  try {
+    const { data: g } = await admin
+      .from("groups")
+      .select("homework_topic_url")
+      .eq("id", groupId)
+      .maybeSingle();
+    if (g?.homework_topic_url) return { url: g.homework_topic_url, source: "shared" };
+  } catch (_e) { /* noop */ }
+  return { url: null, source: null };
+}
+
+
+
 // Build a re-openable link to a specific message inside a private supergroup topic.
 function buildMessageLink(chatId: number, threadId: number, messageId: number): string {
   // chatId is -100xxxxxxxxxx → strip -100 → xxxxxxxxxx
@@ -3017,18 +3069,14 @@ async function startHomeworkIntent(
     return;
   }
 
-  // 3. Resolve student group + topic
+  // 3. Resolve student group + topic (per-module override → group shared topic)
   if (!profile.group_id) { await sendMessage(chatId, t.hwIntentNoGroup); return; }
-  const { data: gmt } = await admin
-    .from("group_module_topics")
-    .select("telegram_topic_url")
-    .eq("group_id", profile.group_id).eq("module_id", a.module_id)
-    .maybeSingle();
-  const topicUrl = gmt?.telegram_topic_url;
+  const { url: topicUrl } = await resolveModuleTopicUrl(admin, profile.group_id, a.module_id);
   if (!topicUrl) { await sendMessage(chatId, t.hwIntentNoTopic); return; }
 
   const parsed = parseTopicUrl(topicUrl);
   if (!parsed) { await sendMessage(chatId, t.hwIntentNoTopic); return; }
+
 
   // 4. Upsert intent (10 min TTL)
   const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
@@ -3071,7 +3119,18 @@ async function resolveGroupFromChatId(
     if (gmt?.[0]?.group_id) return { groupId: gmt[0].group_id, pattern: "gmt_topic_url" };
   } catch (_e) { /* noop */ }
 
+  // Pattern 1b: groups.homework_topic_url contains /c/{stripped}/ (shared topic config)
+  try {
+    const { data: gh } = await admin
+      .from("groups")
+      .select("id")
+      .ilike("homework_topic_url", `%${needle}%`)
+      .limit(1);
+    if (gh?.[0]?.id) return { groupId: gh[0].id, pattern: "group_homework_topic_url" };
+  } catch (_e) { /* noop */ }
+
   // Pattern 2: groups.telegram_group_url contains /c/{stripped}/ (legacy/manual)
+
   try {
     const { data: g2 } = await admin
       .from("groups")
