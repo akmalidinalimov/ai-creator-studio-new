@@ -3642,7 +3642,9 @@ async function notifyTeachersOfSubmission(
         .select("id, telegram_id, notifications_enabled, name, last_name")
         .eq("id", teacherId)
         .maybeSingle();
-      if (teacher?.telegram_id && teacher.notifications_enabled !== false) {
+      if (!teacher?.telegram_id || teacher.notifications_enabled === false) {
+        console.log("hw:group:teacher-skip", JSON.stringify({ teacher_id: teacherId, has_tg: !!teacher?.telegram_id, notif: teacher?.notifications_enabled }));
+      } else {
         const { data: grp } = await admin.from("groups").select("name").eq("id", groupId).maybeSingle();
         const moduleName = `Modul ${mn}`;
         const body = hwTeacherBody(studentName, grp?.name || "—", moduleName, aTitle || "");
@@ -3651,9 +3653,18 @@ async function notifyTeachersOfSubmission(
           [{ text: "📌 Topikga o'tish", url: messageUrl }],
         ];
         try {
-          await sendMessage(Number(teacher.telegram_id), body, { inline_keyboard: inlineKb });
-          if (queued?.id) {
-            await admin.from("homework_teacher_dm_queue").update({ sent_at: new Date().toISOString() }).eq("id", queued.id);
+          const resp = await sendMessage(Number(teacher.telegram_id), body, { inline_keyboard: inlineKb });
+          let okBody: any = null;
+          try { okBody = await resp.clone().json(); } catch { /* ignore */ }
+          if (resp.ok && okBody?.ok) {
+            if (queued?.id) {
+              await admin.from("homework_teacher_dm_queue").update({ sent_at: new Date().toISOString() }).eq("id", queued.id);
+            }
+            console.log("hw:group:teacher-dm-ok", JSON.stringify({ teacher_id: teacherId, submission_id: submissionId }));
+          } else {
+            const errTxt = okBody ? JSON.stringify(okBody).slice(0, 200) : await resp.text().catch(() => "");
+            console.error("hw:group:teacher-dm-fail", JSON.stringify({ teacher_id: teacherId, status: resp.status, err: String(errTxt).slice(0, 200) }));
+            // leave queue row unsent so cron retries
           }
         } catch (e) {
           console.log("teacher_dm_immediate_failed", JSON.stringify({ teacher_id: teacherId, err: String(e) }));
