@@ -1271,14 +1271,25 @@ async function buildHomeworkMessage(
 
     const aIds = list.map((a) => a.id);
     const moduleIds = Array.from(new Set(list.map((a) => a.module_id)));
-    const [{ data: subs }, { data: topics }] = await Promise.all([
+    const [{ data: subs }, { data: topics }, { data: groupRow }] = await Promise.all([
       admin.from("homework_submissions").select("assignment_id, score, score_feedback").eq("user_id", userId).in("assignment_id", aIds),
       groupId
         ? admin.from("group_module_topics").select("module_id, telegram_topic_url").eq("group_id", groupId).in("module_id", moduleIds)
         : Promise.resolve({ data: [] }),
+      groupId
+        ? admin.from("groups").select("homework_topic_url").eq("id", groupId).maybeSingle()
+        : Promise.resolve({ data: null }),
     ]);
     const subMap = new Map((subs || []).map((s: any) => [s.assignment_id, s]));
-    const topicMap = new Map((topics || []).map((tp: any) => [tp.module_id, tp.telegram_topic_url]));
+    const sharedTopicUrl: string | null = (groupRow as any)?.homework_topic_url || null;
+    const topicMap = new Map<string, string>();
+    for (const tp of (topics || []) as any[]) {
+      if (tp.telegram_topic_url) topicMap.set(tp.module_id, tp.telegram_topic_url);
+    }
+    if (sharedTopicUrl) {
+      for (const mid of moduleIds) if (!topicMap.has(mid)) topicMap.set(mid, sharedTopicUrl);
+    }
+
 
     // Group by module
     const byModule = new Map<string, any[]>();
