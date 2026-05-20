@@ -3311,10 +3311,8 @@ async function resolveAssignmentForTopic(
   return { moduleId, assignment: asg, resolvedVia: "group_module_topic" };
 }
 
-// v3.14.40: per-(profile, assignment) in-memory dedupe so two posts within 60s
-// only DM the teacher once.
-const autoIntentTeacherDedupe = new Map<string, number>();
-const AUTO_INTENT_TEACHER_TTL_MS = 60_000;
+// v3.14.41: Teacher-DM dedupe is now enforced inside notifyTeachersOfSubmission
+// by message_url (per-submission), so resubmissions always notify.
 
 async function handleGroupTopicMessage(admin: any, msg: any) {
   try {
