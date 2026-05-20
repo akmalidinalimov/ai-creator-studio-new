@@ -2974,6 +2974,36 @@ function parseTopicUrl(url: string): { chatId: number; threadId: number } | null
   }
 }
 
+// Resolve the submission topic URL for a (group, module) pair.
+// Per-module override in `group_module_topics` wins; otherwise fall back to
+// the group's shared `homework_topic_url` (Admin → Groups setting).
+async function resolveModuleTopicUrl(
+  admin: any,
+  groupId: string | null | undefined,
+  moduleId: string,
+): Promise<{ url: string | null; source: "per_module" | "shared" | null }> {
+  if (!groupId) return { url: null, source: null };
+  try {
+    const { data: gmt } = await admin
+      .from("group_module_topics")
+      .select("telegram_topic_url")
+      .eq("group_id", groupId).eq("module_id", moduleId)
+      .maybeSingle();
+    if (gmt?.telegram_topic_url) return { url: gmt.telegram_topic_url, source: "per_module" };
+  } catch (_e) { /* fall through */ }
+  try {
+    const { data: g } = await admin
+      .from("groups")
+      .select("homework_topic_url")
+      .eq("id", groupId)
+      .maybeSingle();
+    if (g?.homework_topic_url) return { url: g.homework_topic_url, source: "shared" };
+  } catch (_e) { /* noop */ }
+  return { url: null, source: null };
+}
+
+
+
 // Build a re-openable link to a specific message inside a private supergroup topic.
 function buildMessageLink(chatId: number, threadId: number, messageId: number): string {
   // chatId is -100xxxxxxxxxx → strip -100 → xxxxxxxxxx
