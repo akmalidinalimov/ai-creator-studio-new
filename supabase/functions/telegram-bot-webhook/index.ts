@@ -3246,6 +3246,76 @@ async function recordGroupMessageEvent(admin: any, msg: any) {
     }, { onConflict: "telegram_chat_id,telegram_message_id" });
 }
 
+// v3.14.40: Resolve an active leaf assignment for a sender posting in a homework topic.
+// Used when a student posts without an explicit /vazifalar → 📤 Topshirish intent.
+// Strict per-sender: each call resolves the next un-graded leaf for THIS profile only.
+async function resolveAssignmentForTopic(
+  admin: any,
+  group: { id: string; course_id: string | null; homework_topic_id: number | bigint | null },
+  threadId: number,
+  profileId: string,
+): Promise<{ moduleId: string; assignment: any; resolvedVia: "shared_topic" | "group_module_topic" } | null> {
+  // Path A: shared-topic mode (groups.homework_topic_id matches the thread).
+  if (group.homework_topic_id != null && Number(group.homework_topic_id) === Number(threadId)) {
+    if (!group.course_id) return null;
+    const { data: mods } = await admin.from("modules").select("id").eq("course_id", group.course_id);
+    const modIds = ((mods as any[]) || []).map((m: any) => m.id);
+    if (!modIds.length) return null;
+    const { data: courseAsgs } = await admin
+      .from("homework_assignments")
+      .select("id, title, task_number, sap_number, max_score, module_id, parent_id, is_active, created_at, due_days_after_module_unlock")
+      .in("module_id", modIds)
+      .eq("is_active", true)
+      .order("created_at", { ascending: false });
+    const leaves = computeLeaves((courseAsgs || []) as any);
+    if (!leaves.length) return null;
+    const leafIds = leaves.map((l: any) => l.id);
+    const { data: existingSubs } = await admin
+      .from("homework_submissions")
+      .select("assignment_id, score")
+      .eq("user_id", profileId)
+      .in("assignment_id", leafIds);
+    const asg =
+      pickNextLeaf(leaves as any, (existingSubs || []) as any) ||
+      // All graded: fall back to the most recent leaf so a resubmission still attaches somewhere.
+      [...leaves].sort((a: any, b: any) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
+    if (!asg) return null;
+    return { moduleId: asg.module_id, assignment: asg, resolvedVia: "shared_topic" };
+  }
+  // Path B: legacy per-module topic mapping.
+  const { data: topicRow } = await admin
+    .from("group_module_topics")
+    .select("module_id")
+    .eq("group_id", group.id)
+    .eq("telegram_topic_id", threadId)
+    .maybeSingle();
+  if (!topicRow?.module_id) return null;
+  const moduleId = topicRow.module_id as string;
+  const { data: allAssignsForModule } = await admin
+    .from("homework_assignments")
+    .select("id, title, task_number, sap_number, max_score, module_id, parent_id, is_active, created_at, due_days_after_module_unlock")
+    .eq("module_id", moduleId)
+    .eq("is_active", true);
+  const leaves = computeLeaves(((allAssignsForModule || []) as any));
+  if (!leaves.length) return null;
+  const leafIds = leaves.map((l: any) => l.id);
+  const { data: existingSubs } = await admin
+    .from("homework_submissions")
+    .select("assignment_id, score")
+    .eq("user_id", profileId)
+    .in("assignment_id", leafIds);
+  const asg =
+    pickNextLeaf(leaves as any, (existingSubs || []) as any) ||
+    [...leaves].sort((a: any, b: any) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
+  if (!asg) return null;
+  return { moduleId, assignment: asg, resolvedVia: "group_module_topic" };
+}
+
+// v3.14.40: per-(profile, assignment) in-memory dedupe so two posts within 60s
+// only DM the teacher once.
+const autoIntentTeacherDedupe = new Map<string, number>();
+const AUTO_INTENT_TEACHER_TTL_MS = 60_000;
+
 async function handleGroupTopicMessage(admin: any, msg: any) {
   try {
     const chatId = msg.chat?.id;
@@ -3288,10 +3358,60 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       .order("created_at", { ascending: false })
       .limit(1);
     if (intentErr) console.error("hw:group:intent-query-err", intentErr);
-    const intent = (intents && intents[0]) as any;
+    let intent = (intents && intents[0]) as any;
+
+    // v3.14.40: If the student posted in the topic without going through
+    // /vazifalar → 📤 Topshirish, synthesize an intent on the fly. Strictly
+    // per-sender — never attributed to anyone else in the same topic.
+    let synthesized = false;
     if (!intent) {
-      console.log("hw:group:no-matching-intent", JSON.stringify({ user_id: profile.id, chatId, threadId }));
-      return; // silent — no pending submission for this student in this topic
+      const { groupId, pattern } = await resolveGroupFromChatId(admin, chatId);
+      if (!groupId) {
+        console.log("hw:group:auto-intent-no-group", JSON.stringify({ chatId, threadId, pattern }));
+        return;
+      }
+      const { data: groupRow } = await admin
+        .from("groups")
+        .select("id, name, course_id, teacher_id, homework_topic_id")
+        .eq("id", groupId)
+        .maybeSingle();
+      if (!groupRow) {
+        console.log("hw:group:auto-intent-no-group-row", JSON.stringify({ groupId }));
+        return;
+      }
+      const resolved = await resolveAssignmentForTopic(admin, groupRow as any, threadId, profile.id);
+      if (!resolved) {
+        console.log("hw:group:auto-intent-no-assignment", JSON.stringify({ groupId, threadId }));
+        return;
+      }
+      // Already-graded short-circuit: react ✅ and DM "already scored", no resubmission row, no teacher DM.
+      const { data: prior } = await admin
+        .from("homework_submissions")
+        .select("id, score, score_is_stale")
+        .eq("user_id", profile.id)
+        .eq("assignment_id", resolved.assignment.id)
+        .maybeSingle();
+      if (prior && prior.score != null && !prior.score_is_stale) {
+        try { await setMessageReaction(chatId, messageId, "✅"); } catch (_e) { /* ignore */ }
+        if (profile.telegram_id) {
+          const loc: Locale = normLocale(profile.preferred_locale);
+          try { await sendMessage(profile.telegram_id, (T[loc] as any).hwIntentAlreadyScored); } catch (_e) { /* ignore */ }
+        }
+        console.log("hw:group:auto-intent-already-graded", JSON.stringify({ profile_id: profile.id, assignment_id: resolved.assignment.id }));
+        return;
+      }
+      intent = {
+        id: null,
+        user_id: profile.id,
+        assignment_id: resolved.assignment.id,
+        module_id: resolved.moduleId,
+        group_id: groupRow.id,
+      };
+      synthesized = true;
+      console.log("hw:group:auto-intent", JSON.stringify({
+        profile_id: profile.id, group_id: groupRow.id, assignment_id: resolved.assignment.id,
+        module_id: resolved.moduleId, via: resolved.resolvedVia,
+      }));
     }
     // Defensive — never attribute a message to a user other than the intent owner.
     if (intent.user_id !== profile.id) {
@@ -3366,8 +3486,10 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       return;
     }
 
-    // Consume intent
-    await admin.from("bot_homework_intents").delete().eq("id", intent.id);
+    // Consume intent (only if it was persisted; synthesized intents have no row)
+    if (intent.id) {
+      await admin.from("bot_homework_intents").delete().eq("id", intent.id);
+    }
 
     // ✅ React to confirm in-thread
     await setMessageReaction(chatId, messageId, "✅");
@@ -3394,9 +3516,17 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       try { await sendMessage(profile.telegram_id, t.hwReceived(mn, tn)); } catch (_e) {}
     }
 
-    // Queue teacher DM (handles RBAC, throttling, quiet hours) + immediate send
-    const subId = upserted?.id;
-    await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId, intent.assignment_id, moduleId);
+    // Queue teacher DM (handles RBAC, throttling, quiet hours) + immediate send.
+    // 60s dedupe for synthesized intents so a quick second post doesn't double-DM.
+    const dKey = `${profile.id}:${intent.assignment_id}`;
+    const lastT = autoIntentTeacherDedupe.get(dKey) || 0;
+    if (!synthesized || Date.now() - lastT > AUTO_INTENT_TEACHER_TTL_MS) {
+      autoIntentTeacherDedupe.set(dKey, Date.now());
+      const subId = upserted?.id;
+      await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId, intent.assignment_id, moduleId);
+    } else {
+      console.log("hw:group:teacher-dm-deduped", JSON.stringify({ key: dKey }));
+    }
 
     // Invalidate any cached "stats" for the student so next /galaba is fresh
     cacheInvalidateUser(profile.id);
@@ -3405,373 +3535,11 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
   }
 }
 
-// v3.14.32: in-memory dedupe caches for auto-detected homework submissions.
-// teacher DM: one per (student, assignment) within 5 minutes.
-// student confirmation: one per (student, assignment) within 24 hours.
-const teacherDmDedupe = new Map<string, number>(); // key=`${studentId}:${assignmentId}` -> ts
-const studentConfirmDedupe = new Map<string, number>(); // same key -> ts
-const TEACHER_DM_TTL_MS = 5 * 60_000;
-const STUDENT_CONFIRM_TTL_MS = 24 * 60 * 60_000;
-
-const HW_STUDENT_CONFIRM: Record<Locale, string> = {
-  uz: "✅ Vazifangiz topshirildi. Ustoz baholaganidan keyin natija saytda ko'rinadi. Kutib turing.",
-  ru: "✅ Ваше задание отправлено. После проверки преподавателем результат появится на сайте.",
-  en: "✅ Your homework was submitted. After teacher review, the score will appear on the website.",
-};
-
+// v3.14.40: auto-detect path removed — handleGroupTopicMessage now auto-synthesizes
+// intents for sender-attributed topic posts. hwTeacherBody is still used by
+// notifyTeachersOfSubmission below.
 function hwTeacherBody(studentName: string, groupName: string, moduleName: string, assignmentTitle: string): string {
   return `🆕 <b>Yangi vazifa topshirildi</b>\n👤 Talaba: <b>${csvEscapeHtml(studentName)}</b>\n👥 Guruh: <b>${csvEscapeHtml(groupName)}</b>\n📚 Modul: <b>${csvEscapeHtml(moduleName)}</b>\n📝 Vazifa: <b>${csvEscapeHtml(assignmentTitle)}</b>\n\nXabarni topikda ko'ring va baholang.`;
-}
-
-// v3.14.32: auto-detect homework submission from any topic message — no /vazifalar intent needed.
-async function autoDetectHomeworkSubmission(admin: any, msg: any, inboxId: number | null = null) {
-  const res: Record<string, any> = { homework_detector_fired: true };
-  try {
-    const chatType = msg.chat?.type;
-    res.chat_type_seen = chatType;
-    if (chatType !== "supergroup" && chatType !== "group") {
-      res.skip_reason = "not_group_chat";
-      await updateInboxResolution(admin, inboxId, res);
-      return;
-    }
-    if (!msg.is_topic_message || !msg.message_thread_id) {
-      res.skip_reason = "not_topic_message";
-      await updateInboxResolution(admin, inboxId, res);
-      return;
-    }
-    if (!msg.from || msg.from.is_bot) {
-      res.skip_reason = "from_bot_or_missing";
-      await updateInboxResolution(admin, inboxId, res);
-      return;
-    }
-    const chatId: number = msg.chat.id;
-    const threadId: number = msg.message_thread_id;
-    const messageId: number = msg.message_id;
-    const tgUserId: number = msg.from.id;
-
-    // v3.14.33: multi-pattern resolver. Old code only checked groups.telegram_group_url
-    // which stores invite links (https://t.me/+xxxx) — never matched, always silent fail.
-    const { groupId, pattern } = await resolveGroupFromChatId(admin, chatId);
-    res.resolved_chat_to_group_id = groupId;
-    res.group_resolver_pattern = pattern;
-    if (!groupId) {
-      res.skip_reason = "no_group";
-      await updateInboxResolution(admin, inboxId, res);
-      console.log("homework_event_skipped", JSON.stringify({ reason: "no_group", chat_id: chatId, thread_id: threadId }));
-      return;
-    }
-    const { data: groupFull } = await admin
-      .from("groups")
-      .select("id, name, teacher_id, course_id, homework_topic_id, homework_topic_url")
-      .eq("id", groupId)
-      .maybeSingle();
-    const group = groupFull;
-    if (!group) {
-      res.skip_reason = "group_row_missing";
-      await updateInboxResolution(admin, inboxId, res);
-      return;
-    }
-
-    // v3.14.34: Resolve module/assignment.
-    // Step 1 (primary): groups.homework_topic_id matches the thread → shared topic.
-    //   Pick the most-recently-created active leaf assignment in this group's course.
-    // Step 2 (fallback): legacy group_module_topics mapping → pick a leaf inside that module.
-    let moduleId: string | null = null;
-    let asg: any = null;
-    let allList: any[] = [];
-    let resolvedVia: "shared_topic" | "group_module_topic" | "no_match" = "no_match";
-
-    if (group.homework_topic_id && Number(group.homework_topic_id) === Number(threadId)) {
-      resolvedVia = "shared_topic";
-      // Get all active leaf assignments across modules of this group's course,
-      // pick the most-recently-created one as the "active" assignment.
-      if (!group.course_id) {
-        res.resolved_via = resolvedVia;
-        res.skip_reason = "no_active_assignment_in_window";
-        await updateInboxResolution(admin, inboxId, res);
-        console.log("homework_event_skipped", JSON.stringify({ reason: "no_course_for_group", group_id: group.id }));
-        return;
-      }
-      const { data: mods } = await admin.from("modules").select("id").eq("course_id", group.course_id);
-      const modIds = ((mods as any[]) || []).map((m: any) => m.id);
-      if (!modIds.length) {
-        res.resolved_via = resolvedVia;
-        res.skip_reason = "no_active_assignment_in_window";
-        await updateInboxResolution(admin, inboxId, res);
-        return;
-      }
-      const { data: courseAsgs } = await admin
-        .from("homework_assignments")
-        .select("id, title, task_number, sap_number, max_score, module_id, parent_id, is_active, created_at, due_days_after_module_unlock")
-        .in("module_id", modIds)
-        .eq("is_active", true)
-        .order("created_at", { ascending: false });
-      allList = (courseAsgs || []) as any[];
-      const leaves = computeLeaves(allList as any);
-      // Most recent leaf by created_at
-      const sortedLeaves = [...leaves].sort((a: any, b: any) =>
-        String(b.created_at || "").localeCompare(String(a.created_at || ""))
-      );
-      asg = sortedLeaves[0] || null;
-      if (!asg) {
-        res.resolved_via = resolvedVia;
-        res.skip_reason = "no_active_assignment_in_window";
-        await updateInboxResolution(admin, inboxId, res);
-        console.log("homework_event_skipped", JSON.stringify({ reason: "no_active_assignment_in_window", group_id: group.id }));
-        return;
-      }
-      moduleId = asg.module_id;
-    } else {
-      // Fallback: legacy per-module topic mapping
-      const { data: topicRow } = await admin
-        .from("group_module_topics")
-        .select("module_id")
-        .eq("group_id", group.id)
-        .eq("telegram_topic_id", threadId)
-        .maybeSingle();
-      if (!topicRow?.module_id) {
-        res.resolved_via = "no_match";
-        res.skip_reason = "no_module_for_topic";
-        await updateInboxResolution(admin, inboxId, res);
-        console.log("homework_event_skipped", JSON.stringify({ reason: "no_module_for_topic", group_id: group.id, thread_id: threadId }));
-        return;
-      }
-      resolvedVia = "group_module_topic";
-      moduleId = topicRow.module_id;
-      const { data: allAssignsForModule } = await admin
-        .from("homework_assignments")
-        .select("id, title, task_number, sap_number, max_score, module_id, parent_id, is_active, created_at, due_days_after_module_unlock")
-        .eq("module_id", moduleId)
-        .eq("is_active", true);
-      allList = (allAssignsForModule || []) as any[];
-      if (!allList.length) {
-        res.resolved_via = resolvedVia;
-        res.skip_reason = "no_active_assignment";
-        await updateInboxResolution(admin, inboxId, res);
-        console.log("homework_event_skipped", JSON.stringify({ reason: "no_active_assignment", module_id: moduleId }));
-        return;
-      }
-    }
-    res.resolved_via = resolvedVia;
-    res.resolved_thread_to_module_id = moduleId;
-    const leaves = computeLeaves(allList as any);
-
-    // Resolve student profile (telegram_id first, username fallback w/ backfill)
-    const tgUsername = (msg.from.username || "").toLowerCase();
-    const profile = await resolveProfileForTelegramUser(admin, tgUserId, tgUsername, "bot");
-    if (!profile) {
-      res.skip_reason = "unregistered_student";
-      await updateInboxResolution(admin, inboxId, res);
-      console.log("homework_event_skipped", JSON.stringify({ reason: "unregistered_student", telegram_id: tgUserId, username: tgUsername }));
-      return;
-    }
-    res.resolved_profile_id = profile.id;
-
-    // For shared_topic mode, asg is already chosen (most recent leaf).
-    // For legacy mode, pick the next un-graded leaf for this student.
-    if (!asg) {
-      const leafIds = leaves.map((l: any) => l.id);
-      const { data: existingSubs } = await admin
-        .from("homework_submissions")
-        .select("assignment_id, score")
-        .eq("user_id", profile.id)
-        .in("assignment_id", leafIds);
-      asg = pickNextLeaf(leaves as any, (existingSubs || []) as any);
-    }
-    if (!asg) {
-      res.skip_reason = "no_active_assignment_in_window";
-      await updateInboxResolution(admin, inboxId, res);
-      return;
-    }
-    res.matched_assignment_id = asg.id;
-    res.resolved_assignment_id = asg.id;
-    res.resolved_assignment_module_id = asg.module_id;
-
-    // Compute is_late: deadline = created_at + due_days_after_module_unlock days
-    let isLate = false;
-    let lateDays = 0;
-    try {
-      const created = asg.created_at ? new Date(asg.created_at).getTime() : null;
-      const dueDays = Number(asg.due_days_after_module_unlock || 0);
-      if (created && dueDays > 0) {
-        const deadlineMs = created + dueDays * 86400_000;
-        if (Date.now() > deadlineMs) {
-          isLate = true;
-          lateDays = Math.max(1, Math.ceil((Date.now() - deadlineMs) / 86400_000));
-        }
-      }
-    } catch { /* ignore */ }
-    res.is_late = isLate;
-    if (isLate) res.late_days = lateDays;
-
-    console.log("homework_event", JSON.stringify({
-      chat_id: chatId, thread_id: threadId, resolved_group: group.id,
-      resolved_module: moduleId, resolved_profile: profile.id,
-      matched_assignment: asg.id, action: "submission_detected",
-    }));
-
-    // Extract media kind
-    let fileId: string | null = null;
-    let kind = "text";
-    if (Array.isArray(msg.photo) && msg.photo.length) { fileId = msg.photo[msg.photo.length - 1].file_id; kind = "photo"; }
-    else if (msg.document) { fileId = msg.document.file_id; kind = "document"; }
-    else if (msg.video) { fileId = msg.video.file_id; kind = "video"; }
-    else if (msg.voice) { fileId = msg.voice.file_id; kind = "voice"; }
-    else if (msg.video_note) { fileId = msg.video_note.file_id; kind = "video_note"; }
-    else if (!msg.text && !msg.caption) {
-      res.skip_reason = "no_content";
-      await updateInboxResolution(admin, inboxId, res);
-      console.log("homework_event_skipped", JSON.stringify({ reason: "no_content", message_id: messageId }));
-      return;
-    }
-
-    const messageUrl = buildMessageLink(chatId, threadId, messageId);
-    const submittedText = (msg.caption || msg.text || "").slice(0, 4000);
-
-    // Upsert submission (idempotent on user_id+assignment_id). Don't overwrite a graded one.
-    const { data: existing } = await admin
-      .from("homework_submissions")
-      .select("id, score")
-      .eq("user_id", profile.id)
-      .eq("assignment_id", asg.id)
-      .maybeSingle();
-    if (existing && existing.score != null) {
-      res.skip_reason = "already_graded";
-      await updateInboxResolution(admin, inboxId, res);
-      console.log("homework_event_skipped", JSON.stringify({ reason: "already_graded", submission_id: existing.id }));
-      return;
-    }
-
-    const { data: upserted, error: upErr } = await admin
-      .from("homework_submissions")
-      .upsert({
-        user_id: profile.id,
-        assignment_id: asg.id,
-        submitted_text: submittedText,
-        submitted_at: new Date().toISOString(),
-        score: null, score_feedback: null, scored_by: null, scored_at: null, is_late: isLate,
-        telegram_chat_id: chatId, telegram_thread_id: threadId, telegram_message_id: messageId,
-        telegram_message_url: messageUrl, telegram_file_id: fileId, telegram_file_kind: kind,
-        source: "telegram_topic",
-      }, { onConflict: "user_id,assignment_id" })
-      .select("id")
-      .maybeSingle();
-    if (upErr) {
-      res.skip_reason = "upsert_err";
-      res.upsert_err = String(upErr.message || upErr);
-      await updateInboxResolution(admin, inboxId, res);
-      console.error("homework_event_skipped upsert_err", upErr);
-      return;
-    }
-    const submissionId = upserted?.id;
-
-    // React ✅ in-thread
-    try { await setMessageReaction(chatId, messageId, "✅"); } catch (_e) { /* ignore */ }
-
-    const dedupeKey = `${profile.id}:${asg.id}`;
-    const nowMs = Date.now();
-
-    // Student confirmation DM (1/day per assignment)
-    res.student_dm_sent = false;
-    const lastConfirm = studentConfirmDedupe.get(dedupeKey) || 0;
-    if (profile.telegram_id && nowMs - lastConfirm > STUDENT_CONFIRM_TTL_MS) {
-      studentConfirmDedupe.set(dedupeKey, nowMs);
-      const loc: Locale = normLocale(profile.preferred_locale);
-      try {
-        let confirmText = HW_STUDENT_CONFIRM[loc];
-        if (isLate) confirmText += "\n\n⏰ Vazifa kechikkan deb belgilandi, lekin baho beriladi.";
-        await sendMessage(Number(profile.telegram_id), confirmText);
-        res.student_dm_sent = true;
-      } catch (e) {
-        res.student_dm_error = String(e);
-        console.log("student_dm_unreachable", JSON.stringify({ profile_id: profile.id, err: String(e) }));
-      }
-    } else if (!profile.telegram_id) {
-      res.student_dm_error = "no_telegram_id_on_profile";
-    } else {
-      res.student_dm_error = "deduped";
-    }
-
-    // Teacher DM (1 per 5 min per student+assignment)
-    res.teacher_dm_sent = false;
-    const lastTeacherDm = teacherDmDedupe.get(dedupeKey) || 0;
-    if (nowMs - lastTeacherDm < TEACHER_DM_TTL_MS) {
-      res.teacher_dm_error = "deduped";
-      await updateInboxResolution(admin, inboxId, res);
-      console.log("homework_event_skipped", JSON.stringify({ reason: "teacher_dm_dedupe", key: dedupeKey }));
-      return;
-    }
-    teacherDmDedupe.set(dedupeKey, nowMs);
-
-    if (!group.teacher_id) {
-      res.teacher_dm_error = "no_teacher_assigned";
-      await updateInboxResolution(admin, inboxId, res);
-      console.log("homework_event_skipped", JSON.stringify({ reason: "no_teacher_assigned", group_id: group.id }));
-      return;
-    }
-    const { data: teacher } = await admin
-      .from("profiles")
-      .select("id, telegram_id, notifications_enabled")
-      .eq("id", group.teacher_id)
-      .maybeSingle();
-    if (!teacher?.telegram_id) {
-      res.teacher_dm_error = "teacher_no_telegram";
-      await updateInboxResolution(admin, inboxId, res);
-      console.log("homework_event_skipped", JSON.stringify({ reason: "teacher_no_telegram", teacher_id: group.teacher_id }));
-      return;
-    }
-    if (teacher.notifications_enabled === false) {
-      res.teacher_dm_error = "teacher_notifications_disabled";
-      await updateInboxResolution(admin, inboxId, res);
-      console.log("homework_event_skipped", JSON.stringify({ reason: "teacher_notifications_disabled", teacher_id: teacher.id }));
-      return;
-    }
-
-    const { data: mod } = await admin.from("modules").select("title, position").eq("id", moduleId).maybeSingle();
-    const moduleName = mod?.title ? `M${(mod.position ?? 0) + 1} — ${mod.title}` : `Modul`;
-    const studentName = [profile.name, profile.last_name].filter(Boolean).join(" ") || "—";
-
-    let asgLabel = asg.title || "";
-    if (asg.parent_id) {
-      const parent = allList.find((a: any) => a.id === asg.parent_id);
-      const tn = parent?.task_number ?? "?";
-      asgLabel = `V${tn}.S${asg.sap_number ?? "?"} — ${asg.title || ""}`;
-    } else if (asg.task_number) {
-      asgLabel = `V${asg.task_number} — ${asg.title || ""}`;
-    }
-    const lateSuffix = isLate ? `\n⏰ Kechikkan: ${lateDays} kun.` : "";
-    const body = hwTeacherBody(studentName, group.name || "—", moduleName, asgLabel) + lateSuffix;
-    const inlineKb = [
-      [{ text: "🎯 Baholash", callback_data: `grade_task:${asg.id}:${profile.id}` }],
-      [{ text: "📌 Topikga o'tish", url: messageUrl }],
-    ];
-    try {
-      await sendMessage(Number(teacher.telegram_id), body, { inline_keyboard: inlineKb });
-      res.teacher_dm_sent = true;
-    } catch (e) {
-      res.teacher_dm_error = String(e);
-      console.log("teacher_dm_unreachable", JSON.stringify({ teacher_id: teacher.id, err: String(e) }));
-    }
-
-    await updateInboxResolution(admin, inboxId, res);
-
-    // Audit
-    try {
-      await admin.from("admin_actions").insert({
-        actor_user_id: profile.id,
-        action: "homework_submission_dm_sent",
-        target_user_id: teacher.id,
-        target_resource_type: "homework_submission",
-        target_resource_id: submissionId,
-        details: { auto_detected: true, group_id: group.id, module_id: moduleId, assignment_id: asg.id, message_url: messageUrl },
-      });
-    } catch { /* ignore */ }
-  } catch (e) {
-    res.skip_reason = "exception";
-    res.exception = String(e);
-    await updateInboxResolution(admin, inboxId, res);
-    console.error("autoDetectHomeworkSubmission error", e);
-  }
 }
 
 async function notifyTeachersOfSubmission(
@@ -4379,11 +4147,11 @@ Deno.serve(async (req) => {
       if (chatType === "supergroup" || chatType === "group" || chatType === "channel") {
         // v3.14.29: passively record topic messages for Statistika analytics.
         try { await recordGroupMessageEvent(admin, msg); } catch (e) { console.error("recordGroupMessageEvent failed", e); }
-        // v3.14.35: auto-detect disabled — intent-only flow.
-        // Posts in the homework topic only count as submissions when the student
-        // first goes through the bot: Mini vazifalarim → module → 📤 Topshirish
-        // (which creates a bot_homework_intents row consumed by handleGroupTopicMessage).
-        await updateInboxResolution(admin, inboxId, { skip_reason: "intent_only_mode", homework_detector_fired: false });
+        // v3.14.40: handleGroupTopicMessage now auto-synthesizes an intent for the
+        // sender when there's no pending /vazifalar intent. Strict per-sender
+        // attribution is preserved inside the handler (anon/bot/unknown senders
+        // are ignored; one student's post can never overwrite another's row).
+        await updateInboxResolution(admin, inboxId, { skip_reason: "delegated_to_handler", homework_detector_fired: false });
         await handleGroupTopicMessage(admin, msg);
         return new Response("ok", { status: 200, headers: corsHeaders });
       }
