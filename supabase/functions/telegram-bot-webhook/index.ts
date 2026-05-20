@@ -3358,10 +3358,60 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       .order("created_at", { ascending: false })
       .limit(1);
     if (intentErr) console.error("hw:group:intent-query-err", intentErr);
-    const intent = (intents && intents[0]) as any;
+    let intent = (intents && intents[0]) as any;
+
+    // v3.14.40: If the student posted in the topic without going through
+    // /vazifalar → 📤 Topshirish, synthesize an intent on the fly. Strictly
+    // per-sender — never attributed to anyone else in the same topic.
+    let synthesized = false;
     if (!intent) {
-      console.log("hw:group:no-matching-intent", JSON.stringify({ user_id: profile.id, chatId, threadId }));
-      return; // silent — no pending submission for this student in this topic
+      const { groupId, pattern } = await resolveGroupFromChatId(admin, chatId);
+      if (!groupId) {
+        console.log("hw:group:auto-intent-no-group", JSON.stringify({ chatId, threadId, pattern }));
+        return;
+      }
+      const { data: groupRow } = await admin
+        .from("groups")
+        .select("id, name, course_id, teacher_id, homework_topic_id")
+        .eq("id", groupId)
+        .maybeSingle();
+      if (!groupRow) {
+        console.log("hw:group:auto-intent-no-group-row", JSON.stringify({ groupId }));
+        return;
+      }
+      const resolved = await resolveAssignmentForTopic(admin, groupRow as any, threadId, profile.id);
+      if (!resolved) {
+        console.log("hw:group:auto-intent-no-assignment", JSON.stringify({ groupId, threadId }));
+        return;
+      }
+      // Already-graded short-circuit: react ✅ and DM "already scored", no resubmission row, no teacher DM.
+      const { data: prior } = await admin
+        .from("homework_submissions")
+        .select("id, score, score_is_stale")
+        .eq("user_id", profile.id)
+        .eq("assignment_id", resolved.assignment.id)
+        .maybeSingle();
+      if (prior && prior.score != null && !prior.score_is_stale) {
+        try { await setMessageReaction(chatId, messageId, "✅"); } catch (_e) { /* ignore */ }
+        if (profile.telegram_id) {
+          const loc: Locale = normLocale(profile.preferred_locale);
+          try { await sendMessage(profile.telegram_id, (T[loc] as any).hwIntentAlreadyScored); } catch (_e) { /* ignore */ }
+        }
+        console.log("hw:group:auto-intent-already-graded", JSON.stringify({ profile_id: profile.id, assignment_id: resolved.assignment.id }));
+        return;
+      }
+      intent = {
+        id: null,
+        user_id: profile.id,
+        assignment_id: resolved.assignment.id,
+        module_id: resolved.moduleId,
+        group_id: groupRow.id,
+      };
+      synthesized = true;
+      console.log("hw:group:auto-intent", JSON.stringify({
+        profile_id: profile.id, group_id: groupRow.id, assignment_id: resolved.assignment.id,
+        module_id: resolved.moduleId, via: resolved.resolvedVia,
+      }));
     }
     // Defensive — never attribute a message to a user other than the intent owner.
     if (intent.user_id !== profile.id) {
