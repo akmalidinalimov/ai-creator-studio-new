@@ -3119,7 +3119,18 @@ async function resolveGroupFromChatId(
     if (gmt?.[0]?.group_id) return { groupId: gmt[0].group_id, pattern: "gmt_topic_url" };
   } catch (_e) { /* noop */ }
 
+  // Pattern 1b: groups.homework_topic_url contains /c/{stripped}/ (shared topic config)
+  try {
+    const { data: gh } = await admin
+      .from("groups")
+      .select("id")
+      .ilike("homework_topic_url", `%${needle}%`)
+      .limit(1);
+    if (gh?.[0]?.id) return { groupId: gh[0].id, pattern: "group_homework_topic_url" };
+  } catch (_e) { /* noop */ }
+
   // Pattern 2: groups.telegram_group_url contains /c/{stripped}/ (legacy/manual)
+
   try {
     const { data: g2 } = await admin
       .from("groups")
