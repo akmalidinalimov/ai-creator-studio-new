@@ -3246,6 +3246,76 @@ async function recordGroupMessageEvent(admin: any, msg: any) {
     }, { onConflict: "telegram_chat_id,telegram_message_id" });
 }
 
+// v3.14.40: Resolve an active leaf assignment for a sender posting in a homework topic.
+// Used when a student posts without an explicit /vazifalar → 📤 Topshirish intent.
+// Strict per-sender: each call resolves the next un-graded leaf for THIS profile only.
+async function resolveAssignmentForTopic(
+  admin: any,
+  group: { id: string; course_id: string | null; homework_topic_id: number | bigint | null },
+  threadId: number,
+  profileId: string,
+): Promise<{ moduleId: string; assignment: any; resolvedVia: "shared_topic" | "group_module_topic" } | null> {
+  // Path A: shared-topic mode (groups.homework_topic_id matches the thread).
+  if (group.homework_topic_id != null && Number(group.homework_topic_id) === Number(threadId)) {
+    if (!group.course_id) return null;
+    const { data: mods } = await admin.from("modules").select("id").eq("course_id", group.course_id);
+    const modIds = ((mods as any[]) || []).map((m: any) => m.id);
+    if (!modIds.length) return null;
+    const { data: courseAsgs } = await admin
+      .from("homework_assignments")
+      .select("id, title, task_number, sap_number, max_score, module_id, parent_id, is_active, created_at, due_days_after_module_unlock")
+      .in("module_id", modIds)
+      .eq("is_active", true)
+      .order("created_at", { ascending: false });
+    const leaves = computeLeaves((courseAsgs || []) as any);
+    if (!leaves.length) return null;
+    const leafIds = leaves.map((l: any) => l.id);
+    const { data: existingSubs } = await admin
+      .from("homework_submissions")
+      .select("assignment_id, score")
+      .eq("user_id", profileId)
+      .in("assignment_id", leafIds);
+    const asg =
+      pickNextLeaf(leaves as any, (existingSubs || []) as any) ||
+      // All graded: fall back to the most recent leaf so a resubmission still attaches somewhere.
+      [...leaves].sort((a: any, b: any) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
+    if (!asg) return null;
+    return { moduleId: asg.module_id, assignment: asg, resolvedVia: "shared_topic" };
+  }
+  // Path B: legacy per-module topic mapping.
+  const { data: topicRow } = await admin
+    .from("group_module_topics")
+    .select("module_id")
+    .eq("group_id", group.id)
+    .eq("telegram_topic_id", threadId)
+    .maybeSingle();
+  if (!topicRow?.module_id) return null;
+  const moduleId = topicRow.module_id as string;
+  const { data: allAssignsForModule } = await admin
+    .from("homework_assignments")
+    .select("id, title, task_number, sap_number, max_score, module_id, parent_id, is_active, created_at, due_days_after_module_unlock")
+    .eq("module_id", moduleId)
+    .eq("is_active", true);
+  const leaves = computeLeaves(((allAssignsForModule || []) as any));
+  if (!leaves.length) return null;
+  const leafIds = leaves.map((l: any) => l.id);
+  const { data: existingSubs } = await admin
+    .from("homework_submissions")
+    .select("assignment_id, score")
+    .eq("user_id", profileId)
+    .in("assignment_id", leafIds);
+  const asg =
+    pickNextLeaf(leaves as any, (existingSubs || []) as any) ||
+    [...leaves].sort((a: any, b: any) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
+  if (!asg) return null;
+  return { moduleId, assignment: asg, resolvedVia: "group_module_topic" };
+}
+
+// v3.14.40: per-(profile, assignment) in-memory dedupe so two posts within 60s
+// only DM the teacher once.
+const autoIntentTeacherDedupe = new Map<string, number>();
+const AUTO_INTENT_TEACHER_TTL_MS = 60_000;
+
 async function handleGroupTopicMessage(admin: any, msg: any) {
   try {
     const chatId = msg.chat?.id;
