@@ -2203,7 +2203,18 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
   const topicsRes = prof?.group_id && moduleIds.length
     ? await admin.from("group_module_topics").select("module_id, telegram_topic_url").eq("group_id", prof.group_id).in("module_id", moduleIds)
     : { data: [] as any[] };
-  const topicMap = new Map(((topicsRes.data || []) as any[]).map((tp: any) => [tp.module_id, tp.telegram_topic_url]));
+  const groupTopicRes = prof?.group_id
+    ? await admin.from("groups").select("homework_topic_url").eq("id", prof.group_id).maybeSingle()
+    : { data: null as any };
+  const sharedTopicUrl: string | null = (groupTopicRes.data as any)?.homework_topic_url || null;
+  const topicMap = new Map<string, string>();
+  for (const tp of ((topicsRes.data || []) as any[])) {
+    if (tp.telegram_topic_url) topicMap.set(tp.module_id, tp.telegram_topic_url);
+  }
+  if (sharedTopicUrl) {
+    for (const mid of moduleIds) if (!topicMap.has(mid)) topicMap.set(mid, sharedTopicUrl);
+  }
+
 
   const byModule = new Map<string, { mPos: number; mTitle: string; mid: string; items: any[] }>();
   for (const s of list) {
