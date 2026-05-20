@@ -3486,8 +3486,10 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       return;
     }
 
-    // Consume intent
-    await admin.from("bot_homework_intents").delete().eq("id", intent.id);
+    // Consume intent (only if it was persisted; synthesized intents have no row)
+    if (intent.id) {
+      await admin.from("bot_homework_intents").delete().eq("id", intent.id);
+    }
 
     // ✅ React to confirm in-thread
     await setMessageReaction(chatId, messageId, "✅");
@@ -3514,9 +3516,17 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       try { await sendMessage(profile.telegram_id, t.hwReceived(mn, tn)); } catch (_e) {}
     }
 
-    // Queue teacher DM (handles RBAC, throttling, quiet hours) + immediate send
-    const subId = upserted?.id;
-    await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId, intent.assignment_id, moduleId);
+    // Queue teacher DM (handles RBAC, throttling, quiet hours) + immediate send.
+    // 60s dedupe for synthesized intents so a quick second post doesn't double-DM.
+    const dKey = `${profile.id}:${intent.assignment_id}`;
+    const lastT = autoIntentTeacherDedupe.get(dKey) || 0;
+    if (!synthesized || Date.now() - lastT > AUTO_INTENT_TEACHER_TTL_MS) {
+      autoIntentTeacherDedupe.set(dKey, Date.now());
+      const subId = upserted?.id;
+      await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId, intent.assignment_id, moduleId);
+    } else {
+      console.log("hw:group:teacher-dm-deduped", JSON.stringify({ key: dKey }));
+    }
 
     // Invalidate any cached "stats" for the student so next /galaba is fresh
     cacheInvalidateUser(profile.id);
