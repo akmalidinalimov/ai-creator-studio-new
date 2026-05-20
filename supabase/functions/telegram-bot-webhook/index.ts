@@ -3511,22 +3511,29 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     }
     const moduleId = a?.module_id || intent.module_id;
 
-    // Private DM to student
+    // Private DM to student (confirmation). Log Telegram errors so failures are visible.
     if (profile.telegram_id) {
-      try { await sendMessage(profile.telegram_id, t.hwReceived(mn, tn)); } catch (_e) {}
+      try {
+        const resp = await sendMessage(profile.telegram_id, t.hwReceived(mn, tn));
+        if (!resp.ok) {
+          const errTxt = await resp.text().catch(() => "");
+          console.error("hw:group:student-dm-fail", JSON.stringify({ profile_id: profile.id, status: resp.status, err: errTxt.slice(0, 200) }));
+        } else {
+          console.log("hw:group:student-dm-ok", JSON.stringify({ profile_id: profile.id, mn, tn }));
+        }
+      } catch (e) {
+        console.error("hw:group:student-dm-exc", JSON.stringify({ profile_id: profile.id, err: String(e) }));
+      }
+    } else {
+      console.log("hw:group:student-no-telegram-id", JSON.stringify({ profile_id: profile.id }));
     }
 
-    // Queue teacher DM (handles RBAC, throttling, quiet hours) + immediate send.
-    // 60s dedupe for synthesized intents so a quick second post doesn't double-DM.
-    const dKey = `${profile.id}:${intent.assignment_id}`;
-    const lastT = autoIntentTeacherDedupe.get(dKey) || 0;
-    if (!synthesized || Date.now() - lastT > AUTO_INTENT_TEACHER_TTL_MS) {
-      autoIntentTeacherDedupe.set(dKey, Date.now());
-      const subId = upserted?.id;
-      await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId, intent.assignment_id, moduleId);
-    } else {
-      console.log("hw:group:teacher-dm-deduped", JSON.stringify({ key: dKey }));
-    }
+    // Teacher DM. Idempotency is enforced inside notifyTeachersOfSubmission by
+    // message_url (Telegram webhook retries won't duplicate). New posts and
+    // resubmissions always notify because they carry a fresh message URL.
+    void synthesized;
+    const subId = upserted?.id;
+    await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId, intent.assignment_id, moduleId);
 
     // Invalidate any cached "stats" for the student so next /galaba is fresh
     cacheInvalidateUser(profile.id);
