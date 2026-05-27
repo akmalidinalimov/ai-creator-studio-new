@@ -1,37 +1,57 @@
-Findings from the current code/data:
+# Student 360 — Admin Per-Student Detail Page
 
-- The core webhook path exists: topic posts are turned into `homework_submissions`, students should get a DM, and teachers should get a DM.
-- Recent data shows this path is working for other groups and queues teacher DMs, but Group 8 has no recent webhook inbox rows for its chat id, which means the bot is likely not receiving Group 8 topic posts at all, or they are arriving in a format the handler does not log/consume.
-- The notification code has a reliability bug: Telegram `sendMessage` failures are not checked consistently. If Telegram returns an error response, the code can still mark the teacher queue row as sent and silently skip the student confirmation.
-- The current auto-submit path dedupes synthesized teacher notifications in-memory for 60 seconds by student+assignment. That can suppress valid quick resubmissions/album uploads and is not reliable across Edge Function instances.
-- The resubmission path starts correctly from `/vazifalar`, but automatic topic posting currently blocks already-graded submissions unless the resubmission was explicitly started, so we should keep that behavior but make confirmation/notification reliable when a resubmission is active.
+A new admin page that shows everything about one student in one place: profile, lessons watched, homework history, Telegram bot activity, and engagement signals.
 
-Implementation plan:
+## Route & Navigation
 
-1. Add reliable Telegram send handling
-   - Add a small helper around Telegram API calls for homework confirmations/teacher notifications that checks `response.ok` and Telegram `{ ok: true }`.
-   - If student DM fails, log the exact Telegram error instead of silently ignoring it.
-   - If immediate teacher DM fails, leave the queue row unsent so the cron notification function can retry instead of marking it as delivered.
+- New route: `/admin/users/:id` (component `AdminStudentDetail.tsx`)
+- Entry points:
+  - `/admin/users` — make each row clickable → opens detail page (keeps existing "Manage" drawer for quick edits)
+  - `/admin/groups/:id` — student rows link to the detail page
+  - `/admin/homework` — student name in submissions links to detail page
 
-2. Fix teacher notification delivery status
-   - Update `notifyTeachersOfSubmission` in `telegram-bot-webhook` so it only sets `sent_at` after Telegram confirms success.
-   - Keep the fallback queue behavior intact for quiet hours and failed sends.
-   - Align the separate `notify-homework-submission` queue drainer with the same button format and success/error handling.
+## Page Layout
 
-3. Fix confirmation/resubmission behavior
-   - Remove or narrow the 60-second in-memory teacher-DM suppression so valid resubmissions always notify the teacher.
-   - Keep idempotency based on the actual message URL/submission row so Telegram retries do not duplicate notifications, but new message posts/resubmissions do notify.
-   - Ensure student confirmation is sent after both first submissions and active resubmissions.
+Header card: avatar, name, email, role badge, group, Telegram link status, join date, last active, quick actions (Open Manage drawer, Send DM via bot, Copy email).
 
-4. Strengthen Group 8 intake diagnostics
-   - Add explicit logs/resolution states for: group resolved, assignment resolved, submission upserted, student DM sent/failed, teacher DM queued/sent/failed.
-   - Ensure `webhook_inbox` records enough detail for Group 8 topic posts so we can distinguish “bot never received the message” from “bot received but ignored it”.
+Tabs:
 
-5. Verify all groups’ setup and dependencies
-   - Query all groups for shared homework topic URLs, topic ids, assigned teacher, teacher Telegram id, and student Telegram coverage.
-   - Confirm Group 8 shared topic id `3` and its teacher are configured.
-   - After code changes, deploy `telegram-bot-webhook` and `notify-homework-submission`, then verify logs/data for a fresh Group 8 submission and a resubmission: submission row created/updated, student confirmation attempted successfully, teacher queue row created, and teacher DM sent or left retryable with a real error.
+1. **Profile** — name, email, language, group, role, archived status, signup source, magic-link status, password set y/n. Read-only summary (editing stays in the existing Manage drawer).
 
-Important note:
+2. **Lessons** — table of every lesson with: module, lesson title, watch %, watch time, last position, completed_at. Sort by module/position. Top KPIs: total lessons completed, total watch minutes, current streak, last 7d minutes.
 
-If Group 8 still produces no webhook inbox rows after deployment, the remaining issue is Telegram-side setup: the bot is not receiving messages from that group/topic. In that case the code will surface it clearly, and the fix will be to add the bot to Group 8 with message visibility/admin permissions or refresh the webhook allowed updates.
+3. **Homework** — per-assignment row: module #, task #, status (not submitted / submitted / graded / late / resubmitted), submitted_at, score, attempts count, source (web/telegram), link to submission (opens grader drawer). Show full attempts history (previous_attempts JSON) in an expand row.
+
+4. **Telegram** — link status (telegram_id, username, first/last name), `/myid` history, last bot interaction, list of submissions made via bot, DM delivery log (from `homework_teacher_dm_queue` where student_id = this user, plus any DMs sent to this student from `notifications_log`).
+
+5. **Engagement** — streaks (current + longest), logins (last 30, from `auth_events`), nudges sent (`nudge_log`), badges earned, leaderboard rank, daily watch heatmap (last 90d from `daily_watch_summary`).
+
+## Data Sources (read-only queries)
+
+- `profiles`, `user_roles`, `groups`, `enrollments`
+- `lessons`, `modules`, `lesson_progress`, `daily_watch_summary`
+- `homework_assignments`, `homework_submissions`
+- `bot_homework_intents`, `group_message_events`, `homework_teacher_dm_queue`, `notifications_log`
+- `auth_events`, `nudge_log`, `badges` + award table, `leaderboard_cache`
+
+All queries scoped by `user_id = :id`. Access gated by `has_role(auth.uid(), 'admin')` — existing RLS already covers most tables; for the few that are admin-only-read, queries run from the admin session and will pass.
+
+## Files
+
+- `src/pages/admin/AdminStudentDetail.tsx` (new) — main page with tabs
+- `src/components/admin/student/ProfileTab.tsx`
+- `src/components/admin/student/LessonsTab.tsx`
+- `src/components/admin/student/HomeworkTab.tsx`
+- `src/components/admin/student/TelegramTab.tsx`
+- `src/components/admin/student/EngagementTab.tsx`
+- `src/App.tsx` — register `/admin/users/:id` route
+- `src/pages/admin/AdminUsers.tsx` — row click → navigate to detail
+- `src/pages/admin/GroupDetail.tsx` — link student names to detail
+- `src/pages/admin/AdminHomework.tsx` — link student names to detail
+- i18n keys in `en.json` / `ru.json` / `uz.json`
+
+## Non-goals
+
+- No new edit flows here (Manage drawer stays the editor)
+- No new tables or migrations
+- No changes to Telegram bot / submission logic
