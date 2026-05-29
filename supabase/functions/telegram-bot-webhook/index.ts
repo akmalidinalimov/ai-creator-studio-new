@@ -244,12 +244,13 @@ const T = {
     hwTopicMissing: "   ⚠️ Topik sozlanmagan — ustozingizga murojaat qiling.",
     hwSubmitBtn: (mn: number, tn: number) => `📤 Topshirish — M${mn}·V${tn}`,
     hwIntentReady: (mn: number, tn: number) =>
-      `📤 <b>Modul ${mn} · Vazifa ${tn}</b>\n\nQuyidagi tugmani bosib topikga o'ting va rasm yoki video yuboring. Bot avtomatik qabul qiladi (10 daqiqa ichida).`,
+      `📤 <b>Modul ${mn} · Vazifa ${tn}</b>\n\nVazifangizni shu yerga (botga) rasm yoki video sifatida yuboring. Bot uni topikka o'zi joylaydi (10 daqiqa ichida).\n\n⚠️ Diqqat: topikka to'g'ridan-to'g'ri yuborilgan xabarlar vazifa sifatida qabul qilinmaydi.`,
     hwIntentNoTopic: "Bu modul uchun topik sozlanmagan. Iltimos, ustozingizga murojaat qiling.",
     hwIntentNoGroup: "Sizga guruh biriktirilmagan. Ustozingiz bilan bog'laning.",
-    hwIntentBtnGoTopic: "📌 Topikga o'tish",
+    hwIntentBtnGoTopic: "📌 Topikni ko'rish",
     hwIntentAlreadyScored: "Bu vazifa allaqachon baholangan ✅",
-    hwOnlyMedia: "❗️ Faqat rasm yoki video qabul qilinadi. Iltimos, vazifangizni rasm yoki video sifatida yuboring.",
+    hwOnlyMedia: "❗️ Faqat rasm yoki video qabul qilinadi. Iltimos, vazifangizni rasm yoki video sifatida shu yerga yuboring.",
+    hwForwardFailed: "❌ Vazifangizni topikka joylab bo'lmadi. Iltimos, ustozingizga murojaat qiling va keyinroq qayta urinib ko'ring.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Sizning oldingi natijangiz: <b>${sc}/${mx}</b>${fb ? `\nIzoh: "${csvEscapeHtml(fb)}"` : ""}\n\nQayta topshirmoqchimisiz?`,
     hwResubYes: "✅ Ha, qayta topshiraman",
