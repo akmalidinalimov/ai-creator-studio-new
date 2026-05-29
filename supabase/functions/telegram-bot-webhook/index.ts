@@ -4209,6 +4209,14 @@ Deno.serve(async (req) => {
       const persona: Persona = profileForLocale ? await getPersona(admin, profileForLocale.id) : "student";
       const adminFlag = persona === "admin";
 
+      // v3.14.44: if the student has an open homework intent, intercept media
+      // sent to the bot in this DM and route it as a homework submission.
+      // Returns true if consumed; falls through otherwise.
+      if (profileForLocale && persona === "student") {
+        const consumedHw = await handlePrivateHomeworkUpload(admin, msg, profileForLocale);
+        if (consumedHw) return new Response("ok", { status: 200, headers: corsHeaders });
+      }
+
       if (text.startsWith("/start ")) {
         const arg = text.slice(7).trim();
         if (arg.startsWith("login_")) {
