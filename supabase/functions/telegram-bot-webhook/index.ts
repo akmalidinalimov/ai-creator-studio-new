@@ -447,6 +447,7 @@ const T = {
     hwIntentNoGroup: "Вам не назначена группа. Свяжитесь с преподавателем.",
     hwIntentBtnGoTopic: "📌 Перейти в топик",
     hwIntentAlreadyScored: "Это задание уже оценено ✅",
+    hwOnlyMedia: "❗️ Принимаются только фото или видео. Пожалуйста, отправьте задание изображением или видео.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Ваш предыдущий результат: <b>${sc}/${mx}</b>${fb ? `\nКомментарий: "${csvEscapeHtml(fb)}"` : ""}\n\nХотите отправить заново?`,
     hwResubYes: "✅ Да, отправить заново",
