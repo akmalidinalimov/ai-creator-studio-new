@@ -3354,20 +3354,31 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
     // Quick check: does this message carry any attachment we care about?
     const hasAttachment = !!(
       (Array.isArray(msg.photo) && msg.photo.length) ||
-      msg.video || msg.video_note || msg.document
+      msg.video || msg.video_note || msg.document || msg.animation
     );
 
     // Look up the most-recent non-expired intent for this student.
     const nowIso = new Date().toISOString();
     const { data: intents, error: intentErr } = await admin
       .from("bot_homework_intents")
-      .select("id, user_id, assignment_id, module_id, group_id, telegram_chat_id, telegram_thread_id")
+      .select("id, user_id, assignment_id, module_id, group_id, telegram_chat_id, telegram_thread_id, expires_at, created_at")
       .eq("user_id", profile.id)
       .gt("expires_at", nowIso)
       .order("created_at", { ascending: false })
       .limit(1);
     if (intentErr) console.error("hw:dm:intent-query-err", intentErr);
     const intent = intents && intents[0];
+    console.log("hw:dm:entry", JSON.stringify({
+      profile_id: profile.id, chatId, messageId,
+      has_photo: Array.isArray(msg.photo) && msg.photo.length > 0,
+      has_video: !!msg.video, has_video_note: !!msg.video_note,
+      has_document: !!msg.document, doc_mime: msg.document?.mime_type || null,
+      has_animation: !!msg.animation,
+      has_attachment: hasAttachment,
+      intent_found: !!intent,
+      intent_id: intent?.id || null,
+      intent_expires_at: intent?.expires_at || null,
+    }));
     if (!intent) return false; // no active intent — let normal routing handle this message
 
     // Extract media
