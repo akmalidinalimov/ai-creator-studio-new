@@ -3589,7 +3589,7 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
       return true;
     }
 
-    const messageUrl = buildMessageLink(intent.telegram_chat_id, intent.telegram_thread_id, copiedMessageId);
+    const messageUrl = buildMessageLink(routeChatId, routeThreadId, copiedMessageId);
     const submittedText = userCaption.slice(0, 4000);
 
     // Finalize both first submissions and resubmissions in one place.
