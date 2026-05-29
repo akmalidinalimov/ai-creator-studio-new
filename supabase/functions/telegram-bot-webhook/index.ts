@@ -3111,11 +3111,10 @@ async function startHomeworkIntent(
 
   const mn = (a.modules?.position ?? 0) + 1;
   const tn = a.task_number || 1;
-  // v3.14.44: students must now send the photo/video to the bot in this DM.
-  // The bot will copy the media into the topic on their behalf. The topic
-  // link is informational only — direct topic posts are ignored.
+  // v3.14.45: students must stay in this bot DM. Do not show a topic link
+  // here because direct topic posts are intentionally ignored.
   await sendMessage(chatId, t.hwIntentReady(mn, tn), {
-    inline_keyboard: [[{ text: t.hwIntentBtnGoTopic, url: topicUrl }]],
+    inline_keyboard: [[{ text: t.hwCancelIntent, callback_data: `hw:cancel:${assignmentId}` }]],
   });
 }
 
