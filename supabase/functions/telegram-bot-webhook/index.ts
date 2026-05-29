@@ -3441,6 +3441,24 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       return; // unsupported message type, no media, no text
     }
 
+    // v3.14.42: Only accept image or video submissions. Text, voice, and non-media
+    // documents must NOT create a submission, confirm to the student, or notify the teacher.
+    const docMime: string = String(msg.document?.mime_type || "").toLowerCase();
+    const isImageDoc = kind === "document" && docMime.startsWith("image/");
+    const isVideoDoc = kind === "document" && docMime.startsWith("video/");
+    const isAcceptedMedia =
+      kind === "photo" || kind === "video" || kind === "video_note" || isImageDoc || isVideoDoc;
+    if (!isAcceptedMedia) {
+      console.log("hw:group:rejected-non-media", JSON.stringify({
+        profile_id: profile.id, kind, doc_mime: docMime || null, chatId, threadId, messageId,
+      }));
+      if (profile.telegram_id) {
+        const loc: Locale = normLocale(profile.preferred_locale);
+        try { await sendMessage(profile.telegram_id, (T[loc] as any).hwOnlyMedia); } catch (_e) { /* ignore */ }
+      }
+      return;
+    }
+
     const messageUrl = buildMessageLink(chatId, threadId, messageId);
     const submittedText = (msg.caption || msg.text || "").slice(0, 4000);
 
