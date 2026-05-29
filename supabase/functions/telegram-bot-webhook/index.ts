@@ -249,6 +249,7 @@ const T = {
     hwIntentNoGroup: "Sizga guruh biriktirilmagan. Ustozingiz bilan bog'laning.",
     hwIntentBtnGoTopic: "📌 Topikga o'tish",
     hwIntentAlreadyScored: "Bu vazifa allaqachon baholangan ✅",
+    hwOnlyMedia: "❗️ Faqat rasm yoki video qabul qilinadi. Iltimos, vazifangizni rasm yoki video sifatida yuboring.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Sizning oldingi natijangiz: <b>${sc}/${mx}</b>${fb ? `\nIzoh: "${csvEscapeHtml(fb)}"` : ""}\n\nQayta topshirmoqchimisiz?`,
     hwResubYes: "✅ Ha, qayta topshiraman",
@@ -446,6 +447,7 @@ const T = {
     hwIntentNoGroup: "Вам не назначена группа. Свяжитесь с преподавателем.",
     hwIntentBtnGoTopic: "📌 Перейти в топик",
     hwIntentAlreadyScored: "Это задание уже оценено ✅",
+    hwOnlyMedia: "❗️ Принимаются только фото или видео. Пожалуйста, отправьте задание изображением или видео.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Ваш предыдущий результат: <b>${sc}/${mx}</b>${fb ? `\nКомментарий: "${csvEscapeHtml(fb)}"` : ""}\n\nХотите отправить заново?`,
     hwResubYes: "✅ Да, отправить заново",
@@ -643,6 +645,7 @@ const T = {
     hwIntentNoGroup: "You are not assigned to a group. Please contact your teacher.",
     hwIntentBtnGoTopic: "📌 Open topic",
     hwIntentAlreadyScored: "This task has already been graded ✅",
+    hwOnlyMedia: "❗️ Only photos or videos are accepted. Please send your homework as an image or video.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Your previous result: <b>${sc}/${mx}</b>${fb ? `\nFeedback: "${csvEscapeHtml(fb)}"` : ""}\n\nDo you want to resubmit?`,
     hwResubYes: "✅ Yes, resubmit",
@@ -3436,6 +3439,24 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       kind = "video_note";
     } else if (!msg.text && !msg.caption) {
       return; // unsupported message type, no media, no text
+    }
+
+    // v3.14.42: Only accept image or video submissions. Text, voice, and non-media
+    // documents must NOT create a submission, confirm to the student, or notify the teacher.
+    const docMime: string = String(msg.document?.mime_type || "").toLowerCase();
+    const isImageDoc = kind === "document" && docMime.startsWith("image/");
+    const isVideoDoc = kind === "document" && docMime.startsWith("video/");
+    const isAcceptedMedia =
+      kind === "photo" || kind === "video" || kind === "video_note" || isImageDoc || isVideoDoc;
+    if (!isAcceptedMedia) {
+      console.log("hw:group:rejected-non-media", JSON.stringify({
+        profile_id: profile.id, kind, doc_mime: docMime || null, chatId, threadId, messageId,
+      }));
+      if (profile.telegram_id) {
+        const loc: Locale = normLocale(profile.preferred_locale);
+        try { await sendMessage(profile.telegram_id, (T[loc] as any).hwOnlyMedia); } catch (_e) { /* ignore */ }
+      }
+      return;
     }
 
     const messageUrl = buildMessageLink(chatId, threadId, messageId);
