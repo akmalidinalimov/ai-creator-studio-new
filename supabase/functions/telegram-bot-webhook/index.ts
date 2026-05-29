@@ -248,6 +248,8 @@ const T = {
     hwIntentNoTopic: "Bu modul uchun topik sozlanmagan. Iltimos, ustozingizga murojaat qiling.",
     hwIntentNoGroup: "Sizga guruh biriktirilmagan. Ustozingiz bilan bog'laning.",
     hwIntentBtnGoTopic: "📌 Topikni ko'rish",
+    hwCancelIntent: "Bekor qilish",
+    hwIntentCancelled: "Topshirish bekor qilindi.",
     hwIntentAlreadyScored: "Bu vazifa allaqachon baholangan ✅",
     hwOnlyMedia: "❗️ Faqat rasm yoki video qabul qilinadi. Iltimos, vazifangizni rasm yoki video sifatida shu yerga yuboring.",
     hwForwardFailed: "❌ Vazifangizni topikka joylab bo'lmadi. Iltimos, ustozingizga murojaat qiling va keyinroq qayta urinib ko'ring.",
@@ -259,6 +261,8 @@ const T = {
     hwResubError: "❌ Qayta topshirishni boshlab bo'lmadi. Keyinroq urinib ko'ring.",
     hwReceived: (mn: number, tn: number) =>
       `✅ Vazifangiz qabul qilindi · Modul ${mn} · V${tn}\nUstoz baholaganidan keyin natija keladi.`,
+    hwResubReceived: (mn: number, tn: number) =>
+      `✅ Qayta topshirish qabul qilindi · Modul ${mn} · V${tn}\nVazifangiz qayta baholash uchun ustozga yuborildi.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
       `🆕 <b>Yangi topshiriq</b>\n👤 ${csvEscapeHtml(name)}\n📚 Modul ${mn} · V${tn} — ${csvEscapeHtml(title)}`,
     hwTeacherBtnFile: "📂 Faylni ko'rish",
@@ -447,6 +451,8 @@ const T = {
     hwIntentNoTopic: "Топик для этого модуля не настроен. Свяжитесь с преподавателем.",
     hwIntentNoGroup: "Вам не назначена группа. Свяжитесь с преподавателем.",
     hwIntentBtnGoTopic: "📌 Открыть топик",
+    hwCancelIntent: "Отменить",
+    hwIntentCancelled: "Отправка отменена.",
     hwIntentAlreadyScored: "Это задание уже оценено ✅",
     hwOnlyMedia: "❗️ Принимаются только фото или видео. Пожалуйста, отправьте задание фото или видео сюда.",
     hwForwardFailed: "❌ Не удалось опубликовать задание в топике. Свяжитесь с преподавателем и попробуйте позже.",
@@ -458,6 +464,8 @@ const T = {
     hwResubError: "❌ Не удалось начать пересдачу. Попробуйте позже.",
     hwReceived: (mn: number, tn: number) =>
       `✅ Задание принято · Модуль ${mn} · З${tn}\nКак только преподаватель оценит — пришлю результат.`,
+    hwResubReceived: (mn: number, tn: number) =>
+      `✅ Повторная отправка принята · Модуль ${mn} · З${tn}\nРабота отправлена преподавателю на проверку.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
       `🆕 <b>Новая сдача</b>\n👤 ${csvEscapeHtml(name)}\n📚 Модуль ${mn} · З${tn} — ${csvEscapeHtml(title)}`,
     hwTeacherBtnFile: "📂 Открыть файл",
@@ -646,6 +654,8 @@ const T = {
     hwIntentNoTopic: "Topic not configured for this module. Please contact your teacher.",
     hwIntentNoGroup: "You are not assigned to a group. Please contact your teacher.",
     hwIntentBtnGoTopic: "📌 Open topic",
+    hwCancelIntent: "Cancel",
+    hwIntentCancelled: "Submission cancelled.",
     hwIntentAlreadyScored: "This task has already been graded ✅",
     hwOnlyMedia: "❗️ Only photos or videos are accepted. Please send your homework as a photo or video here.",
     hwForwardFailed: "❌ Could not post your submission to the topic. Please contact your teacher and try again later.",
@@ -657,6 +667,8 @@ const T = {
     hwResubError: "❌ Could not start resubmission. Please try again later.",
     hwReceived: (mn: number, tn: number) =>
       `✅ Submission received · Module ${mn} · T${tn}\nYou'll get the result once your teacher grades it.`,
+    hwResubReceived: (mn: number, tn: number) =>
+      `✅ Resubmission received · Module ${mn} · T${tn}\nYour work is waiting for teacher review/grading.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
       `🆕 <b>New submission</b>\n👤 ${csvEscapeHtml(name)}\n📚 Module ${mn} · T${tn} — ${csvEscapeHtml(title)}`,
     hwTeacherBtnFile: "📂 Open file",
@@ -2749,7 +2761,6 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
   if (state.state === "grade_comment") {
     if (text === "/cancel") {
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
-    if (sub) cacheInvalidateUser(sub.user_id);
       await sendWithKeyboard(msg.chat.id, t.gradeCancelled, locale, isAdmin, isAdmin ? "admin" : "teacher");
       return true;
     }
@@ -2761,12 +2772,14 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
       .select("user_id, assignment_id").eq("id", submissionId).maybeSingle();
     const { error: upErr } = await admin.from("homework_submissions").update({
       score, score_feedback: feedback, scored_by: profileId, scored_at: new Date().toISOString(),
+      score_is_stale: false,
     }).eq("id", submissionId);
     if (upErr) {
       await sendMessage(msg.chat.id, `❌ ${upErr.message}`);
       return true;
     }
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+    if (sub) cacheInvalidateUser(sub.user_id);
 
     // Auto-DM the student (always)
     if (sub) {
@@ -3050,6 +3063,19 @@ async function setMessageReaction(chatId: number, messageId: number, emoji = "�
   } catch (_e) { /* best-effort */ }
 }
 
+function archivedHomeworkAttempt(row: any) {
+  return {
+    attempt_number: row.attempt_number,
+    score: row.score,
+    score_feedback: row.score_feedback,
+    scored_by: row.scored_by,
+    scored_at: row.scored_at,
+    submitted_at: row.submitted_at,
+    telegram_message_url: row.telegram_message_url,
+    is_late: row.is_late,
+  };
+}
+
 // Student tapped "📤 Topshirish" in /vazifalar — open intent and point to topic.
 async function startHomeworkIntent(
   admin: any, chatId: number, profile: any, locale: Locale, assignmentId: string,
@@ -3099,11 +3125,10 @@ async function startHomeworkIntent(
 
   const mn = (a.modules?.position ?? 0) + 1;
   const tn = a.task_number || 1;
-  // v3.14.44: students must now send the photo/video to the bot in this DM.
-  // The bot will copy the media into the topic on their behalf. The topic
-  // link is informational only — direct topic posts are ignored.
+  // v3.14.45: students must stay in this bot DM. Do not show a topic link
+  // here because direct topic posts are intentionally ignored.
   await sendMessage(chatId, t.hwIntentReady(mn, tn), {
-    inline_keyboard: [[{ text: t.hwIntentBtnGoTopic, url: topicUrl }]],
+    inline_keyboard: [[{ text: t.hwCancelIntent, callback_data: `hw:cancel:${assignmentId}` }]],
   });
 }
 
@@ -3477,14 +3502,20 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
     const messageUrl = buildMessageLink(intent.telegram_chat_id, intent.telegram_thread_id, copiedMessageId);
     const submittedText = userCaption.slice(0, 4000);
 
-    // Bump attempt_number for the homework_submissions_guard trigger.
+    // Finalize both first submissions and resubmissions in one place.
     const { data: existingSub } = await admin
       .from("homework_submissions")
-      .select("attempt_number")
+      .select("id, attempt_number, score, score_feedback, scored_by, scored_at, submitted_at, telegram_message_url, is_late, previous_attempts, score_is_stale")
       .eq("user_id", profile.id)
       .eq("assignment_id", intent.assignment_id)
       .maybeSingle();
-    const nextAttempt = ((existingSub?.attempt_number as number | null) ?? 0) + 1;
+    const priorAttempts = Array.isArray(existingSub?.previous_attempts) ? existingSub.previous_attempts : [];
+    const shouldArchiveGrade = existingSub?.score != null && !existingSub?.score_is_stale;
+    const previousAttempts = shouldArchiveGrade ? [...priorAttempts, archivedHomeworkAttempt(existingSub)] : priorAttempts;
+    const isResubmission = !!existingSub && (
+      shouldArchiveGrade || !!existingSub.score_is_stale || priorAttempts.length > 0 || Number(existingSub.attempt_number || 1) > 1
+    );
+    const nextAttempt = existingSub ? Number(existingSub.attempt_number || 1) + 1 : 1;
 
     const { data: upserted, error: upErr } = await admin
       .from("homework_submissions")
@@ -3498,7 +3529,8 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
         score_feedback: null,
         scored_by: null,
         scored_at: null,
-        score_is_stale: false,
+        score_is_stale: isResubmission,
+        previous_attempts: previousAttempts,
         is_late: false,
         telegram_chat_id: intent.telegram_chat_id,
         telegram_thread_id: intent.telegram_thread_id,
@@ -3525,12 +3557,13 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
     // Confirmation DM
     if (profile.telegram_id) {
       try {
-        const resp = await sendMessage(profile.telegram_id, t.hwReceived(mn, tn));
+        const confirmationText = isResubmission ? t.hwResubReceived(mn, tn) : t.hwReceived(mn, tn);
+        const resp = await sendMessage(profile.telegram_id, confirmationText);
         if (!resp.ok) {
           const errTxt = await resp.text().catch(() => "");
           console.error("hw:dm:student-confirm-fail", JSON.stringify({ profile_id: profile.id, status: resp.status, err: errTxt.slice(0, 200) }));
         } else {
-          console.log("hw:dm:student-confirm-ok", JSON.stringify({ profile_id: profile.id, mn, tn }));
+          console.log("hw:dm:student-confirm-ok", JSON.stringify({ profile_id: profile.id, mn, tn, is_resubmission: isResubmission }));
         }
       } catch (e) {
         console.error("hw:dm:student-confirm-exc", JSON.stringify({ profile_id: profile.id, err: String(e) }));
@@ -3539,10 +3572,11 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
 
     // Teacher DM (existing helper handles queueing + quiet hours + idempotency)
     const subId = upserted?.id;
-    await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId, intent.assignment_id, moduleId);
+    const teacherTitle = isResubmission ? `Qayta topshirish: ${aTitle}` : aTitle;
+    await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, teacherTitle, messageUrl, subId, intent.assignment_id, moduleId);
 
     cacheInvalidateUser(profile.id);
-    console.log("hw:dm:ok", JSON.stringify({ profile_id: profile.id, assignment_id: intent.assignment_id, copied_message_id: copiedMessageId }));
+    console.log("hw:dm:ok", JSON.stringify({ profile_id: profile.id, assignment_id: intent.assignment_id, copied_message_id: copiedMessageId, is_resubmission: isResubmission }));
     return true;
   } catch (e) {
     console.error("handlePrivateHomeworkUpload error", e);
@@ -3750,6 +3784,18 @@ async function handleCallback(admin: any, cq: any) {
     const locale: Locale = normLocale(profile.preferred_locale);
     await answerCallback(cq.id);
     await startHomeworkIntent(admin, chatId, profile, locale, assignmentId);
+    return;
+  }
+
+  if (data.startsWith("hw:cancel:") && chatId) {
+    const assignmentId = data.slice("hw:cancel:".length);
+    const profile = await findProfileByTelegramId(admin, tgId);
+    if (!profile) { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(profile.preferred_locale);
+    const t = T[locale] as any;
+    await admin.from("bot_homework_intents").delete().eq("user_id", profile.id).eq("assignment_id", assignmentId);
+    await answerCallback(cq.id, "OK");
+    await sendMessage(chatId, t.hwIntentCancelled);
     return;
   }
 
@@ -4165,8 +4211,8 @@ Deno.serve(async (req) => {
   const inboxId = await logWebhookInbox(admin, update);
 
   try {
-    // Treat both message and channel_post as inbound for group topics (forum supergroups can deliver either)
-    const inbound = update.message || update.channel_post;
+    // Treat messages, edited messages, and channel posts as inbound for group topics.
+    const inbound = update.message || update.edited_message || update.channel_post;
     if (inbound) {
       const msg = inbound;
       // Group/supergroup posts (e.g. inside a forum topic) → homework intake only
@@ -4183,8 +4229,8 @@ Deno.serve(async (req) => {
         return new Response("ok", { status: 200, headers: corsHeaders });
       }
     }
-    if (update.message) {
-      const msg = update.message;
+    if (update.message || update.edited_message) {
+      const msg = update.message || update.edited_message;
       const text: string = msg.text || "";
       const tgUsername = (msg.from.username || "").toLowerCase();
       // v3.14.32: identity gate ONLY runs for private chats. Group/supergroup/channel
