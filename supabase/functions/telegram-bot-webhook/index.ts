@@ -2761,7 +2761,6 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
   if (state.state === "grade_comment") {
     if (text === "/cancel") {
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
-    if (sub) cacheInvalidateUser(sub.user_id);
       await sendWithKeyboard(msg.chat.id, t.gradeCancelled, locale, isAdmin, isAdmin ? "admin" : "teacher");
       return true;
     }
@@ -2773,12 +2772,14 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
       .select("user_id, assignment_id").eq("id", submissionId).maybeSingle();
     const { error: upErr } = await admin.from("homework_submissions").update({
       score, score_feedback: feedback, scored_by: profileId, scored_at: new Date().toISOString(),
+      score_is_stale: false,
     }).eq("id", submissionId);
     if (upErr) {
       await sendMessage(msg.chat.id, `❌ ${upErr.message}`);
       return true;
     }
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+    if (sub) cacheInvalidateUser(sub.user_id);
 
     // Auto-DM the student (always)
     if (sub) {
