@@ -654,6 +654,8 @@ const T = {
     hwIntentNoTopic: "Topic not configured for this module. Please contact your teacher.",
     hwIntentNoGroup: "You are not assigned to a group. Please contact your teacher.",
     hwIntentBtnGoTopic: "📌 Open topic",
+    hwCancelIntent: "Cancel",
+    hwIntentCancelled: "Submission cancelled.",
     hwIntentAlreadyScored: "This task has already been graded ✅",
     hwOnlyMedia: "❗️ Only photos or videos are accepted. Please send your homework as a photo or video here.",
     hwForwardFailed: "❌ Could not post your submission to the topic. Please contact your teacher and try again later.",
@@ -665,6 +667,8 @@ const T = {
     hwResubError: "❌ Could not start resubmission. Please try again later.",
     hwReceived: (mn: number, tn: number) =>
       `✅ Submission received · Module ${mn} · T${tn}\nYou'll get the result once your teacher grades it.`,
+    hwResubReceived: (mn: number, tn: number) =>
+      `✅ Resubmission received · Module ${mn} · T${tn}\nYour work is waiting for teacher review/grading.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
       `🆕 <b>New submission</b>\n👤 ${csvEscapeHtml(name)}\n📚 Module ${mn} · T${tn} — ${csvEscapeHtml(title)}`,
     hwTeacherBtnFile: "📂 Open file",
