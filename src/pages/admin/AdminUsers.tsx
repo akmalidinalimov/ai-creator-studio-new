@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import { getSiteUrl } from "@/lib/siteUrl";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
@@ -983,7 +982,7 @@ export default function AdminUsers() {
                       <span className="text-muted-foreground">{(enrollMap[u.id]?.size) || 0} {t("admin.users.headers.courses").toLowerCase()}</span>
                       <span className="text-muted-foreground">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}</span>
                     </div>
-                    <div className="flex gap-1"><Link to={`/admin/users/${u.id}`}><Button variant="outline" size="sm" className="h-7">View</Button></Link>{isAdmin && <Button variant="ghost" size="sm" className="h-7" onClick={() => setManageUser(u)}>{t("admin.users.manage")}</Button>}</div>
+                    {isAdmin && <Button variant="ghost" size="sm" className="h-7" onClick={() => setManageUser(u)}>{t("admin.users.manage")}</Button>}
                   </div>
                 </div>
               </div>
@@ -1021,8 +1020,8 @@ export default function AdminUsers() {
                 {filtered.map((u) => (
                   <tr key={u.id} className="border-t hover:bg-muted/20">
                     <td className="p-3"><Checkbox checked={selected.has(u.id)} onCheckedChange={() => toggleSelect(u.id)} /></td>
-                    <td className="p-3 font-medium"><Link to={`/admin/users/${u.id}`} className="hover:underline text-primary">{u.name || "—"}</Link></td>
-                    <td className="p-3 text-muted-foreground"><Link to={`/admin/users/${u.id}`} className="hover:underline">{u.last_name || "—"}</Link></td>
+                    <td className="p-3 font-medium">{u.name || "—"}</td>
+                    <td className="p-3 text-muted-foreground">{u.last_name || "—"}</td>
                     <td className="p-3 text-muted-foreground">
                       {u.email}
                       {isLocked(u.email) && <Badge variant="destructive" className="ml-2 text-[10px]">{t("admin.users.locked")}</Badge>}
@@ -1062,7 +1061,7 @@ export default function AdminUsers() {
                     <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : u.status === "archived" ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-destructive/10 text-destructive"}`}>{u.status === "active" ? t("admin.users.active") : u.status === "archived" ? "Arxiv" : t("admin.users.inactive")}</span></td>
                     <td className="p-3 text-xs text-muted-foreground">{(enrollMap[u.id]?.size) || 0}</td>
                     <td className="p-3 text-xs text-muted-foreground">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}</td>
-                    <td className="p-3"><div className="flex gap-1"><Link to={`/admin/users/${u.id}`}><Button variant="outline" size="sm">View</Button></Link>{isAdmin && <Button variant="ghost" size="sm" onClick={() => setManageUser(u)}>{t("admin.users.manage")}</Button>}</div></td>
+                    <td className="p-3">{isAdmin && <Button variant="ghost" size="sm" onClick={() => setManageUser(u)}>{t("admin.users.manage")}</Button>}</td>
                   </tr>
                 ))}
               </tbody>

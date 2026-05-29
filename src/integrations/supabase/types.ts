@@ -1699,7 +1699,6 @@ export type Database = {
           preferred_language: string | null
           preferred_locale: string
           reminder_time: string
-          stats_dirty_at: string | null
           status: Database["public"]["Enums"]["user_status"]
           tashkent_offset_minutes: number
           telegram_id: number | null
@@ -1730,7 +1729,6 @@ export type Database = {
           preferred_language?: string | null
           preferred_locale?: string
           reminder_time?: string
-          stats_dirty_at?: string | null
           status?: Database["public"]["Enums"]["user_status"]
           tashkent_offset_minutes?: number
           telegram_id?: number | null
@@ -1761,7 +1759,6 @@ export type Database = {
           preferred_language?: string | null
           preferred_locale?: string
           reminder_time?: string
-          stats_dirty_at?: string | null
           status?: Database["public"]["Enums"]["user_status"]
           tashkent_offset_minutes?: number
           telegram_id?: number | null

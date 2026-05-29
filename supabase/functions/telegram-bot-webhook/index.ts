@@ -244,15 +244,11 @@ const T = {
     hwTopicMissing: "   ⚠️ Topik sozlanmagan — ustozingizga murojaat qiling.",
     hwSubmitBtn: (mn: number, tn: number) => `📤 Topshirish — M${mn}·V${tn}`,
     hwIntentReady: (mn: number, tn: number) =>
-      `📤 <b>Modul ${mn} · Vazifa ${tn}</b>\n\nVazifangizni shu yerga (botga) rasm yoki video sifatida yuboring. Bot uni topikka o'zi joylaydi (10 daqiqa ichida).\n\n⚠️ Diqqat: topikka to'g'ridan-to'g'ri yuborilgan xabarlar vazifa sifatida qabul qilinmaydi.`,
+      `📤 <b>Modul ${mn} · Vazifa ${tn}</b>\n\nQuyidagi tugmani bosib topikga o'ting va rasm yoki video yuboring. Bot avtomatik qabul qiladi (10 daqiqa ichida).`,
     hwIntentNoTopic: "Bu modul uchun topik sozlanmagan. Iltimos, ustozingizga murojaat qiling.",
     hwIntentNoGroup: "Sizga guruh biriktirilmagan. Ustozingiz bilan bog'laning.",
-    hwIntentBtnGoTopic: "📌 Topikni ko'rish",
-    hwCancelIntent: "Bekor qilish",
-    hwIntentCancelled: "Topshirish bekor qilindi.",
+    hwIntentBtnGoTopic: "📌 Topikga o'tish",
     hwIntentAlreadyScored: "Bu vazifa allaqachon baholangan ✅",
-    hwOnlyMedia: "❗️ Faqat rasm yoki video qabul qilinadi. Iltimos, vazifangizni rasm yoki video sifatida shu yerga yuboring.",
-    hwForwardFailed: "❌ Vazifangizni topikka joylab bo'lmadi. Iltimos, ustozingizga murojaat qiling va keyinroq qayta urinib ko'ring.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Sizning oldingi natijangiz: <b>${sc}/${mx}</b>${fb ? `\nIzoh: "${csvEscapeHtml(fb)}"` : ""}\n\nQayta topshirmoqchimisiz?`,
     hwResubYes: "✅ Ha, qayta topshiraman",
@@ -261,8 +257,6 @@ const T = {
     hwResubError: "❌ Qayta topshirishni boshlab bo'lmadi. Keyinroq urinib ko'ring.",
     hwReceived: (mn: number, tn: number) =>
       `✅ Vazifangiz qabul qilindi · Modul ${mn} · V${tn}\nUstoz baholaganidan keyin natija keladi.`,
-    hwResubReceived: (mn: number, tn: number) =>
-      `✅ Qayta topshirish qabul qilindi · Modul ${mn} · V${tn}\nVazifangiz qayta baholash uchun ustozga yuborildi.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
       `🆕 <b>Yangi topshiriq</b>\n👤 ${csvEscapeHtml(name)}\n📚 Modul ${mn} · V${tn} — ${csvEscapeHtml(title)}`,
     hwTeacherBtnFile: "📂 Faylni ko'rish",
@@ -447,15 +441,11 @@ const T = {
     hwTopicMissing: "   ⚠️ Топик не настроен — обратитесь к преподавателю.",
     hwSubmitBtn: (mn: number, tn: number) => `📤 Сдать — М${mn}·З${tn}`,
     hwIntentReady: (mn: number, tn: number) =>
-      `📤 <b>Модуль ${mn} · Задание ${tn}</b>\n\nОтправьте задание сюда (в этот чат с ботом) фото или видео. Бот сам опубликует его в топике (в течение 10 минут).\n\n⚠️ Внимание: сообщения, отправленные напрямую в топик, не засчитываются как сдача.`,
+      `📤 <b>Модуль ${mn} · Задание ${tn}</b>\n\nНажмите кнопку ниже, перейдите в топик и отправьте фото или видео. Бот примет автоматически (в течение 10 минут).`,
     hwIntentNoTopic: "Топик для этого модуля не настроен. Свяжитесь с преподавателем.",
     hwIntentNoGroup: "Вам не назначена группа. Свяжитесь с преподавателем.",
-    hwIntentBtnGoTopic: "📌 Открыть топик",
-    hwCancelIntent: "Отменить",
-    hwIntentCancelled: "Отправка отменена.",
+    hwIntentBtnGoTopic: "📌 Перейти в топик",
     hwIntentAlreadyScored: "Это задание уже оценено ✅",
-    hwOnlyMedia: "❗️ Принимаются только фото или видео. Пожалуйста, отправьте задание фото или видео сюда.",
-    hwForwardFailed: "❌ Не удалось опубликовать задание в топике. Свяжитесь с преподавателем и попробуйте позже.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Ваш предыдущий результат: <b>${sc}/${mx}</b>${fb ? `\nКомментарий: "${csvEscapeHtml(fb)}"` : ""}\n\nХотите отправить заново?`,
     hwResubYes: "✅ Да, отправить заново",
@@ -464,8 +454,6 @@ const T = {
     hwResubError: "❌ Не удалось начать пересдачу. Попробуйте позже.",
     hwReceived: (mn: number, tn: number) =>
       `✅ Задание принято · Модуль ${mn} · З${tn}\nКак только преподаватель оценит — пришлю результат.`,
-    hwResubReceived: (mn: number, tn: number) =>
-      `✅ Повторная отправка принята · Модуль ${mn} · З${tn}\nРабота отправлена преподавателю на проверку.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
       `🆕 <b>Новая сдача</b>\n👤 ${csvEscapeHtml(name)}\n📚 Модуль ${mn} · З${tn} — ${csvEscapeHtml(title)}`,
     hwTeacherBtnFile: "📂 Открыть файл",
@@ -650,15 +638,11 @@ const T = {
     hwTopicMissing: "   ⚠️ Topic not configured — contact your teacher.",
     hwSubmitBtn: (mn: number, tn: number) => `📤 Submit — M${mn}·T${tn}`,
     hwIntentReady: (mn: number, tn: number) =>
-      `📤 <b>Module ${mn} · Task ${tn}</b>\n\nSend your homework here (in this chat with the bot) as a photo or video. The bot will post it to the topic for you (within 10 minutes).\n\n⚠️ Note: messages posted directly in the group topic are NOT counted as submissions.`,
+      `📤 <b>Module ${mn} · Task ${tn}</b>\n\nTap the button below to open the topic and post your photo or video. The bot will accept it automatically (within 10 minutes).`,
     hwIntentNoTopic: "Topic not configured for this module. Please contact your teacher.",
     hwIntentNoGroup: "You are not assigned to a group. Please contact your teacher.",
     hwIntentBtnGoTopic: "📌 Open topic",
-    hwCancelIntent: "Cancel",
-    hwIntentCancelled: "Submission cancelled.",
     hwIntentAlreadyScored: "This task has already been graded ✅",
-    hwOnlyMedia: "❗️ Only photos or videos are accepted. Please send your homework as a photo or video here.",
-    hwForwardFailed: "❌ Could not post your submission to the topic. Please contact your teacher and try again later.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Your previous result: <b>${sc}/${mx}</b>${fb ? `\nFeedback: "${csvEscapeHtml(fb)}"` : ""}\n\nDo you want to resubmit?`,
     hwResubYes: "✅ Yes, resubmit",
@@ -667,8 +651,6 @@ const T = {
     hwResubError: "❌ Could not start resubmission. Please try again later.",
     hwReceived: (mn: number, tn: number) =>
       `✅ Submission received · Module ${mn} · T${tn}\nYou'll get the result once your teacher grades it.`,
-    hwResubReceived: (mn: number, tn: number) =>
-      `✅ Resubmission received · Module ${mn} · T${tn}\nYour work is waiting for teacher review/grading.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
       `🆕 <b>New submission</b>\n👤 ${csvEscapeHtml(name)}\n📚 Module ${mn} · T${tn} — ${csvEscapeHtml(title)}`,
     hwTeacherBtnFile: "📂 Open file",
@@ -935,41 +917,6 @@ function cacheSet(key: string, text: string) {
 function cacheInvalidateUser(userId: string) {
   for (const k of REPLY_CACHE.keys()) if (k.includes(`:${userId}:`)) REPLY_CACHE.delete(k);
 }
-
-// v3.14.46: structured event logger. Console for edge function logs + admin_actions row
-// for durable audit. Never throws — logging must not break the user flow.
-async function logEvent(
-  admin: any,
-  actorProfileId: string | null,
-  action: string,
-  details: Record<string, any> = {},
-) {
-  try {
-    console.log(`evt:${action}`, JSON.stringify({ actor: actorProfileId, ...details }));
-  } catch { /* ignore */ }
-  if (!actorProfileId) return;
-  try {
-    await admin.from("admin_actions").insert({
-      actor_user_id: actorProfileId,
-      action,
-      target_resource_type: details?.resource_type || null,
-      target_resource_id: details?.resource_id || null,
-      target_user_id: details?.target_user_id || null,
-      details,
-    });
-  } catch (e) {
-    console.error("logEvent insert failed", String(e));
-  }
-}
-
-async function markProfileStatsDirty(admin: any, profileId: string) {
-  try {
-    await admin.from("profiles").update({ stats_dirty_at: new Date().toISOString() }).eq("id", profileId);
-  } catch (e) {
-    console.error("markProfileStatsDirty failed", String(e));
-  }
-}
-
 
 async function findProfileByTelegramId(admin: any, tgId: number) {
   const { data } = await admin
@@ -2796,6 +2743,7 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
   if (state.state === "grade_comment") {
     if (text === "/cancel") {
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+    if (sub) cacheInvalidateUser(sub.user_id);
       await sendWithKeyboard(msg.chat.id, t.gradeCancelled, locale, isAdmin, isAdmin ? "admin" : "teacher");
       return true;
     }
@@ -2807,38 +2755,12 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
       .select("user_id, assignment_id").eq("id", submissionId).maybeSingle();
     const { error: upErr } = await admin.from("homework_submissions").update({
       score, score_feedback: feedback, scored_by: profileId, scored_at: new Date().toISOString(),
-      score_is_stale: false,
     }).eq("id", submissionId);
     if (upErr) {
       await sendMessage(msg.chat.id, `❌ ${upErr.message}`);
       return true;
     }
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
-    if (sub) {
-      cacheInvalidateUser(sub.user_id);
-      await markProfileStatsDirty(admin, sub.user_id);
-      await logEvent(admin, profileId, "hw:graded", {
-        resource_type: "homework_submission", resource_id: submissionId,
-        target_user_id: sub.user_id, assignment_id: sub.assignment_id,
-        score, has_feedback: !!feedback,
-      });
-      // Recompute leaderboard since a new grade landed.
-      try {
-        const projectRef = Deno.env.get("SUPABASE_PROJECT_ID") || Deno.env.get("PROJECT_ID");
-        const svc = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-        const supaUrl = Deno.env.get("SUPABASE_URL");
-        if (supaUrl && svc) {
-          // Fire and forget; do not await long.
-          fetch(`${supaUrl}/functions/v1/leaderboard-recalc`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${svc}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ trigger: "homework_graded" }),
-          }).catch((e) => console.error("leaderboard-recalc invoke failed", String(e)));
-        }
-        void projectRef;
-      } catch (e) { console.error("leaderboard-recalc invoke exc", String(e)); }
-    }
-
 
     // Auto-DM the student (always)
     if (sub) {
@@ -3122,19 +3044,6 @@ async function setMessageReaction(chatId: number, messageId: number, emoji = "�
   } catch (_e) { /* best-effort */ }
 }
 
-function archivedHomeworkAttempt(row: any) {
-  return {
-    attempt_number: row.attempt_number,
-    score: row.score,
-    score_feedback: row.score_feedback,
-    scored_by: row.scored_by,
-    scored_at: row.scored_at,
-    submitted_at: row.submitted_at,
-    telegram_message_url: row.telegram_message_url,
-    is_late: row.is_late,
-  };
-}
-
 // Student tapped "📤 Topshirish" in /vazifalar — open intent and point to topic.
 async function startHomeworkIntent(
   admin: any, chatId: number, profile: any, locale: Locale, assignmentId: string,
@@ -3149,20 +3058,14 @@ async function startHomeworkIntent(
     .maybeSingle();
   if (!a) { await sendMessage(chatId, t.gradeNotFound); return; }
 
-  // 2. Already graded? Block — unless the row is already in resubmission mode
-  //    (score cleared OR score_is_stale flipped OR a prior attempt is archived).
+  // 2. Already graded? Block — unless the score is stale (student already started a resubmission).
   const { data: existing } = await admin
     .from("homework_submissions")
-    .select("id, score, score_is_stale, previous_attempts")
+    .select("id, score, score_is_stale")
     .eq("user_id", profile.id).eq("assignment_id", assignmentId)
     .maybeSingle();
-  const hasArchived = Array.isArray(existing?.previous_attempts) && existing!.previous_attempts.length > 0;
-  const inResubMode = !!existing && (existing.score == null || existing.score_is_stale === true || hasArchived);
-  if (existing && existing.score != null && !existing.score_is_stale && !hasArchived && !inResubMode) {
+  if (existing && existing.score != null && !existing.score_is_stale) {
     await sendMessage(chatId, t.hwIntentAlreadyScored);
-    await logEvent(admin, profile.id, "hw:intent:blocked-graded", {
-      resource_type: "homework_assignment", resource_id: assignmentId,
-    });
     return;
   }
 
@@ -3174,16 +3077,6 @@ async function startHomeworkIntent(
   const parsed = parseTopicUrl(topicUrl);
   if (!parsed) { await sendMessage(chatId, t.hwIntentNoTopic); return; }
 
-  // 3b. STRICT module routing: drop any other active intents for this student so the
-  //     next DM upload can only attach to the assignment the student just tapped.
-  try {
-    await admin.from("bot_homework_intents")
-      .delete()
-      .eq("user_id", profile.id)
-      .neq("assignment_id", assignmentId);
-  } catch (e) {
-    console.error("hw:intent:purge-others-failed", String(e));
-  }
 
   // 4. Upsert intent (10 min TTL)
   const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
@@ -3200,21 +3093,10 @@ async function startHomeworkIntent(
 
   const mn = (a.modules?.position ?? 0) + 1;
   const tn = a.task_number || 1;
-  await logEvent(admin, profile.id, "hw:intent:create", {
-    resource_type: "homework_assignment", resource_id: assignmentId,
-    module_id: a.module_id, module_position: a.modules?.position ?? null,
-    module_number: mn, task_number: tn,
-    group_id: profile.group_id,
-    topic_chat_id: parsed.chatId, topic_thread_id: parsed.threadId,
-    expires_at: expiresAt,
-  });
-  // v3.14.45: students must stay in this bot DM. Do not show a topic link
-  // here because direct topic posts are intentionally ignored.
   await sendMessage(chatId, t.hwIntentReady(mn, tn), {
-    inline_keyboard: [[{ text: t.hwCancelIntent, callback_data: `hw:cancel:${assignmentId}` }]],
+    inline_keyboard: [[{ text: t.hwIntentBtnGoTopic, url: topicUrl }]],
   });
 }
-
 
 // v3.14.33: resolve group from supergroup chat_id by trying multiple URL patterns.
 // Returns { groupId, pattern } or null. Bug fix: groups.telegram_group_url stores
@@ -3426,81 +3308,114 @@ async function resolveAssignmentForTopic(
     pickNextLeaf(leaves as any, (existingSubs || []) as any) ||
     [...leaves].sort((a: any, b: any) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
   if (!asg) return null;
-  return { moduleId: (asg as any).module_id, assignment: asg, resolvedVia: "group_module_topic" };
+  return { moduleId, assignment: asg, resolvedVia: "group_module_topic" };
 }
 
-// v3.14.44: Group topic messages are NEVER counted as homework submissions.
-// Submissions can ONLY be made by sending a photo/video to the bot in the
-// private DM after opening an intent via /vazifalar → 📤 Topshirish. The bot
-// then forwards the media into the topic on the student's behalf (see
-// handlePrivateHomeworkUpload). Casual chat or media in the group topic is
-// silently ignored — no submission, no DM, no teacher notify.
+// v3.14.41: Teacher-DM dedupe is now enforced inside notifyTeachersOfSubmission
+// by message_url (per-submission), so resubmissions always notify.
+
 async function handleGroupTopicMessage(admin: any, msg: any) {
   try {
     const chatId = msg.chat?.id;
     const threadId = msg.message_thread_id;
     const fromId = msg.from?.id;
+    const senderChatId = msg.sender_chat?.id;
     const messageId = msg.message_id;
-    console.log("hw:group:ignored-not-bot-flow", JSON.stringify({
-      chatId, threadId, fromId, messageId,
-    }));
-  } catch (e) {
-    console.error("handleGroupTopicMessage error", e);
-  }
-}
+    // Telegram's anonymous-admin proxy bot id (when an admin posts "as the group")
+    const ANON_ADMIN_BOT_ID = 1087968824;
+    const isAnon = fromId === ANON_ADMIN_BOT_ID;
+    console.log("hw:group:enter", JSON.stringify({ chatId, threadId, fromId, senderChatId, messageId, isAnon }));
+    if (!chatId || !threadId || !messageId) {
+      console.log("hw:group:skip-missing-fields");
+      return;
+    }
 
-// v3.14.44: Handle a private-chat media upload from a student who has an
-// active homework intent. Copies the media into the group topic, records the
-// submission, notifies the teacher. Returns true if the message was consumed
-// (so the outer router stops processing), false if no active intent.
-async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): Promise<boolean> {
-  try {
-    if (!profile?.id) return false;
-    const chatId = msg.chat?.id;
-    const messageId = msg.message_id;
-    if (!chatId || !messageId) return false;
+    // Try to identify the student (only useful when not anonymous)
+    let profile: any = null;
+    if (fromId && !isAnon) {
+      profile = await findProfileByTelegramId(admin, fromId);
+    }
 
-    // Quick check: does this message carry any attachment we care about?
-    const hasAttachment = !!(
-      (Array.isArray(msg.photo) && msg.photo.length) ||
-      msg.video || msg.video_note || msg.document || msg.animation
-    );
-
-    // Look up ALL non-expired intents for this student. Strict routing keeps only one,
-    // but log any drift so we can diagnose mis-attribution after the fact.
+    // v3.14.37: Strict per-student attribution. A submission can ONLY be created
+    // by the same student who opened the intent. Anonymous-admin proxy posts and
+    // any unidentified sender are ignored — otherwise an admin/teacher message
+    // (or any other person's post) in the topic would overwrite the active
+    // student's pending submission link.
+    if (!profile) {
+      console.log("hw:group:unknown-sender-ignored", JSON.stringify({ fromId, isAnon, chatId, threadId, messageId }));
+      return;
+    }
     const nowIso = new Date().toISOString();
     const { data: intents, error: intentErr } = await admin
       .from("bot_homework_intents")
-      .select("id, user_id, assignment_id, module_id, group_id, telegram_chat_id, telegram_thread_id, expires_at, created_at")
+      .select("id, user_id, assignment_id, module_id, group_id")
+      .eq("telegram_chat_id", chatId)
+      .eq("telegram_thread_id", threadId)
       .eq("user_id", profile.id)
       .gt("expires_at", nowIso)
-      .order("created_at", { ascending: false });
-    if (intentErr) console.error("hw:dm:intent-query-err", intentErr);
-    const intent = intents && intents[0];
-    if (intents && intents.length > 1) {
-      console.warn("hw:dm:multi-intent", JSON.stringify({
-        profile_id: profile.id,
-        count: intents.length,
-        intents: intents.map((i: any) => ({ id: i.id, assignment_id: i.assignment_id, module_id: i.module_id, created_at: i.created_at })),
-        picked: intent?.id,
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (intentErr) console.error("hw:group:intent-query-err", intentErr);
+    let intent = (intents && intents[0]) as any;
+
+    // v3.14.40: If the student posted in the topic without going through
+    // /vazifalar → 📤 Topshirish, synthesize an intent on the fly. Strictly
+    // per-sender — never attributed to anyone else in the same topic.
+    let synthesized = false;
+    if (!intent) {
+      const { groupId, pattern } = await resolveGroupFromChatId(admin, chatId);
+      if (!groupId) {
+        console.log("hw:group:auto-intent-no-group", JSON.stringify({ chatId, threadId, pattern }));
+        return;
+      }
+      const { data: groupRow } = await admin
+        .from("groups")
+        .select("id, name, course_id, teacher_id, homework_topic_id")
+        .eq("id", groupId)
+        .maybeSingle();
+      if (!groupRow) {
+        console.log("hw:group:auto-intent-no-group-row", JSON.stringify({ groupId }));
+        return;
+      }
+      const resolved = await resolveAssignmentForTopic(admin, groupRow as any, threadId, profile.id);
+      if (!resolved) {
+        console.log("hw:group:auto-intent-no-assignment", JSON.stringify({ groupId, threadId }));
+        return;
+      }
+      // Already-graded short-circuit: react ✅ and DM "already scored", no resubmission row, no teacher DM.
+      const { data: prior } = await admin
+        .from("homework_submissions")
+        .select("id, score, score_is_stale")
+        .eq("user_id", profile.id)
+        .eq("assignment_id", resolved.assignment.id)
+        .maybeSingle();
+      if (prior && prior.score != null && !prior.score_is_stale) {
+        try { await setMessageReaction(chatId, messageId, "✅"); } catch (_e) { /* ignore */ }
+        if (profile.telegram_id) {
+          const loc: Locale = normLocale(profile.preferred_locale);
+          try { await sendMessage(profile.telegram_id, (T[loc] as any).hwIntentAlreadyScored); } catch (_e) { /* ignore */ }
+        }
+        console.log("hw:group:auto-intent-already-graded", JSON.stringify({ profile_id: profile.id, assignment_id: resolved.assignment.id }));
+        return;
+      }
+      intent = {
+        id: null,
+        user_id: profile.id,
+        assignment_id: resolved.assignment.id,
+        module_id: resolved.moduleId,
+        group_id: groupRow.id,
+      };
+      synthesized = true;
+      console.log("hw:group:auto-intent", JSON.stringify({
+        profile_id: profile.id, group_id: groupRow.id, assignment_id: resolved.assignment.id,
+        module_id: resolved.moduleId, via: resolved.resolvedVia,
       }));
     }
-    console.log("hw:dm:entry", JSON.stringify({
-      profile_id: profile.id, chatId, messageId,
-      has_photo: Array.isArray(msg.photo) && msg.photo.length > 0,
-      has_video: !!msg.video, has_video_note: !!msg.video_note,
-      has_document: !!msg.document, doc_mime: msg.document?.mime_type || null,
-      has_animation: !!msg.animation,
-      has_attachment: hasAttachment,
-      intent_found: !!intent,
-      intent_id: intent?.id || null,
-      intent_assignment_id: intent?.assignment_id || null,
-      intent_module_id: intent?.module_id || null,
-      intent_expires_at: intent?.expires_at || null,
-    }));
-    if (!intent) return false; // no active intent — let normal routing handle this message
-
-
+    // Defensive — never attribute a message to a user other than the intent owner.
+    if (intent.user_id !== profile.id) {
+      console.log("hw:group:intent-user-mismatch", JSON.stringify({ intent_user: intent.user_id, sender_user: profile.id, chatId, threadId, messageId }));
+      return;
+    }
     // Extract media
     let fileId: string | null = null;
     let kind = "text";
@@ -3519,118 +3434,27 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
     } else if (msg.video_note) {
       fileId = msg.video_note.file_id;
       kind = "video_note";
+    } else if (!msg.text && !msg.caption) {
+      return; // unsupported message type, no media, no text
     }
 
-    const locale: Locale = normLocale(profile.preferred_locale);
-    const t = T[locale] as any;
+    const messageUrl = buildMessageLink(chatId, threadId, messageId);
+    const submittedText = (msg.caption || msg.text || "").slice(0, 4000);
 
-    // Media-only filter (mirror of v3.14.42 logic).
-    const docMime: string = String(msg.document?.mime_type || "").toLowerCase();
-    const isImageDoc = kind === "document" && docMime.startsWith("image/");
-    const isVideoDoc = kind === "document" && docMime.startsWith("video/");
-    const isAcceptedMedia =
-      kind === "photo" || kind === "video" || kind === "video_note" || isImageDoc || isVideoDoc;
-
-    if (!isAcceptedMedia) {
-      // If this isn't an attachment message at all (e.g. plain text), do NOT
-      // consume — let normal routing handle button presses / commands.
-      if (!hasAttachment) return false;
-      // It was an attachment but not photo/video → reject with reminder.
-      console.log("hw:dm:rejected-non-media", JSON.stringify({
-        profile_id: profile.id, kind, doc_mime: docMime || null, chatId, messageId,
-      }));
-      try { await sendMessage(profile.telegram_id || chatId, t.hwOnlyMedia); } catch (_e) { /* ignore */ }
-      return true; // consumed
-    }
-
-    // Build a caption identifying the student + assignment for the topic post.
-    const studentName = [profile.name, profile.last_name].filter(Boolean).join(" ") || "—";
-    const { data: aMeta } = await admin
-      .from("homework_assignments")
-      .select("title, task_number, sap_number, parent_id, module_id, modules(position)")
-      .eq("id", intent.assignment_id)
-      .maybeSingle();
-    const mn = ((aMeta?.modules?.position ?? 0) as number) + 1;
-    const tn = (aMeta?.task_number ?? 1) as number;
-    let aTitle = aMeta?.title || "";
-    if (aMeta?.parent_id) {
-      const { data: par } = await admin.from("homework_assignments").select("task_number").eq("id", aMeta.parent_id).maybeSingle();
-      aTitle = `V${par?.task_number ?? "?"}.S${aMeta?.sap_number ?? "?"} — ${aMeta?.title || ""}`;
-    }
-    const moduleId = aMeta?.module_id || intent.module_id;
-
-    // Re-resolve the topic at upload time so admin topic edits between tap and
-    // upload don't route this message to the wrong topic / wrong module.
-    let routeChatId = intent.telegram_chat_id;
-    let routeThreadId = intent.telegram_thread_id;
-    try {
-      if (intent.group_id) {
-        const { url: liveTopicUrl } = await resolveModuleTopicUrl(admin, intent.group_id, moduleId);
-        const liveParsed = liveTopicUrl ? parseTopicUrl(liveTopicUrl) : null;
-        if (liveParsed) { routeChatId = liveParsed.chatId; routeThreadId = liveParsed.threadId; }
-      }
-    } catch (e) { console.error("hw:dm:topic-reresolve-failed", String(e)); }
-
-    console.log("hw:dm:resolved", JSON.stringify({
-      profile_id: profile.id, intent_id: intent.id, assignment_id: intent.assignment_id,
-      module_id: moduleId, module_position: aMeta?.modules?.position ?? null,
-      module_number: mn, task_number: tn, route_chat_id: routeChatId, route_thread_id: routeThreadId,
-    }));
-
-    const userCaption = (msg.caption || "").toString();
-    const headerCaption = `📤 ${studentName} — M${mn}·V${tn}${aTitle ? ` — ${aTitle}` : ""}`;
-    // Telegram caption max ~1024 chars
-    const combinedCaption = (userCaption ? `${headerCaption}\n\n${userCaption}` : headerCaption).slice(0, 1020);
-
-    // Copy the media into the topic via Telegram copyMessage.
-    let copiedMessageId: number | null = null;
-    try {
-      const copyResp = await tgApi("copyMessage", {
-        chat_id: routeChatId,
-        message_thread_id: routeThreadId,
-        from_chat_id: chatId,
-        message_id: messageId,
-        caption: combinedCaption,
-      });
-
-      const copyBody: any = await copyResp.json().catch(() => null);
-      if (!copyResp.ok || !copyBody?.ok) {
-        console.error("hw:dm:copy-fail", JSON.stringify({
-          profile_id: profile.id, status: copyResp.status, body: JSON.stringify(copyBody || {}).slice(0, 300),
-        }));
-        try { await sendMessage(profile.telegram_id || chatId, t.hwForwardFailed); } catch (_e) { /* ignore */ }
-        // Keep intent so the student can retry once the teacher fixes the topic.
-        return true;
-      }
-      copiedMessageId = Number(copyBody.result?.message_id);
-    } catch (e) {
-      console.error("hw:dm:copy-exc", JSON.stringify({ profile_id: profile.id, err: String(e) }));
-      try { await sendMessage(profile.telegram_id || chatId, t.hwForwardFailed); } catch (_e) { /* ignore */ }
-      return true;
-    }
-    if (!copiedMessageId) {
-      try { await sendMessage(profile.telegram_id || chatId, t.hwForwardFailed); } catch (_e) { /* ignore */ }
-      return true;
-    }
-
-    const messageUrl = buildMessageLink(routeChatId, routeThreadId, copiedMessageId);
-    const submittedText = userCaption.slice(0, 4000);
-
-    // Finalize both first submissions and resubmissions in one place.
+    // v3.14.39: bump attempt_number on every consumed-intent post so the
+    // homework_submissions_guard trigger permits clearing a previously-set
+    // score. Without this bump, a resubmission post is silently rolled back
+    // to keep the old score, hiding the new attempt from the teacher's
+    // pending list (both /galaba and the web dashboard filter by score IS NULL).
     const { data: existingSub } = await admin
       .from("homework_submissions")
-      .select("id, attempt_number, score, score_feedback, scored_by, scored_at, submitted_at, telegram_message_url, is_late, previous_attempts, score_is_stale")
+      .select("attempt_number")
       .eq("user_id", profile.id)
       .eq("assignment_id", intent.assignment_id)
       .maybeSingle();
-    const priorAttempts = Array.isArray(existingSub?.previous_attempts) ? existingSub.previous_attempts : [];
-    const shouldArchiveGrade = existingSub?.score != null && !existingSub?.score_is_stale;
-    const previousAttempts = shouldArchiveGrade ? [...priorAttempts, archivedHomeworkAttempt(existingSub)] : priorAttempts;
-    const isResubmission = !!existingSub && (
-      shouldArchiveGrade || !!existingSub.score_is_stale || priorAttempts.length > 0 || Number(existingSub.attempt_number || 1) > 1
-    );
-    const nextAttempt = existingSub ? Number(existingSub.attempt_number || 1) + 1 : 1;
+    const nextAttempt = ((existingSub?.attempt_number as number | null) ?? 0) + 1;
 
+    // Upsert submission. Unique key (user_id, assignment_id) — idempotent.
     const { data: upserted, error: upErr } = await admin
       .from("homework_submissions")
       .upsert({
@@ -3643,70 +3467,78 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
         score_feedback: null,
         scored_by: null,
         scored_at: null,
-        score_is_stale: isResubmission,
-        previous_attempts: previousAttempts,
+        score_is_stale: false,
         is_late: false,
-        telegram_chat_id: routeChatId,
-        telegram_thread_id: routeThreadId,
-
-        telegram_message_id: copiedMessageId,
+        telegram_chat_id: chatId,
+        telegram_thread_id: threadId,
+        telegram_message_id: messageId,
         telegram_message_url: messageUrl,
         telegram_file_id: fileId,
         telegram_file_kind: kind,
-        source: "telegram_bot_dm",
+        source: "telegram_topic",
       }, { onConflict: "user_id,assignment_id" })
       .select("id")
       .maybeSingle();
     if (upErr) {
-      console.error("hw:dm:upsert-err", upErr);
-      try { await sendMessage(profile.telegram_id || chatId, t.hwForwardFailed); } catch (_e) { /* ignore */ }
-      return true;
+      console.error("hw upsert error", upErr);
+      return;
     }
 
-    // Consume intent
-    await admin.from("bot_homework_intents").delete().eq("id", intent.id);
+    // Consume intent (only if it was persisted; synthesized intents have no row)
+    if (intent.id) {
+      await admin.from("bot_homework_intents").delete().eq("id", intent.id);
+    }
 
-    // ✅ React to the student's DM message to confirm receipt
-    try { await setMessageReaction(chatId, messageId, "✅"); } catch (_e) { /* ignore */ }
+    // ✅ React to confirm in-thread
+    await setMessageReaction(chatId, messageId, "✅");
 
-    // Confirmation DM
+    // Locale + assignment meta for messages
+    const locale: Locale = normLocale(profile.preferred_locale);
+    const t = T[locale] as any;
+    const { data: a } = await admin
+      .from("homework_assignments")
+      .select("title, task_number, sap_number, parent_id, module_id, modules(position)")
+      .eq("id", intent.assignment_id)
+      .maybeSingle();
+    const mn = ((a?.modules?.position ?? 0) as number) + 1;
+    const tn = (a?.task_number ?? 1) as number;
+    let aTitle = a?.title || "";
+    if (a?.parent_id) {
+      const { data: par } = await admin.from("homework_assignments").select("task_number").eq("id", a.parent_id).maybeSingle();
+      aTitle = `V${par?.task_number ?? "?"}.S${a?.sap_number ?? "?"} — ${a?.title || ""}`;
+    }
+    const moduleId = a?.module_id || intent.module_id;
+
+    // Private DM to student (confirmation). Log Telegram errors so failures are visible.
     if (profile.telegram_id) {
       try {
-        const confirmationText = isResubmission ? t.hwResubReceived(mn, tn) : t.hwReceived(mn, tn);
-        const resp = await sendMessage(profile.telegram_id, confirmationText);
+        const resp = await sendMessage(profile.telegram_id, t.hwReceived(mn, tn));
         if (!resp.ok) {
           const errTxt = await resp.text().catch(() => "");
-          console.error("hw:dm:student-confirm-fail", JSON.stringify({ profile_id: profile.id, status: resp.status, err: errTxt.slice(0, 200) }));
+          console.error("hw:group:student-dm-fail", JSON.stringify({ profile_id: profile.id, status: resp.status, err: errTxt.slice(0, 200) }));
         } else {
-          console.log("hw:dm:student-confirm-ok", JSON.stringify({ profile_id: profile.id, mn, tn, is_resubmission: isResubmission }));
+          console.log("hw:group:student-dm-ok", JSON.stringify({ profile_id: profile.id, mn, tn }));
         }
       } catch (e) {
-        console.error("hw:dm:student-confirm-exc", JSON.stringify({ profile_id: profile.id, err: String(e) }));
+        console.error("hw:group:student-dm-exc", JSON.stringify({ profile_id: profile.id, err: String(e) }));
       }
+    } else {
+      console.log("hw:group:student-no-telegram-id", JSON.stringify({ profile_id: profile.id }));
     }
 
-    // Teacher DM (existing helper handles queueing + quiet hours + idempotency)
+    // Teacher DM. Idempotency is enforced inside notifyTeachersOfSubmission by
+    // message_url (Telegram webhook retries won't duplicate). New posts and
+    // resubmissions always notify because they carry a fresh message URL.
+    void synthesized;
     const subId = upserted?.id;
-    const teacherTitle = isResubmission ? `Qayta topshirish: ${aTitle}` : aTitle;
-    await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, teacherTitle, messageUrl, subId, intent.assignment_id, moduleId);
-    cacheInvalidateUser(profile.id);
-    await markProfileStatsDirty(admin, profile.id);
-    await logEvent(admin, profile.id, isResubmission ? "hw:submission:resubmitted" : "hw:submission:created", {
-      resource_type: "homework_submission", resource_id: subId,
-      assignment_id: intent.assignment_id, module_id: moduleId,
-      module_number: mn, task_number: tn, group_id: intent.group_id,
-      attempt_number: nextAttempt, message_url: messageUrl,
-    });
-    console.log("hw:dm:ok", JSON.stringify({ profile_id: profile.id, assignment_id: intent.assignment_id, module_id: moduleId, module_number: mn, task_number: tn, copied_message_id: copiedMessageId, is_resubmission: isResubmission }));
-    return true;
+    await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId, intent.assignment_id, moduleId);
 
-    return true;
+    // Invalidate any cached "stats" for the student so next /galaba is fresh
+    cacheInvalidateUser(profile.id);
   } catch (e) {
-    console.error("handlePrivateHomeworkUpload error", e);
-    return false;
+    console.error("handleGroupTopicMessage error", e);
   }
 }
-
 
 // v3.14.40: auto-detect path removed — handleGroupTopicMessage now auto-synthesizes
 // intents for sender-attributed topic posts. hwTeacherBody is still used by
@@ -3910,18 +3742,6 @@ async function handleCallback(admin: any, cq: any) {
     return;
   }
 
-  if (data.startsWith("hw:cancel:") && chatId) {
-    const assignmentId = data.slice("hw:cancel:".length);
-    const profile = await findProfileByTelegramId(admin, tgId);
-    if (!profile) { await answerCallback(cq.id); return; }
-    const locale: Locale = normLocale(profile.preferred_locale);
-    const t = T[locale] as any;
-    await admin.from("bot_homework_intents").delete().eq("user_id", profile.id).eq("assignment_id", assignmentId);
-    await answerCallback(cq.id, "OK");
-    await sendMessage(chatId, t.hwIntentCancelled);
-    return;
-  }
-
   // Student tapped "🔁 qayta topshirish" — confirm with Yes/No before resetting score.
   if (data.startsWith("hw:resub_ask:") && chatId) {
     const assignmentId = data.slice("hw:resub_ask:".length);
@@ -3977,31 +3797,16 @@ async function handleCallback(admin: any, cq: any) {
       await sendMessage(chatId, t.gradeNotFound);
       return;
     }
-    // Purge any other active intents so the upcoming upload can only land on this assignment.
-    try {
-      await admin.from("bot_homework_intents")
-        .delete().eq("user_id", profile.id).neq("assignment_id", assignmentId);
-    } catch (e) { console.error("hw:resub:purge-others-failed", String(e)); }
-
     const { error: rpcErr } = await admin.rpc("start_homework_resubmission", { p_submission_id: sub.id });
     if (rpcErr) {
       console.error("start_homework_resubmission failed", rpcErr);
-      await logEvent(admin, profile.id, "hw:resub:rpc-failed", {
-        resource_type: "homework_submission", resource_id: sub.id, error: String(rpcErr.message || rpcErr),
-      });
       await sendMessage(chatId, t.hwResubError);
       return;
     }
-    await logEvent(admin, profile.id, "hw:resub:opened", {
-      resource_type: "homework_submission", resource_id: sub.id, assignment_id: assignmentId,
-    });
     cacheInvalidateUser(profile.id);
     await startHomeworkIntent(admin, chatId, profile, locale, assignmentId);
     return;
   }
-
-
-
 
 
   // v3.14.32: teacher taps "🎯 Baholash" on auto-detected submission DM.
@@ -4349,8 +4154,8 @@ Deno.serve(async (req) => {
   const inboxId = await logWebhookInbox(admin, update);
 
   try {
-    // Treat messages, edited messages, and channel posts as inbound for group topics.
-    const inbound = update.message || update.edited_message || update.channel_post;
+    // Treat both message and channel_post as inbound for group topics (forum supergroups can deliver either)
+    const inbound = update.message || update.channel_post;
     if (inbound) {
       const msg = inbound;
       // Group/supergroup posts (e.g. inside a forum topic) → homework intake only
@@ -4367,8 +4172,8 @@ Deno.serve(async (req) => {
         return new Response("ok", { status: 200, headers: corsHeaders });
       }
     }
-    if (update.message || update.edited_message) {
-      const msg = update.message || update.edited_message;
+    if (update.message) {
+      const msg = update.message;
       const text: string = msg.text || "";
       const tgUsername = (msg.from.username || "").toLowerCase();
       // v3.14.32: identity gate ONLY runs for private chats. Group/supergroup/channel
@@ -4400,16 +4205,6 @@ Deno.serve(async (req) => {
 
       const persona: Persona = profileForLocale ? await getPersona(admin, profileForLocale.id) : "student";
       const adminFlag = persona === "admin";
-
-      // v3.14.44: if the student has an open homework intent, intercept media
-      // sent to the bot in this DM and route it as a homework submission.
-      // The handler returns true only when it actually consumed the message
-      // (i.e. there's an open intent AND the message is a media attachment).
-      if (profileForLocale && isPrivateChat) {
-        const consumedHw = await handlePrivateHomeworkUpload(admin, msg, profileForLocale);
-        if (consumedHw) return new Response("ok", { status: 200, headers: corsHeaders });
-      }
-
 
       if (text.startsWith("/start ")) {
         const arg = text.slice(7).trim();
