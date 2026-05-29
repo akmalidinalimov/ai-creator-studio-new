@@ -2814,7 +2814,31 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
       return true;
     }
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
-    if (sub) cacheInvalidateUser(sub.user_id);
+    if (sub) {
+      cacheInvalidateUser(sub.user_id);
+      await markProfileStatsDirty(admin, sub.user_id);
+      await logEvent(admin, profileId, "hw:graded", {
+        resource_type: "homework_submission", resource_id: submissionId,
+        target_user_id: sub.user_id, assignment_id: sub.assignment_id,
+        score, has_feedback: !!feedback,
+      });
+      // Recompute leaderboard since a new grade landed.
+      try {
+        const projectRef = Deno.env.get("SUPABASE_PROJECT_ID") || Deno.env.get("PROJECT_ID");
+        const svc = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+        const supaUrl = Deno.env.get("SUPABASE_URL");
+        if (supaUrl && svc) {
+          // Fire and forget; do not await long.
+          fetch(`${supaUrl}/functions/v1/leaderboard-recalc`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${svc}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ trigger: "homework_graded" }),
+          }).catch((e) => console.error("leaderboard-recalc invoke failed", String(e)));
+        }
+        void projectRef;
+      } catch (e) { console.error("leaderboard-recalc invoke exc", String(e)); }
+    }
+
 
     // Auto-DM the student (always)
     if (sub) {
