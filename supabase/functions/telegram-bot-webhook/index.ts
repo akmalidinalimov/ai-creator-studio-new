@@ -3665,9 +3665,17 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
     const subId = upserted?.id;
     const teacherTitle = isResubmission ? `Qayta topshirish: ${aTitle}` : aTitle;
     await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, teacherTitle, messageUrl, subId, intent.assignment_id, moduleId);
-
     cacheInvalidateUser(profile.id);
-    console.log("hw:dm:ok", JSON.stringify({ profile_id: profile.id, assignment_id: intent.assignment_id, copied_message_id: copiedMessageId, is_resubmission: isResubmission }));
+    await markProfileStatsDirty(admin, profile.id);
+    await logEvent(admin, profile.id, isResubmission ? "hw:submission:resubmitted" : "hw:submission:created", {
+      resource_type: "homework_submission", resource_id: subId,
+      assignment_id: intent.assignment_id, module_id: moduleId,
+      module_number: mn, task_number: tn, group_id: intent.group_id,
+      attempt_number: nextAttempt, message_url: messageUrl,
+    });
+    console.log("hw:dm:ok", JSON.stringify({ profile_id: profile.id, assignment_id: intent.assignment_id, module_id: moduleId, module_number: mn, task_number: tn, copied_message_id: copiedMessageId, is_resubmission: isResubmission }));
+    return true;
+
     return true;
   } catch (e) {
     console.error("handlePrivateHomeworkUpload error", e);
