@@ -248,6 +248,8 @@ const T = {
     hwIntentNoTopic: "Bu modul uchun topik sozlanmagan. Iltimos, ustozingizga murojaat qiling.",
     hwIntentNoGroup: "Sizga guruh biriktirilmagan. Ustozingiz bilan bog'laning.",
     hwIntentBtnGoTopic: "📌 Topikni ko'rish",
+    hwCancelIntent: "Bekor qilish",
+    hwIntentCancelled: "Topshirish bekor qilindi.",
     hwIntentAlreadyScored: "Bu vazifa allaqachon baholangan ✅",
     hwOnlyMedia: "❗️ Faqat rasm yoki video qabul qilinadi. Iltimos, vazifangizni rasm yoki video sifatida shu yerga yuboring.",
     hwForwardFailed: "❌ Vazifangizni topikka joylab bo'lmadi. Iltimos, ustozingizga murojaat qiling va keyinroq qayta urinib ko'ring.",
@@ -259,6 +261,8 @@ const T = {
     hwResubError: "❌ Qayta topshirishni boshlab bo'lmadi. Keyinroq urinib ko'ring.",
     hwReceived: (mn: number, tn: number) =>
       `✅ Vazifangiz qabul qilindi · Modul ${mn} · V${tn}\nUstoz baholaganidan keyin natija keladi.`,
+    hwResubReceived: (mn: number, tn: number) =>
+      `✅ Qayta topshirish qabul qilindi · Modul ${mn} · V${tn}\nVazifangiz qayta baholash uchun ustozga yuborildi.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
       `🆕 <b>Yangi topshiriq</b>\n👤 ${csvEscapeHtml(name)}\n📚 Modul ${mn} · V${tn} — ${csvEscapeHtml(title)}`,
     hwTeacherBtnFile: "📂 Faylni ko'rish",
