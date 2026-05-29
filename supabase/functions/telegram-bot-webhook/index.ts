@@ -936,6 +936,41 @@ function cacheInvalidateUser(userId: string) {
   for (const k of REPLY_CACHE.keys()) if (k.includes(`:${userId}:`)) REPLY_CACHE.delete(k);
 }
 
+// v3.14.46: structured event logger. Console for edge function logs + admin_actions row
+// for durable audit. Never throws — logging must not break the user flow.
+async function logEvent(
+  admin: any,
+  actorProfileId: string | null,
+  action: string,
+  details: Record<string, any> = {},
+) {
+  try {
+    console.log(`evt:${action}`, JSON.stringify({ actor: actorProfileId, ...details }));
+  } catch { /* ignore */ }
+  if (!actorProfileId) return;
+  try {
+    await admin.from("admin_actions").insert({
+      actor_user_id: actorProfileId,
+      action,
+      target_resource_type: details?.resource_type || null,
+      target_resource_id: details?.resource_id || null,
+      target_user_id: details?.target_user_id || null,
+      details,
+    });
+  } catch (e) {
+    console.error("logEvent insert failed", String(e));
+  }
+}
+
+async function markProfileStatsDirty(admin: any, profileId: string) {
+  try {
+    await admin.from("profiles").update({ stats_dirty_at: new Date().toISOString() }).eq("id", profileId);
+  } catch (e) {
+    console.error("markProfileStatsDirty failed", String(e));
+  }
+}
+
+
 async function findProfileByTelegramId(admin: any, tgId: number) {
   const { data } = await admin
     .from("profiles")
