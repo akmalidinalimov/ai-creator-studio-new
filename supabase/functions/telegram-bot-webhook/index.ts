@@ -3556,12 +3556,13 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
     // Confirmation DM
     if (profile.telegram_id) {
       try {
-        const resp = await sendMessage(profile.telegram_id, t.hwReceived(mn, tn));
+        const confirmationText = isResubmission ? t.hwResubReceived(mn, tn) : t.hwReceived(mn, tn);
+        const resp = await sendMessage(profile.telegram_id, confirmationText);
         if (!resp.ok) {
           const errTxt = await resp.text().catch(() => "");
           console.error("hw:dm:student-confirm-fail", JSON.stringify({ profile_id: profile.id, status: resp.status, err: errTxt.slice(0, 200) }));
         } else {
-          console.log("hw:dm:student-confirm-ok", JSON.stringify({ profile_id: profile.id, mn, tn }));
+          console.log("hw:dm:student-confirm-ok", JSON.stringify({ profile_id: profile.id, mn, tn, is_resubmission: isResubmission }));
         }
       } catch (e) {
         console.error("hw:dm:student-confirm-exc", JSON.stringify({ profile_id: profile.id, err: String(e) }));
@@ -3570,10 +3571,11 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
 
     // Teacher DM (existing helper handles queueing + quiet hours + idempotency)
     const subId = upserted?.id;
-    await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId, intent.assignment_id, moduleId);
+    const teacherTitle = isResubmission ? `Qayta topshirish: ${aTitle}` : aTitle;
+    await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, teacherTitle, messageUrl, subId, intent.assignment_id, moduleId);
 
     cacheInvalidateUser(profile.id);
-    console.log("hw:dm:ok", JSON.stringify({ profile_id: profile.id, assignment_id: intent.assignment_id, copied_message_id: copiedMessageId }));
+    console.log("hw:dm:ok", JSON.stringify({ profile_id: profile.id, assignment_id: intent.assignment_id, copied_message_id: copiedMessageId, is_resubmission: isResubmission }));
     return true;
   } catch (e) {
     console.error("handlePrivateHomeworkUpload error", e);
