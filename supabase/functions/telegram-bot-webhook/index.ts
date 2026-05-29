@@ -645,6 +645,7 @@ const T = {
     hwIntentNoGroup: "You are not assigned to a group. Please contact your teacher.",
     hwIntentBtnGoTopic: "📌 Open topic",
     hwIntentAlreadyScored: "This task has already been graded ✅",
+    hwOnlyMedia: "❗️ Only photos or videos are accepted. Please send your homework as an image or video.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Your previous result: <b>${sc}/${mx}</b>${fb ? `\nFeedback: "${csvEscapeHtml(fb)}"` : ""}\n\nDo you want to resubmit?`,
     hwResubYes: "✅ Yes, resubmit",
