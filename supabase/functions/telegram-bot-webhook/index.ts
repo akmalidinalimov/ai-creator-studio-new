@@ -244,12 +244,13 @@ const T = {
     hwTopicMissing: "   ⚠️ Topik sozlanmagan — ustozingizga murojaat qiling.",
     hwSubmitBtn: (mn: number, tn: number) => `📤 Topshirish — M${mn}·V${tn}`,
     hwIntentReady: (mn: number, tn: number) =>
-      `📤 <b>Modul ${mn} · Vazifa ${tn}</b>\n\nQuyidagi tugmani bosib topikga o'ting va rasm yoki video yuboring. Bot avtomatik qabul qiladi (10 daqiqa ichida).`,
+      `📤 <b>Modul ${mn} · Vazifa ${tn}</b>\n\nVazifangizni shu yerga (botga) rasm yoki video sifatida yuboring. Bot uni topikka o'zi joylaydi (10 daqiqa ichida).\n\n⚠️ Diqqat: topikka to'g'ridan-to'g'ri yuborilgan xabarlar vazifa sifatida qabul qilinmaydi.`,
     hwIntentNoTopic: "Bu modul uchun topik sozlanmagan. Iltimos, ustozingizga murojaat qiling.",
     hwIntentNoGroup: "Sizga guruh biriktirilmagan. Ustozingiz bilan bog'laning.",
-    hwIntentBtnGoTopic: "📌 Topikga o'tish",
+    hwIntentBtnGoTopic: "📌 Topikni ko'rish",
     hwIntentAlreadyScored: "Bu vazifa allaqachon baholangan ✅",
-    hwOnlyMedia: "❗️ Faqat rasm yoki video qabul qilinadi. Iltimos, vazifangizni rasm yoki video sifatida yuboring.",
+    hwOnlyMedia: "❗️ Faqat rasm yoki video qabul qilinadi. Iltimos, vazifangizni rasm yoki video sifatida shu yerga yuboring.",
+    hwForwardFailed: "❌ Vazifangizni topikka joylab bo'lmadi. Iltimos, ustozingizga murojaat qiling va keyinroq qayta urinib ko'ring.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Sizning oldingi natijangiz: <b>${sc}/${mx}</b>${fb ? `\nIzoh: "${csvEscapeHtml(fb)}"` : ""}\n\nQayta topshirmoqchimisiz?`,
     hwResubYes: "✅ Ha, qayta topshiraman",
@@ -442,12 +443,13 @@ const T = {
     hwTopicMissing: "   ⚠️ Топик не настроен — обратитесь к преподавателю.",
     hwSubmitBtn: (mn: number, tn: number) => `📤 Сдать — М${mn}·З${tn}`,
     hwIntentReady: (mn: number, tn: number) =>
-      `📤 <b>Модуль ${mn} · Задание ${tn}</b>\n\nНажмите кнопку ниже, перейдите в топик и отправьте фото или видео. Бот примет автоматически (в течение 10 минут).`,
+      `📤 <b>Модуль ${mn} · Задание ${tn}</b>\n\nОтправьте задание сюда (в этот чат с ботом) фото или видео. Бот сам опубликует его в топике (в течение 10 минут).\n\n⚠️ Внимание: сообщения, отправленные напрямую в топик, не засчитываются как сдача.`,
     hwIntentNoTopic: "Топик для этого модуля не настроен. Свяжитесь с преподавателем.",
     hwIntentNoGroup: "Вам не назначена группа. Свяжитесь с преподавателем.",
-    hwIntentBtnGoTopic: "📌 Перейти в топик",
+    hwIntentBtnGoTopic: "📌 Открыть топик",
     hwIntentAlreadyScored: "Это задание уже оценено ✅",
-    hwOnlyMedia: "❗️ Принимаются только фото или видео. Пожалуйста, отправьте задание изображением или видео.",
+    hwOnlyMedia: "❗️ Принимаются только фото или видео. Пожалуйста, отправьте задание фото или видео сюда.",
+    hwForwardFailed: "❌ Не удалось опубликовать задание в топике. Свяжитесь с преподавателем и попробуйте позже.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Ваш предыдущий результат: <b>${sc}/${mx}</b>${fb ? `\nКомментарий: "${csvEscapeHtml(fb)}"` : ""}\n\nХотите отправить заново?`,
     hwResubYes: "✅ Да, отправить заново",
@@ -640,12 +642,13 @@ const T = {
     hwTopicMissing: "   ⚠️ Topic not configured — contact your teacher.",
     hwSubmitBtn: (mn: number, tn: number) => `📤 Submit — M${mn}·T${tn}`,
     hwIntentReady: (mn: number, tn: number) =>
-      `📤 <b>Module ${mn} · Task ${tn}</b>\n\nTap the button below to open the topic and post your photo or video. The bot will accept it automatically (within 10 minutes).`,
+      `📤 <b>Module ${mn} · Task ${tn}</b>\n\nSend your homework here (in this chat with the bot) as a photo or video. The bot will post it to the topic for you (within 10 minutes).\n\n⚠️ Note: messages posted directly in the group topic are NOT counted as submissions.`,
     hwIntentNoTopic: "Topic not configured for this module. Please contact your teacher.",
     hwIntentNoGroup: "You are not assigned to a group. Please contact your teacher.",
     hwIntentBtnGoTopic: "📌 Open topic",
     hwIntentAlreadyScored: "This task has already been graded ✅",
-    hwOnlyMedia: "❗️ Only photos or videos are accepted. Please send your homework as an image or video.",
+    hwOnlyMedia: "❗️ Only photos or videos are accepted. Please send your homework as a photo or video here.",
+    hwForwardFailed: "❌ Could not post your submission to the topic. Please contact your teacher and try again later.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Your previous result: <b>${sc}/${mx}</b>${fb ? `\nFeedback: "${csvEscapeHtml(fb)}"` : ""}\n\nDo you want to resubmit?`,
     hwResubYes: "✅ Yes, resubmit",
@@ -3096,6 +3099,9 @@ async function startHomeworkIntent(
 
   const mn = (a.modules?.position ?? 0) + 1;
   const tn = a.task_number || 1;
+  // v3.14.44: students must now send the photo/video to the bot in this DM.
+  // The bot will copy the media into the topic on their behalf. The topic
+  // link is informational only — direct topic posts are ignored.
   await sendMessage(chatId, t.hwIntentReady(mn, tn), {
     inline_keyboard: [[{ text: t.hwIntentBtnGoTopic, url: topicUrl }]],
   });
@@ -3311,72 +3317,58 @@ async function resolveAssignmentForTopic(
     pickNextLeaf(leaves as any, (existingSubs || []) as any) ||
     [...leaves].sort((a: any, b: any) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
   if (!asg) return null;
-  return { moduleId, assignment: asg, resolvedVia: "group_module_topic" };
+  return { moduleId: (asg as any).module_id, assignment: asg, resolvedVia: "group_module_topic" };
 }
 
-// v3.14.41: Teacher-DM dedupe is now enforced inside notifyTeachersOfSubmission
-// by message_url (per-submission), so resubmissions always notify.
-
+// v3.14.44: Group topic messages are NEVER counted as homework submissions.
+// Submissions can ONLY be made by sending a photo/video to the bot in the
+// private DM after opening an intent via /vazifalar → 📤 Topshirish. The bot
+// then forwards the media into the topic on the student's behalf (see
+// handlePrivateHomeworkUpload). Casual chat or media in the group topic is
+// silently ignored — no submission, no DM, no teacher notify.
 async function handleGroupTopicMessage(admin: any, msg: any) {
   try {
     const chatId = msg.chat?.id;
     const threadId = msg.message_thread_id;
     const fromId = msg.from?.id;
-    const senderChatId = msg.sender_chat?.id;
     const messageId = msg.message_id;
-    // Telegram's anonymous-admin proxy bot id (when an admin posts "as the group")
-    const ANON_ADMIN_BOT_ID = 1087968824;
-    const isAnon = fromId === ANON_ADMIN_BOT_ID;
-    console.log("hw:group:enter", JSON.stringify({ chatId, threadId, fromId, senderChatId, messageId, isAnon }));
-    if (!chatId || !threadId || !messageId) {
-      console.log("hw:group:skip-missing-fields");
-      return;
-    }
+    console.log("hw:group:ignored-not-bot-flow", JSON.stringify({
+      chatId, threadId, fromId, messageId,
+    }));
+  } catch (e) {
+    console.error("handleGroupTopicMessage error", e);
+  }
+}
 
-    // Try to identify the student (only useful when not anonymous)
-    let profile: any = null;
-    if (fromId && !isAnon) {
-      profile = await findProfileByTelegramId(admin, fromId);
-    }
+// v3.14.44: Handle a private-chat media upload from a student who has an
+// active homework intent. Copies the media into the group topic, records the
+// submission, notifies the teacher. Returns true if the message was consumed
+// (so the outer router stops processing), false if no active intent.
+async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): Promise<boolean> {
+  try {
+    if (!profile?.id) return false;
+    const chatId = msg.chat?.id;
+    const messageId = msg.message_id;
+    if (!chatId || !messageId) return false;
 
-    // v3.14.37: Strict per-student attribution. A submission can ONLY be created
-    // by the same student who opened the intent. Anonymous-admin proxy posts and
-    // any unidentified sender are ignored — otherwise an admin/teacher message
-    // (or any other person's post) in the topic would overwrite the active
-    // student's pending submission link.
-    if (!profile) {
-      console.log("hw:group:unknown-sender-ignored", JSON.stringify({ fromId, isAnon, chatId, threadId, messageId }));
-      return;
-    }
+    // Quick check: does this message carry any attachment we care about?
+    const hasAttachment = !!(
+      (Array.isArray(msg.photo) && msg.photo.length) ||
+      msg.video || msg.video_note || msg.document
+    );
+
+    // Look up the most-recent non-expired intent for this student.
     const nowIso = new Date().toISOString();
     const { data: intents, error: intentErr } = await admin
       .from("bot_homework_intents")
-      .select("id, user_id, assignment_id, module_id, group_id")
-      .eq("telegram_chat_id", chatId)
-      .eq("telegram_thread_id", threadId)
+      .select("id, user_id, assignment_id, module_id, group_id, telegram_chat_id, telegram_thread_id")
       .eq("user_id", profile.id)
       .gt("expires_at", nowIso)
       .order("created_at", { ascending: false })
       .limit(1);
-    if (intentErr) console.error("hw:group:intent-query-err", intentErr);
-    let intent = (intents && intents[0]) as any;
-
-    // v3.14.43: Require an explicit, persisted intent. A submission may ONLY be
-    // recorded when the student deliberately went through the bot DM flow
-    // (/vazifalar → 📤 Topshirish), which inserts a bot_homework_intents row.
-    // Casual chat or media posted in the topic without an active intent is
-    // ignored completely — no submission, no student DM, no teacher notify.
-    if (!intent) {
-      console.log("hw:group:no-active-intent-ignored", JSON.stringify({
-        profile_id: profile.id, chatId, threadId, messageId,
-      }));
-      return;
-    }
-    // Defensive — never attribute a message to a user other than the intent owner.
-    if (intent.user_id !== profile.id) {
-      console.log("hw:group:intent-user-mismatch", JSON.stringify({ intent_user: intent.user_id, sender_user: profile.id, chatId, threadId, messageId }));
-      return;
-    }
+    if (intentErr) console.error("hw:dm:intent-query-err", intentErr);
+    const intent = intents && intents[0];
+    if (!intent) return false; // no active intent — let normal routing handle this message
 
     // Extract media
     let fileId: string | null = null;
@@ -3396,36 +3388,85 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     } else if (msg.video_note) {
       fileId = msg.video_note.file_id;
       kind = "video_note";
-    } else if (!msg.text && !msg.caption) {
-      return; // unsupported message type, no media, no text
     }
 
-    // v3.14.42: Only accept image or video submissions. Text, voice, and non-media
-    // documents must NOT create a submission, confirm to the student, or notify the teacher.
+    const locale: Locale = normLocale(profile.preferred_locale);
+    const t = T[locale] as any;
+
+    // Media-only filter (mirror of v3.14.42 logic).
     const docMime: string = String(msg.document?.mime_type || "").toLowerCase();
     const isImageDoc = kind === "document" && docMime.startsWith("image/");
     const isVideoDoc = kind === "document" && docMime.startsWith("video/");
     const isAcceptedMedia =
       kind === "photo" || kind === "video" || kind === "video_note" || isImageDoc || isVideoDoc;
+
     if (!isAcceptedMedia) {
-      console.log("hw:group:rejected-non-media", JSON.stringify({
-        profile_id: profile.id, kind, doc_mime: docMime || null, chatId, threadId, messageId,
+      // If this isn't an attachment message at all (e.g. plain text), do NOT
+      // consume — let normal routing handle button presses / commands.
+      if (!hasAttachment) return false;
+      // It was an attachment but not photo/video → reject with reminder.
+      console.log("hw:dm:rejected-non-media", JSON.stringify({
+        profile_id: profile.id, kind, doc_mime: docMime || null, chatId, messageId,
       }));
-      if (profile.telegram_id) {
-        const loc: Locale = normLocale(profile.preferred_locale);
-        try { await sendMessage(profile.telegram_id, (T[loc] as any).hwOnlyMedia); } catch (_e) { /* ignore */ }
-      }
-      return;
+      try { await sendMessage(profile.telegram_id || chatId, t.hwOnlyMedia); } catch (_e) { /* ignore */ }
+      return true; // consumed
     }
 
-    const messageUrl = buildMessageLink(chatId, threadId, messageId);
-    const submittedText = (msg.caption || msg.text || "").slice(0, 4000);
+    // Build a caption identifying the student + assignment for the topic post.
+    const studentName = [profile.name, profile.last_name].filter(Boolean).join(" ") || "—";
+    const { data: aMeta } = await admin
+      .from("homework_assignments")
+      .select("title, task_number, sap_number, parent_id, module_id, modules(position)")
+      .eq("id", intent.assignment_id)
+      .maybeSingle();
+    const mn = ((aMeta?.modules?.position ?? 0) as number) + 1;
+    const tn = (aMeta?.task_number ?? 1) as number;
+    let aTitle = aMeta?.title || "";
+    if (aMeta?.parent_id) {
+      const { data: par } = await admin.from("homework_assignments").select("task_number").eq("id", aMeta.parent_id).maybeSingle();
+      aTitle = `V${par?.task_number ?? "?"}.S${aMeta?.sap_number ?? "?"} — ${aMeta?.title || ""}`;
+    }
+    const moduleId = aMeta?.module_id || intent.module_id;
 
-    // v3.14.39: bump attempt_number on every consumed-intent post so the
-    // homework_submissions_guard trigger permits clearing a previously-set
-    // score. Without this bump, a resubmission post is silently rolled back
-    // to keep the old score, hiding the new attempt from the teacher's
-    // pending list (both /galaba and the web dashboard filter by score IS NULL).
+    const userCaption = (msg.caption || "").toString();
+    const headerCaption = `📤 ${studentName} — M${mn}·V${tn}${aTitle ? ` — ${aTitle}` : ""}`;
+    // Telegram caption max ~1024 chars
+    const combinedCaption = (userCaption ? `${headerCaption}\n\n${userCaption}` : headerCaption).slice(0, 1020);
+
+    // Copy the media into the topic via Telegram copyMessage.
+    let copiedMessageId: number | null = null;
+    try {
+      const copyResp = await tgApi("copyMessage", {
+        chat_id: intent.telegram_chat_id,
+        message_thread_id: intent.telegram_thread_id,
+        from_chat_id: chatId,
+        message_id: messageId,
+        caption: combinedCaption,
+      });
+      const copyBody: any = await copyResp.json().catch(() => null);
+      if (!copyResp.ok || !copyBody?.ok) {
+        console.error("hw:dm:copy-fail", JSON.stringify({
+          profile_id: profile.id, status: copyResp.status, body: JSON.stringify(copyBody || {}).slice(0, 300),
+        }));
+        try { await sendMessage(profile.telegram_id || chatId, t.hwForwardFailed); } catch (_e) { /* ignore */ }
+        // Keep intent so the student can retry once the teacher fixes the topic.
+        return true;
+      }
+      copiedMessageId = Number(copyBody.result?.message_id);
+    } catch (e) {
+      console.error("hw:dm:copy-exc", JSON.stringify({ profile_id: profile.id, err: String(e) }));
+      try { await sendMessage(profile.telegram_id || chatId, t.hwForwardFailed); } catch (_e) { /* ignore */ }
+      return true;
+    }
+    if (!copiedMessageId) {
+      try { await sendMessage(profile.telegram_id || chatId, t.hwForwardFailed); } catch (_e) { /* ignore */ }
+      return true;
+    }
+
+    const messageUrl = buildMessageLink(intent.telegram_chat_id, intent.telegram_thread_id, copiedMessageId);
+    const submittedText = userCaption.slice(0, 4000);
+
+    // Bump attempt_number for the homework_submissions_guard trigger.
     const { data: existingSub } = await admin
       .from("homework_submissions")
       .select("attempt_number")
@@ -3434,7 +3475,6 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       .maybeSingle();
     const nextAttempt = ((existingSub?.attempt_number as number | null) ?? 0) + 1;
 
-    // Upsert submission. Unique key (user_id, assignment_id) — idempotent.
     const { data: upserted, error: upErr } = await admin
       .from("homework_submissions")
       .upsert({
@@ -3449,75 +3489,56 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
         scored_at: null,
         score_is_stale: false,
         is_late: false,
-        telegram_chat_id: chatId,
-        telegram_thread_id: threadId,
-        telegram_message_id: messageId,
+        telegram_chat_id: intent.telegram_chat_id,
+        telegram_thread_id: intent.telegram_thread_id,
+        telegram_message_id: copiedMessageId,
         telegram_message_url: messageUrl,
         telegram_file_id: fileId,
         telegram_file_kind: kind,
-        source: "telegram_topic",
+        source: "telegram_bot_dm",
       }, { onConflict: "user_id,assignment_id" })
       .select("id")
       .maybeSingle();
     if (upErr) {
-      console.error("hw upsert error", upErr);
-      return;
+      console.error("hw:dm:upsert-err", upErr);
+      try { await sendMessage(profile.telegram_id || chatId, t.hwForwardFailed); } catch (_e) { /* ignore */ }
+      return true;
     }
 
-    // Consume intent (only if it was persisted; synthesized intents have no row)
-    if (intent.id) {
-      await admin.from("bot_homework_intents").delete().eq("id", intent.id);
-    }
+    // Consume intent
+    await admin.from("bot_homework_intents").delete().eq("id", intent.id);
 
-    // ✅ React to confirm in-thread
-    await setMessageReaction(chatId, messageId, "✅");
+    // ✅ React to the student's DM message to confirm receipt
+    try { await setMessageReaction(chatId, messageId, "✅"); } catch (_e) { /* ignore */ }
 
-    // Locale + assignment meta for messages
-    const locale: Locale = normLocale(profile.preferred_locale);
-    const t = T[locale] as any;
-    const { data: a } = await admin
-      .from("homework_assignments")
-      .select("title, task_number, sap_number, parent_id, module_id, modules(position)")
-      .eq("id", intent.assignment_id)
-      .maybeSingle();
-    const mn = ((a?.modules?.position ?? 0) as number) + 1;
-    const tn = (a?.task_number ?? 1) as number;
-    let aTitle = a?.title || "";
-    if (a?.parent_id) {
-      const { data: par } = await admin.from("homework_assignments").select("task_number").eq("id", a.parent_id).maybeSingle();
-      aTitle = `V${par?.task_number ?? "?"}.S${a?.sap_number ?? "?"} — ${a?.title || ""}`;
-    }
-    const moduleId = a?.module_id || intent.module_id;
-
-    // Private DM to student (confirmation). Log Telegram errors so failures are visible.
+    // Confirmation DM
     if (profile.telegram_id) {
       try {
         const resp = await sendMessage(profile.telegram_id, t.hwReceived(mn, tn));
         if (!resp.ok) {
           const errTxt = await resp.text().catch(() => "");
-          console.error("hw:group:student-dm-fail", JSON.stringify({ profile_id: profile.id, status: resp.status, err: errTxt.slice(0, 200) }));
+          console.error("hw:dm:student-confirm-fail", JSON.stringify({ profile_id: profile.id, status: resp.status, err: errTxt.slice(0, 200) }));
         } else {
-          console.log("hw:group:student-dm-ok", JSON.stringify({ profile_id: profile.id, mn, tn }));
+          console.log("hw:dm:student-confirm-ok", JSON.stringify({ profile_id: profile.id, mn, tn }));
         }
       } catch (e) {
-        console.error("hw:group:student-dm-exc", JSON.stringify({ profile_id: profile.id, err: String(e) }));
+        console.error("hw:dm:student-confirm-exc", JSON.stringify({ profile_id: profile.id, err: String(e) }));
       }
-    } else {
-      console.log("hw:group:student-no-telegram-id", JSON.stringify({ profile_id: profile.id }));
     }
 
-    // Teacher DM. Idempotency is enforced inside notifyTeachersOfSubmission by
-    // message_url (Telegram webhook retries won't duplicate). New posts and
-    // resubmissions always notify because they carry a fresh message URL.
+    // Teacher DM (existing helper handles queueing + quiet hours + idempotency)
     const subId = upserted?.id;
     await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId, intent.assignment_id, moduleId);
 
-    // Invalidate any cached "stats" for the student so next /galaba is fresh
     cacheInvalidateUser(profile.id);
+    console.log("hw:dm:ok", JSON.stringify({ profile_id: profile.id, assignment_id: intent.assignment_id, copied_message_id: copiedMessageId }));
+    return true;
   } catch (e) {
-    console.error("handleGroupTopicMessage error", e);
+    console.error("handlePrivateHomeworkUpload error", e);
+    return false;
   }
 }
+
 
 // v3.14.40: auto-detect path removed — handleGroupTopicMessage now auto-synthesizes
 // intents for sender-attributed topic posts. hwTeacherBody is still used by
@@ -4184,6 +4205,16 @@ Deno.serve(async (req) => {
 
       const persona: Persona = profileForLocale ? await getPersona(admin, profileForLocale.id) : "student";
       const adminFlag = persona === "admin";
+
+      // v3.14.44: if the student has an open homework intent, intercept media
+      // sent to the bot in this DM and route it as a homework submission.
+      // The handler returns true only when it actually consumed the message
+      // (i.e. there's an open intent AND the message is a media attachment).
+      if (profileForLocale && isPrivateChat) {
+        const consumedHw = await handlePrivateHomeworkUpload(admin, msg, profileForLocale);
+        if (consumedHw) return new Response("ok", { status: 200, headers: corsHeaders });
+      }
+
 
       if (text.startsWith("/start ")) {
         const arg = text.slice(7).trim();
