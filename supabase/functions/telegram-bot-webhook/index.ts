@@ -936,6 +936,41 @@ function cacheInvalidateUser(userId: string) {
   for (const k of REPLY_CACHE.keys()) if (k.includes(`:${userId}:`)) REPLY_CACHE.delete(k);
 }
 
+// v3.14.46: structured event logger. Console for edge function logs + admin_actions row
+// for durable audit. Never throws — logging must not break the user flow.
+async function logEvent(
+  admin: any,
+  actorProfileId: string | null,
+  action: string,
+  details: Record<string, any> = {},
+) {
+  try {
+    console.log(`evt:${action}`, JSON.stringify({ actor: actorProfileId, ...details }));
+  } catch { /* ignore */ }
+  if (!actorProfileId) return;
+  try {
+    await admin.from("admin_actions").insert({
+      actor_user_id: actorProfileId,
+      action,
+      target_resource_type: details?.resource_type || null,
+      target_resource_id: details?.resource_id || null,
+      target_user_id: details?.target_user_id || null,
+      details,
+    });
+  } catch (e) {
+    console.error("logEvent insert failed", String(e));
+  }
+}
+
+async function markProfileStatsDirty(admin: any, profileId: string) {
+  try {
+    await admin.from("profiles").update({ stats_dirty_at: new Date().toISOString() }).eq("id", profileId);
+  } catch (e) {
+    console.error("markProfileStatsDirty failed", String(e));
+  }
+}
+
+
 async function findProfileByTelegramId(admin: any, tgId: number) {
   const { data } = await admin
     .from("profiles")
@@ -2779,7 +2814,31 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
       return true;
     }
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
-    if (sub) cacheInvalidateUser(sub.user_id);
+    if (sub) {
+      cacheInvalidateUser(sub.user_id);
+      await markProfileStatsDirty(admin, sub.user_id);
+      await logEvent(admin, profileId, "hw:graded", {
+        resource_type: "homework_submission", resource_id: submissionId,
+        target_user_id: sub.user_id, assignment_id: sub.assignment_id,
+        score, has_feedback: !!feedback,
+      });
+      // Recompute leaderboard since a new grade landed.
+      try {
+        const projectRef = Deno.env.get("SUPABASE_PROJECT_ID") || Deno.env.get("PROJECT_ID");
+        const svc = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+        const supaUrl = Deno.env.get("SUPABASE_URL");
+        if (supaUrl && svc) {
+          // Fire and forget; do not await long.
+          fetch(`${supaUrl}/functions/v1/leaderboard-recalc`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${svc}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ trigger: "homework_graded" }),
+          }).catch((e) => console.error("leaderboard-recalc invoke failed", String(e)));
+        }
+        void projectRef;
+      } catch (e) { console.error("leaderboard-recalc invoke exc", String(e)); }
+    }
+
 
     // Auto-DM the student (always)
     if (sub) {
@@ -3090,14 +3149,20 @@ async function startHomeworkIntent(
     .maybeSingle();
   if (!a) { await sendMessage(chatId, t.gradeNotFound); return; }
 
-  // 2. Already graded? Block — unless the score is stale (student already started a resubmission).
+  // 2. Already graded? Block — unless the row is already in resubmission mode
+  //    (score cleared OR score_is_stale flipped OR a prior attempt is archived).
   const { data: existing } = await admin
     .from("homework_submissions")
-    .select("id, score, score_is_stale")
+    .select("id, score, score_is_stale, previous_attempts")
     .eq("user_id", profile.id).eq("assignment_id", assignmentId)
     .maybeSingle();
-  if (existing && existing.score != null && !existing.score_is_stale) {
+  const hasArchived = Array.isArray(existing?.previous_attempts) && existing!.previous_attempts.length > 0;
+  const inResubMode = !!existing && (existing.score == null || existing.score_is_stale === true || hasArchived);
+  if (existing && existing.score != null && !existing.score_is_stale && !hasArchived && !inResubMode) {
     await sendMessage(chatId, t.hwIntentAlreadyScored);
+    await logEvent(admin, profile.id, "hw:intent:blocked-graded", {
+      resource_type: "homework_assignment", resource_id: assignmentId,
+    });
     return;
   }
 
@@ -3109,6 +3174,16 @@ async function startHomeworkIntent(
   const parsed = parseTopicUrl(topicUrl);
   if (!parsed) { await sendMessage(chatId, t.hwIntentNoTopic); return; }
 
+  // 3b. STRICT module routing: drop any other active intents for this student so the
+  //     next DM upload can only attach to the assignment the student just tapped.
+  try {
+    await admin.from("bot_homework_intents")
+      .delete()
+      .eq("user_id", profile.id)
+      .neq("assignment_id", assignmentId);
+  } catch (e) {
+    console.error("hw:intent:purge-others-failed", String(e));
+  }
 
   // 4. Upsert intent (10 min TTL)
   const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
@@ -3125,12 +3200,21 @@ async function startHomeworkIntent(
 
   const mn = (a.modules?.position ?? 0) + 1;
   const tn = a.task_number || 1;
+  await logEvent(admin, profile.id, "hw:intent:create", {
+    resource_type: "homework_assignment", resource_id: assignmentId,
+    module_id: a.module_id, module_position: a.modules?.position ?? null,
+    module_number: mn, task_number: tn,
+    group_id: profile.group_id,
+    topic_chat_id: parsed.chatId, topic_thread_id: parsed.threadId,
+    expires_at: expiresAt,
+  });
   // v3.14.45: students must stay in this bot DM. Do not show a topic link
   // here because direct topic posts are intentionally ignored.
   await sendMessage(chatId, t.hwIntentReady(mn, tn), {
     inline_keyboard: [[{ text: t.hwCancelIntent, callback_data: `hw:cancel:${assignmentId}` }]],
   });
 }
+
 
 // v3.14.33: resolve group from supergroup chat_id by trying multiple URL patterns.
 // Returns { groupId, pattern } or null. Bug fix: groups.telegram_group_url stores
@@ -3382,17 +3466,25 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
       msg.video || msg.video_note || msg.document || msg.animation
     );
 
-    // Look up the most-recent non-expired intent for this student.
+    // Look up ALL non-expired intents for this student. Strict routing keeps only one,
+    // but log any drift so we can diagnose mis-attribution after the fact.
     const nowIso = new Date().toISOString();
     const { data: intents, error: intentErr } = await admin
       .from("bot_homework_intents")
       .select("id, user_id, assignment_id, module_id, group_id, telegram_chat_id, telegram_thread_id, expires_at, created_at")
       .eq("user_id", profile.id)
       .gt("expires_at", nowIso)
-      .order("created_at", { ascending: false })
-      .limit(1);
+      .order("created_at", { ascending: false });
     if (intentErr) console.error("hw:dm:intent-query-err", intentErr);
     const intent = intents && intents[0];
+    if (intents && intents.length > 1) {
+      console.warn("hw:dm:multi-intent", JSON.stringify({
+        profile_id: profile.id,
+        count: intents.length,
+        intents: intents.map((i: any) => ({ id: i.id, assignment_id: i.assignment_id, module_id: i.module_id, created_at: i.created_at })),
+        picked: intent?.id,
+      }));
+    }
     console.log("hw:dm:entry", JSON.stringify({
       profile_id: profile.id, chatId, messageId,
       has_photo: Array.isArray(msg.photo) && msg.photo.length > 0,
@@ -3402,9 +3494,12 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
       has_attachment: hasAttachment,
       intent_found: !!intent,
       intent_id: intent?.id || null,
+      intent_assignment_id: intent?.assignment_id || null,
+      intent_module_id: intent?.module_id || null,
       intent_expires_at: intent?.expires_at || null,
     }));
     if (!intent) return false; // no active intent — let normal routing handle this message
+
 
     // Extract media
     let fileId: string | null = null;
@@ -3464,6 +3559,24 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
     }
     const moduleId = aMeta?.module_id || intent.module_id;
 
+    // Re-resolve the topic at upload time so admin topic edits between tap and
+    // upload don't route this message to the wrong topic / wrong module.
+    let routeChatId = intent.telegram_chat_id;
+    let routeThreadId = intent.telegram_thread_id;
+    try {
+      if (intent.group_id) {
+        const { url: liveTopicUrl } = await resolveModuleTopicUrl(admin, intent.group_id, moduleId);
+        const liveParsed = liveTopicUrl ? parseTopicUrl(liveTopicUrl) : null;
+        if (liveParsed) { routeChatId = liveParsed.chatId; routeThreadId = liveParsed.threadId; }
+      }
+    } catch (e) { console.error("hw:dm:topic-reresolve-failed", String(e)); }
+
+    console.log("hw:dm:resolved", JSON.stringify({
+      profile_id: profile.id, intent_id: intent.id, assignment_id: intent.assignment_id,
+      module_id: moduleId, module_position: aMeta?.modules?.position ?? null,
+      module_number: mn, task_number: tn, route_chat_id: routeChatId, route_thread_id: routeThreadId,
+    }));
+
     const userCaption = (msg.caption || "").toString();
     const headerCaption = `📤 ${studentName} — M${mn}·V${tn}${aTitle ? ` — ${aTitle}` : ""}`;
     // Telegram caption max ~1024 chars
@@ -3473,12 +3586,13 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
     let copiedMessageId: number | null = null;
     try {
       const copyResp = await tgApi("copyMessage", {
-        chat_id: intent.telegram_chat_id,
-        message_thread_id: intent.telegram_thread_id,
+        chat_id: routeChatId,
+        message_thread_id: routeThreadId,
         from_chat_id: chatId,
         message_id: messageId,
         caption: combinedCaption,
       });
+
       const copyBody: any = await copyResp.json().catch(() => null);
       if (!copyResp.ok || !copyBody?.ok) {
         console.error("hw:dm:copy-fail", JSON.stringify({
@@ -3499,7 +3613,7 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
       return true;
     }
 
-    const messageUrl = buildMessageLink(intent.telegram_chat_id, intent.telegram_thread_id, copiedMessageId);
+    const messageUrl = buildMessageLink(routeChatId, routeThreadId, copiedMessageId);
     const submittedText = userCaption.slice(0, 4000);
 
     // Finalize both first submissions and resubmissions in one place.
@@ -3532,8 +3646,9 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
         score_is_stale: isResubmission,
         previous_attempts: previousAttempts,
         is_late: false,
-        telegram_chat_id: intent.telegram_chat_id,
-        telegram_thread_id: intent.telegram_thread_id,
+        telegram_chat_id: routeChatId,
+        telegram_thread_id: routeThreadId,
+
         telegram_message_id: copiedMessageId,
         telegram_message_url: messageUrl,
         telegram_file_id: fileId,
@@ -3574,9 +3689,17 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
     const subId = upserted?.id;
     const teacherTitle = isResubmission ? `Qayta topshirish: ${aTitle}` : aTitle;
     await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, teacherTitle, messageUrl, subId, intent.assignment_id, moduleId);
-
     cacheInvalidateUser(profile.id);
-    console.log("hw:dm:ok", JSON.stringify({ profile_id: profile.id, assignment_id: intent.assignment_id, copied_message_id: copiedMessageId, is_resubmission: isResubmission }));
+    await markProfileStatsDirty(admin, profile.id);
+    await logEvent(admin, profile.id, isResubmission ? "hw:submission:resubmitted" : "hw:submission:created", {
+      resource_type: "homework_submission", resource_id: subId,
+      assignment_id: intent.assignment_id, module_id: moduleId,
+      module_number: mn, task_number: tn, group_id: intent.group_id,
+      attempt_number: nextAttempt, message_url: messageUrl,
+    });
+    console.log("hw:dm:ok", JSON.stringify({ profile_id: profile.id, assignment_id: intent.assignment_id, module_id: moduleId, module_number: mn, task_number: tn, copied_message_id: copiedMessageId, is_resubmission: isResubmission }));
+    return true;
+
     return true;
   } catch (e) {
     console.error("handlePrivateHomeworkUpload error", e);
@@ -3854,16 +3977,31 @@ async function handleCallback(admin: any, cq: any) {
       await sendMessage(chatId, t.gradeNotFound);
       return;
     }
+    // Purge any other active intents so the upcoming upload can only land on this assignment.
+    try {
+      await admin.from("bot_homework_intents")
+        .delete().eq("user_id", profile.id).neq("assignment_id", assignmentId);
+    } catch (e) { console.error("hw:resub:purge-others-failed", String(e)); }
+
     const { error: rpcErr } = await admin.rpc("start_homework_resubmission", { p_submission_id: sub.id });
     if (rpcErr) {
       console.error("start_homework_resubmission failed", rpcErr);
+      await logEvent(admin, profile.id, "hw:resub:rpc-failed", {
+        resource_type: "homework_submission", resource_id: sub.id, error: String(rpcErr.message || rpcErr),
+      });
       await sendMessage(chatId, t.hwResubError);
       return;
     }
+    await logEvent(admin, profile.id, "hw:resub:opened", {
+      resource_type: "homework_submission", resource_id: sub.id, assignment_id: assignmentId,
+    });
     cacheInvalidateUser(profile.id);
     await startHomeworkIntent(admin, chatId, profile, locale, assignmentId);
     return;
   }
+
+
+
 
 
   // v3.14.32: teacher taps "🎯 Baholash" on auto-detected submission DM.
