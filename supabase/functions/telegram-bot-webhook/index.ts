@@ -3442,17 +3442,25 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
       msg.video || msg.video_note || msg.document || msg.animation
     );
 
-    // Look up the most-recent non-expired intent for this student.
+    // Look up ALL non-expired intents for this student. Strict routing keeps only one,
+    // but log any drift so we can diagnose mis-attribution after the fact.
     const nowIso = new Date().toISOString();
     const { data: intents, error: intentErr } = await admin
       .from("bot_homework_intents")
       .select("id, user_id, assignment_id, module_id, group_id, telegram_chat_id, telegram_thread_id, expires_at, created_at")
       .eq("user_id", profile.id)
       .gt("expires_at", nowIso)
-      .order("created_at", { ascending: false })
-      .limit(1);
+      .order("created_at", { ascending: false });
     if (intentErr) console.error("hw:dm:intent-query-err", intentErr);
     const intent = intents && intents[0];
+    if (intents && intents.length > 1) {
+      console.warn("hw:dm:multi-intent", JSON.stringify({
+        profile_id: profile.id,
+        count: intents.length,
+        intents: intents.map((i: any) => ({ id: i.id, assignment_id: i.assignment_id, module_id: i.module_id, created_at: i.created_at })),
+        picked: intent?.id,
+      }));
+    }
     console.log("hw:dm:entry", JSON.stringify({
       profile_id: profile.id, chatId, messageId,
       has_photo: Array.isArray(msg.photo) && msg.photo.length > 0,
@@ -3462,9 +3470,12 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
       has_attachment: hasAttachment,
       intent_found: !!intent,
       intent_id: intent?.id || null,
+      intent_assignment_id: intent?.assignment_id || null,
+      intent_module_id: intent?.module_id || null,
       intent_expires_at: intent?.expires_at || null,
     }));
     if (!intent) return false; // no active intent — let normal routing handle this message
+
 
     // Extract media
     let fileId: string | null = null;
