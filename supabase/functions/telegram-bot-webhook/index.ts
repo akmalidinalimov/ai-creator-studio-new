@@ -3953,15 +3953,29 @@ async function handleCallback(admin: any, cq: any) {
       await sendMessage(chatId, t.gradeNotFound);
       return;
     }
+    // Purge any other active intents so the upcoming upload can only land on this assignment.
+    try {
+      await admin.from("bot_homework_intents")
+        .delete().eq("user_id", profile.id).neq("assignment_id", assignmentId);
+    } catch (e) { console.error("hw:resub:purge-others-failed", String(e)); }
+
     const { error: rpcErr } = await admin.rpc("start_homework_resubmission", { p_submission_id: sub.id });
     if (rpcErr) {
       console.error("start_homework_resubmission failed", rpcErr);
+      await logEvent(admin, profile.id, "hw:resub:rpc-failed", {
+        resource_type: "homework_submission", resource_id: sub.id, error: String(rpcErr.message || rpcErr),
+      });
       await sendMessage(chatId, t.hwResubError);
       return;
     }
+    await logEvent(admin, profile.id, "hw:resub:opened", {
+      resource_type: "homework_submission", resource_id: sub.id, assignment_id: assignmentId,
+    });
     cacheInvalidateUser(profile.id);
     await startHomeworkIntent(admin, chatId, profile, locale, assignmentId);
     return;
+  }
+
   }
 
 
