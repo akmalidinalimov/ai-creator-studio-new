@@ -3501,14 +3501,20 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
     const messageUrl = buildMessageLink(intent.telegram_chat_id, intent.telegram_thread_id, copiedMessageId);
     const submittedText = userCaption.slice(0, 4000);
 
-    // Bump attempt_number for the homework_submissions_guard trigger.
+    // Finalize both first submissions and resubmissions in one place.
     const { data: existingSub } = await admin
       .from("homework_submissions")
-      .select("attempt_number")
+      .select("id, attempt_number, score, score_feedback, scored_by, scored_at, submitted_at, telegram_message_url, is_late, previous_attempts, score_is_stale")
       .eq("user_id", profile.id)
       .eq("assignment_id", intent.assignment_id)
       .maybeSingle();
-    const nextAttempt = ((existingSub?.attempt_number as number | null) ?? 0) + 1;
+    const priorAttempts = Array.isArray(existingSub?.previous_attempts) ? existingSub.previous_attempts : [];
+    const shouldArchiveGrade = existingSub?.score != null && !existingSub?.score_is_stale;
+    const previousAttempts = shouldArchiveGrade ? [...priorAttempts, archivedHomeworkAttempt(existingSub)] : priorAttempts;
+    const isResubmission = !!existingSub && (
+      shouldArchiveGrade || !!existingSub.score_is_stale || priorAttempts.length > 0 || Number(existingSub.attempt_number || 1) > 1
+    );
+    const nextAttempt = existingSub ? Number(existingSub.attempt_number || 1) + 1 : 1;
 
     const { data: upserted, error: upErr } = await admin
       .from("homework_submissions")
@@ -3522,7 +3528,8 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
         score_feedback: null,
         scored_by: null,
         scored_at: null,
-        score_is_stale: false,
+        score_is_stale: isResubmission,
+        previous_attempts: previousAttempts,
         is_late: false,
         telegram_chat_id: intent.telegram_chat_id,
         telegram_thread_id: intent.telegram_thread_id,
