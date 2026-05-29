@@ -3622,8 +3622,9 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
         score_is_stale: isResubmission,
         previous_attempts: previousAttempts,
         is_late: false,
-        telegram_chat_id: intent.telegram_chat_id,
-        telegram_thread_id: intent.telegram_thread_id,
+        telegram_chat_id: routeChatId,
+        telegram_thread_id: routeThreadId,
+
         telegram_message_id: copiedMessageId,
         telegram_message_url: messageUrl,
         telegram_file_id: fileId,
