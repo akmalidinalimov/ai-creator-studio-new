@@ -3125,14 +3125,20 @@ async function startHomeworkIntent(
     .maybeSingle();
   if (!a) { await sendMessage(chatId, t.gradeNotFound); return; }
 
-  // 2. Already graded? Block — unless the score is stale (student already started a resubmission).
+  // 2. Already graded? Block — unless the row is already in resubmission mode
+  //    (score cleared OR score_is_stale flipped OR a prior attempt is archived).
   const { data: existing } = await admin
     .from("homework_submissions")
-    .select("id, score, score_is_stale")
+    .select("id, score, score_is_stale, previous_attempts")
     .eq("user_id", profile.id).eq("assignment_id", assignmentId)
     .maybeSingle();
-  if (existing && existing.score != null && !existing.score_is_stale) {
+  const hasArchived = Array.isArray(existing?.previous_attempts) && existing!.previous_attempts.length > 0;
+  const inResubMode = !!existing && (existing.score == null || existing.score_is_stale === true || hasArchived);
+  if (existing && existing.score != null && !existing.score_is_stale && !hasArchived && !inResubMode) {
     await sendMessage(chatId, t.hwIntentAlreadyScored);
+    await logEvent(admin, profile.id, "hw:intent:blocked-graded", {
+      resource_type: "homework_assignment", resource_id: assignmentId,
+    });
     return;
   }
 
@@ -3144,6 +3150,16 @@ async function startHomeworkIntent(
   const parsed = parseTopicUrl(topicUrl);
   if (!parsed) { await sendMessage(chatId, t.hwIntentNoTopic); return; }
 
+  // 3b. STRICT module routing: drop any other active intents for this student so the
+  //     next DM upload can only attach to the assignment the student just tapped.
+  try {
+    await admin.from("bot_homework_intents")
+      .delete()
+      .eq("user_id", profile.id)
+      .neq("assignment_id", assignmentId);
+  } catch (e) {
+    console.error("hw:intent:purge-others-failed", String(e));
+  }
 
   // 4. Upsert intent (10 min TTL)
   const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
@@ -3160,12 +3176,21 @@ async function startHomeworkIntent(
 
   const mn = (a.modules?.position ?? 0) + 1;
   const tn = a.task_number || 1;
+  await logEvent(admin, profile.id, "hw:intent:create", {
+    resource_type: "homework_assignment", resource_id: assignmentId,
+    module_id: a.module_id, module_position: a.modules?.position ?? null,
+    module_number: mn, task_number: tn,
+    group_id: profile.group_id,
+    topic_chat_id: parsed.chatId, topic_thread_id: parsed.threadId,
+    expires_at: expiresAt,
+  });
   // v3.14.45: students must stay in this bot DM. Do not show a topic link
   // here because direct topic posts are intentionally ignored.
   await sendMessage(chatId, t.hwIntentReady(mn, tn), {
     inline_keyboard: [[{ text: t.hwCancelIntent, callback_data: `hw:cancel:${assignmentId}` }]],
   });
 }
+
 
 // v3.14.33: resolve group from supergroup chat_id by trying multiple URL patterns.
 // Returns { groupId, pattern } or null. Bug fix: groups.telegram_group_url stores
