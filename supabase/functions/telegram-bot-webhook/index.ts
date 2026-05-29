@@ -642,12 +642,13 @@ const T = {
     hwTopicMissing: "   ⚠️ Topic not configured — contact your teacher.",
     hwSubmitBtn: (mn: number, tn: number) => `📤 Submit — M${mn}·T${tn}`,
     hwIntentReady: (mn: number, tn: number) =>
-      `📤 <b>Module ${mn} · Task ${tn}</b>\n\nTap the button below to open the topic and post your photo or video. The bot will accept it automatically (within 10 minutes).`,
+      `📤 <b>Module ${mn} · Task ${tn}</b>\n\nSend your homework here (in this chat with the bot) as a photo or video. The bot will post it to the topic for you (within 10 minutes).\n\n⚠️ Note: messages posted directly in the group topic are NOT counted as submissions.`,
     hwIntentNoTopic: "Topic not configured for this module. Please contact your teacher.",
     hwIntentNoGroup: "You are not assigned to a group. Please contact your teacher.",
     hwIntentBtnGoTopic: "📌 Open topic",
     hwIntentAlreadyScored: "This task has already been graded ✅",
-    hwOnlyMedia: "❗️ Only photos or videos are accepted. Please send your homework as an image or video.",
+    hwOnlyMedia: "❗️ Only photos or videos are accepted. Please send your homework as a photo or video here.",
+    hwForwardFailed: "❌ Could not post your submission to the topic. Please contact your teacher and try again later.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Your previous result: <b>${sc}/${mx}</b>${fb ? `\nFeedback: "${csvEscapeHtml(fb)}"` : ""}\n\nDo you want to resubmit?`,
     hwResubYes: "✅ Yes, resubmit",
