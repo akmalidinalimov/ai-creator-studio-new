@@ -1,64 +1,89 @@
 ## Problem
 
-Today, when a student posts a photo/video in the group homework topic — even casually, with no intent to submit — the bot still records it as a homework submission. That's because `handleGroupTopicMessage` in `supabase/functions/telegram-bot-webhook/index.ts` (v3.14.40, lines ~3364–3416) **auto-synthesizes a `bot_homework_intents` row on the fly** whenever a known student posts media in a recognized topic. The result: every casual image/video in the topic → submission row + student confirmation DM + teacher DM.
+Today's flow:
+1. Student taps `/vazifalar` → 📤 Topshirish → bot creates a `bot_homework_intents` row (10 min TTL) and shows a "Topikga o'tish" link to the group topic.
+2. Student opens the topic and posts a photo/video.
+3. `handleGroupTopicMessage` matches that post against the open intent and records a submission + teacher DM.
 
-The user wants the opposite behavior: a homework submission may **only** be created when the student deliberately went through the bot flow (`/vazifalar` → 📤 Topshirish), which inserts a real `bot_homework_intents` row. Anything posted in the topic without an active intent must be ignored completely — no submission, no confirmation, no teacher notification, no "please send media" DM.
+The bug the user is hitting: step 1 happens, then they leave the bot and post media directly in the group topic (their own intent is still open, or another student/themselves posts unrelated media). The webhook matches the topic upload to the intent and counts it as a submission, even though the student never actually completed the bot flow.
 
-## Change (single edit, telegram-bot-webhook)
+There is no reliable way to distinguish "media posted because the student tapped the bot's link" vs "media posted by walking into the topic directly" — Telegram doesn't mark posts as coming from a button. As long as we accept group-topic uploads as submissions, casual topic activity will keep getting counted.
 
-In `handleGroupTopicMessage`:
+## Fix: submission must happen inside the bot DM
 
-1. **Remove the v3.14.40 auto-synthesis branch** (the entire `if (!intent) { … synthesized = true; }` block, ~lines 3364–3416). Replace it with:
-   ```ts
-   if (!intent) {
-     console.log("hw:group:no-active-intent-ignored", JSON.stringify({
-       profile_id: profile.id, chatId, threadId, messageId,
-     }));
-     return; // silent — do not DM, do not react, do not record
-   }
-   ```
-2. Drop the now-unused `synthesized` flag and any code paths that depend on it (resubmission attempt-number handling already works off `existingSub`, not `synthesized`, so it stays correct).
-3. Keep the rest of the function untouched: media-only filter (v3.14.42), upsert into `homework_submissions`, `homework_teacher_dm_queue` enqueue, student confirmation DM, intent deletion after consumption.
+Change the submission flow so the photo/video is sent **to the bot in the private chat**, not to the group topic. The bot then mirrors the media into the topic on the student's behalf and records the submission. Group-topic uploads stop being a submission channel entirely.
 
-Net behavior:
-- Student opens DM with bot → `/vazifalar` → picks module/task → 📤 Topshirish → intent row created, "go to topic" button shown → student posts photo/video in topic → recorded as submission, teacher DM fires, intent deleted. ✅
-- Student chats / posts media in topic without first going through the bot → completely ignored, no DM either way, nothing written. ✅
-- Student posts text in topic with an active intent → still rejected by the media-only filter from the previous change. ✅
-- Anonymous-admin posts, unknown senders → still ignored as today.
+### New flow
 
-## i18n
+1. Student → bot DM: `/vazifalar` → pick module → 📤 Topshirish.
+2. Bot replies in DM: "Send your photo or video here in this chat. I'll post it in the group topic for you." (single attachment, plus optional caption.)
+3. Bot creates the same `bot_homework_intents` row, but now scoped to the **DM chat** (no `telegram_thread_id` matching anymore — the intent says "next media this user sends me in DM goes to assignment X").
+4. Student sends a photo/video to the bot in DM.
+5. Bot:
+   - validates it's a photo/video (existing media-only filter from v3.14.42),
+   - forwards/copies the media into the group homework topic via `copyMessage` (so the post appears in the topic under the bot, with a caption like `📤 {Student Name} — M{n}·T{n}`),
+   - inserts/updates `homework_submissions` (forwarded `telegram_message_id` = the copied message in the topic, so teacher's "View post" button still works),
+   - enqueues `homework_teacher_dm_queue`,
+   - sends the student the existing confirmation DM,
+   - deletes the intent.
+6. If the student sends text/other non-media in DM while an intent is open → existing `hwOnlyMedia` reminder.
+7. If the student posts anything in the group topic → **completely ignored**, no submission, no DMs.
 
-No new strings. The `hwOnlyMedia` reminder DM stays, but only fires for students who actually opened an intent and then sent non-media. Casual topic chatter no longer triggers it.
+### Changes in `supabase/functions/telegram-bot-webhook/index.ts`
 
-## Out of scope (explicitly unchanged)
+- **`startHomeworkIntent`** (~lines 3050–3102):
+  - Keep intent upsert, but change the user-facing message to: "Send your photo or video here (in this chat). I'll post it in the topic for you. (10 minutes)" in uz/ru/en.
+  - Drop the "Topikga o'tish" inline button. (Topic link can stay as a secondary "Open group topic" link for context only — not the submission path.)
+  - Still store `telegram_chat_id` / `telegram_thread_id` of the **target topic** in the intent row so we know where to mirror the media.
+- **New `handlePrivateHomeworkUpload(admin, msg, profile, locale)`** wired into the private-message router:
+  - Look up the active `bot_homework_intents` row for `profile.id` (not expired).
+  - If none → ignore (fall through to existing main-menu behavior).
+  - Run the existing media-only filter; on non-media send `hwOnlyMedia` and keep the intent.
+  - Call Telegram `copyMessage` to the intent's `telegram_chat_id` + `telegram_thread_id`, with a caption identifying the student + assignment.
+  - Use the returned `message_id` as the submission's `telegram_message_id`.
+  - Insert/upsert `homework_submissions` (same fields as today, including resubmission attempt bump from `existingSub`).
+  - Enqueue `homework_teacher_dm_queue`.
+  - Send student confirmation DM (existing strings).
+  - Delete the intent.
+- **`handleGroupTopicMessage`** (~lines 3320–3520):
+  - Replace the whole body with: log `hw:group:ignored-not-bot-flow` and return. No intent matching, no submission, no student DM, no teacher DM. (Keeps unknown-sender / anon-admin behavior — all ignored.)
+- **i18n** (uz/ru/en blocks):
+  - Update `hwIntentReady` / `hwIntentReadyMedia` (or add new keys) to "Send your photo or video here in this chat" wording.
+  - Reuse existing `hwOnlyMedia` and confirmation strings.
+- **`supabase/config.toml`** — no change.
+- **DB schema** — no migration needed; `bot_homework_intents` already has the needed columns.
 
-- `bot_homework_intents` schema and TTL
-- Intent creation flow in `/vazifalar` → 📤 Topshirish
-- `homework_submissions` schema, `homework_submissions_guard` trigger, resubmission RPC
-- `homework_teacher_dm_queue` and `notify-homework-submission` drainer
-- Web-based homework submission path
-- Admin views (`AdminStudentDetail`, `AdminHomework`)
+### Out of scope (unchanged)
 
-## End-to-end testing plan
+- `homework_submissions` schema and `homework_submissions_guard` trigger.
+- Resubmission RPC and `score_is_stale` flow.
+- `notify-homework-submission` drainer.
+- Web-based submission path.
+- Admin views.
 
-After deploying the edge function, run these checks against the live bot and confirm via `supabase--edge_function_logs telegram-bot-webhook` plus a couple of `supabase--read_query` lookups on `homework_submissions` / `bot_homework_intents`.
+### Edge cases
 
-1. **No-intent topic media (the bug):** As a linked student, post a photo directly in the group homework topic without touching the bot first.
-   - Expect: log line `hw:group:no-active-intent-ignored`, **no** new row in `homework_submissions`, **no** student DM, **no** entry in `homework_teacher_dm_queue`.
-2. **Happy path:** In bot DM → `/vazifalar` → pick a module → 📤 Topshirish → tap "Topikga o'tish" → post a photo in the topic.
-   - Expect: log `hw:group:auto-intent` is gone; instead a normal consumed-intent flow, a new `homework_submissions` row, intent row deleted, student confirmation DM, `homework_teacher_dm_queue` row enqueued, then teacher DM after the cron runs.
-3. **Text-only with active intent:** Open intent via bot, then send "." in the topic.
-   - Expect: `hw:group:rejected-non-media` log, `hwOnlyMedia` DM to student, intent row remains for retry, no submission.
-4. **Resubmission after grading:** Teacher grades the submission, then student opens a fresh intent and posts a new photo.
-   - Expect: `attempt_number` bumps, score cleared, teacher DM re-enqueued.
-5. **Already-graded short-circuit removed with synth path:** Posting in topic for a graded assignment **without** an intent → now just `hw:group:no-active-intent-ignored` (no ✅ reaction, no DM). This is the intended new behavior.
-6. **Anonymous-admin post / non-student post:** Unchanged — `hw:group:unknown-sender-ignored`.
-7. **Button-level smoke (bot DM):** Walk `/start` → main menu → `/vazifalar` → module list → task list → 📤 Topshirish; confirm each callback returns the expected screen and the intent row is created with correct `assignment_id`, `module_id`, `group_id`, `telegram_chat_id`, `telegram_thread_id`, and a future `expires_at`.
+- **Multiple open intents per student:** existing `onConflict: "user_id,assignment_id"` means at most one per assignment, but a student could open intents for two different assignments back-to-back. Resolution: at upload time, pick the most recently created non-expired intent and consume that. Reminder DM if multiple are open: not needed — newest wins, matches current UX where 📤 Topshirish replaces context.
+- **Group has no configured topic:** still rejected at `startHomeworkIntent` like today (`hwIntentNoTopic`).
+- **`copyMessage` fails** (bot not in group, topic deleted, permissions): catch the error, DM the student a friendly "Could not post to the group topic — please contact your teacher" message, do NOT create a submission, keep the intent so the student can retry.
+- **Existing in-flight intents created before this deploy:** harmless — they'll just expire after 10 min since group-topic uploads no longer consume them; students will reopen via 📤 Topshirish.
 
-If any of (1)–(7) fail, fix in the same loop before reporting back.
+## End-to-end test plan (post-deploy)
+
+Verify via `supabase--edge_function_logs telegram-bot-webhook` plus `homework_submissions` / `bot_homework_intents` reads:
+
+1. **The reported bug:** open intent via bot, leave, post photo directly in topic → log `hw:group:ignored-not-bot-flow`, no `homework_submissions` row, no DMs.
+2. **Bot DM happy path:** `/vazifalar` → 📤 Topshirish → send photo to bot DM → bot copies into topic, submission row created, intent deleted, student confirmation DM, teacher DM queued.
+3. **Text in DM with active intent:** `hwOnlyMedia` reminder, intent kept, no submission.
+4. **Media in DM without active intent:** ignored (falls through to normal menu/no-op).
+5. **`copyMessage` failure:** simulate by pointing intent at a chat where bot isn't admin → student gets friendly failure DM, no submission, intent retained.
+6. **Resubmission:** teacher grades, student opens new intent, sends new photo in DM → `attempt_number` bumps, score cleared, teacher DM re-enqueued.
+7. **Group topic chatter (text, photo, video, anonymous admin):** all silently ignored.
+8. **Bot menu smoke:** `/start` → main menu → `/vazifalar` → module list → task list → 📤 Topshirish → confirm intent row has correct `assignment_id`, `module_id`, `group_id`, `telegram_chat_id`, `telegram_thread_id`, future `expires_at`.
+
+If any of (1)–(8) fail, fix in the same loop before reporting back.
 
 ## Files touched
 
-- `supabase/functions/telegram-bot-webhook/index.ts` — remove auto-synthesis block in `handleGroupTopicMessage` (~lines 3364–3416), add silent-ignore early return.
-
-Then `supabase--deploy_edge_functions` for `telegram-bot-webhook` and run the test plan above.
+- `supabase/functions/telegram-bot-webhook/index.ts` — update `startHomeworkIntent` wording, add `handlePrivateHomeworkUpload` + private-chat routing hook, gut `handleGroupTopicMessage` to a silent ignore, refresh uz/ru/en strings.
+- Then `supabase--deploy_edge_functions` for `telegram-bot-webhook` and run the test plan above.
