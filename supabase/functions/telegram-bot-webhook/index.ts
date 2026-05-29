@@ -3535,6 +3535,24 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
     }
     const moduleId = aMeta?.module_id || intent.module_id;
 
+    // Re-resolve the topic at upload time so admin topic edits between tap and
+    // upload don't route this message to the wrong topic / wrong module.
+    let routeChatId = intent.telegram_chat_id;
+    let routeThreadId = intent.telegram_thread_id;
+    try {
+      if (intent.group_id) {
+        const { url: liveTopicUrl } = await resolveModuleTopicUrl(admin, intent.group_id, moduleId);
+        const liveParsed = liveTopicUrl ? parseTopicUrl(liveTopicUrl) : null;
+        if (liveParsed) { routeChatId = liveParsed.chatId; routeThreadId = liveParsed.threadId; }
+      }
+    } catch (e) { console.error("hw:dm:topic-reresolve-failed", String(e)); }
+
+    console.log("hw:dm:resolved", JSON.stringify({
+      profile_id: profile.id, intent_id: intent.id, assignment_id: intent.assignment_id,
+      module_id: moduleId, module_position: aMeta?.modules?.position ?? null,
+      module_number: mn, task_number: tn, route_chat_id: routeChatId, route_thread_id: routeThreadId,
+    }));
+
     const userCaption = (msg.caption || "").toString();
     const headerCaption = `📤 ${studentName} — M${mn}·V${tn}${aTitle ? ` — ${aTitle}` : ""}`;
     // Telegram caption max ~1024 chars
@@ -3544,12 +3562,13 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
     let copiedMessageId: number | null = null;
     try {
       const copyResp = await tgApi("copyMessage", {
-        chat_id: intent.telegram_chat_id,
-        message_thread_id: intent.telegram_thread_id,
+        chat_id: routeChatId,
+        message_thread_id: routeThreadId,
         from_chat_id: chatId,
         message_id: messageId,
         caption: combinedCaption,
       });
+
       const copyBody: any = await copyResp.json().catch(() => null);
       if (!copyResp.ok || !copyBody?.ok) {
         console.error("hw:dm:copy-fail", JSON.stringify({
