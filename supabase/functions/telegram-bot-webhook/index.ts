@@ -3764,6 +3764,18 @@ async function handleCallback(admin: any, cq: any) {
     return;
   }
 
+  if (data.startsWith("hw:cancel:") && chatId) {
+    const assignmentId = data.slice("hw:cancel:".length);
+    const profile = await findProfileByTelegramId(admin, tgId);
+    if (!profile) { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(profile.preferred_locale);
+    const t = T[locale] as any;
+    await admin.from("bot_homework_intents").delete().eq("user_id", profile.id).eq("assignment_id", assignmentId);
+    await answerCallback(cq.id, "OK");
+    await sendMessage(chatId, t.hwIntentCancelled);
+    return;
+  }
+
   // Student tapped "🔁 qayta topshirish" — confirm with Yes/No before resetting score.
   if (data.startsWith("hw:resub_ask:") && chatId) {
     const assignmentId = data.slice("hw:resub_ask:".length);
