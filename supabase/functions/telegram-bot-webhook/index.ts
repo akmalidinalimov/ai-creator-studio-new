@@ -451,6 +451,8 @@ const T = {
     hwIntentNoTopic: "Топик для этого модуля не настроен. Свяжитесь с преподавателем.",
     hwIntentNoGroup: "Вам не назначена группа. Свяжитесь с преподавателем.",
     hwIntentBtnGoTopic: "📌 Открыть топик",
+    hwCancelIntent: "Отменить",
+    hwIntentCancelled: "Отправка отменена.",
     hwIntentAlreadyScored: "Это задание уже оценено ✅",
     hwOnlyMedia: "❗️ Принимаются только фото или видео. Пожалуйста, отправьте задание фото или видео сюда.",
     hwForwardFailed: "❌ Не удалось опубликовать задание в топике. Свяжитесь с преподавателем и попробуйте позже.",
@@ -462,6 +464,8 @@ const T = {
     hwResubError: "❌ Не удалось начать пересдачу. Попробуйте позже.",
     hwReceived: (mn: number, tn: number) =>
       `✅ Задание принято · Модуль ${mn} · З${tn}\nКак только преподаватель оценит — пришлю результат.`,
+    hwResubReceived: (mn: number, tn: number) =>
+      `✅ Повторная отправка принята · Модуль ${mn} · З${tn}\nРабота отправлена преподавателю на проверку.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
       `🆕 <b>Новая сдача</b>\n👤 ${csvEscapeHtml(name)}\n📚 Модуль ${mn} · З${tn} — ${csvEscapeHtml(title)}`,
     hwTeacherBtnFile: "📂 Открыть файл",
