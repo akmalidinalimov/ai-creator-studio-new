@@ -3317,6 +3317,9 @@ async function resolveAssignmentForTopic(
     pickNextLeaf(leaves as any, (existingSubs || []) as any) ||
     [...leaves].sort((a: any, b: any) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
   if (!asg) return null;
+  return { moduleId: (asg as any).module_id, assignment: asg, resolvedVia: "group_module_topic" };
+}
+
 // v3.14.44: Group topic messages are NEVER counted as homework submissions.
 // Submissions can ONLY be made by sending a photo/video to the bot in the
 // private DM after opening an intent via /vazifalar → 📤 Topshirish. The bot
