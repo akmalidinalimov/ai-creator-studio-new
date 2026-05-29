@@ -1,57 +1,61 @@
-# Student 360 — Admin Per-Student Detail Page
+## Goal
 
-A new admin page that shows everything about one student in one place: profile, lessons watched, homework history, Telegram bot activity, and engagement signals.
+Tighten `handleGroupTopicMessage` in `supabase/functions/telegram-bot-webhook/index.ts` so that **only image (photo) or video (video / video_note) posts** in a group homework topic are treated as a submission. Text, plain captions, documents, and voice notes must no longer create a submission row, and must not generate student confirmations or teacher DMs.
 
-## Route & Navigation
+## Current behavior (bug)
 
-- New route: `/admin/users/:id` (component `AdminStudentDetail.tsx`)
-- Entry points:
-  - `/admin/users` — make each row clickable → opens detail page (keeps existing "Manage" drawer for quick edits)
-  - `/admin/groups/:id` — student rows link to the detail page
-  - `/admin/homework` — student name in submissions links to detail page
+Lines 3419–3439 extract media from the incoming Telegram message. Today:
+- `msg.photo` → counted as submission (photo) ✅
+- `msg.video` / `msg.video_note` → counted as submission ✅
+- `msg.document` → counted ❌ (user wants images/videos only)
+- `msg.voice` → counted ❌
+- Plain `msg.text` or `msg.caption` with no media → `kind = "text"` and a submission row is still upserted ❌ (root cause of "a dot counts as homework")
 
-## Page Layout
+Everything downstream — `homework_submissions` upsert, student confirmation DM, `homework_teacher_dm_queue` insert (drained by `notify-homework-submission`) — runs regardless of `kind`.
 
-Header card: avatar, name, email, role badge, group, Telegram link status, join date, last active, quick actions (Open Manage drawer, Send DM via bot, Copy email).
+## Change
 
-Tabs:
+In `handleGroupTopicMessage`, after the media extraction block:
 
-1. **Profile** — name, email, language, group, role, archived status, signup source, magic-link status, password set y/n. Read-only summary (editing stays in the existing Manage drawer).
+1. Define `const isAcceptedMedia = kind === "photo" || kind === "video" || kind === "video_note";`
+2. If `!isAcceptedMedia`, short-circuit before the submission upsert:
+   - Do **not** insert/upsert into `homework_submissions`.
+   - Do **not** enqueue a teacher DM.
+   - Do **not** send the student "submission received" confirmation.
+   - Optionally react to the original topic message with `👀` (or skip reaction) and DM the student (only if `profile.telegram_id` and only once per intent, to avoid spamming a chatty topic) telling them to send a photo or video.
+   - Log `hw:group:rejected-non-media` with `{ profile_id, kind, chatId, threadId, messageId }`.
+   - `return;`
+3. Leave the rest of the flow (attempt bump, upsert, message URL, teacher DM enqueue, student confirmation, resubmission attempt counter) **completely untouched** — so first submissions and resubmissions keep working exactly as they do today for valid media.
 
-2. **Lessons** — table of every lesson with: module, lesson title, watch %, watch time, last position, completed_at. Sort by module/position. Top KPIs: total lessons completed, total watch minutes, current streak, last 7d minutes.
+To avoid DM spam when a student writes several text messages in the topic, gate the "please send a photo or video" reminder DM with a short in-memory or `bot_homework_intents`-based throttle: only send the reminder if the most recent reminder for this `(user_id, intent_id or assignment_id)` is older than e.g. 5 minutes. If that adds risk, a simpler v1 is: send the reminder at most once per Telegram message (no dedupe) — still safe because we only DM the sender of the rejected message, not the whole topic.
 
-3. **Homework** — per-assignment row: module #, task #, status (not submitted / submitted / graded / late / resubmitted), submitted_at, score, attempts count, source (web/telegram), link to submission (opens grader drawer). Show full attempts history (previous_attempts JSON) in an expand row.
+## i18n
 
-4. **Telegram** — link status (telegram_id, username, first/last name), `/myid` history, last bot interaction, list of submissions made via bot, DM delivery log (from `homework_teacher_dm_queue` where student_id = this user, plus any DMs sent to this student from `notifications_log`).
+Add three locale strings (uz/ru/en) used only for the rejection DM, e.g.:
+- uz: `❗️ Faqat rasm yoki video qabul qilinadi. Iltimos, vazifangizni rasm yoki video sifatida yuboring.`
+- ru: `❗️ Принимаются только фото или видео. Пожалуйста, отправьте задание изображением или видео.`
+- en: `❗️ Only photos or videos are accepted. Please send your homework as an image or video.`
 
-5. **Engagement** — streaks (current + longest), logins (last 30, from `auth_events`), nudges sent (`nudge_log`), badges earned, leaderboard rank, daily watch heatmap (last 90d from `daily_watch_summary`).
+These live next to the existing `hwIntent*` keys in the same file (no client i18n JSON changes needed — these are bot-side strings).
 
-## Data Sources (read-only queries)
+## Out of scope (explicitly unchanged)
 
-- `profiles`, `user_roles`, `groups`, `enrollments`
-- `lessons`, `modules`, `lesson_progress`, `daily_watch_summary`
-- `homework_assignments`, `homework_submissions`
-- `bot_homework_intents`, `group_message_events`, `homework_teacher_dm_queue`, `notifications_log`
-- `auth_events`, `nudge_log`, `badges` + award table, `leaderboard_cache`
+- Submission upsert logic, attempt_number bumping, `score_is_stale` handling
+- `homework_teacher_dm_queue` enqueue + `notify-homework-submission` drainer
+- Student confirmation DM content/flow
+- Resubmission RPC `start_homework_resubmission`
+- Web-based homework submission path
+- Anonymous-admin filtering, intent synthesis, already-graded short-circuit
+- Any database schema, migrations, or RLS
 
-All queries scoped by `user_id = :id`. Access gated by `has_role(auth.uid(), 'admin')` — existing RLS already covers most tables; for the few that are admin-only-read, queries run from the admin session and will pass.
+## Files touched
 
-## Files
+- `supabase/functions/telegram-bot-webhook/index.ts` — single localized edit inside `handleGroupTopicMessage` (around lines 3419–3470) plus 3 new locale strings.
 
-- `src/pages/admin/AdminStudentDetail.tsx` (new) — main page with tabs
-- `src/components/admin/student/ProfileTab.tsx`
-- `src/components/admin/student/LessonsTab.tsx`
-- `src/components/admin/student/HomeworkTab.tsx`
-- `src/components/admin/student/TelegramTab.tsx`
-- `src/components/admin/student/EngagementTab.tsx`
-- `src/App.tsx` — register `/admin/users/:id` route
-- `src/pages/admin/AdminUsers.tsx` — row click → navigate to detail
-- `src/pages/admin/GroupDetail.tsx` — link student names to detail
-- `src/pages/admin/AdminHomework.tsx` — link student names to detail
-- i18n keys in `en.json` / `ru.json` / `uz.json`
+## Verification
 
-## Non-goals
-
-- No new edit flows here (Manage drawer stays the editor)
-- No new tables or migrations
-- No changes to Telegram bot / submission logic
+- Send a text-only message ("hi", ".") in a group homework topic as a linked student → no submission row, no teacher DM, student gets the "image/video only" DM, log line `hw:group:rejected-non-media`.
+- Send a photo → submission created, student confirmation + teacher DM as before.
+- Send a video → same as photo.
+- Resubmit with a photo after a prior graded submission → attempt_number bumps and teacher DM fires as before.
+- Send a document or voice note → rejected, same as text.
