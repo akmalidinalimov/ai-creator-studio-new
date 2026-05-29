@@ -3062,6 +3062,19 @@ async function setMessageReaction(chatId: number, messageId: number, emoji = "�
   } catch (_e) { /* best-effort */ }
 }
 
+function archivedHomeworkAttempt(row: any) {
+  return {
+    attempt_number: row.attempt_number,
+    score: row.score,
+    score_feedback: row.score_feedback,
+    scored_by: row.scored_by,
+    scored_at: row.scored_at,
+    submitted_at: row.submitted_at,
+    telegram_message_url: row.telegram_message_url,
+    is_late: row.is_late,
+  };
+}
+
 // Student tapped "📤 Topshirish" in /vazifalar — open intent and point to topic.
 async function startHomeworkIntent(
   admin: any, chatId: number, profile: any, locale: Locale, assignmentId: string,
