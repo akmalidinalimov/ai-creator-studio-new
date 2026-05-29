@@ -3536,12 +3536,6 @@ async function handlePrivateHomeworkUpload(admin: any, msg: any, profile: any): 
   }
 }
 
-    // Invalidate any cached "stats" for the student so next /galaba is fresh
-    cacheInvalidateUser(profile.id);
-  } catch (e) {
-    console.error("handleGroupTopicMessage error", e);
-  }
-}
 
 // v3.14.40: auto-detect path removed — handleGroupTopicMessage now auto-synthesizes
 // intents for sender-attributed topic posts. hwTeacherBody is still used by
