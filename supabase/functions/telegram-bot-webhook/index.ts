@@ -4211,8 +4211,8 @@ Deno.serve(async (req) => {
   const inboxId = await logWebhookInbox(admin, update);
 
   try {
-    // Treat both message and channel_post as inbound for group topics (forum supergroups can deliver either)
-    const inbound = update.message || update.channel_post;
+    // Treat messages, edited messages, and channel posts as inbound for group topics.
+    const inbound = update.message || update.edited_message || update.channel_post;
     if (inbound) {
       const msg = inbound;
       // Group/supergroup posts (e.g. inside a forum topic) → homework intake only
@@ -4229,8 +4229,8 @@ Deno.serve(async (req) => {
         return new Response("ok", { status: 200, headers: corsHeaders });
       }
     }
-    if (update.message) {
-      const msg = update.message;
+    if (update.message || update.edited_message) {
+      const msg = update.message || update.edited_message;
       const text: string = msg.text || "";
       const tgUsername = (msg.from.username || "").toLowerCase();
       // v3.14.32: identity gate ONLY runs for private chats. Group/supergroup/channel
