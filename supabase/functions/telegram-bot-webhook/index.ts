@@ -4211,11 +4211,13 @@ Deno.serve(async (req) => {
 
       // v3.14.44: if the student has an open homework intent, intercept media
       // sent to the bot in this DM and route it as a homework submission.
-      // Returns true if consumed; falls through otherwise.
-      if (profileForLocale && persona === "student") {
+      // The handler returns true only when it actually consumed the message
+      // (i.e. there's an open intent AND the message is a media attachment).
+      if (profileForLocale && isPrivateChat) {
         const consumedHw = await handlePrivateHomeworkUpload(admin, msg, profileForLocale);
         if (consumedHw) return new Response("ok", { status: 200, headers: corsHeaders });
       }
+
 
       if (text.startsWith("/start ")) {
         const arg = text.slice(7).trim();
