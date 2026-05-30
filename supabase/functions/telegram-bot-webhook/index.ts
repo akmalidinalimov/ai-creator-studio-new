@@ -3499,7 +3499,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     // Teacher DM. Idempotency is enforced inside notifyTeachersOfSubmission by
     // message_url (Telegram webhook retries won't duplicate). New posts and
     // resubmissions always notify because they carry a fresh message URL.
-    void synthesized;
+
     const subId = upserted?.id;
     await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId, intent.assignment_id, moduleId);
 
