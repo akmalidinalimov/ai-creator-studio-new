@@ -1,37 +1,96 @@
-Findings from the current code/data:
+## Problem
 
-- The core webhook path exists: topic posts are turned into `homework_submissions`, students should get a DM, and teachers should get a DM.
-- Recent data shows this path is working for other groups and queues teacher DMs, but Group 8 has no recent webhook inbox rows for its chat id, which means the bot is likely not receiving Group 8 topic posts at all, or they are arriving in a format the handler does not log/consume.
-- The notification code has a reliability bug: Telegram `sendMessage` failures are not checked consistently. If Telegram returns an error response, the code can still mark the teacher queue row as sent and silently skip the student confirmation.
-- The current auto-submit path dedupes synthesized teacher notifications in-memory for 60 seconds by student+assignment. That can suppress valid quick resubmissions/album uploads and is not reliable across Edge Function instances.
-- The resubmission path starts correctly from `/vazifalar`, but automatic topic posting currently blocks already-graded submissions unless the resubmission was explicitly started, so we should keep that behavior but make confirmation/notification reliable when a resubmission is active.
+In `supabase/functions/telegram-bot-webhook/index.ts → handleGroupTopicMessage` (line ~3317), ANY registered student message in a homework topic currently becomes a submission:
 
-Implementation plan:
+1. Media check (line ~3422) accepts `photo`, `document`, `video`, `voice`, `video_note`, and even falls through on text/caption-only — only fully empty messages are dropped.
+2. **Auto-intent synthesis** (line ~3361, "v3.14.40"): if the student never tapped 📤 Topshirish in the bot, the webhook silently fabricates an intent on the fly for any post in the topic and writes a `homework_submissions` row + DMs the teacher.
 
-1. Add reliable Telegram send handling
-   - Add a small helper around Telegram API calls for homework confirmations/teacher notifications that checks `response.ok` and Telegram `{ ok: true }`.
-   - If student DM fails, log the exact Telegram error instead of silently ignoring it.
-   - If immediate teacher DM fails, leave the queue row unsent so the cron notification function can retry instead of marking it as delivered.
+Result: casual chat ("thanks", questions, stickers, random photos shared with classmates) in groups 1–8 all fire fake submissions and teacher notifications.
 
-2. Fix teacher notification delivery status
-   - Update `notifyTeachersOfSubmission` in `telegram-bot-webhook` so it only sets `sent_at` after Telegram confirms success.
-   - Keep the fallback queue behavior intact for quiet hours and failed sends.
-   - Align the separate `notify-homework-submission` queue drainer with the same button format and success/error handling.
+## Fix — two gates, both required
 
-3. Fix confirmation/resubmission behavior
-   - Remove or narrow the 60-second in-memory teacher-DM suppression so valid resubmissions always notify the teacher.
-   - Keep idempotency based on the actual message URL/submission row so Telegram retries do not duplicate notifications, but new message posts/resubmissions do notify.
-   - Ensure student confirmation is sent after both first submissions and active resubmissions.
+A message in a homework topic is a submission **only if BOTH are true**:
 
-4. Strengthen Group 8 intake diagnostics
-   - Add explicit logs/resolution states for: group resolved, assignment resolved, submission upserted, student DM sent/failed, teacher DM queued/sent/failed.
-   - Ensure `webhook_inbox` records enough detail for Group 8 topic posts so we can distinguish “bot never received the message” from “bot received but ignored it”.
+1. It is a **photo or video** (per user spec: not text, not document, not voice, not video_note, not sticker, not animation, not caption-only).
+2. The sender has an **active `bot_homework_intents` row** they created by going through `/vazifalar → 📤 Topshirish` in the bot DM (i.e. they explicitly chose which assignment to submit).
 
-5. Verify all groups’ setup and dependencies
-   - Query all groups for shared homework topic URLs, topic ids, assigned teacher, teacher Telegram id, and student Telegram coverage.
-   - Confirm Group 8 shared topic id `3` and its teacher are configured.
-   - After code changes, deploy `telegram-bot-webhook` and `notify-homework-submission`, then verify logs/data for a fresh Group 8 submission and a resubmission: submission row created/updated, student confirmation attempted successfully, teacher queue row created, and teacher DM sent or left retryable with a real error.
+If either gate fails → ignore silently. No intent synthesis. No submission row. No student ✅. No teacher DM.
 
-Important note:
+### Code changes in `handleGroupTopicMessage`
 
-If Group 8 still produces no webhook inbox rows after deployment, the remaining issue is Telegram-side setup: the bot is not receiving messages from that group/topic. In that case the code will surface it clearly, and the fix will be to add the bot to Group 8 with message visibility/admin permissions or refresh the webhook allowed updates.
+**A. Strict media gate — first thing after the chat/thread/message-id guard:**
+
+```ts
+let fileId: string | null = null;
+let kind: "photo" | "video" | null = null;
+if (Array.isArray(msg.photo) && msg.photo.length) {
+  fileId = msg.photo[msg.photo.length - 1].file_id;
+  kind = "photo";
+} else if (msg.video) {
+  fileId = msg.video.file_id;
+  kind = "video";
+}
+if (!kind) {
+  console.log("hw:group:non-media-ignored", JSON.stringify({ chatId, threadId, messageId }));
+  return;
+}
+```
+
+**B. Remove the auto-intent synthesis block (lines ~3361–3413).** Replace it with a strict require:
+
+```ts
+if (!intent) {
+  console.log("hw:group:no-active-intent-ignored", JSON.stringify({
+    profile_id: profile.id, chatId, threadId, messageId,
+  }));
+  return; // student didn't go through /vazifalar → 📤 Topshirish
+}
+```
+
+**C. Delete the now-duplicate media-extraction block at lines ~3420–3439.** `kind` / `fileId` are already set by gate A.
+
+**D. Consume the intent on successful submission** (one-shot). After the `homework_submissions` upsert succeeds:
+
+```ts
+if (intent.id) {
+  await admin.from("bot_homework_intents").delete().eq("id", intent.id);
+}
+```
+
+This prevents a second post in the same topic from accidentally attaching to the same intent. A resubmission requires the student to tap 📤 Topshirish again — which is the intended UX and matches the user's "submission must go through the bot" rule.
+
+### Student-facing UX (already in place, untouched)
+
+- `/vazifalar → 📤 Topshirish` already DMs: "Tap the button below to open the topic and post your photo or video. The bot will accept it automatically (within 10 minutes)." (line 247 uz, 641 en). The 10-minute window is the existing `bot_homework_intents.expires_at` default.
+- If a student posts directly in the topic without using the bot, they get no confirmation — which is now the correct signal that the post was not accepted as homework.
+
+### Grading + stats (unchanged, already correct)
+
+The grading flow (`gs:open:<id>` → `grade_comment`, line ~2743) already:
+- Updates `homework_submissions.score / score_feedback / scored_by / scored_at`.
+- Calls `cacheInvalidateUser(sub.user_id)` → refreshes `/vazifalar`, `/galaba`, profile DM, admin homework views.
+- DMs the student their grade + feedback + magic-link to `/profile`.
+- Leaderboard recomputes via the existing `leaderboard-recalc` cron from the updated rows.
+
+Resubmission path remains: new intent → new photo/video post → `attempt_number` bumps, `score_is_stale` resets, `previous_attempts` keeps prior graded attempt, new teacher DM fires (idempotent per fresh `telegram_message_url`).
+
+## Files touched
+
+- `supabase/functions/telegram-bot-webhook/index.ts` — `handleGroupTopicMessage` only. Net: remove ~50 lines of synthesis, add ~15 lines of gates + intent consume.
+
+No DB migration. No frontend change. No change to grading/stats pipelines.
+
+## Verification
+
+1. Deploy `telegram-bot-webhook`.
+2. Group 8 topic, registered student, **no bot flow first**:
+   - Send plain text → log `hw:group:non-media-ignored`, no DB write, no DMs.
+   - Send a photo → log `hw:group:no-active-intent-ignored`, no DB write, no DMs.
+   - Send a document/voice/sticker → log `hw:group:non-media-ignored`, no DB write, no DMs.
+3. Group 8, same student goes through `/vazifalar → 📤 Topshirish` for Module X Task Y, then posts a photo in the topic:
+   - `homework_submissions` row created with `telegram_message_url`, `telegram_file_id`, `telegram_file_kind='photo'`.
+   - Student gets ✅ + "submitted" DM. Teacher gets DM with "📂 Open post" + "🎯 Grade" buttons.
+   - `bot_homework_intents` row deleted.
+4. Same student posts a second random photo in the topic without re-tapping Topshirish → ignored (no active intent).
+5. Student taps Topshirish again for the same assignment and posts a new photo → `attempt_number` bumps, teacher gets a fresh DM.
+6. Teacher grades from DM → student grade DM arrives; `/vazifalar` + leaderboard reflect the new score on refresh.
