@@ -3330,21 +3330,37 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       return;
     }
 
+    // STRICT MEDIA GATE: homework is only photo or video. Any other message type
+    // (text, caption-only, document, voice, video_note, sticker, animation, audio,
+    // poll, etc.) is ignored silently — casual chat in the topic must never
+    // become a submission.
+    let fileId: string | null = null;
+    let kind: "photo" | "video" | null = null;
+    if (Array.isArray(msg.photo) && msg.photo.length) {
+      fileId = msg.photo[msg.photo.length - 1].file_id;
+      kind = "photo";
+    } else if (msg.video) {
+      fileId = msg.video.file_id;
+      kind = "video";
+    }
+    if (!kind) {
+      console.log("hw:group:non-media-ignored", JSON.stringify({ chatId, threadId, messageId }));
+      return;
+    }
+
     // Try to identify the student (only useful when not anonymous)
     let profile: any = null;
     if (fromId && !isAnon) {
       profile = await findProfileByTelegramId(admin, fromId);
     }
 
-    // v3.14.37: Strict per-student attribution. A submission can ONLY be created
-    // by the same student who opened the intent. Anonymous-admin proxy posts and
-    // any unidentified sender are ignored — otherwise an admin/teacher message
-    // (or any other person's post) in the topic would overwrite the active
-    // student's pending submission link.
+    // Strict per-student attribution. Submissions are only created by the
+    // identified student who opened an intent via /vazifalar → 📤 Topshirish.
     if (!profile) {
       console.log("hw:group:unknown-sender-ignored", JSON.stringify({ fromId, isAnon, chatId, threadId, messageId }));
       return;
     }
+
     const nowIso = new Date().toISOString();
     const { data: intents, error: intentErr } = await admin
       .from("bot_homework_intents")
