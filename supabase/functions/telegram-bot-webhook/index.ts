@@ -3330,21 +3330,37 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       return;
     }
 
+    // STRICT MEDIA GATE: homework is only photo or video. Any other message type
+    // (text, caption-only, document, voice, video_note, sticker, animation, audio,
+    // poll, etc.) is ignored silently — casual chat in the topic must never
+    // become a submission.
+    let fileId: string | null = null;
+    let kind: "photo" | "video" | null = null;
+    if (Array.isArray(msg.photo) && msg.photo.length) {
+      fileId = msg.photo[msg.photo.length - 1].file_id;
+      kind = "photo";
+    } else if (msg.video) {
+      fileId = msg.video.file_id;
+      kind = "video";
+    }
+    if (!kind) {
+      console.log("hw:group:non-media-ignored", JSON.stringify({ chatId, threadId, messageId }));
+      return;
+    }
+
     // Try to identify the student (only useful when not anonymous)
     let profile: any = null;
     if (fromId && !isAnon) {
       profile = await findProfileByTelegramId(admin, fromId);
     }
 
-    // v3.14.37: Strict per-student attribution. A submission can ONLY be created
-    // by the same student who opened the intent. Anonymous-admin proxy posts and
-    // any unidentified sender are ignored — otherwise an admin/teacher message
-    // (or any other person's post) in the topic would overwrite the active
-    // student's pending submission link.
+    // Strict per-student attribution. Submissions are only created by the
+    // identified student who opened an intent via /vazifalar → 📤 Topshirish.
     if (!profile) {
       console.log("hw:group:unknown-sender-ignored", JSON.stringify({ fromId, isAnon, chatId, threadId, messageId }));
       return;
     }
+
     const nowIso = new Date().toISOString();
     const { data: intents, error: intentErr } = await admin
       .from("bot_homework_intents")
@@ -3358,85 +3374,39 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     if (intentErr) console.error("hw:group:intent-query-err", intentErr);
     let intent = (intents && intents[0]) as any;
 
-    // v3.14.40: If the student posted in the topic without going through
-    // /vazifalar → 📤 Topshirish, synthesize an intent on the fly. Strictly
-    // per-sender — never attributed to anyone else in the same topic.
-    let synthesized = false;
+    // STRICT INTENT GATE: A submission requires an active intent created via
+    // /vazifalar → 📤 Topshirish. Direct posts in the topic without going
+    // through the bot are ignored — no synthesis, no submission, no DM.
     if (!intent) {
-      const { groupId, pattern } = await resolveGroupFromChatId(admin, chatId);
-      if (!groupId) {
-        console.log("hw:group:auto-intent-no-group", JSON.stringify({ chatId, threadId, pattern }));
-        return;
-      }
-      const { data: groupRow } = await admin
-        .from("groups")
-        .select("id, name, course_id, teacher_id, homework_topic_id")
-        .eq("id", groupId)
-        .maybeSingle();
-      if (!groupRow) {
-        console.log("hw:group:auto-intent-no-group-row", JSON.stringify({ groupId }));
-        return;
-      }
-      const resolved = await resolveAssignmentForTopic(admin, groupRow as any, threadId, profile.id);
-      if (!resolved) {
-        console.log("hw:group:auto-intent-no-assignment", JSON.stringify({ groupId, threadId }));
-        return;
-      }
-      // Already-graded short-circuit: react ✅ and DM "already scored", no resubmission row, no teacher DM.
-      const { data: prior } = await admin
-        .from("homework_submissions")
-        .select("id, score, score_is_stale")
-        .eq("user_id", profile.id)
-        .eq("assignment_id", resolved.assignment.id)
-        .maybeSingle();
-      if (prior && prior.score != null && !prior.score_is_stale) {
-        try { await setMessageReaction(chatId, messageId, "✅"); } catch (_e) { /* ignore */ }
-        if (profile.telegram_id) {
-          const loc: Locale = normLocale(profile.preferred_locale);
-          try { await sendMessage(profile.telegram_id, (T[loc] as any).hwIntentAlreadyScored); } catch (_e) { /* ignore */ }
-        }
-        console.log("hw:group:auto-intent-already-graded", JSON.stringify({ profile_id: profile.id, assignment_id: resolved.assignment.id }));
-        return;
-      }
-      intent = {
-        id: null,
-        user_id: profile.id,
-        assignment_id: resolved.assignment.id,
-        module_id: resolved.moduleId,
-        group_id: groupRow.id,
-      };
-      synthesized = true;
-      console.log("hw:group:auto-intent", JSON.stringify({
-        profile_id: profile.id, group_id: groupRow.id, assignment_id: resolved.assignment.id,
-        module_id: resolved.moduleId, via: resolved.resolvedVia,
+      console.log("hw:group:no-active-intent-ignored", JSON.stringify({
+        profile_id: profile.id, chatId, threadId, messageId,
       }));
+      return;
     }
     // Defensive — never attribute a message to a user other than the intent owner.
     if (intent.user_id !== profile.id) {
       console.log("hw:group:intent-user-mismatch", JSON.stringify({ intent_user: intent.user_id, sender_user: profile.id, chatId, threadId, messageId }));
       return;
     }
-    // Extract media
-    let fileId: string | null = null;
-    let kind = "text";
-    if (Array.isArray(msg.photo) && msg.photo.length) {
-      fileId = msg.photo[msg.photo.length - 1].file_id;
-      kind = "photo";
-    } else if (msg.document) {
-      fileId = msg.document.file_id;
-      kind = "document";
-    } else if (msg.video) {
-      fileId = msg.video.file_id;
-      kind = "video";
-    } else if (msg.voice) {
-      fileId = msg.voice.file_id;
-      kind = "voice";
-    } else if (msg.video_note) {
-      fileId = msg.video_note.file_id;
-      kind = "video_note";
-    } else if (!msg.text && !msg.caption) {
-      return; // unsupported message type, no media, no text
+
+    // Already-graded short-circuit: react ✅ and DM "already scored", no resubmission row, no teacher DM.
+    const { data: prior } = await admin
+      .from("homework_submissions")
+      .select("id, score, score_is_stale")
+      .eq("user_id", profile.id)
+      .eq("assignment_id", intent.assignment_id)
+      .maybeSingle();
+    if (prior && prior.score != null && !prior.score_is_stale) {
+      try { await setMessageReaction(chatId, messageId, "✅"); } catch (_e) { /* ignore */ }
+      if (profile.telegram_id) {
+        const loc: Locale = normLocale(profile.preferred_locale);
+        try { await sendMessage(profile.telegram_id, (T[loc] as any).hwIntentAlreadyScored); } catch (_e) { /* ignore */ }
+      }
+      console.log("hw:group:already-graded", JSON.stringify({ profile_id: profile.id, assignment_id: intent.assignment_id }));
+      if (intent.id) await admin.from("bot_homework_intents").delete().eq("id", intent.id);
+      return;
     }
+
 
     const messageUrl = buildMessageLink(chatId, threadId, messageId);
     const submittedText = (msg.caption || msg.text || "").slice(0, 4000);
@@ -3529,7 +3499,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     // Teacher DM. Idempotency is enforced inside notifyTeachersOfSubmission by
     // message_url (Telegram webhook retries won't duplicate). New posts and
     // resubmissions always notify because they carry a fresh message URL.
-    void synthesized;
+
     const subId = upserted?.id;
     await notifyTeachersOfSubmission(admin, profile, intent.group_id, mn, tn, aTitle, messageUrl, subId, intent.assignment_id, moduleId);
 
