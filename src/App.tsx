@@ -51,10 +51,9 @@ const AdminBunnyDiagnostics = lazy(() => import("./pages/admin/AdminBunnyDiagnos
 const AdminNotifications = lazy(() => import("./pages/admin/AdminNotifications"));
 const AdminGroups = lazy(() => import("./pages/admin/AdminGroups"));
 const GroupDetail = lazy(() => import("./pages/admin/GroupDetail"));
-const AdminReengagement = lazy(() => import("./pages/admin/AdminReengagement"));
 const AdminHomework = lazy(() => import("./pages/admin/AdminHomework"));
 const TeacherHomework = lazy(() => import("./pages/TeacherHomework"));
-const AdminNudges = lazy(() => import("./pages/admin/AdminNudges"));
+const AdminEngagement = lazy(() => import("./pages/admin/AdminEngagement"));
 
 const AdminAnalytics = lazy(() => import("./pages/admin/AdminAnalytics"));
 const AnalyticsFunnel = lazy(() => import("./pages/admin/AnalyticsFunnel"));
@@ -113,10 +112,12 @@ const App = () => (
             <Route path="/admin/notifications" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminNotifications /></Suspense></RequireAuth>} />
             <Route path="/admin/groups" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminGroups /></Suspense></RequireAuth>} />
             <Route path="/admin/groups/:id" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><GroupDetail /></Suspense></RequireAuth>} />
-            <Route path="/admin/reengagement" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminReengagement /></Suspense></RequireAuth>} />
+            <Route path="/admin/engagement" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminEngagement /></Suspense></RequireAuth>} />
+            {/* Legacy routes → merged engagement hub */}
+            <Route path="/admin/reengagement" element={<Navigate to="/admin/engagement?tab=reengagement" replace />} />
+            <Route path="/admin/nudges" element={<Navigate to="/admin/engagement" replace />} />
             <Route path="/admin/homework" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminHomework /></Suspense></RequireAuth>} />
             <Route path="/teacher/homework" element={<RequireAuth staffOnly><Suspense fallback={<AdminFallback />}><TeacherHomework /></Suspense></RequireAuth>} />
-            <Route path="/admin/nudges" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminNudges /></Suspense></RequireAuth>} />
             
             <Route path="/admin/analytics" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminAnalytics /></Suspense></RequireAuth>} />
             <Route path="/admin/analytics/funnel" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AnalyticsFunnel /></Suspense></RequireAuth>} />
