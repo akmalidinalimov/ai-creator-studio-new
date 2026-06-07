@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { getSiteUrl } from "@/lib/siteUrl";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
@@ -15,7 +16,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Upload as UploadIcon, Search, Copy, RefreshCw, Trash2, Download, Mail, Unlock, ChevronDown, ChevronRight } from "lucide-react";
+import { Plus, Upload as UploadIcon, Search, Copy, RefreshCw, Trash2, Download, Mail, Unlock, ChevronDown, ChevronRight, AlertTriangle, X } from "lucide-react";
 import { toast } from "sonner";
 import Papa from "papaparse";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -68,6 +69,15 @@ Elnur,Aliyev,elnur@example.com,AdminPass456!,555555555,@elnura,admin,
 
 const FN_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
 
+// Engagement deep-link filters (driven by AdminDashboard ?status= links).
+const ENGAGEMENT_VALUES = ["active7d", "active30d", "logged_once", "never_logged_in"];
+const ENGAGEMENT_LABELS: Record<string, string> = {
+  active7d: "7 kunda faol",
+  active30d: "30 kunda faol",
+  logged_once: "Kamida bir marta kirgan",
+  never_logged_in: "Hech qachon kirmagan",
+};
+
 export default function AdminUsers() {
   const { t } = useTranslation();
   const { session, role } = useAuth();
@@ -80,13 +90,25 @@ export default function AdminUsers() {
   const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
   const [enrollMap, setEnrollMap] = useState<Record<string, Set<string>>>({});
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("active");
+  const initialStatusFilter = (() => {
+    if (typeof window === "undefined") return "active";
+    const s = new URLSearchParams(window.location.search).get("status");
+    // Engagement deep-links (from AdminDashboard) should show all users, then narrow by engagement.
+    return ENGAGEMENT_VALUES.includes(s || "") ? "all" : "active";
+  })();
+  const [statusFilter, setStatusFilter] = useState<string>(initialStatusFilter);
   const initialRoleFilter = (() => {
     if (typeof window === "undefined") return "all";
     const p = new URLSearchParams(window.location.search).get("role");
     return p === "teacher" || p === "admin" || p === "student" ? p : "all";
   })();
   const [roleFilter, setRoleFilter] = useState<string>(initialRoleFilter);
+  const initialEngagement = (() => {
+    if (typeof window === "undefined") return "all";
+    const s = new URLSearchParams(window.location.search).get("status");
+    return ENGAGEMENT_VALUES.includes(s || "") ? (s as string) : "all";
+  })();
+  const [engagementFilter, setEngagementFilter] = useState<string>(initialEngagement);
   const [groupFilter, setGroupFilter] = useState<string>("all");
   const [orphansOnly, setOrphansOnly] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState<{ ids: string[]; mode: "archive" | "unarchive" } | null>(null);
@@ -126,6 +148,8 @@ export default function AdminUsers() {
   const [confirmDelete, setConfirmDelete] = useState<UserRow | null>(null);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState<string[] | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  // Duplicate accounts (banner only shows when > 0)
+  const [dupCount, setDupCount] = useState(0);
 
   const reload = async () => {
     setLoading(true);
@@ -209,6 +233,19 @@ export default function AdminUsers() {
 
   useEffect(() => { reload(); }, []);
 
+  // Best-effort duplicate-count probe (admin only). Never blocks the page.
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke("admin-merge-duplicates", { body: { action: "list" } });
+        if (!error && !cancelled) setDupCount(data?.duplicate_row_count ?? 0);
+      } catch { /* silent — banner just stays hidden */ }
+    })();
+    return () => { cancelled = true; };
+  }, [isAdmin]);
+
   const groupNameById = useMemo(() => {
     const m = new Map<string, string>();
     groups.forEach((g) => m.set(g.id, g.name));
@@ -285,6 +322,14 @@ export default function AdminUsers() {
       if (orphansOnly) {
         if (u.group_id && activeGroupIds.has(u.group_id)) return false;
       }
+      if (engagementFilter !== "all") {
+        const last = u.last_sign_in_at ? new Date(u.last_sign_in_at).getTime() : 0;
+        const now = Date.now();
+        if (engagementFilter === "never_logged_in" && last) return false;
+        if (engagementFilter === "logged_once" && !last) return false;
+        if (engagementFilter === "active7d" && (!last || now - last > 7 * 86400_000)) return false;
+        if (engagementFilter === "active30d" && (!last || now - last > 30 * 86400_000)) return false;
+      }
       if (q) {
         return (
           (u.name || "").toLowerCase().includes(q) ||
@@ -296,7 +341,7 @@ export default function AdminUsers() {
       }
       return true;
     });
-  }, [users, search, statusFilter, roleFilter, groupFilter, orphansOnly, activeGroupIds]);
+  }, [users, search, statusFilter, roleFilter, groupFilter, orphansOnly, engagementFilter, activeGroupIds]);
 
   const counts = useMemo(() => {
     let active = 0, archived = 0, teachers = 0;
@@ -847,47 +892,73 @@ export default function AdminUsers() {
             </p>
           </div>
           <div className="flex gap-2 flex-wrap">
-            {isAdmin && selected.size > 0 && statusFilter !== "archived" && (
-              <Select value={bulkGroupId} onValueChange={(v) => { setBulkGroupId(v); bulkAssignGroup(v); }}>
-                <SelectTrigger className="w-[200px] h-9 text-xs">
-                  <SelectValue placeholder={t("admin.users.bulkMoveTo", { defaultValue: "Move {{n}} to group…", n: selected.size })} />
-                </SelectTrigger>
-                <SelectContent>
-                  {groups.map((g) => (
-                    <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            {isAdmin && selected.size > 0 && (
-              <Button variant="destructive" size="sm" onClick={() => setConfirmBulkDelete(Array.from(selected))}>
-                <Trash2 className="h-4 w-4" /> {`O'chirish (${selected.size})`}
-              </Button>
-            )}
-            {isAdmin && selected.size > 0 && statusFilter !== "archived" && (
-              <Button variant="outline" size="sm" onClick={() => setConfirmArchive({ ids: Array.from(selected), mode: "archive" })}>
-                {`Arxivlash (${selected.size})`}
-              </Button>
-            )}
-            {isAdmin && selected.size > 0 && statusFilter === "archived" && (
-              <Button variant="outline" size="sm" onClick={() => setConfirmArchive({ ids: Array.from(selected), mode: "unarchive" })}>
-                {`Qayta faollashtirish (${selected.size})`}
-              </Button>
-            )}
-            {selected.size > 0 && (
+            {isAdmin && <Button variant="outline" size="sm" onClick={() => setOpenCsv(true)}><UploadIcon className="h-4 w-4" />{t("admin.users.importCsv")}</Button>}
+            <Button variant="outline" size="sm" onClick={exportFilteredCsv} disabled={filtered.length === 0}><Download className="h-4 w-4" />{t("admin.users.exportCsv", { defaultValue: "Export CSV" })}</Button>
+            {isAdmin && <Button size="sm" onClick={() => { setNewPassword(randPassword()); setOpenAdd(true); }}><Plus className="h-4 w-4" />{t("admin.users.addUser")}</Button>}
+          </div>
+        </div>
+
+        {/* Duplicate-accounts banner — only when duplicates exist */}
+        {isAdmin && dupCount > 0 && (
+          <div className="flex items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-sm">
+            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+            <span className="text-amber-800 dark:text-amber-300">
+              {dupCount} ta takroriy hisob topildi.
+            </span>
+            <Link to="/admin/users/duplicates" className="ml-auto font-medium text-amber-700 dark:text-amber-300 underline underline-offset-2 hover:opacity-80">
+              Ko'rib chiqish →
+            </Link>
+          </div>
+        )}
+
+        {/* Contextual bulk action bar — only when rows are selected */}
+        {selected.size > 0 && (
+          <div className="flex items-center gap-2 flex-wrap rounded-lg border border-primary/30 bg-primary/5 px-3 py-2">
+            <span className="text-sm font-medium">{selected.size} tanlandi</span>
+            <button
+              onClick={() => setSelected(new Set())}
+              className="inline-flex items-center justify-center h-6 w-6 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted"
+              aria-label="Tanlovni bekor qilish"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+            <div className="ml-auto flex items-center gap-2 flex-wrap">
+              {isAdmin && statusFilter !== "archived" && (
+                <Select value={bulkGroupId} onValueChange={(v) => { setBulkGroupId(v); bulkAssignGroup(v); }}>
+                  <SelectTrigger className="w-[180px] h-8 text-xs">
+                    <SelectValue placeholder={t("admin.users.bulkMoveTo", { defaultValue: "Guruhga ko'chirish…" })} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {groups.map((g) => (
+                      <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
               <Button variant="outline" size="sm" onClick={() => {
                 const emails = users.filter((u) => selected.has(u.id)).map((u) => u.email);
                 resendWelcome(emails);
               }}>
-                <Mail className="h-4 w-4" /> {t("admin.users.resendWelcomeN", { n: selected.size })}
+                <Mail className="h-4 w-4" /> {t("admin.users.resendWelcome", { defaultValue: "Xush kelibsiz" })}
               </Button>
-            )}
-            {isAdmin && <Button variant="outline" size="sm" onClick={() => setOpenCsv(true)}><UploadIcon className="h-4 w-4" />{t("admin.users.importCsv")}</Button>}
-            <Button variant="outline" size="sm" onClick={exportFilteredCsv} disabled={filtered.length === 0}><Download className="h-4 w-4" />{t("admin.users.exportCsv", { defaultValue: "Export CSV" })}</Button>
-            {isAdmin && <Button variant="outline" size="sm" asChild><a href="/admin/users/duplicates">Duplicates</a></Button>}
-            {isAdmin && <Button size="sm" onClick={() => { setNewPassword(randPassword()); setOpenAdd(true); }}><Plus className="h-4 w-4" />{t("admin.users.addUser")}</Button>}
+              {isAdmin && statusFilter !== "archived" && (
+                <Button variant="outline" size="sm" onClick={() => setConfirmArchive({ ids: Array.from(selected), mode: "archive" })}>
+                  Arxivlash
+                </Button>
+              )}
+              {isAdmin && statusFilter === "archived" && (
+                <Button variant="outline" size="sm" onClick={() => setConfirmArchive({ ids: Array.from(selected), mode: "unarchive" })}>
+                  Qayta faollashtirish
+                </Button>
+              )}
+              {isAdmin && (
+                <Button variant="destructive" size="sm" onClick={() => setConfirmBulkDelete(Array.from(selected))}>
+                  <Trash2 className="h-4 w-4" /> O'chirish
+                </Button>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Status chips */}
         <div className="flex flex-wrap gap-2 items-center">
@@ -908,6 +979,12 @@ export default function AdminUsers() {
           >
             Ustozlar ({counts.teachers})
           </Button>
+          {engagementFilter !== "all" && (
+            <Button variant="default" size="sm" className="gap-1" onClick={() => setEngagementFilter("all")}>
+              {ENGAGEMENT_LABELS[engagementFilter] || engagementFilter}
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          )}
           {isAdmin && (
             <label className="flex items-center gap-2 text-xs cursor-pointer ml-2">
               <Checkbox checked={orphansOnly} onCheckedChange={(v) => setOrphansOnly(!!v)} />

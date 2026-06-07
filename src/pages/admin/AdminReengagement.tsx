@@ -41,7 +41,7 @@ type Delivery = {
 
 const renderTpl = (tpl: string, name: string) => (tpl || "").split("{{name}}").join(name || "do'stim");
 
-export default function AdminReengagement() {
+export function ReengagementPanel() {
   const [counts, setCounts] = useState({ never_logged_in: 0, with_tg: 0, without_tg: 0 });
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [active, setActive] = useState<Campaign | null>(null);
@@ -210,13 +210,7 @@ export default function AdminReengagement() {
   };
 
   return (
-    <PageShell>
-      <div className="container py-6 space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold">🎯 Reaktivatsiya</h1>
-          <p className="text-muted-foreground text-sm">Hech qachon kirmagan talabalar uchun Telegram orqali sehrli havola yuborish.</p>
-        </div>
-
+    <div className="space-y-6">
         {/* Stats tiles */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <Card className="p-4">
@@ -420,6 +414,19 @@ export default function AdminReengagement() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+    </div>
+  );
+}
+
+export default function AdminReengagement() {
+  return (
+    <PageShell>
+      <div>
+        <h1 className="text-2xl font-bold">🎯 Reaktivatsiya</h1>
+        <p className="text-muted-foreground text-sm">Hech qachon kirmagan talabalar uchun Telegram orqali sehrli havola yuborish.</p>
+      </div>
+      <div className="mt-6">
+        <ReengagementPanel />
       </div>
     </PageShell>
   );

@@ -7,13 +7,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { PageShell } from "@/components/Layout";
 import { toast } from "sonner";
 
 type NudgeType = "inactive_3d" | "inactive_7d" | "stuck_lesson" | "module_complete";
 const TYPES: NudgeType[] = ["inactive_3d", "inactive_7d", "stuck_lesson", "module_complete"];
 const LOCALES = ["uz", "ru", "en"] as const;
 
-export default function AdminNudges() {
+export function NudgesPanel() {
   const [cronActive, setCronActive] = useState(false);
   const [stats, setStats] = useState<Record<string, { sent: number; clicked: number }>>({});
   const [optOuts, setOptOuts] = useState(0);
@@ -102,12 +103,7 @@ export default function AdminNudges() {
   const overallCtr = totalSent ? Math.round((totalClicked / totalSent) * 100) : 0;
 
   return (
-    <div className="container max-w-5xl py-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">🔔 Smart eslatmalar (nudges)</h1>
-        <p className="text-sm text-muted-foreground">Rate-limited, opt-out, quiet hours.</p>
-      </div>
-
+    <div className="space-y-6">
       <Card className="p-4 grid sm:grid-cols-3 gap-4">
         <div>
           <div className="text-xs text-muted-foreground">Yuborilgan (7 kun)</div>
@@ -199,5 +195,19 @@ export default function AdminNudges() {
         <Button onClick={saveTemplates}>Saqlash</Button>
       </Card>
     </div>
+  );
+}
+
+export default function AdminNudges() {
+  return (
+    <PageShell>
+      <div>
+        <h1 className="text-2xl font-bold">🔔 Smart eslatmalar (nudges)</h1>
+        <p className="text-sm text-muted-foreground">Rate-limited, opt-out, quiet hours.</p>
+      </div>
+      <div className="mt-6">
+        <NudgesPanel />
+      </div>
+    </PageShell>
   );
 }

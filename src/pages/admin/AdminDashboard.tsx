@@ -636,7 +636,7 @@ export default function AdminDashboard() {
               onClick={() => setInactiveOpen(7)}
             />
             {!isTeacher && (
-              <Link to="/admin/nudges" className="block">
+              <Link to="/admin/engagement" className="block">
                 <Card className="p-4 hover:bg-muted/50 transition cursor-pointer h-full">
                   <div className="text-xs text-muted-foreground">🔔 Smart eslatmalar</div>
                   <div className="text-2xl font-bold mt-1">Nudges</div>
@@ -752,7 +752,9 @@ export default function AdminDashboard() {
                     <td className="p-3 tabular-nums">{s.days_since}d</td>
                     <td className="p-3 tabular-nums">{s.pct}%</td>
                     <td className="p-3 text-right">
-                      <Button variant="outline" size="sm" onClick={() => toast.info(t("admin.dashboard.stuck.queuedToast"))}>{t("admin.dashboard.stuck.sendEmail")}</Button>
+                      <Button variant="outline" size="sm" asChild>
+                        <a href={`mailto:${s.email}`}>{t("admin.dashboard.stuck.sendEmail")}</a>
+                      </Button>
                     </td>
                   </tr>
                 ))}
