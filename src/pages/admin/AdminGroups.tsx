@@ -10,7 +10,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Pencil, Trash2, Users as UsersIcon, Upload, RefreshCw, UserPlus, Info } from "lucide-react";
+import { Plus, Trash2, Users as UsersIcon, Upload, RefreshCw, UserPlus } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useAuth } from "@/contexts/AuthContext";
@@ -60,12 +61,8 @@ export default function AdminGroups() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [teachers, setTeachers] = useState<ProfileLite[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
-  const [logins, setLogins] = useState<Record<string, { logged: number; total: number }>>({});
-  const [activeWin, setActiveWin] = useState<Record<string, { active: number; total: number }>>({});
   const [topics, setTopics] = useState<Record<string, { configured: number; total: number }>>({});
-  const [hwMods, setHwMods] = useState<Record<string, Array<{ module_id: string; position: number; title: string; submitted: number; total: number }>>>({});
   const [loading, setLoading] = useState(true);
-  const [windowDays, setWindowDays] = useState<3 | 7 | 30>(3);
 
   const [openCreate, setOpenCreate] = useState(false);
   const [editGroup, setEditGroup] = useState<Group | null>(null);
@@ -94,16 +91,6 @@ export default function AdminGroups() {
       if (r.group_id) map[r.group_id] = (map[r.group_id] || 0) + 1;
     });
     setCounts(map);
-    // Per-group engagement stats (loggedin + active in window)
-    const { data: ls } = await supabase.rpc("admin_group_engagement_stats" as any, { p_window_days: windowDays });
-    const lmap: Record<string, { logged: number; total: number }> = {};
-    const amap: Record<string, { active: number; total: number }> = {};
-    ((ls as any[]) || []).forEach((r) => {
-      lmap[r.group_id] = { logged: r.logged_in_count || 0, total: r.total_active || 0 };
-      amap[r.group_id] = { active: (r.active_count ?? r.active_3d_count) || 0, total: r.total_active || 0 };
-    });
-    setLogins(lmap);
-    setActiveWin(amap);
 
     // Shared homework topic configured per group?
     const groupRows = ((g.data as any[]) || []) as any[];
@@ -112,23 +99,11 @@ export default function AdminGroups() {
       tmap[gg.id] = { configured: gg.homework_topic_url ? 1 : 0, total: 1 };
     });
     setTopics(tmap);
-
-    // Per-module homework submission counts per group
-    const { data: hw } = await supabase.rpc("admin_group_module_submissions" as any, {});
-    const hmap: Record<string, Array<{ module_id: string; position: number; title: string; submitted: number; total: number }>> = {};
-    ((hw as any[]) || []).forEach((r) => {
-      const arr = hmap[r.group_id] || [];
-      arr.push({ module_id: r.module_id, position: r.module_position, title: r.module_title, submitted: r.submitted_count || 0, total: r.total_students || 0 });
-      hmap[r.group_id] = arr;
-    });
-    Object.keys(hmap).forEach((k) => hmap[k].sort((a, b) => a.position - b.position));
-    setHwMods(hmap);
     setLoading(false);
   };
 
-  useEffect(() => { reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [windowDays]);
+  useEffect(() => { reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
-  const courseTitle = (id: string | null) => courses.find((c) => c.id === id)?.title || "—";
   const teacherLabel = (id: string | null) => {
     const t = teachers.find((u) => u.id === id);
     if (!t) return id ? id.slice(0, 8) : "—";
@@ -144,15 +119,6 @@ export default function AdminGroups() {
             <p className="text-sm text-muted-foreground">Manage student groups and assign teachers.</p>
           </div>
           <div className="flex items-center gap-2">
-            <Label className="text-xs text-muted-foreground">Faollik oynasi</Label>
-            <Select value={String(windowDays)} onValueChange={(v) => setWindowDays(Number(v) as 3 | 7 | 30)}>
-              <SelectTrigger className="h-9 w-[110px]"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="3">3 kun</SelectItem>
-                <SelectItem value="7">7 kun</SelectItem>
-                <SelectItem value="30">30 kun</SelectItem>
-              </SelectContent>
-            </Select>
             <Button onClick={() => setOpenCreate(true)}><Plus className="mr-2 h-4 w-4" />Create group</Button>
           </div>
         </div>
@@ -163,56 +129,22 @@ export default function AdminGroups() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Teacher</TableHead>
-                <TableHead>Course</TableHead>
                 <TableHead>Students</TableHead>
-                <TableHead>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="inline-flex items-center gap-1 cursor-help">Loggedin <Info className="h-3 w-3 text-muted-foreground" /></span>
-                    </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-xs text-xs">
-                      Faol va arxivlangan barcha talabalar hisoblanadi
-                    </TooltipContent>
-                  </Tooltip>
-                </TableHead>
-                <TableHead>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="inline-flex items-center gap-1 cursor-help">Faol ({windowDays} kun) <Info className="h-3 w-3 text-muted-foreground" /></span>
-                    </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-xs text-xs">
-                      So'nggi {windowDays} kunda darsda faol bo'lgan talabalar
-                    </TooltipContent>
-                  </Tooltip>
-                </TableHead>
                 <TableHead>Topiklar</TableHead>
-                <TableHead>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="inline-flex items-center gap-1 cursor-help">Vazifalar bo'yicha <Info className="h-3 w-3 text-muted-foreground" /></span>
-                    </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-xs text-xs">
-                      Har bir modul uchun vazifa topshirgan talabalar / jami talabalar
-                    </TooltipContent>
-                  </Tooltip>
-                </TableHead>
                 <TableHead>Default</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
               ) : groups.length === 0 ? (
-                <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">No groups yet.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No groups yet.</TableCell></TableRow>
               ) : groups.map((g) => {
-                const a3 = activeWin[g.id] || { active: 0, total: 0 };
-                const aPct = a3.total > 0 ? (a3.active / a3.total) * 100 : 0;
-                const aColor = a3.total === 0 ? "bg-muted text-muted-foreground" : a3.active === 0 ? "bg-rose-500 text-white" : aPct < 30 ? "bg-amber-500 text-white" : "bg-emerald-500 text-white";
                 return (
                 <TableRow key={g.id}>
                   <TableCell className="font-medium">
-                    <button className="hover:underline text-left" onClick={() => setEditGroup(g)}>{g.name}</button>
+                    <Link to={`/admin/groups/${g.id}`} className="hover:underline text-left">{g.name}</Link>
                   </TableCell>
                   <TableCell>
                     {g.teacher_id ? (
@@ -226,52 +158,12 @@ export default function AdminGroups() {
                       </button>
                     )}
                   </TableCell>
-                  <TableCell>{courseTitle(g.course_id)}</TableCell>
                   <TableCell><Badge variant="secondary">{counts[g.id] || 0}</Badge></TableCell>
-                  <TableCell>{(() => {
-                    const ll = logins[g.id] || { logged: 0, total: 0 };
-                    const pct = ll.total > 0 ? (ll.logged / ll.total) * 100 : 0;
-                    const cls = ll.total === 0 ? "bg-muted text-muted-foreground" : ll.logged === 0 ? "bg-rose-500 text-white" : pct < 50 ? "bg-amber-500 text-white" : "bg-emerald-500 text-white";
-                    return <span className={`inline-block px-2 py-0.5 rounded text-xs ${cls}`} title={`${ll.logged}/${ll.total} kirgan`}>{ll.logged}/{ll.total}</span>;
-                  })()}</TableCell>
-                  <TableCell><span className={`inline-block px-2 py-0.5 rounded text-xs ${aColor}`} title={`${a3.active}/${a3.total} faol (${windowDays} kun)`}>{a3.active}/{a3.total}{a3.total > 0 ? ` · ${Math.round(aPct)}%` : ""}</span></TableCell>
                   <TableCell>{(() => {
                     const tt = topics[g.id] || { configured: 0, total: 0 };
                     return tt.configured > 0
                       ? <span className="inline-block px-2 py-0.5 rounded text-xs bg-emerald-500 text-white">✓ Topik sozlangan</span>
                       : <span className="inline-block px-2 py-0.5 rounded text-xs bg-rose-500 text-white">✗ Topik yo'q</span>;
-                  })()}</TableCell>
-                  <TableCell>{(() => {
-                    const mods = hwMods[g.id] || [];
-                    if (!mods.length) return <span className="text-xs text-muted-foreground">—</span>;
-                    const visible = mods.slice(0, 6);
-                    const overflow = mods.length - visible.length;
-                    return (
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {visible.map((m) => {
-                          const pct = m.total > 0 ? Math.round((m.submitted / m.total) * 100) : 0;
-                          const fillCls = m.total === 0 ? "bg-muted-foreground/30" : pct === 0 ? "bg-rose-400" : pct < 50 ? "bg-amber-500" : "bg-emerald-500";
-                          return (
-                            <Tooltip key={m.module_id}>
-                              <TooltipTrigger asChild>
-                                <div className="inline-flex items-center gap-1 cursor-help">
-                                  <span className="text-[11px] font-medium text-muted-foreground">M{m.position + 1}</span>
-                                  <div className="h-1.5 w-10 rounded-full bg-muted overflow-hidden">
-                                    <div className={`h-full ${fillCls}`} style={{ width: `${m.total > 0 ? pct : 0}%` }} />
-                                  </div>
-                                  <span className="text-[11px] tabular-nums">{m.submitted}/{m.total}</span>
-                                </div>
-                              </TooltipTrigger>
-                              <TooltipContent side="top" className="text-xs max-w-[260px]">
-                                <div className="font-medium">M{m.position + 1}. {m.title}</div>
-                                <div className="text-muted-foreground">{m.submitted}/{m.total} talaba topshirgan ({pct}%)</div>
-                              </TooltipContent>
-                            </Tooltip>
-                          );
-                        })}
-                        {overflow > 0 && <span className="text-[11px] text-muted-foreground">+{overflow}</span>}
-                      </div>
-                    );
                   })()}</TableCell>
                   <TableCell>
                     <Button
@@ -291,12 +183,6 @@ export default function AdminGroups() {
                           <Button variant="outline" size="sm" onClick={() => setStudentsGroup(g)} aria-label="Talabalar"><UsersIcon className="h-4 w-4" /></Button>
                         </TooltipTrigger>
                         <TooltipContent>Talabalar</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button variant="outline" size="sm" onClick={() => setEditGroup(g)} aria-label="Tahrirlash"><Pencil className="h-4 w-4" /></Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Tahrirlash</TooltipContent>
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>

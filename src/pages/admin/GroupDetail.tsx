@@ -50,6 +50,22 @@ type Member = {
   avg_score: number | null;
 };
 
+type ModuleSubmission = {
+  module_id: string;
+  position: number;
+  title: string;
+  submitted: number;
+  total: number;
+};
+
+type Engagement = {
+  total_active: number;
+  logged_in_count: number;
+  active_count: number;
+};
+
+const ENGAGEMENT_WINDOW_DAYS = 3;
+
 const FN_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
 
 export default function GroupDetail() {
@@ -58,6 +74,10 @@ export default function GroupDetail() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // engagement + per-module submission progress for THIS group
+  const [moduleSubs, setModuleSubs] = useState<ModuleSubmission[]>([]);
+  const [engagement, setEngagement] = useState<Engagement | null>(null);
 
   // edit teacher / course
   const [teachers, setTeachers] = useState<{ id: string; label: string }[]>([]);
@@ -88,13 +108,38 @@ export default function GroupDetail() {
   const reload = async () => {
     if (!id) return;
     setLoading(true);
-    const [ov, mem] = await Promise.all([
+    const [ov, mem, eng, subs] = await Promise.all([
       supabase.rpc("staff_group_overview" as any, { _group_id: id }),
       supabase.rpc("staff_group_members" as any, { _group_id: id }),
+      supabase.rpc("admin_group_engagement_stats" as any, { p_window_days: ENGAGEMENT_WINDOW_DAYS }),
+      supabase.rpc("admin_group_module_submissions" as any, {}),
     ]);
     const ovRow = Array.isArray(ov.data) ? ov.data[0] : ov.data;
     setOverview((ovRow as Overview) || null);
     setMembers(((mem.data as any[]) || []) as Member[]);
+
+    // engagement: filter all-groups result down to this group
+    const engRow = ((eng.data as any[]) || []).find((r: any) => r.group_id === id);
+    setEngagement(engRow
+      ? {
+          total_active: engRow.total_active || 0,
+          logged_in_count: engRow.logged_in_count || 0,
+          active_count: (engRow.active_count ?? engRow.active_3d_count) || 0,
+        }
+      : null);
+
+    // per-module submission progress: filter to this group, sort by position
+    const mods = ((subs.data as any[]) || [])
+      .filter((r: any) => r.group_id === id)
+      .map((r: any) => ({
+        module_id: r.module_id,
+        position: r.module_position,
+        title: r.module_title,
+        submitted: r.submitted_count || 0,
+        total: r.total_students || 0,
+      }))
+      .sort((a, b) => a.position - b.position);
+    setModuleSubs(mods);
     setLoading(false);
   };
 
@@ -418,6 +463,75 @@ export default function GroupDetail() {
 
             {/* Telegram topics */}
             <GroupTopicsSection groupId={id!} />
+
+            {/* Engagement + per-module submission progress */}
+            {(() => {
+              const eng = engagement;
+              const loggedPct = eng && eng.total_active > 0 ? Math.round((eng.logged_in_count / eng.total_active) * 100) : 0;
+              const activePct = eng && eng.total_active > 0 ? Math.round((eng.active_count / eng.total_active) * 100) : 0;
+              return (
+                <Card className="p-4 space-y-4">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <h2 className="text-base font-semibold">📊 Modul topshiriqlari</h2>
+                    {eng && (
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 ${
+                            eng.total_active === 0 ? "bg-muted text-muted-foreground"
+                              : loggedPct < 50 ? "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30"
+                              : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30"
+                          }`}
+                          title="Tizimga kirgan talabalar"
+                        >
+                          Loggedin: <b>{eng.logged_in_count}/{eng.total_active}</b> ({loggedPct}%)
+                        </span>
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 ${
+                            eng.total_active === 0 ? "bg-muted text-muted-foreground"
+                              : activePct < 30 ? "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30"
+                              : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30"
+                          }`}
+                          title={`So'nggi ${ENGAGEMENT_WINDOW_DAYS} kunda darsda faol talabalar`}
+                        >
+                          Faol ({ENGAGEMENT_WINDOW_DAYS} kun): <b>{eng.active_count}/{eng.total_active}</b> ({activePct}%)
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {!overview.course_id ? (
+                    <p className="text-sm text-muted-foreground">Bu guruhga kurs biriktirilmagan. Modullar bo'yicha statistika ko'rsatish uchun kurs tanlang.</p>
+                  ) : moduleSubs.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">Modullar topilmadi.</p>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {moduleSubs.map((m) => {
+                        const pct = m.total > 0 ? Math.round((m.submitted / m.total) * 100) : 0;
+                        const fillCls = m.total === 0 ? "bg-muted-foreground/30"
+                          : pct === 0 ? "bg-rose-400"
+                          : pct < 50 ? "bg-amber-500"
+                          : "bg-emerald-500";
+                        return (
+                          <div key={m.module_id} className="flex items-center gap-3">
+                            <div className="w-8 shrink-0 text-xs font-medium text-muted-foreground">M{m.position + 1}</div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm truncate">{m.title}</div>
+                              <div className="mt-1 h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                                <div className={`h-full ${fillCls}`} style={{ width: `${pct}%` }} />
+                              </div>
+                            </div>
+                            <div className="w-20 shrink-0 text-right text-xs tabular-nums">
+                              <span className="font-medium">{m.submitted}/{m.total}</span>
+                              <span className="text-muted-foreground"> · {pct}%</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Card>
+              );
+            })()}
 
             {/* Add students actions */}
             <div className="flex flex-col sm:flex-row gap-2">
