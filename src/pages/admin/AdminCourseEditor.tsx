@@ -22,7 +22,13 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
-  GripVertical, Plus, ChevronDown, ChevronRight, Trash2, ExternalLink, Eye, EyeOff, Image as ImageIcon, Upload,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  GripVertical, Plus, ChevronDown, ChevronRight, Trash2, ExternalLink, Eye, EyeOff, Image as ImageIcon, Upload, MoreVertical,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -300,9 +306,21 @@ function SortableModule({
           className="flex-1 h-8"
         />
         <span className="text-xs text-muted-foreground hidden sm:inline">{t("admin.courseEditor.lessonsCount", { n: m.lessons.length })}</span>
-        <Button variant="ghost" size="icon" onClick={onDelete} aria-label="Delete module">
-          <Trash2 className="h-4 w-4 text-destructive" />
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" aria-label="Module actions">
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onClick={onDelete}
+            >
+              <Trash2 className="h-4 w-4 mr-2" /> {t("admin.courseEditor.deleteModule")}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       {expanded && (
         <div className="p-4 space-y-3">

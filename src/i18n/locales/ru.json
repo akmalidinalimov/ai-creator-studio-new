@@ -594,6 +594,7 @@
         "noVideo": "Без видео",
         "hasVideo": "С видео"
       },
+      "deleteModule": "Удалить модуль",
       "deleteModuleConfirm": "Удалить модуль и все его уроки? Это действие нельзя отменить.",
       "moduleDeleted": "Модуль удалён",
       "coverUploaded": "Обложка загружена",

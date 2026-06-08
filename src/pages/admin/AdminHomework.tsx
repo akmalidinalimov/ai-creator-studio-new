@@ -11,8 +11,14 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, MoreVertical } from "lucide-react";
 import { getSetting } from "@/lib/settings";
 
 interface ModuleRow { id: string; title: string; course_id: string; courses?: { title: string } }
@@ -234,12 +240,24 @@ export default function AdminHomework() {
                               <Plus className="h-4 w-4 mr-1" /> SAP
                             </Button>
                             <Switch checked={a.is_active} onCheckedChange={() => toggleActive(a)} />
-                            <Button size="sm" variant="outline" onClick={() => setEditing({ moduleId: m.id, assignment: a, nextTaskNumber: a.task_number })}>
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                            <Button size="sm" variant="outline" onClick={() => remove(a)}>
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" aria-label="Amallar">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => setEditing({ moduleId: m.id, assignment: a, nextTaskNumber: a.task_number })}>
+                                  <Pencil className="h-4 w-4 mr-2" /> Tahrirlash
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={() => remove(a)}
+                                >
+                                  <Trash2 className="h-4 w-4 mr-2" /> O'chirish
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                           {saps.length > 0 && (
                             <div className="pl-6 space-y-2 border-l-2 ml-3">
@@ -253,15 +271,27 @@ export default function AdminHomework() {
                                     <div className="text-xs text-muted-foreground">Max: {s.max_score}</div>
                                   </div>
                                   <Switch checked={s.is_active} onCheckedChange={() => toggleActive(s)} />
-                                  <Button size="sm" variant="outline" onClick={() => setEditing({
-                                    moduleId: m.id, assignment: s, nextTaskNumber: a.task_number,
-                                    parentId: a.id, parentTaskNumber: a.task_number,
-                                  })}>
-                                    <Pencil className="h-4 w-4" />
-                                  </Button>
-                                  <Button size="sm" variant="outline" onClick={() => remove(s)}>
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button variant="ghost" size="icon" aria-label="Amallar">
+                                        <MoreVertical className="h-4 w-4" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      <DropdownMenuItem onClick={() => setEditing({
+                                        moduleId: m.id, assignment: s, nextTaskNumber: a.task_number,
+                                        parentId: a.id, parentTaskNumber: a.task_number,
+                                      })}>
+                                        <Pencil className="h-4 w-4 mr-2" /> Tahrirlash
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        className="text-destructive focus:text-destructive"
+                                        onClick={() => remove(s)}
+                                      >
+                                        <Trash2 className="h-4 w-4 mr-2" /> O'chirish
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
                                 </div>
                               ))}
                             </div>
