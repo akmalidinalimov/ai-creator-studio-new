@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ExternalLink } from "lucide-react";
+import { effectiveLeafGrades, summarizeHomework } from "@/lib/homeworkStats";
 
 interface Props { lessonId: string }
 interface Assignment {
@@ -17,6 +18,7 @@ interface Assignment {
 interface Submission {
   id: string; assignment_id: string;
   score: number | null; score_feedback: string | null;
+  previous_attempts: any[] | null;
 }
 
 export function HomeworkSection({ lessonId }: Props) {
@@ -66,7 +68,7 @@ export function HomeworkSection({ lessonId }: Props) {
       });
       if (ids.length) {
         const { data: ss } = await supabase
-          .from("homework_submissions").select("id, assignment_id, score, score_feedback")
+          .from("homework_submissions").select("id, assignment_id, score, score_feedback, previous_attempts")
           .eq("user_id", user.id).in("assignment_id", ids);
         const m: Record<string, Submission> = {};
         (ss as any[] || []).forEach((s) => { m[s.assignment_id] = s as Submission; });
@@ -100,12 +102,29 @@ export function HomeworkSection({ lessonId }: Props) {
     else leaves.push({ leaf: p, parent: p });
   });
 
-  const scoredLeaves = leaves.filter(({ leaf }) => subsByAssign[leaf.id]?.score != null);
-  const totalScore = scoredLeaves.reduce((acc, { leaf }) => acc + Number(subsByAssign[leaf.id].score), 0);
-  const totalMax = scoredLeaves.reduce((acc, { leaf }) => acc + leaf.max_score, 0);
+  // Effective per-leaf grades: resubmitted-but-currently-null scores fall back to the
+  // last scored attempt (mirrors HomeworkProfileSection.tsx).
+  const effRows = effectiveLeafGrades(
+    leaves.map(({ leaf }) => ({ id: leaf.id, max_score: leaf.max_score })),
+    Object.values(subsByAssign).map((s) => ({
+      assignment_id: s.assignment_id,
+      score: s.score,
+      score_feedback: s.score_feedback,
+      previous_attempts: s.previous_attempts,
+    })),
+  );
+  const effByLeaf = new Map(effRows.map((r) => [r.assignment_id, r]));
+  const summary = summarizeHomework(effRows);
+  const scoredLeaves = leaves.filter(({ leaf }) => effByLeaf.get(leaf.id)?.effective_score != null);
+  const totalScore = summary.earned;
+  // Denominator spans ALL leaves' max_score, not just scored ones (15/30, not 15/20).
+  const totalMax = summary.maxTotal;
 
   const renderLeaf = (leaf: Assignment, parent: Assignment) => {
     const s = subsByAssign[leaf.id];
+    const eff = effByLeaf.get(leaf.id);
+    const effScore = eff?.effective_score ?? null;
+    const effFeedback = eff?.effective_feedback ?? null;
     const isSap = !!leaf.parent_id;
     const label = isSap ? `V${parent.task_number}.S${leaf.sap_number}` : `V${parent.task_number}`;
     return (
@@ -129,11 +148,11 @@ export function HomeworkSection({ lessonId }: Props) {
         ) : null}
         <div className="border-t pt-3">
           <div className="text-xs font-semibold text-muted-foreground mb-1">Sizning natijangiz</div>
-          {s?.score != null ? (
+          {effScore != null ? (
             <div className="space-y-2">
-              <Badge className="bg-green-600 text-white">✅ {s.score}/{leaf.max_score}</Badge>
-              {s.score_feedback && (
-                <div className="text-sm whitespace-pre-wrap mt-1">"{s.score_feedback}"</div>
+              <Badge className="bg-green-600 text-white">✅ {effScore}/{leaf.max_score}</Badge>
+              {effFeedback && (
+                <div className="text-sm whitespace-pre-wrap mt-1">"{effFeedback}"</div>
               )}
               <Button
                 size="sm"
@@ -187,9 +206,9 @@ export function HomeworkSection({ lessonId }: Props) {
         const saps = sapsByParent[p.id] || [];
         if (saps.length === 0) return renderLeaf(p, p);
         // Parent with SAPs: header + nested SAPs
-        const sapScored = saps.filter(s => subsByAssign[s.id]?.score != null);
-        const pScore = sapScored.reduce((acc, s) => acc + Number(subsByAssign[s.id].score), 0);
-        const pMax = sapScored.reduce((acc, s) => acc + s.max_score, 0);
+        const sapScored = saps.filter(s => effByLeaf.get(s.id)?.effective_score != null);
+        const pScore = sapScored.reduce((acc, s) => acc + Number(effByLeaf.get(s.id)!.effective_score), 0);
+        const pMax = saps.reduce((acc, s) => acc + s.max_score, 0);
         return (
           <div key={p.id} className="space-y-3">
             <div className="flex items-center gap-2 flex-wrap">
