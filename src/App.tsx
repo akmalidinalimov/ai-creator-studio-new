@@ -41,6 +41,7 @@ const AdminDashboard = lazy(() => import("./pages/admin/AdminDashboard"));
 const AdminCourses = lazy(() => import("./pages/admin/AdminCourses"));
 const AdminCourseEditor = lazy(() => import("./pages/admin/AdminCourseEditor"));
 const AdminUsers = lazy(() => import("./pages/admin/AdminUsers"));
+const AdminStudentDetail = lazy(() => import("./pages/admin/AdminStudentDetail"));
 const AdminUsersDuplicates = lazy(() => import("./pages/admin/AdminUsersDuplicates"));
 const AdminSettings = lazy(() => import("./pages/admin/AdminSettings"));
 const AdminDeploy = lazy(() => import("./pages/admin/AdminDeploy"));
@@ -103,6 +104,7 @@ const App = () => (
             <Route path="/admin/courses/:courseId" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminCourseEditor /></Suspense></RequireAuth>} />
             <Route path="/admin/users" element={<RequireAuth staffOnly><Suspense fallback={<AdminFallback />}><AdminUsers /></Suspense></RequireAuth>} />
             <Route path="/admin/users/duplicates" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminUsersDuplicates /></Suspense></RequireAuth>} />
+            <Route path="/admin/users/:id" element={<RequireAuth staffOnly><Suspense fallback={<AdminFallback />}><AdminStudentDetail /></Suspense></RequireAuth>} />
             <Route path="/admin/settings" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminSettings /></Suspense></RequireAuth>} />
             <Route path="/admin/deploy" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminDeploy /></Suspense></RequireAuth>} />
             <Route path="/admin/ai-analytics" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminAIAnalytics /></Suspense></RequireAuth>} />
