@@ -1613,6 +1613,7 @@ function csvEscapeHtml(s: string): string {
 async function handleAdminCommand(
   admin: any,
   chatId: number,
+  adminProfileId: string,
   locale: Locale,
   cmd: string,
 ): Promise<boolean> {
@@ -1740,7 +1741,7 @@ async function handleAdminCommand(
   }
 
   // Grading commands work for admins too
-  const g = await handleGradingCommand(admin, chatId, /*graderId*/ "", locale, cmd, true);
+  const g = await handleGradingCommand(admin, chatId, /*graderId*/ adminProfileId, locale, cmd, true);
   if (g) return true;
 
   return false;
@@ -2741,6 +2742,9 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
   }
 
   if (state.state === "grade_comment") {
+    const submissionId = ctx.submission_id as string;
+    const { data: sub } = await admin.from("homework_submissions")
+      .select("user_id, assignment_id").eq("id", submissionId).maybeSingle();
     if (text === "/cancel") {
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
     if (sub) cacheInvalidateUser(sub.user_id);
@@ -2748,19 +2752,24 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
       return true;
     }
     const feedback = text === "/skip" ? null : text;
-    const submissionId = ctx.submission_id as string;
     const score = Number(ctx.score);
 
-    const { data: sub } = await admin.from("homework_submissions")
-      .select("user_id, assignment_id").eq("id", submissionId).maybeSingle();
     const { error: upErr } = await admin.from("homework_submissions").update({
-      score, score_feedback: feedback, scored_by: profileId, scored_at: new Date().toISOString(),
+      score, score_feedback: feedback, scored_by: profileId, scored_at: new Date().toISOString(), score_is_stale: false,
     }).eq("id", submissionId);
     if (upErr) {
       await sendMessage(msg.chat.id, `❌ ${upErr.message}`);
       return true;
     }
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+    if (sub) {
+      cacheInvalidateUser(sub.user_id);
+      try {
+        await admin.from("profiles").update({ stats_dirty_at: new Date().toISOString() }).eq("id", sub.user_id);
+      } catch (e) {
+        console.error("mark stats dirty failed", e);
+      }
+    }
 
     // Auto-DM the student (always)
     if (sub) {
@@ -2853,7 +2862,7 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   // Admin / teacher routing
   const persona = await getPersona(admin, profile.id);
   if (persona === "admin") {
-    const handled = await handleAdminCommand(admin, chatId, locale, cmd);
+    const handled = await handleAdminCommand(admin, chatId, profile.id, locale, cmd);
     if (handled) return;
   } else if (persona === "teacher") {
     const handled = await handleTeacherCommand(admin, chatId, profile.id, locale, cmd);
