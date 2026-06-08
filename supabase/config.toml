@@ -1,7 +1,5 @@
 project_id = "wpdztrijasgmxgliwddr"
 
-[functions.bootstrap-seed-users]
-verify_jwt = false
 
 [functions.study-assistant]
 verify_jwt = true
