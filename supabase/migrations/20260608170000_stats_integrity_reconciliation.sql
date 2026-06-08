@@ -114,11 +114,37 @@ BEGIN
 END;
 $fn$;
 
--- 4) RLS: block student self-grade (WITH CHECK mirrors USING).
+-- 4) RLS: block student self-grade (WITH CHECK) + scope teachers to their own groups.
+--    Student: only own ungraded row. Admin: any. Teacher: only students in groups they teach.
+--    (Bot grading uses the service role and bypasses RLS.)
 DROP POLICY IF EXISTS "hws own update" ON public.homework_submissions;
 CREATE POLICY "hws own update" ON public.homework_submissions FOR UPDATE TO authenticated
-  USING ((auth.uid() = user_id AND score IS NULL) OR has_role(auth.uid(),'admin'::app_role) OR has_role(auth.uid(),'teacher'::app_role))
-  WITH CHECK ((auth.uid() = user_id AND score IS NULL) OR has_role(auth.uid(),'admin'::app_role) OR has_role(auth.uid(),'teacher'::app_role));
+  USING (
+    (auth.uid() = user_id AND score IS NULL)
+    OR has_role(auth.uid(),'admin'::app_role)
+    OR (has_role(auth.uid(),'teacher'::app_role) AND EXISTS (
+        SELECT 1 FROM profiles p JOIN groups g ON g.id = p.group_id
+        WHERE p.id = homework_submissions.user_id AND g.teacher_id = auth.uid()))
+  )
+  WITH CHECK (
+    (auth.uid() = user_id AND score IS NULL)
+    OR has_role(auth.uid(),'admin'::app_role)
+    OR (has_role(auth.uid(),'teacher'::app_role) AND EXISTS (
+        SELECT 1 FROM profiles p JOIN groups g ON g.id = p.group_id
+        WHERE p.id = homework_submissions.user_id AND g.teacher_id = auth.uid()))
+  );
+
+-- 4b) RLS: scope teacher READ access to their own groups (matches the write policy;
+--     the teacher UI already self-scopes via scopeIds, so this is enforcement only).
+DROP POLICY IF EXISTS "hws own select" ON public.homework_submissions;
+CREATE POLICY "hws own select" ON public.homework_submissions FOR SELECT TO authenticated
+  USING (
+    auth.uid() = user_id
+    OR has_role(auth.uid(),'admin'::app_role)
+    OR (has_role(auth.uid(),'teacher'::app_role) AND EXISTS (
+        SELECT 1 FROM profiles p JOIN groups g ON g.id = p.group_id
+        WHERE p.id = homework_submissions.user_id AND g.teacher_id = auth.uid()))
+  );
 
 -- 5) Dedup teacher DMs.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_dm_submission_teacher_msg
