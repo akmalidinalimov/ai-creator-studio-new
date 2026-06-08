@@ -65,16 +65,17 @@ export default function AdminHomework() {
     });
     setAssignsByModule(map);
 
+    // Effective view: per-student rows already normalized to /10 via avg10_normalized.
+    // Average that across students per module (only students with a scored value).
     const { data: scoreRows } = await supabase
-      .from("vw_module_homework_score" as any)
-      .select("module_id, profile_id, module_total, module_max");
-    const totals: Record<string, { totSum: number; maxSum: number; n: number; students: Set<string> }> = {};
+      .from("vw_module_homework_score_effective" as any)
+      .select("module_id, profile_id, avg10_normalized");
+    const totals: Record<string, { avgSum: number; n: number; students: Set<string> }> = {};
     (scoreRows as any[] || []).forEach((r) => {
-      const t = totals[r.module_id] ||= { totSum: 0, maxSum: 0, n: 0, students: new Set() };
+      const t = totals[r.module_id] ||= { avgSum: 0, n: 0, students: new Set() };
       t.students.add(r.profile_id);
-      if (r.module_max && Number(r.module_max) > 0) {
-        t.totSum += Number(r.module_total);
-        t.maxSum += Number(r.module_max);
+      if (r.avg10_normalized != null && Number.isFinite(Number(r.avg10_normalized))) {
+        t.avgSum += Number(r.avg10_normalized);
         t.n++;
       }
     });
@@ -83,8 +84,8 @@ export default function AdminHomework() {
       stats[mid] = {
         submitted_students: t.students.size,
         total_students: t.students.size,
-        module_total: t.n ? +(t.totSum / t.n).toFixed(1) : null,
-        module_max: t.n ? +(t.maxSum / t.n).toFixed(1) : null,
+        module_total: t.n ? +(t.avgSum / t.n).toFixed(1) : null,
+        module_max: t.n ? 10 : null,
       };
     });
     setModStats(stats);

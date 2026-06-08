@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Clock, BookOpen, FileCheck2, Flame, PlayCircle, Award, LogIn } from "lucide-react";
+import { effectiveLeafGrades, summarizeHomework } from "@/lib/homeworkStats";
 
 interface LessonRow {
   lesson_id: string;
@@ -111,7 +112,7 @@ export default function MyActivity() {
         supabase
           .from("homework_submissions")
           .select(
-            "id, submitted_at, score, is_late, telegram_message_url, homework_assignments!inner(task_number, max_score, modules!inner(title, position))"
+            "id, assignment_id, submitted_at, score, score_feedback, scored_at, previous_attempts, is_late, telegram_message_url, homework_assignments!inner(task_number, max_score, modules!inner(title, position))"
           )
           .eq("user_id", user.id)
           .order("submitted_at", { ascending: false }),
@@ -163,9 +164,27 @@ export default function MyActivity() {
       }));
       setHomework(hwRows);
       setHwCount(hwRows.length);
-      const scored = hwRows.filter((r) => r.score != null);
-      setHwScored(scored.length);
-      setHwAvg(scored.length ? scored.reduce((s, r) => s + (r.score || 0), 0) / scored.length : null);
+
+      // Effective-grade average — mirrors HomeworkProfileSection / homeworkStats:
+      // honors max_score normalization (/10) and falls back to the last scored
+      // previous attempt when the live submission isn't scored.
+      const leafMax = new Map<string, number>();
+      (hw || []).forEach((h: any) => {
+        if (h.assignment_id) {
+          leafMax.set(h.assignment_id, Number(h.homework_assignments?.max_score) || 0);
+        }
+      });
+      const leaves = Array.from(leafMax.entries()).map(([id, max_score]) => ({ id, max_score }));
+      const subs = (hw || []).map((h: any) => ({
+        assignment_id: h.assignment_id,
+        score: h.score,
+        score_feedback: h.score_feedback ?? null,
+        scored_at: h.scored_at ?? null,
+        previous_attempts: h.previous_attempts ?? null,
+      }));
+      const summary = summarizeHomework(effectiveLeafGrades(leaves, subs));
+      setHwScored(summary.scoredCount);
+      setHwAvg(summary.avg10);
 
       setStreakCur(streak?.current_streak || 0);
       setStreakLong(streak?.longest_streak || 0);
