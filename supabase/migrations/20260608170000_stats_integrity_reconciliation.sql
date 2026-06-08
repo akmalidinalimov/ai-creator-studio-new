@@ -153,3 +153,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_dm_submission_teacher_msg
 
 -- 6) Auto-propagation cron: recompute leaderboard every 15 min (idempotent upsert by jobname).
 SELECT cron.schedule('recalc-leaderboard', '*/15 * * * *', $$SELECT public.recalc_leaderboard();$$);
+
+-- 7) Security linter fixes (Supabase scanner):
+-- F1: effective view respects the caller's RLS (admin-only caller; no behavior change).
+ALTER VIEW public.vw_module_homework_score_effective SET (security_invoker = true);
+-- F2: lock leaderboard_cache direct reads to admins. App reads go via SECURITY DEFINER
+-- RPCs (leaderboard_top / leaderboard_my_rank) which bypass RLS, so the leaderboard works.
+DROP POLICY IF EXISTS "leaderboard read auth" ON public.leaderboard_cache;
+CREATE POLICY "leaderboard read admin" ON public.leaderboard_cache
+  FOR SELECT TO authenticated USING (has_role(auth.uid(),'admin'::app_role));
