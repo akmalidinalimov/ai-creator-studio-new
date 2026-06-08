@@ -2274,6 +2274,33 @@ export type Database = {
           },
         ]
       }
+      vw_module_homework_score_effective: {
+        Row: {
+          avg10_normalized: number | null
+          earned: number | null
+          max_scored: number | null
+          module_id: string | null
+          profile_id: string | null
+          scored_tasks: number | null
+          submitted_tasks: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "homework_assignments_module_id_fkey"
+            columns: ["module_id"]
+            isOneToOne: false
+            referencedRelation: "modules"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "homework_assignments_module_id_fkey"
+            columns: ["module_id"]
+            isOneToOne: false
+            referencedRelation: "mv_lesson_dropoff"
+            referencedColumns: ["module_id"]
+          },
+        ]
+      }
     }
     Functions: {
       admin_assign_group: {
@@ -2718,6 +2745,10 @@ export type Database = {
           p_lesson_id: string
         }
         Returns: Json
+      }
+      user_homework_avg10_effective: {
+        Args: { p_user_id: string; p_within_days?: number }
+        Returns: number
       }
       weekly_digest_set_enabled: {
         Args: { _enabled: boolean }
