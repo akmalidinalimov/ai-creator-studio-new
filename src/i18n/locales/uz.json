@@ -594,6 +594,7 @@
         "noVideo": "Video yo'q",
         "hasVideo": "Video bor"
       },
+      "deleteModule": "Modulni o'chirish",
       "deleteModuleConfirm": "Ushbu modul va uning barcha darslarini o'chirish? Buni qaytarib bo'lmaydi.",
       "moduleDeleted": "Modul o'chirildi",
       "coverUploaded": "Muqova yuklandi",

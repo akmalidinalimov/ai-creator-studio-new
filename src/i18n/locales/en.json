@@ -594,6 +594,7 @@
         "noVideo": "No video",
         "hasVideo": "Has video"
       },
+      "deleteModule": "Delete module",
       "deleteModuleConfirm": "Delete this module and all its lessons? This cannot be undone.",
       "moduleDeleted": "Module deleted",
       "coverUploaded": "Cover uploaded",
