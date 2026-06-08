@@ -16,7 +16,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Upload as UploadIcon, Search, Copy, RefreshCw, Trash2, Download, Mail, Unlock, ChevronDown, ChevronRight, AlertTriangle, X } from "lucide-react";
+import { Plus, Upload as UploadIcon, Search, Copy, RefreshCw, Trash2, Download, Mail, Unlock, ChevronDown, ChevronRight, AlertTriangle, X, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import Papa from "papaparse";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -1059,7 +1059,12 @@ export default function AdminUsers() {
                       <span className="text-muted-foreground">{(enrollMap[u.id]?.size) || 0} {t("admin.users.headers.courses").toLowerCase()}</span>
                       <span className="text-muted-foreground">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}</span>
                     </div>
-                    {isAdmin && <Button variant="ghost" size="sm" className="h-7" onClick={() => setManageUser(u)}>{t("admin.users.manage")}</Button>}
+                    <div className="ml-auto flex items-center gap-1">
+                      <Button asChild variant="ghost" size="sm" className="h-7 gap-1" title="Statistika">
+                        <Link to={`/admin/users/${u.id}`}><BarChart3 className="h-3.5 w-3.5" /> Statistika</Link>
+                      </Button>
+                      {isAdmin && <Button variant="ghost" size="sm" className="h-7" onClick={() => setManageUser(u)}>{t("admin.users.manage")}</Button>}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1138,7 +1143,14 @@ export default function AdminUsers() {
                     <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : u.status === "archived" ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-destructive/10 text-destructive"}`}>{u.status === "active" ? t("admin.users.active") : u.status === "archived" ? "Arxiv" : t("admin.users.inactive")}</span></td>
                     <td className="p-3 text-xs text-muted-foreground">{(enrollMap[u.id]?.size) || 0}</td>
                     <td className="p-3 text-xs text-muted-foreground">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}</td>
-                    <td className="p-3">{isAdmin && <Button variant="ghost" size="sm" onClick={() => setManageUser(u)}>{t("admin.users.manage")}</Button>}</td>
+                    <td className="p-3">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button asChild variant="ghost" size="sm" className="gap-1" title="Statistika">
+                          <Link to={`/admin/users/${u.id}`}><BarChart3 className="h-3.5 w-3.5" /> Statistika</Link>
+                        </Button>
+                        {isAdmin && <Button variant="ghost" size="sm" onClick={() => setManageUser(u)}>{t("admin.users.manage")}</Button>}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1503,6 +1515,9 @@ export default function AdminUsers() {
           {manageUser && (
             <>
               <SheetHeader><SheetTitle>{[manageUser.name, manageUser.last_name].filter(Boolean).join(" ") || manageUser.email}</SheetTitle></SheetHeader>
+              <Button asChild variant="outline" size="sm" className="mt-4 w-full gap-2">
+                <Link to={`/admin/users/${manageUser.id}`}><BarChart3 className="h-4 w-4" /> 📊 Statistika</Link>
+              </Button>
               <div className="mt-6 space-y-5">
                 <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-1.5">
