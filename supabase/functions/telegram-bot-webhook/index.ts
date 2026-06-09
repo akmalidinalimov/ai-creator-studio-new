@@ -159,6 +159,7 @@ const T = {
     tKbTop: "🏆 TOP talabalar",
     tKbBroadcast: "📣 Guruhga xabar",
     tKbSettings: "⚙️ Sozlamalar",
+    tKbSwitchGroup: "🔄 Guruhni almashtirish",
     tKbHomework: "📝 Vazifalar",
     tKbGrade: "📝 Baholash",
     tKbGraded: "👥 Talabalar",
@@ -364,6 +365,7 @@ const T = {
     tKbTop: "🏆 ТОП студенты",
     tKbBroadcast: "📣 Сообщение группе",
     tKbSettings: "⚙️ Настройки",
+    tKbSwitchGroup: "🔄 Сменить группу",
     tKbHomework: "📝 Задания",
     tKbGrade: "📝 Оценить",
     tKbGraded: "👥 Студенты",
@@ -561,6 +563,7 @@ const T = {
     tKbTop: "🏆 Top students",
     tKbBroadcast: "📣 Broadcast",
     tKbSettings: "⚙️ Settings",
+    tKbSwitchGroup: "🔄 Switch group",
     tKbHomework: "📝 Homework",
     tKbGrade: "📝 Grade",
     tKbGraded: "👥 Students",
@@ -755,6 +758,7 @@ function getTeacherKeyboard(locale: Locale) {
       [{ text: t.tKbStats }, { text: t.tKbTop }],
       [{ text: t.tKbStudents }, { text: t.tKbInactive }],
       [{ text: t.tKbBroadcast }, { text: t.tKbSettings }],
+      [{ text: t.tKbSwitchGroup }],
       [{ text: t.kbLang }],
     ],
     resize_keyboard: true,
@@ -853,6 +857,7 @@ function buttonTextToCommand(text: string): string | null {
     if (t.tKbTop && trimmed === t.tKbTop) return "/ttop";
     if (t.tKbBroadcast && trimmed === t.tKbBroadcast) return "/tbroadcast";
     if (t.tKbSettings && trimmed === t.tKbSettings) return "/sozlamalar";
+    if (t.tKbSwitchGroup && trimmed === t.tKbSwitchGroup) return "/guruh";
     if (t.tKbGrade && trimmed === t.tKbGrade) return "/baholash";
     if (t.tKbHealth && trimmed === t.tKbHealth) return "/thealth";
     // "📝 Vazifalar" opens module-grouped homework view.
@@ -1818,7 +1823,9 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
   if (cmd === "/guruh" || cmd === "/group") {
     const r = await resolveActiveGroup(admin, teacherId);
     if (r.mode === "none") { await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher"); return true; }
-    await showGroupPicker(chatId, locale, "switch", r.mode === "ok" ? r.groups : r.groups);
+    const allGroups = r.mode === "ok" ? r.groups : r.groups;
+    if (allGroups.length === 1) { await sendWithKeyboard(chatId, t.tActiveGroup(allGroups[0].name), locale, false, "teacher"); return true; }
+    await showGroupPicker(chatId, locale, "switch", allGroups);
     return true;
   }
 
