@@ -30,10 +30,13 @@ async function tgSend(chatId: number, text: string) {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const __p = req.headers.get("x-internal-secret");
+  const __s = await __internalSecret();
+  if (!__p || __p !== __s) {
+    return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
 
-  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-  const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const admin = createClient(SUPABASE_URL, SERVICE_KEY);
+  const admin = __admin;
 
   try {
     // Active courses → modules
