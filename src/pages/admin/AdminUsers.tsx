@@ -1748,6 +1748,11 @@ export default function AdminUsers() {
                 <div className="flex flex-wrap gap-2 pt-2">
                   <Button variant="outline" size="sm" onClick={() => resendWelcome([manageUser.email])}><Mail className="h-4 w-4" />{t("admin.users.resendWelcome")}</Button>
                   <Button variant="outline" size="sm" onClick={() => resetPassword(manageUser)}>{t("admin.users.resetPassword")}</Button>
+                  {isStaffAdmin && manageUser.role_name !== "admin" && manageUser.role_name !== "superadmin" && (
+                    <Button variant="outline" size="sm" disabled={impBusy} onClick={() => runImpersonate({ user_id: manageUser.id })}>
+                      Log in as
+                    </Button>
+                  )}
                   {isLocked(manageUser.email) && (
                     <Button variant="outline" size="sm" onClick={() => clearLockout(manageUser.email)}><Unlock className="h-4 w-4" />{t("admin.users.clearLockout")}</Button>
                   )}
