@@ -1207,6 +1207,7 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     const completedLessons = (progressRes.data || []).length;
     const totalWatchSeconds = (watchRes.data || []).reduce((acc: number, r: any) => acc + Number(r.total_seconds || 0), 0);
     lines.push(t.statsLessons(completedLessons, totalLessons, fmtWatchDuration(totalWatchSeconds)));
+    lines.push("");
 
     const sk = streakRes.data;
     if (sk && (sk.current_streak || sk.longest_streak)) {
@@ -1214,11 +1215,13 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     } else {
       lines.push(t.statsStreakNone);
     }
+    lines.push("");
 
     const todayDone = (todayRes.data || []).length;
     const weeklyGoal = prefRes.data?.weekly_goal_lessons || 5;
     const dailyTarget = Math.max(1, Math.round(weeklyGoal / 7));
     lines.push(t.statsDailyGoal(todayDone, dailyTarget, todayDone >= dailyTarget));
+    lines.push("");
 
     // Homework: leaves only, with effective grade (current score ?? latest previous_attempts.score).
     const allAssigns = (hwAssignsRes.data || []) as any[];
@@ -1235,6 +1238,7 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
         lines.push(t.statsHomeworkPoints(summary.earned, summary.maxTotal));
       }
     }
+    lines.push("");
 
     const lb = lbRes.data;
     if (lb && lb.rank) {
@@ -1242,6 +1246,7 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     } else {
       lines.push(t.statsRankingNone);
     }
+    lines.push("");
 
     lines.push(t.statsBadges(badgesEarnedRes.count || 0, badgesTotalRes.count || 0));
   } catch (e) {
