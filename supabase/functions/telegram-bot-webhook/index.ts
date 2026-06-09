@@ -100,7 +100,7 @@ const T = {
     levelNames: ["Boshlovchi", "O'quvchi", "Bilimdon", "Usta", "Master"],
     statsLevel: (emoji: string, name: string, score: number, barStr: string, isMax: boolean, nextEmoji: string, nextName: string) => `⭐ Daraja: ${emoji} <b>${name}</b> (${score}/100)\n${barStr}${isMax ? " — eng yuqori daraja! 🏆" : ` → ${nextEmoji} ${nextName}`}`,
     statsLessons: (d: number, tot: number, watch: string) => `📚 Darslar: <b>${d}/${tot}</b>${watch ? ` · ${watch} jami` : ""}\n${bar(d, tot)}`,
-    statsStreak: (c: number, b: number) => `🔥 Streak: <b>${c} kun</b> (eng yaxshisi: ${b})`,
+    statsStreak: (cur: number, best: number, barStr: string, next: number | null, atMilestone: boolean) => `🔥 <b>${cur} kunlik streak</b>${atMilestone ? " 🎉 yangi bosqich!" : ""} · rekord: ${best}\n${barStr}${next ? ` → ${next} kun` : " 🏆 eng yuqori!"}`,
     statsStreakNone: "🔥 Streak: hali boshlanmadi",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Bugungi maqsad: <b>${d}/${tar}</b>${ok ? " ✅" : ""}\n${bar(d, tar)}`,
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Uy vazifalari: <b>${sub}/${totalLeaves}</b>${scored ? ` (${scored} ta baholangan)` : ""}\n${bar(sub, totalLeaves)}`,
@@ -321,7 +321,7 @@ const T = {
     levelNames: ["Новичок", "Ученик", "Знаток", "Мастер", "Магистр"],
     statsLevel: (emoji: string, name: string, score: number, barStr: string, isMax: boolean, nextEmoji: string, nextName: string) => `⭐ Уровень: ${emoji} <b>${name}</b> (${score}/100)\n${barStr}${isMax ? " — высший уровень! 🏆" : ` → ${nextEmoji} ${nextName}`}`,
     statsLessons: (d: number, tot: number, watch: string) => `📚 Уроки: <b>${d}/${tot}</b>${watch ? ` · ${watch} всего` : ""}\n${bar(d, tot)}`,
-    statsStreak: (c: number, b: number) => `🔥 Стрик: <b>${c} дн.</b> (рекорд: ${b})`,
+    statsStreak: (cur: number, best: number, barStr: string, next: number | null, atMilestone: boolean) => `🔥 <b>${cur} дн. подряд</b>${atMilestone ? " 🎉 новый рубеж!" : ""} · рекорд: ${best}\n${barStr}${next ? ` → ${next} дн.` : " 🏆 максимум!"}`,
     statsStreakNone: "🔥 Стрик: ещё не начат",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Цель на сегодня: <b>${d}/${tar}</b>${ok ? " ✅" : ""}\n${bar(d, tar)}`,
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Домашка: <b>${sub}/${totalLeaves}</b>${scored ? ` (${scored} оценено)` : ""}\n${bar(sub, totalLeaves)}`,
@@ -532,7 +532,7 @@ const T = {
     levelNames: ["Beginner", "Learner", "Scholar", "Expert", "Master"],
     statsLevel: (emoji: string, name: string, score: number, barStr: string, isMax: boolean, nextEmoji: string, nextName: string) => `⭐ Level: ${emoji} <b>${name}</b> (${score}/100)\n${barStr}${isMax ? " — top level! 🏆" : ` → ${nextEmoji} ${nextName}`}`,
     statsLessons: (d: number, tot: number, watch: string) => `📚 Lessons: <b>${d}/${tot}</b>${watch ? ` · ${watch} total` : ""}\n${bar(d, tot)}`,
-    statsStreak: (c: number, b: number) => `🔥 Streak: <b>${c} days</b> (best: ${b})`,
+    statsStreak: (cur: number, best: number, barStr: string, next: number | null, atMilestone: boolean) => `🔥 <b>${cur}-day streak</b>${atMilestone ? " 🎉 milestone!" : ""} · best: ${best}\n${barStr}${next ? ` → ${next} days` : " 🏆 maxed!"}`,
     statsStreakNone: "🔥 Streak: not started yet",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Today's goal: <b>${d}/${tar}</b>${ok ? " ✅" : ""}\n${bar(d, tar)}`,
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Homework: <b>${sub}/${totalLeaves}</b>${scored ? ` (${scored} graded)` : ""}\n${bar(sub, totalLeaves)}`,
@@ -1212,6 +1212,17 @@ function levelInfo(score: number) {
   return { i, isMax, emoji: LEVELS[i].emoji, score: s, into: s - floor, span: Math.max(1, ceil - floor), nextEmoji: isMax ? "" : LEVELS[i + 1].emoji };
 }
 
+// Streak milestones. Shows progress toward the next badge-worthy milestone and
+// celebrates when the user is exactly on one (loss-aversion + accomplishment).
+const STREAK_MILES = [3, 7, 14, 30, 60, 100];
+function streakInfo(c: number) {
+  const cur = Math.max(0, c || 0);
+  const next = STREAK_MILES.find((m) => m > cur) ?? null;
+  const prev = [...STREAK_MILES].reverse().find((m) => m <= cur) ?? 0;
+  const atMilestone = STREAK_MILES.includes(cur) && cur > 0;
+  return { cur, next, prev, atMilestone };
+}
+
 async function buildStatsMessage(admin: any, userId: string, locale: Locale): Promise<string> {
   const t = T[locale] as any;
   const lines: string[] = [t.statsTitle, ""];
@@ -1278,7 +1289,9 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
 
     const sk = streakRes.data;
     if (sk && (sk.current_streak || sk.longest_streak)) {
-      lines.push(t.statsStreak(sk.current_streak || 0, sk.longest_streak || 0));
+      const si = streakInfo(sk.current_streak || 0);
+      const barStr = si.next ? bar(si.cur - si.prev, si.next - si.prev) : bar(1, 1);
+      lines.push(t.statsStreak(si.cur, sk.longest_streak || 0, barStr, si.next, si.atMilestone));
     } else {
       lines.push(t.statsStreakNone);
     }
