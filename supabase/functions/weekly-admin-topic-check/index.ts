@@ -9,6 +9,16 @@ const corsHeaders = {
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 
+const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+let __sec: string | null = null;
+async function __internalSecret(): Promise<string> {
+  if (__sec) return __sec;
+  const { data, error } = await __admin.rpc("internal_fn_secret");
+  if (error) throw error;
+  __sec = data as string;
+  return __sec;
+}
+
 async function tgSend(chatId: number, text: string) {
   if (!BOT_TOKEN) return;
   await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
@@ -20,10 +30,13 @@ async function tgSend(chatId: number, text: string) {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const __p = req.headers.get("x-internal-secret");
+  const __s = await __internalSecret();
+  if (!__p || __p !== __s) {
+    return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
 
-  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-  const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const admin = createClient(SUPABASE_URL, SERVICE_KEY);
+  const admin = __admin;
 
   try {
     // Active courses → modules
