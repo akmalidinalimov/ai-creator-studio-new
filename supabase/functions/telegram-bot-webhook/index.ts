@@ -3789,6 +3789,24 @@ async function handleCallback(admin: any, cq: any) {
     return;
   }
 
+  // Resolve effective actor (honor admin impersonation via bot_sessions)
+  const _clicker = await findProfileByTelegramId(admin, tgId);
+  let _effId: string | null = _clicker?.id ?? null;
+  let _effPersona: any = _clicker ? await getPersona(admin, _clicker.id) : null;
+  let _isImp = false;
+  if (_clicker && _effPersona === "admin") {
+    const { data: _imp } = await admin.from("bot_sessions").select("state, data").eq("user_id", _clicker.id).maybeSingle();
+    if (_imp?.state === "impersonate" && _imp?.data?.as_user_id) {
+      _effId = _imp.data.as_user_id;
+      _effPersona = _imp.data.as_persona;
+      _isImp = true;
+    }
+  }
+  if (_isImp && (/^grade_task:|^grade:open:|^gs:open:|^settings:|^setlang:/.test(data) || /^hw:(start|resub_yes):/.test(data))) {
+    await answerCallback(cq.id, "👁 Faqat o'qish — /admin");
+    return;
+  }
+
   // Student tapped a per-module button in /vazifalar — show per-SAP submit buttons for that module.
   if (data.startsWith("hw:mod:") && chatId) {
     const moduleId = data.slice("hw:mod:".length);
@@ -4030,12 +4048,9 @@ async function handleCallback(admin: any, cq: any) {
   }
 
   if (data === "tg:switch" && chatId) {
-    const profile = await findProfileByTelegramId(admin, tgId);
-    if (!profile) { await answerCallback(cq.id); return; }
-    const persona = await getPersona(admin, profile.id);
-    if (persona !== "teacher") { await answerCallback(cq.id); return; }
-    const locale: Locale = normLocale(profile.preferred_locale);
-    const groups = await teacherGroups(admin, profile.id);
+    if (!_clicker || _effPersona !== "teacher") { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(_clicker.preferred_locale);
+    const groups = await teacherGroups(admin, _effId);
     await answerCallback(cq.id);
     if (groups.length >= 2) await showGroupPicker(chatId, locale, "switch", groups);
     return;
@@ -4047,23 +4062,20 @@ async function handleCallback(admin: any, cq: any) {
     if (idx <= 0) { await answerCallback(cq.id); return; }
     const action = rest.slice(0, idx);
     const groupId = rest.slice(idx + 1);
-    const profile = await findProfileByTelegramId(admin, tgId);
-    if (!profile) { await answerCallback(cq.id); return; }
-    const persona = await getPersona(admin, profile.id);
-    if (persona !== "teacher") { await answerCallback(cq.id); return; }
-    const locale: Locale = normLocale(profile.preferred_locale);
+    if (!_clicker || _effPersona !== "teacher") { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(_clicker.preferred_locale);
     const t = T[locale] as any;
-    // Validate ownership
-    const groups = await teacherGroups(admin, profile.id);
+    if (_isImp && action === "baholash") { await answerCallback(cq.id, "👁 Faqat o'qish — /admin"); return; }
+    const groups = await teacherGroups(admin, _effId);
     const g = groups.find((x) => x.id === groupId);
     if (!g) { await answerCallback(cq.id); return; }
-    await admin.from("profiles").update({ active_teacher_group_id: g.id }).eq("id", profile.id);
+    await admin.from("profiles").update({ active_teacher_group_id: g.id }).eq("id", _effId);
     await answerCallback(cq.id);
     if (action === "switch") {
       await sendWithKeyboard(chatId, t.tGroupSwitched(g.name), locale, false, "teacher");
     } else {
       const cmd = TEACHER_ACTION_CMD[action];
-      if (cmd) await handleTeacherCommand(admin, chatId, profile.id, locale, cmd, g.id);
+      if (cmd) await handleTeacherCommand(admin, chatId, _effId, locale, cmd, g.id);
     }
     return;
   }
