@@ -41,7 +41,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.notify-admin-new-student]
-verify_jwt = false
+verify_jwt = true
 
 [functions.notify-homework-submission]
 verify_jwt = false
