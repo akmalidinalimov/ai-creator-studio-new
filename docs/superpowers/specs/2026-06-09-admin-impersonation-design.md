@@ -11,7 +11,7 @@ Let an admin reproduce exactly what a teacher (or student) sees, on both surface
 Entry by Telegram `@username`, Telegram ID, or internal user id.
 
 ## Decisions (locked)
-- Web mechanism: **full session**, reusing the existing magic-link flow. Opened in an **incognito/separate window** so the admin's own session is untouched.
+- Web mechanism: **full session (read-only)**, reusing the existing magic-link flow. Opened in an **incognito/separate window** so the admin's own session is untouched. Writes are blocked by the read-only guard (see below).
 - Surfaces: **both** (web + Telegram bot).
 - Who can impersonate: **admin + superadmin**.
 - Who can be impersonated: **teacher or student**, never admin/superadmin (privilege-escalation guard). Never self.
@@ -46,6 +46,12 @@ In `telegram-bot-webhook`:
 - Command routing: when the admin has an active `impersonate` session, teacher/student commands resolve their target id from `as_user_id` instead of the admin's own id (e.g., `teacherGroups(admin, as_user_id)`).
 - `/admin` (existing) clears the impersonate session → back to admin keyboard.
 
+## Read-only guard (enforced)
+Impersonation is **view-only** — the admin can see the user's pages but cannot change their data.
+- **Web (central chokepoint):** a guard wraps the shared Supabase client. While `sessionStorage.impersonating` is set, any `.insert()/.update()/.upsert()/.delete()` and any `.rpc()` whose name is in a `WRITE_RPCS` denylist (e.g. `admin_change_role`, `track_video_progress`, grading/save RPCs, homework writes) throw and surface a toast "Read-only (impersonation)". Read queries and read RPCs (`leaderboard_top`, `teacher_group_statistics`, …) pass through. Write buttons are also hidden/disabled when impersonating (banner + UX), but the client guard is the real enforcement so an un-hidden control still can't write.
+- **Telegram:** while a `/asteacher` impersonation is active, only the view commands run (`/tstats`, `/tstudents`, `/ttop`, `/thealth`, `/thomework` view, `/guruh`). Write/destructive commands (`/baholash` grading, `/tbroadcast`) reply "👁 Read-only — exit with /admin" and do nothing.
+- Threat model: prevents *accidental* writes by a trusted admin. It is client/bot-side (not RLS-enforced), which is acceptable here and avoids broad RLS changes; documented as such.
+
 ## Security & audit
 - Admin/superadmin only (both surfaces).
 - Cannot impersonate admin/superadmin; cannot impersonate self.
@@ -68,4 +74,4 @@ Admin clicks "Log in as" → `admin-impersonate` (JWT) → validates + creates m
 ## Out of scope (YAGNI)
 - Time-boxed auto-expiry of an active web impersonation session (relies on normal logout/incognito-close).
 - Impersonating admins/superadmins.
-- A full server-enforced "read-only" mode (we chose full session).
+- RLS-enforced server-side read-only (we use a client/bot-side guard; sufficient for the trusted-admin threat model).
