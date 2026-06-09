@@ -1859,6 +1859,43 @@ export default function AdminUsers() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={!!impResult} onOpenChange={(o) => { if (!o) setImpResult(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Log in as {impResult?.name}</DialogTitle>
+          </DialogHeader>
+          {impResult && (
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <Input readOnly value={impResult.url} onFocus={(e) => e.currentTarget.select()} />
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(impResult.url);
+                      toast.success("Link copied");
+                    } catch {
+                      toast.error("Copy failed");
+                    }
+                  }}
+                >
+                  <Copy className="h-4 w-4" /> Copy link
+                </Button>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Open this link in an incognito window to view as {impResult.name} (read-only). Incognito keeps your own admin session.
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => impResult && window.open(impResult.url, "_blank")}>
+              Open in new tab
+            </Button>
+            <Button onClick={() => setImpResult(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageShell>
   );
 }
