@@ -109,6 +109,9 @@ const T = {
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Reyting: <b>${r}-o'rin</b> / ${tot} talaba`,
     statsRankingNone: "🏆 Reyting: hali sanalmadi (faollik kerak — kamida 1 ta dars ko'ring)",
     statsBadges: (e: number, tot: number) => `🏅 Nishonlar: <b>${e}/${tot}</b>`,
+    statsBadgesShowcase: (icons: string, earned: number, total: number) => `🏅 Nishonlar: <b>${earned}/${total}</b>${icons ? `\n${icons}` : ""}`,
+    statsNextBadge: (name: string, desc: string) => `🔒 Keyingi nishon: <b>${name}</b>${desc ? ` — ${desc}` : ""}`,
+    statsBadgesAllDone: "🏅 Barcha nishonlar yig'ildi! 🎉",
     btnSiteOpen: "📖 Saytda batafsil",
     hwTitle: "📝 <b>Mening vazifalarim</b>",
     hwEmpty: "Hozircha vazifalar yo'q.",
@@ -319,6 +322,9 @@ const T = {
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Рейтинг: <b>${r} место</b> / ${tot} студентов`,
     statsRankingNone: "🏆 Рейтинг: пока не учтён (нужна активность — посмотрите хотя бы 1 урок)",
     statsBadges: (e: number, tot: number) => `🏅 Значки: <b>${e}/${tot}</b>`,
+    statsBadgesShowcase: (icons: string, earned: number, total: number) => `🏅 Значки: <b>${earned}/${total}</b>${icons ? `\n${icons}` : ""}`,
+    statsNextBadge: (name: string, desc: string) => `🔒 Следующий значок: <b>${name}</b>${desc ? ` — ${desc}` : ""}`,
+    statsBadgesAllDone: "🏅 Все значки собраны! 🎉",
     btnSiteOpen: "📖 Подробнее на сайте",
     hwTitle: "📝 <b>Мои задания</b>",
     hwEmpty: "Пока заданий нет.",
@@ -519,6 +525,9 @@ const T = {
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Ranking: <b>#${r}</b> of ${tot} students`,
     statsRankingNone: "🏆 Ranking: not ranked yet (need activity — watch at least 1 lesson)",
     statsBadges: (e: number, tot: number) => `🏅 Badges: <b>${e}/${tot}</b>`,
+    statsBadgesShowcase: (icons: string, earned: number, total: number) => `🏅 Badges: <b>${earned}/${total}</b>${icons ? `\n${icons}` : ""}`,
+    statsNextBadge: (name: string, desc: string) => `🔒 Next badge: <b>${name}</b>${desc ? ` — ${desc}` : ""}`,
+    statsBadgesAllDone: "🏅 All badges collected! 🎉",
     btnSiteOpen: "📖 More on site",
     hwTitle: "📝 <b>My homework</b>",
     hwEmpty: "No homework yet.",
@@ -1211,7 +1220,7 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
 
     const [
       progressRes, streakRes, todayRes, hwAssignsRes, hwSubsRes,
-      lbRes, totalStudentsRes, badgesEarnedRes, badgesTotalRes, prefRes, watchRes,
+      lbRes, totalStudentsRes, userBadgesRes, badgesAllRes, prefRes, watchRes,
     ] = await Promise.all([
       lessonIds.length
         ? admin.from("lesson_progress").select("lesson_id, completed_at").eq("user_id", userId).in("lesson_id", lessonIds).not("completed_at", "is", null)
@@ -1224,8 +1233,8 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
       admin.from("homework_submissions").select("assignment_id, score, score_feedback, scored_at, previous_attempts").eq("user_id", userId),
       admin.from("leaderboard_cache").select("rank, score").eq("user_id", userId).maybeSingle(),
       admin.from("leaderboard_cache").select("user_id", { count: "exact", head: true }),
-      admin.from("user_badges").select("badge_id", { count: "exact", head: true }).eq("user_id", userId),
-      admin.from("badges").select("id", { count: "exact", head: true }),
+      admin.from("user_badges").select("badge_id").eq("user_id", userId),
+      admin.from("badges").select("id, icon, name_uz, name_ru, name_en, description_uz, description_ru, description_en, position").order("position", { ascending: true }),
       admin.from("profiles").select("weekly_goal_lessons").eq("id", userId).maybeSingle(),
       admin.from("daily_watch_summary").select("total_seconds").eq("user_id", userId),
     ]);
@@ -1282,7 +1291,20 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     }
     lines.push("");
 
-    lines.push(t.statsBadges(badgesEarnedRes.count || 0, badgesTotalRes.count || 0));
+    const allBadges = (badgesAllRes.data || []) as any[];
+    const earnedIds = new Set(((userBadgesRes.data || []) as any[]).map((r) => r.badge_id));
+    const earnedBadges = allBadges.filter((b) => earnedIds.has(b.id));
+    const lockedBadges = allBadges.filter((b) => !earnedIds.has(b.id));
+    const earnedIcons = earnedBadges.map((b) => b.icon || "🏅").join(" ");
+    lines.push(t.statsBadgesShowcase(earnedIcons, earnedBadges.length, allBadges.length));
+    if (lockedBadges.length > 0) {
+      const nb = lockedBadges[0];
+      const nm = nb["name_" + locale] || nb.name_uz || "";
+      const ds = nb["description_" + locale] || nb.description_uz || "";
+      lines.push(t.statsNextBadge(nm, ds));
+    } else {
+      lines.push(t.statsBadgesAllDone);
+    }
   } catch (e) {
     console.error("buildStatsMessage error", e);
   }
