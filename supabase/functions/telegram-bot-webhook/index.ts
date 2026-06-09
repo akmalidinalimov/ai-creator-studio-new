@@ -3866,9 +3866,8 @@ async function handleCallback(admin: any, cq: any) {
   // Student tapped "🔁 qayta topshirish" — confirm with Yes/No before resetting score.
   if (data.startsWith("hw:resub_ask:") && chatId) {
     const assignmentId = data.slice("hw:resub_ask:".length);
-    const profile = await findProfileByTelegramId(admin, tgId);
-    if (!profile) { await answerCallback(cq.id); return; }
-    const locale: Locale = normLocale(profile.preferred_locale);
+    if (!_clicker) { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(_clicker.preferred_locale);
     const t = T[locale] as any;
     await answerCallback(cq.id);
     const { data: a } = await admin
@@ -3878,7 +3877,7 @@ async function handleCallback(admin: any, cq: any) {
     const { data: sub } = await admin
       .from("homework_submissions")
       .select("id, score, score_feedback")
-      .eq("user_id", profile.id).eq("assignment_id", assignmentId)
+      .eq("user_id", _effId).eq("assignment_id", assignmentId)
       .maybeSingle();
     if (!a || !sub || sub.score == null) {
       await sendMessage(chatId, t.gradeNotFound);
