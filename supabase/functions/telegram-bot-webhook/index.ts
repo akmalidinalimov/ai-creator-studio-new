@@ -1220,7 +1220,7 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
 
     const [
       progressRes, streakRes, todayRes, hwAssignsRes, hwSubsRes,
-      lbRes, totalStudentsRes, badgesEarnedRes, badgesTotalRes, prefRes, watchRes,
+      lbRes, totalStudentsRes, userBadgesRes, badgesAllRes, prefRes, watchRes,
     ] = await Promise.all([
       lessonIds.length
         ? admin.from("lesson_progress").select("lesson_id, completed_at").eq("user_id", userId).in("lesson_id", lessonIds).not("completed_at", "is", null)
@@ -1233,8 +1233,8 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
       admin.from("homework_submissions").select("assignment_id, score, score_feedback, scored_at, previous_attempts").eq("user_id", userId),
       admin.from("leaderboard_cache").select("rank, score").eq("user_id", userId).maybeSingle(),
       admin.from("leaderboard_cache").select("user_id", { count: "exact", head: true }),
-      admin.from("user_badges").select("badge_id", { count: "exact", head: true }).eq("user_id", userId),
-      admin.from("badges").select("id", { count: "exact", head: true }),
+      admin.from("user_badges").select("badge_id").eq("user_id", userId),
+      admin.from("badges").select("id, icon, name_uz, name_ru, name_en, description_uz, description_ru, description_en, position").order("position", { ascending: true }),
       admin.from("profiles").select("weekly_goal_lessons").eq("id", userId).maybeSingle(),
       admin.from("daily_watch_summary").select("total_seconds").eq("user_id", userId),
     ]);
