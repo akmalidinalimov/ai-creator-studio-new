@@ -97,11 +97,11 @@ const T = {
     kbStreakOld: "📊 Statistikam",
     kbCertOld: "🎓 Sertifikat",
     statsTitle: "📊 <b>Statistikam</b>",
-    statsLessons: (d: number, tot: number, watch: string) => `📚 Darslar: <b>${d}/${tot}</b> ${bar(d, tot)}${watch ? ` · ${watch} jami` : ""}`,
+    statsLessons: (d: number, tot: number, watch: string) => `📚 Darslar: <b>${d}/${tot}</b>${watch ? ` · ${watch} jami` : ""}\n${bar(d, tot)}`,
     statsStreak: (c: number, b: number) => `🔥 Streak: <b>${c} kun</b> (eng yaxshisi: ${b})`,
     statsStreakNone: "🔥 Streak: hali boshlanmadi",
-    statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Bugungi maqsad: <b>${d}/${tar}</b> ${bar(d, tar)}${ok ? " ✅" : ""}`,
-    statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Uy vazifalari: <b>${sub}/${totalLeaves}</b> ${bar(sub, totalLeaves)}${scored ? ` (${scored} ta baholangan)` : ""}`,
+    statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Bugungi maqsad: <b>${d}/${tar}</b>${ok ? " ✅" : ""}\n${bar(d, tar)}`,
+    statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Uy vazifalari: <b>${sub}/${totalLeaves}</b>${scored ? ` (${scored} ta baholangan)` : ""}\n${bar(sub, totalLeaves)}`,
     statsHomeworkPoints: (earned: number, maxTotal: number) => `🎯 Ball: <b>${earned}/${maxTotal}</b>`,
     statsHomeworkNone: "📝 Uy vazifalari: hali topshirilmadi",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Reyting: <b>${r}-o'rin</b> / ${tot} talaba (faollik bali ${sc}/100)`,
@@ -305,11 +305,11 @@ const T = {
     kbStreakOld: "📊 Моя статистика",
     kbCertOld: "🎓 Сертификат",
     statsTitle: "📊 <b>Моя статистика</b>",
-    statsLessons: (d: number, tot: number, watch: string) => `📚 Уроки: <b>${d}/${tot}</b> ${bar(d, tot)}${watch ? ` · ${watch} всего` : ""}`,
+    statsLessons: (d: number, tot: number, watch: string) => `📚 Уроки: <b>${d}/${tot}</b>${watch ? ` · ${watch} всего` : ""}\n${bar(d, tot)}`,
     statsStreak: (c: number, b: number) => `🔥 Стрик: <b>${c} дн.</b> (рекорд: ${b})`,
     statsStreakNone: "🔥 Стрик: ещё не начат",
-    statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Цель на сегодня: <b>${d}/${tar}</b> ${bar(d, tar)}${ok ? " ✅" : ""}`,
-    statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Домашка: <b>${sub}/${totalLeaves}</b> ${bar(sub, totalLeaves)}${scored ? ` (${scored} оценено)` : ""}`,
+    statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Цель на сегодня: <b>${d}/${tar}</b>${ok ? " ✅" : ""}\n${bar(d, tar)}`,
+    statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Домашка: <b>${sub}/${totalLeaves}</b>${scored ? ` (${scored} оценено)` : ""}\n${bar(sub, totalLeaves)}`,
     statsHomeworkPoints: (earned: number, maxTotal: number) => `🎯 Баллы: <b>${earned}/${maxTotal}</b>`,
     statsHomeworkNone: "📝 Домашка: ещё не сдавали",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Рейтинг: <b>${r} место</b> / ${tot} студентов (балл активности ${sc}/100)`,
@@ -503,11 +503,11 @@ const T = {
     kbStreakOld: "📊 My stats",
     kbCertOld: "🎓 Certificate",
     statsTitle: "📊 <b>My stats</b>",
-    statsLessons: (d: number, tot: number, watch: string) => `📚 Lessons: <b>${d}/${tot}</b> ${bar(d, tot)}${watch ? ` · ${watch} total` : ""}`,
+    statsLessons: (d: number, tot: number, watch: string) => `📚 Lessons: <b>${d}/${tot}</b>${watch ? ` · ${watch} total` : ""}\n${bar(d, tot)}`,
     statsStreak: (c: number, b: number) => `🔥 Streak: <b>${c} days</b> (best: ${b})`,
     statsStreakNone: "🔥 Streak: not started yet",
-    statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Today's goal: <b>${d}/${tar}</b> ${bar(d, tar)}${ok ? " ✅" : ""}`,
-    statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Homework: <b>${sub}/${totalLeaves}</b> ${bar(sub, totalLeaves)}${scored ? ` (${scored} graded)` : ""}`,
+    statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Today's goal: <b>${d}/${tar}</b>${ok ? " ✅" : ""}\n${bar(d, tar)}`,
+    statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Homework: <b>${sub}/${totalLeaves}</b>${scored ? ` (${scored} graded)` : ""}\n${bar(sub, totalLeaves)}`,
     statsHomeworkPoints: (earned: number, maxTotal: number) => `🎯 Score: <b>${earned}/${maxTotal}</b>`,
     statsHomeworkNone: "📝 Homework: nothing submitted yet",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Ranking: <b>#${r}</b> of ${tot} students (activity score ${sc}/100)`,
@@ -1207,6 +1207,7 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     const completedLessons = (progressRes.data || []).length;
     const totalWatchSeconds = (watchRes.data || []).reduce((acc: number, r: any) => acc + Number(r.total_seconds || 0), 0);
     lines.push(t.statsLessons(completedLessons, totalLessons, fmtWatchDuration(totalWatchSeconds)));
+    lines.push("");
 
     const sk = streakRes.data;
     if (sk && (sk.current_streak || sk.longest_streak)) {
@@ -1214,11 +1215,13 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     } else {
       lines.push(t.statsStreakNone);
     }
+    lines.push("");
 
     const todayDone = (todayRes.data || []).length;
     const weeklyGoal = prefRes.data?.weekly_goal_lessons || 5;
     const dailyTarget = Math.max(1, Math.round(weeklyGoal / 7));
     lines.push(t.statsDailyGoal(todayDone, dailyTarget, todayDone >= dailyTarget));
+    lines.push("");
 
     // Homework: leaves only, with effective grade (current score ?? latest previous_attempts.score).
     const allAssigns = (hwAssignsRes.data || []) as any[];
@@ -1235,6 +1238,7 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
         lines.push(t.statsHomeworkPoints(summary.earned, summary.maxTotal));
       }
     }
+    lines.push("");
 
     const lb = lbRes.data;
     if (lb && lb.rank) {
@@ -1242,6 +1246,7 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     } else {
       lines.push(t.statsRankingNone);
     }
+    lines.push("");
 
     lines.push(t.statsBadges(badgesEarnedRes.count || 0, badgesTotalRes.count || 0));
   } catch (e) {
