@@ -151,7 +151,7 @@ export default function AdminUsers() {
   // Duplicate accounts (banner only shows when > 0)
   const [dupCount, setDupCount] = useState(0);
   // Impersonation ("Log in as")
-  const isStaffAdmin = role === "admin" || role === "superadmin";
+  const isStaffAdmin = (role as string) === "admin" || (role as string) === "superadmin";
   const [impInput, setImpInput] = useState("");
   const [impBusy, setImpBusy] = useState(false);
   const [impResult, setImpResult] = useState<{ url: string; name: string } | null>(null);
