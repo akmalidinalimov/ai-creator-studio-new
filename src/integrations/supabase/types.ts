@@ -2510,6 +2510,18 @@ export type Database = {
         Returns: number
       }
       internal_fn_secret: { Args: never; Returns: string }
+      leaderboard_group_window: {
+        Args: { _around?: number; uid: string }
+        Returns: {
+          first_name: string
+          group_rank: number
+          group_total: number
+          is_me: boolean
+          last_initial: string
+          score: number
+          user_id: string
+        }[]
+      }
       leaderboard_my_rank: {
         Args: { uid: string }
         Returns: {

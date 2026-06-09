@@ -108,6 +108,11 @@ const T = {
     statsHomeworkNone: "📝 Uy vazifalari: hali topshirilmadi",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Reyting: <b>${r}-o'rin</b> / ${tot} talaba`,
     statsRankingNone: "🏆 Reyting: hali sanalmadi (faollik kerak — kamida 1 ta dars ko'ring)",
+    statsGroupTitle: "🏆 <b>Guruh reytingi</b>",
+    statsGroupRow: (rankLabel: string, name: string, score: number) => `${rankLabel} ${name} — ${score}`,
+    statsGroupRowMe: (rankLabel: string, score: number) => `<b>${rankLabel} 👉 Siz — ${score}</b>`,
+    statsGroupSummary: (rank: number, total: number, gap: string) => `📊 Guruhdagi o'rningiz: <b>${rank}/${total}</b>${gap}`,
+    statsGroupGap: (nextRank: number, gap: number) => ` · ${nextRank}-o'ringa ${gap} ball qoldi`,
     statsBadges: (e: number, tot: number) => `🏅 Nishonlar: <b>${e}/${tot}</b>`,
     statsBadgesShowcase: (icons: string, earned: number, total: number) => `🏅 Nishonlar: <b>${earned}/${total}</b>${icons ? `\n${icons}` : ""}`,
     statsNextBadge: (name: string, desc: string) => `🔒 Keyingi nishon: <b>${name}</b>${desc ? ` — ${desc}` : ""}`,
@@ -324,6 +329,11 @@ const T = {
     statsHomeworkNone: "📝 Домашка: ещё не сдавали",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Рейтинг: <b>${r} место</b> / ${tot} студентов`,
     statsRankingNone: "🏆 Рейтинг: пока не учтён (нужна активность — посмотрите хотя бы 1 урок)",
+    statsGroupTitle: "🏆 <b>Рейтинг группы</b>",
+    statsGroupRow: (rankLabel: string, name: string, score: number) => `${rankLabel} ${name} — ${score}`,
+    statsGroupRowMe: (rankLabel: string, score: number) => `<b>${rankLabel} 👉 Вы — ${score}</b>`,
+    statsGroupSummary: (rank: number, total: number, gap: string) => `📊 Ваше место в группе: <b>${rank}/${total}</b>${gap}`,
+    statsGroupGap: (nextRank: number, gap: number) => ` · до ${nextRank}-го места ${gap} б.`,
     statsBadges: (e: number, tot: number) => `🏅 Значки: <b>${e}/${tot}</b>`,
     statsBadgesShowcase: (icons: string, earned: number, total: number) => `🏅 Значки: <b>${earned}/${total}</b>${icons ? `\n${icons}` : ""}`,
     statsNextBadge: (name: string, desc: string) => `🔒 Следующий значок: <b>${name}</b>${desc ? ` — ${desc}` : ""}`,
@@ -530,6 +540,11 @@ const T = {
     statsHomeworkNone: "📝 Homework: nothing submitted yet",
     statsRanking: (r: number, tot: number, sc: number) => `🏆 Ranking: <b>#${r}</b> of ${tot} students`,
     statsRankingNone: "🏆 Ranking: not ranked yet (need activity — watch at least 1 lesson)",
+    statsGroupTitle: "🏆 <b>Group ranking</b>",
+    statsGroupRow: (rankLabel: string, name: string, score: number) => `${rankLabel} ${name} — ${score}`,
+    statsGroupRowMe: (rankLabel: string, score: number) => `<b>${rankLabel} 👉 You — ${score}</b>`,
+    statsGroupSummary: (rank: number, total: number, gap: string) => `📊 Your group rank: <b>${rank}/${total}</b>${gap}`,
+    statsGroupGap: (nextRank: number, gap: number) => ` · ${gap} pts to #${nextRank}`,
     statsBadges: (e: number, tot: number) => `🏅 Badges: <b>${e}/${tot}</b>`,
     statsBadgesShowcase: (icons: string, earned: number, total: number) => `🏅 Badges: <b>${earned}/${total}</b>${icons ? `\n${icons}` : ""}`,
     statsNextBadge: (name: string, desc: string) => `🔒 Next badge: <b>${name}</b>${desc ? ` — ${desc}` : ""}`,
@@ -1292,11 +1307,32 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     }
     lines.push("");
 
-    const lb = lbRes.data;
-    if (lb && lb.rank) {
-      lines.push(t.statsRanking(lb.rank, totalStudentsRes.count || 0, lb.score || 0));
+    let groupRows: any[] = [];
+    try {
+      const { data: gw } = await admin.rpc("leaderboard_group_window", { uid: userId, _around: 2 });
+      groupRows = (gw || []) as any[];
+    } catch (_e) { groupRows = []; }
+    if (groupRows.length > 0) {
+      const meRow = groupRows.find((r: any) => r.is_me);
+      const total = meRow?.group_total || groupRows[0]?.group_total || groupRows.length;
+      lines.push(t.statsGroupTitle);
+      for (const r of groupRows) {
+        const medal = r.group_rank === 1 ? "🥇" : r.group_rank === 2 ? "🥈" : r.group_rank === 3 ? "🥉" : `${r.group_rank}.`;
+        const nm = `${r.first_name}${r.last_initial ? " " + r.last_initial + "." : ""}`;
+        if (r.is_me) lines.push(t.statsGroupRowMe(medal, r.score));
+        else lines.push(t.statsGroupRow(medal, nm, r.score));
+      }
+      let gapTxt = "";
+      if (meRow) {
+        const above = groupRows.find((r: any) => r.group_rank === meRow.group_rank - 1);
+        if (above) gapTxt = t.statsGroupGap(above.group_rank, Math.max(0, above.score - meRow.score));
+      }
+      lines.push("");
+      lines.push(t.statsGroupSummary(meRow?.group_rank || 0, total, gapTxt));
     } else {
-      lines.push(t.statsRankingNone);
+      const lb = lbRes.data;
+      if (lb && lb.rank) lines.push(t.statsRanking(lb.rank, totalStudentsRes.count || 0, lb.score || 0));
+      else lines.push(t.statsRankingNone);
     }
     lines.push("");
 
