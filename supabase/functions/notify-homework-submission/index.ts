@@ -27,12 +27,27 @@ const MSG = {
     `📝 <b>New submission</b>\n\n<b>${name}</b> submitted Module ${mn} · Task ${tn}${title ? `\n"${title}"` : ""}`,
 };
 
+const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+let __sec: string | null = null;
+async function __internalSecret(): Promise<string> {
+  if (__sec) return __sec;
+  const { data, error } = await __admin.rpc("internal_fn_secret");
+  if (error) throw error;
+  __sec = data as string;
+  return __sec;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const __p = req.headers.get("x-internal-secret");
+  const __s = await __internalSecret();
+  if (!__p || __p !== __s) {
+    return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
   if (!BOT_TOKEN) {
     return new Response(JSON.stringify({ ok: false, error: "bot not configured" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
-  const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const admin = __admin;
 
   const { data: pending, error } = await admin
     .from("homework_teacher_dm_queue")
