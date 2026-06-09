@@ -3893,8 +3893,7 @@ async function handleCallback(admin: any, cq: any) {
   }
 
   if (data.startsWith("hw:resub_no:") && chatId) {
-    const profile = await findProfileByTelegramId(admin, tgId);
-    const locale: Locale = normLocale(profile?.preferred_locale);
+    const locale: Locale = normLocale(_clicker?.preferred_locale);
     const t = T[locale] as any;
     await answerCallback(cq.id, "OK");
     await sendMessage(chatId, t.hwResubCancelled);
