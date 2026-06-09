@@ -1823,7 +1823,9 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
   if (cmd === "/guruh" || cmd === "/group") {
     const r = await resolveActiveGroup(admin, teacherId);
     if (r.mode === "none") { await sendWithKeyboard(chatId, t.teacherNoGroups, locale, false, "teacher"); return true; }
-    await showGroupPicker(chatId, locale, "switch", r.mode === "ok" ? r.groups : r.groups);
+    const allGroups = r.mode === "ok" ? r.groups : r.groups;
+    if (allGroups.length === 1) { await sendWithKeyboard(chatId, t.tActiveGroup(allGroups[0].name), locale, false, "teacher"); return true; }
+    await showGroupPicker(chatId, locale, "switch", allGroups);
     return true;
   }
 
