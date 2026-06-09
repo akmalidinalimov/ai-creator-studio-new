@@ -1307,11 +1307,32 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     }
     lines.push("");
 
-    const lb = lbRes.data;
-    if (lb && lb.rank) {
-      lines.push(t.statsRanking(lb.rank, totalStudentsRes.count || 0, lb.score || 0));
+    let groupRows: any[] = [];
+    try {
+      const { data: gw } = await admin.rpc("leaderboard_group_window", { uid: userId, _around: 2 });
+      groupRows = (gw || []) as any[];
+    } catch (_e) { groupRows = []; }
+    if (groupRows.length > 0) {
+      const meRow = groupRows.find((r: any) => r.is_me);
+      const total = meRow?.group_total || groupRows[0]?.group_total || groupRows.length;
+      lines.push(t.statsGroupTitle);
+      for (const r of groupRows) {
+        const medal = r.group_rank === 1 ? "🥇" : r.group_rank === 2 ? "🥈" : r.group_rank === 3 ? "🥉" : `${r.group_rank}.`;
+        const nm = `${r.first_name}${r.last_initial ? " " + r.last_initial + "." : ""}`;
+        if (r.is_me) lines.push(t.statsGroupRowMe(medal, r.score));
+        else lines.push(t.statsGroupRow(medal, nm, r.score));
+      }
+      let gapTxt = "";
+      if (meRow) {
+        const above = groupRows.find((r: any) => r.group_rank === meRow.group_rank - 1);
+        if (above) gapTxt = t.statsGroupGap(above.group_rank, Math.max(0, above.score - meRow.score));
+      }
+      lines.push("");
+      lines.push(t.statsGroupSummary(meRow?.group_rank || 0, total, gapTxt));
     } else {
-      lines.push(t.statsRankingNone);
+      const lb = lbRes.data;
+      if (lb && lb.rank) lines.push(t.statsRanking(lb.rank, totalStudentsRes.count || 0, lb.score || 0));
+      else lines.push(t.statsRankingNone);
     }
     lines.push("");
 
