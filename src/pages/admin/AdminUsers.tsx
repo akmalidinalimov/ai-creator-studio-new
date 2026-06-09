@@ -150,6 +150,46 @@ export default function AdminUsers() {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   // Duplicate accounts (banner only shows when > 0)
   const [dupCount, setDupCount] = useState(0);
+  // Impersonation ("Log in as")
+  const isStaffAdmin = (role as string) === "admin" || (role as string) === "superadmin";
+  const [impInput, setImpInput] = useState("");
+  const [impBusy, setImpBusy] = useState(false);
+  const [impResult, setImpResult] = useState<{ url: string; name: string } | null>(null);
+
+  const runImpersonate = async (body: Record<string, unknown>) => {
+    setImpBusy(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("admin-impersonate", { body });
+      if (error) {
+        const msg = (data as any)?.error || error.message || "error";
+        if (msg === "not_found") toast.error("User not found");
+        else if (msg === "ambiguous") toast.error("Multiple users match, use the exact ID");
+        else if (msg === "cannot_impersonate_admin") toast.error("Cannot impersonate an admin");
+        else toast.error(msg);
+        return;
+      }
+      if (data?.error) {
+        const msg = data.error;
+        if (msg === "not_found") toast.error("User not found");
+        else if (msg === "ambiguous") toast.error("Multiple users match, use the exact ID");
+        else if (msg === "cannot_impersonate_admin") toast.error("Cannot impersonate an admin");
+        else toast.error(msg);
+        return;
+      }
+      setImpResult({ url: data.url, name: data.name });
+    } catch (e: any) {
+      toast.error(e?.message || String(e));
+    } finally {
+      setImpBusy(false);
+    }
+  };
+
+  const submitImpersonateInput = () => {
+    const v = impInput.trim();
+    if (!v) return;
+    if (/^\d+$/.test(v)) runImpersonate({ telegram_id: v });
+    else runImpersonate({ telegram_username: v.replace(/^@/, "") });
+  };
 
   const reload = async () => {
     setLoading(true);
@@ -1024,6 +1064,23 @@ export default function AdminUsers() {
           </Select>
         </div>
 
+        {isStaffAdmin && (
+          <div className="flex flex-wrap gap-2 items-center">
+            <Input
+              placeholder="@username yoki Telegram ID"
+              value={impInput}
+              onChange={(e) => setImpInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") submitImpersonateInput(); }}
+              className="max-w-[260px]"
+            />
+            <Button size="sm" variant="outline" disabled={impBusy || !impInput.trim()} onClick={submitImpersonateInput}>
+              Log in as
+            </Button>
+          </div>
+        )}
+
+
+
 
         {/* Mobile: card list */}
         <div className="md:hidden space-y-2">
@@ -1691,6 +1748,11 @@ export default function AdminUsers() {
                 <div className="flex flex-wrap gap-2 pt-2">
                   <Button variant="outline" size="sm" onClick={() => resendWelcome([manageUser.email])}><Mail className="h-4 w-4" />{t("admin.users.resendWelcome")}</Button>
                   <Button variant="outline" size="sm" onClick={() => resetPassword(manageUser)}>{t("admin.users.resetPassword")}</Button>
+                  {isStaffAdmin && manageUser.role_name !== "admin" && manageUser.role_name !== "superadmin" && (
+                    <Button variant="outline" size="sm" disabled={impBusy} onClick={() => runImpersonate({ user_id: manageUser.id })}>
+                      Log in as
+                    </Button>
+                  )}
                   {isLocked(manageUser.email) && (
                     <Button variant="outline" size="sm" onClick={() => clearLockout(manageUser.email)}><Unlock className="h-4 w-4" />{t("admin.users.clearLockout")}</Button>
                   )}
@@ -1797,6 +1859,43 @@ export default function AdminUsers() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={!!impResult} onOpenChange={(o) => { if (!o) setImpResult(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Log in as {impResult?.name}</DialogTitle>
+          </DialogHeader>
+          {impResult && (
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <Input readOnly value={impResult.url} onFocus={(e) => e.currentTarget.select()} />
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(impResult.url);
+                      toast.success("Link copied");
+                    } catch {
+                      toast.error("Copy failed");
+                    }
+                  }}
+                >
+                  <Copy className="h-4 w-4" /> Copy link
+                </Button>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Open this link in an incognito window to view as {impResult.name} (read-only). Incognito keeps your own admin session.
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => impResult && window.open(impResult.url, "_blank")}>
+              Open in new tab
+            </Button>
+            <Button onClick={() => setImpResult(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageShell>
   );
 }
