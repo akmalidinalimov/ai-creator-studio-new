@@ -1146,6 +1146,13 @@ function fmtWatchDuration(totalSeconds: number): string {
   return `${m}m`;
 }
 
+// Renders a 10-char progress bar like ██████░░░░ from a done/total fraction.
+function bar(done: number, total: number, width = 10): string {
+  const frac = total > 0 ? Math.min(1, Math.max(0, done / total)) : 0;
+  const filled = Math.round(frac * width);
+  return "█".repeat(filled) + "░".repeat(width - filled);
+}
+
 async function buildStatsMessage(admin: any, userId: string, locale: Locale): Promise<string> {
   const t = T[locale] as any;
   const lines: string[] = [t.statsTitle, ""];
