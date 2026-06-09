@@ -112,6 +112,7 @@ const T = {
     statsBadgesShowcase: (icons: string, earned: number, total: number) => `🏅 Nishonlar: <b>${earned}/${total}</b>${icons ? `\n${icons}` : ""}`,
     statsNextBadge: (name: string, desc: string) => `🔒 Keyingi nishon: <b>${name}</b>${desc ? ` — ${desc}` : ""}`,
     statsBadgesAllDone: "🏅 Barcha nishonlar yig'ildi! 🎉",
+    statsCta: (met: boolean) => met ? `✨ Zo'r! Bugun maqsadga yetdingiz — streakni saqlab qoldingiz! 🔥` : `👉 Bugun 1 ta dars ko'ring — streakni saqlang va keyingi darajaga yaqinlashing!`,
     btnSiteOpen: "📖 Saytda batafsil",
     hwTitle: "📝 <b>Mening vazifalarim</b>",
     hwEmpty: "Hozircha vazifalar yo'q.",
@@ -245,6 +246,8 @@ const T = {
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Modul ${n} — ${csvEscapeHtml(title)}</b> (${taskCount} ta)`,
     hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ V${tn}: ${sc}/${mx}${fb ? `\n      💬 ${csvEscapeHtml(fb)}` : ""}`,
     hwTaskUnscored: (tn: number) => `   ⏳ V${tn}: hali baholanmagan`,
+    hwTaskSubmitted: (tn: number) => `   📤 V${tn}: topshirilgan, baholashni kuting`,
+    hwTaskNotStarted: (tn: number) => `   📝 V${tn}: boshlanmadi`,
     hwSubmitHint: (mn: number, tn: number) => `   👇 Topshirish uchun pastdagi "📤 Topshirish — M${mn}·V${tn}" tugmasini bosing.`,
     hwModuleAllDone: "   ✅ Bu modul vazifalari topshirilgan.",
     hwTopicMissing: "   ⚠️ Topik sozlanmagan — ustozingizga murojaat qiling.",
@@ -325,6 +328,7 @@ const T = {
     statsBadgesShowcase: (icons: string, earned: number, total: number) => `🏅 Значки: <b>${earned}/${total}</b>${icons ? `\n${icons}` : ""}`,
     statsNextBadge: (name: string, desc: string) => `🔒 Следующий значок: <b>${name}</b>${desc ? ` — ${desc}` : ""}`,
     statsBadgesAllDone: "🏅 Все значки собраны! 🎉",
+    statsCta: (met: boolean) => met ? `✨ Отлично! Цель на сегодня выполнена — стрик сохранён! 🔥` : `👉 Посмотрите 1 урок сегодня — сохраните стрик и приблизьтесь к новому уровню!`,
     btnSiteOpen: "📖 Подробнее на сайте",
     hwTitle: "📝 <b>Мои задания</b>",
     hwEmpty: "Пока заданий нет.",
@@ -448,6 +452,8 @@ const T = {
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Модуль ${n} — ${csvEscapeHtml(title)}</b> (${taskCount})`,
     hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ З${tn}: ${sc}/${mx}${fb ? `\n      💬 ${csvEscapeHtml(fb)}` : ""}`,
     hwTaskUnscored: (tn: number) => `   ⏳ З${tn}: ещё не оценено`,
+    hwTaskSubmitted: (tn: number) => `   📤 З${tn}: сдано, ждёт оценки`,
+    hwTaskNotStarted: (tn: number) => `   📝 З${tn}: не начато`,
     hwSubmitHint: (mn: number, tn: number) => `   👇 Нажмите кнопку ниже "📤 Сдать — М${mn}·З${tn}".`,
     hwModuleAllDone: "   ✅ Задания этого модуля сданы.",
     hwTopicMissing: "   ⚠️ Топик не настроен — обратитесь к преподавателю.",
@@ -528,6 +534,7 @@ const T = {
     statsBadgesShowcase: (icons: string, earned: number, total: number) => `🏅 Badges: <b>${earned}/${total}</b>${icons ? `\n${icons}` : ""}`,
     statsNextBadge: (name: string, desc: string) => `🔒 Next badge: <b>${name}</b>${desc ? ` — ${desc}` : ""}`,
     statsBadgesAllDone: "🏅 All badges collected! 🎉",
+    statsCta: (met: boolean) => met ? `✨ Great! You hit today's goal — streak kept! 🔥` : `👉 Watch 1 lesson today — keep your streak and get closer to the next level!`,
     btnSiteOpen: "📖 More on site",
     hwTitle: "📝 <b>My homework</b>",
     hwEmpty: "No homework yet.",
@@ -651,6 +658,8 @@ const T = {
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Module ${n} — ${csvEscapeHtml(title)}</b> (${taskCount})`,
     hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ T${tn}: ${sc}/${mx}${fb ? `\n      💬 ${csvEscapeHtml(fb)}` : ""}`,
     hwTaskUnscored: (tn: number) => `   ⏳ T${tn}: not graded yet`,
+    hwTaskSubmitted: (tn: number) => `   📤 T${tn}: submitted, awaiting score`,
+    hwTaskNotStarted: (tn: number) => `   📝 T${tn}: not started`,
     hwSubmitHint: (mn: number, tn: number) => `   👇 Tap "📤 Submit — M${mn}·T${tn}" below.`,
     hwModuleAllDone: "   ✅ All tasks for this module submitted.",
     hwTopicMissing: "   ⚠️ Topic not configured — contact your teacher.",
@@ -1305,6 +1314,8 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     } else {
       lines.push(t.statsBadgesAllDone);
     }
+    lines.push("");
+    lines.push(t.statsCta(todayDone >= dailyTarget));
   } catch (e) {
     console.error("buildStatsMessage error", e);
   }
@@ -1384,8 +1395,10 @@ async function buildHomeworkMessage(
         const tnLabel: any = a.parent_id ? `${parentTn}.S${a.sap_number ?? "?"}` : parentTn;
         if (s && s.score != null) {
           lines.push(t.hwTaskScored(tnLabel, s.score, a.max_score || 10, s.score_feedback || ""));
+        } else if (s) {
+          lines.push(t.hwTaskSubmitted(tnLabel));
         } else {
-          lines.push(t.hwTaskUnscored(tnLabel));
+          lines.push(t.hwTaskNotStarted(tnLabel));
         }
       }
       const topic = topicMap.get(m.mid);
@@ -4422,6 +4435,7 @@ Deno.serve(async (req) => {
         if (!consumed) {
           const mapped = buttonTextToCommand(text);
           if (mapped) await handleCommand(admin, msg, mapped);
+          else if (isPrivateChat) await sendWithKeyboard(msg.chat.id, T[locale].kbHint, locale, adminFlag, persona);
         }
       }
     } else if (update.callback_query) {
