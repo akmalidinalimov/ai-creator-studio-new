@@ -112,7 +112,7 @@ Deno.serve(async (req) => {
       token,
       user_id: target.id,
       target_path: "/dashboard",
-      expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
     });
     if (insErr) throw insErr;
 
@@ -131,7 +131,7 @@ Deno.serve(async (req) => {
       "user";
     const trimmed = name.toString().trim();
     const url =
-      SITE_URL + "/auth/magic?token=" + token + "&imp=1&as=" + encodeURIComponent(trimmed);
+      SITE_URL + "/auth/magic?t=" + token + "&imp=1&as=" + encodeURIComponent(trimmed);
 
     return new Response(JSON.stringify({ url, name: trimmed }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
