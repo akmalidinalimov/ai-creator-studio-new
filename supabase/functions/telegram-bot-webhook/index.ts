@@ -3971,10 +3971,8 @@ async function handleCallback(admin: any, cq: any) {
   // Teacher: re-show group picker
   // Teacher: per-module homework drilldown (thw:sub / thw:not : <groupId> : <moduleId>)
   if ((data.startsWith("thw:sub:") || data.startsWith("thw:not:")) && chatId) {
-    const profile = await findProfileByTelegramId(admin, tgId);
-    if (!profile) { await answerCallback(cq.id); return; }
-    const persona = await getPersona(admin, profile.id);
-    if (persona !== "teacher" && persona !== "admin") { await answerCallback(cq.id); return; }
+    if (!_clicker) { await answerCallback(cq.id); return; }
+    if (_effPersona !== "teacher" && _effPersona !== "admin") { await answerCallback(cq.id); return; }
     const isSubmitted = data.startsWith("thw:sub:");
     const rest = data.slice(isSubmitted ? "thw:sub:".length : "thw:not:".length);
     const sep = rest.indexOf(":");
@@ -3982,8 +3980,8 @@ async function handleCallback(admin: any, cq: any) {
     const groupId = rest.slice(0, sep);
     const moduleId = rest.slice(sep + 1);
     // Validate teacher owns group (admins ok)
-    if (persona === "teacher") {
-      const groups = await teacherGroups(admin, profile.id);
+    if (_effPersona === "teacher") {
+      const groups = await teacherGroups(admin, _effId);
       if (!groups.find((x) => x.id === groupId)) { await answerCallback(cq.id, "⛔"); return; }
     }
     await answerCallback(cq.id);
