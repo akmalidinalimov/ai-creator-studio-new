@@ -2509,6 +2509,7 @@ export type Database = {
         Args: { _uid: string }
         Returns: number
       }
+      internal_fn_secret: { Args: never; Returns: string }
       leaderboard_my_rank: {
         Args: { uid: string }
         Returns: {
