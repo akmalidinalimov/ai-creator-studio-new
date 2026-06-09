@@ -365,6 +365,7 @@ const T = {
     tKbTop: "🏆 ТОП студенты",
     tKbBroadcast: "📣 Сообщение группе",
     tKbSettings: "⚙️ Настройки",
+    tKbSwitchGroup: "🔄 Сменить группу",
     tKbHomework: "📝 Задания",
     tKbGrade: "📝 Оценить",
     tKbGraded: "👥 Студенты",
