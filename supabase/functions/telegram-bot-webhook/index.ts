@@ -758,6 +758,7 @@ function getTeacherKeyboard(locale: Locale) {
       [{ text: t.tKbStats }, { text: t.tKbTop }],
       [{ text: t.tKbStudents }, { text: t.tKbInactive }],
       [{ text: t.tKbBroadcast }, { text: t.tKbSettings }],
+      [{ text: t.tKbSwitchGroup }],
       [{ text: t.kbLang }],
     ],
     resize_keyboard: true,
