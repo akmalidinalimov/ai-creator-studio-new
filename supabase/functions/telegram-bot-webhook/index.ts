@@ -2866,15 +2866,133 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
     return;
   }
 
-  // Admin / teacher routing
-  const persona = await getPersona(admin, profile.id);
-  if (persona === "admin") {
-    const handled = await handleAdminCommand(admin, chatId, profile.id, locale, cmd);
-    if (handled) return;
-  } else if (persona === "teacher") {
-    const handled = await handleTeacherCommand(admin, chatId, profile.id, locale, cmd);
-    if (handled) return;
+  // Admin / teacher routing (with impersonation override for admins)
+  const realPersona = await getPersona(admin, profile.id);
+
+  // --- Admin "act as" entry: /asteacher or /aststudent <@username|tg_id> ---
+  if (realPersona === "admin") {
+    const rawLower = cmdRaw.trim().toLowerCase();
+    if (rawLower.startsWith("/asteacher") || rawLower.startsWith("/aststudent")) {
+      const argRaw = cmdRaw.trim().split(/\s+/).slice(1).join(" ").trim();
+      if (!argRaw) {
+        await sendMessage(chatId, "Foydalanish: /asteacher @username yoki Telegram ID");
+        return;
+      }
+      let target: any = null;
+      let ambiguous = false;
+      if (/^\d+$/.test(argRaw)) {
+        const { data } = await admin
+          .from("profiles")
+          .select("id, name, last_name, telegram_username")
+          .eq("telegram_id", Number(argRaw))
+          .maybeSingle();
+        target = data || null;
+      } else {
+        const uname = argRaw.replace(/^@+/, "").toLowerCase();
+        const { data } = await admin
+          .from("profiles")
+          .select("id, name, last_name, telegram_username")
+          .ilike("telegram_username", uname)
+          .limit(2);
+        if (data && data.length === 1) target = data[0];
+        else if (data && data.length > 1) ambiguous = true;
+      }
+      if (ambiguous) {
+        await sendMessage(chatId, "Bir nechta foydalanuvchi topildi, aniqroq kiriting.");
+        return;
+      }
+      if (!target) {
+        await sendMessage(chatId, "Foydalanuvchi topilmadi.");
+        return;
+      }
+      const { data: tRoles } = await admin.from("user_roles").select("role").eq("user_id", target.id);
+      const roleSet = new Set((tRoles || []).map((r: any) => r.role));
+      if (roleSet.has("admin") || roleSet.has("superadmin")) {
+        await sendMessage(chatId, "Admin impersonatsiya qilinmaydi");
+        return;
+      }
+      const asPersona: Persona = roleSet.has("teacher") ? "teacher" : "student";
+      const asName =
+        [target.name, target.last_name].filter(Boolean).join(" ") ||
+        (target.telegram_username ? `@${target.telegram_username}` : "user");
+      await admin.from("bot_sessions").upsert({
+        user_id: profile.id,
+        state: "impersonate",
+        data: { as_user_id: target.id, as_persona: asPersona, as_name: asName },
+        updated_at: new Date().toISOString(),
+      });
+      await sendWithKeyboard(
+        chatId,
+        `👁 ${asName} sifatida ko'ryapsiz (faqat o'qish). Chiqish uchun /admin yozing.`,
+        locale,
+        false,
+        asPersona,
+      );
+      return;
+    }
   }
+
+  // --- Active impersonation override (admins only) ---
+  let effectivePersona: Persona | null = null;
+  let effectiveProfileId: string | null = null;
+  let impAsName = "";
+  if (realPersona === "admin") {
+    const { data: sess } = await admin
+      .from("bot_sessions")
+      .select("state, data")
+      .eq("user_id", profile.id)
+      .maybeSingle();
+    if (sess?.state === "impersonate" && sess?.data?.as_user_id) {
+      if (cmd === "/admin") {
+        // Exit impersonation, then fall through to normal admin routing.
+        await admin.from("bot_sessions").delete().eq("user_id", profile.id);
+      } else {
+        effectivePersona = sess.data.as_persona as Persona;
+        effectiveProfileId = sess.data.as_user_id as string;
+        impAsName = sess.data.as_name || "user";
+      }
+    }
+  }
+
+  if (effectivePersona && effectiveProfileId) {
+    const WRITE_BLOCKED = new Set(["/baholash", "/grade", "/tbroadcast"]);
+    if (WRITE_BLOCKED.has(cmd)) {
+      await sendWithKeyboard(
+        chatId,
+        "👁 Faqat o'qish rejimi. Chiqish: /admin",
+        locale,
+        false,
+        effectivePersona,
+      );
+      return;
+    }
+    if (effectivePersona === "teacher") {
+      const handled = await handleTeacherCommand(admin, chatId, effectiveProfileId, locale, cmd);
+      if (handled) return;
+      // Unknown teacher command while impersonating — keep keyboard and exit.
+      await sendWithKeyboard(chatId, `👁 ${impAsName} (read-only)`, locale, false, "teacher");
+      return;
+    }
+    // Student impersonation: rebind profile to target and fall through to student handlers.
+    const { data: tProfile } = await admin
+      .from("profiles")
+      .select(
+        "id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id, status",
+      )
+      .eq("id", effectiveProfileId)
+      .maybeSingle();
+    if (tProfile) Object.assign(profile as any, tProfile);
+    // Skip admin/teacher branches below — proceed straight to normal student command routing.
+  } else {
+    if (realPersona === "admin") {
+      const handled = await handleAdminCommand(admin, chatId, profile.id, locale, cmd);
+      if (handled) return;
+    } else if (realPersona === "teacher") {
+      const handled = await handleTeacherCommand(admin, chatId, profile.id, locale, cmd);
+      if (handled) return;
+    }
+  }
+
 
   if (cmd === "/davom") {
     const courseId = await getDefaultCourseId(admin);
