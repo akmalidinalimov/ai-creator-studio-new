@@ -1,5 +1,5 @@
 // Sends a Telegram celebration when a lesson is completed for the first time.
-// v2.0.1: copy from public.notification_templates; course completion also sends 1080x1080 share PNG.
+// v2.0.2: Vault-based x-internal-secret guard.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -31,6 +31,16 @@ function tg(method: string, body: unknown) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+let __sec: string | null = null;
+async function __internalSecret(): Promise<string> {
+  if (__sec) return __sec;
+  const { data, error } = await __admin.rpc("internal_fn_secret");
+  if (error) throw error;
+  __sec = data as string;
+  return __sec;
 }
 
 function randomToken(len = 32): string {
@@ -67,6 +77,11 @@ function interpolate(s: string, vars: Record<string, string | number>): string {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const __p = req.headers.get("x-internal-secret");
+  const __s = await __internalSecret();
+  if (!__p || __p !== __s) {
+    return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405, headers: corsHeaders });
 
   let body: { user_id?: string; lesson_id?: string };
@@ -77,7 +92,7 @@ Deno.serve(async (req) => {
   }
   if (!BOT_TOKEN) return new Response(JSON.stringify({ error: "bot not configured" }), { status: 200, headers: corsHeaders });
 
-  const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const admin = __admin;
 
   try {
     const { data: profile } = await admin.from("profiles")
