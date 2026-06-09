@@ -42,6 +42,10 @@ export default function AuthMagicLink() {
         try {
           if (params.get("imp") === "1") {
             sessionStorage.setItem("impersonating", params.get("as") || "user");
+            if (!cancelled) {
+              window.location.assign(data.target_path || "/dashboard");
+              return;
+            }
           }
         } catch { /* ignore */ }
         if (!cancelled) navigate(data.target_path || "/dashboard", { replace: true });
