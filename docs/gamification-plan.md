@@ -42,6 +42,29 @@ Recommended order: #1, #2, #3 (quick wins) → #6, #7, #8 (big levers) → the r
 - **Teacher multi-group switch**: added `🔄 Guruhni almashtirish` keyboard button; refreshed all teachers' keyboards via one-off `refresh-teacher-keyboards` edge fn.
 - **Admin "Log in as" impersonation** (web + bot), read-only. Web: `admin-impersonate` edge fn + magic-link reuse (`/auth/magic?t=…&imp=1`), `ImpersonationBanner`, `src/lib/impersonationGuard.ts` (blocks writes). Bot: `/asteacher` & `/aststudent`, with a central `_clicker/_effId/_effPersona/_isImp` resolver in `handleCallback` so every teacher + student callback honors impersonation and read-only. Spec: `docs/superpowers/specs/2026-06-09-admin-impersonation-design.md`.
 
+## How the new session should work (process)
+Do NOT jump to code. Work in this order:
+1. **Clarify first (ask me, one question at a time).** Goals, definition of "engagement" for this audience, which behaviors to drive (lesson completion, homework submission, streaks, return visits), notification appetite (how aggressive), success metrics, and any hard constraints. Use the brainstorming skill.
+2. **Capability check — skills/plugins.** Before researching from scratch, check whether an existing skill/plugin already covers gamification design. If none fits, **create a reusable `gamification` skill** (use the skill-creator / writing-skills skill) grounded in real frameworks, and install it to `~/.claude/skills/` so it persists. The skill should encode: the major gamification frameworks (Octalysis 8 core drives; Self-Determination Theory — autonomy/competence/relatedness; Fogg Behavior Model B=MAP; Nir Eyal's Hook model — trigger/action/variable-reward/investment; streak & loss-aversion mechanics; points/levels/badges/leaderboards done right vs. cargo-culted), WHEN each applies, common failure modes (extrinsic rewards crowding out intrinsic motivation, vanity metrics, notification fatigue), and how to measure effectiveness.
+3. **Research + synthesize (deep-research skill).** Apply the skill + targeted research to OUR context (Uzbek online learners, Telegram-first, ~484 students of mixed activity). Produce a **top-10** of concrete, prioritized mechanics tailored to the bot.
+4. **Prioritize with me.** I pick the highest-priority items to build.
+5. **Spec → approval → build incrementally via Lovable**, verifying each change (git pull + code review; I test live in Telegram). Quick wins first, then measure, then the big levers.
+
+## Engagement infrastructure to build on (already exists)
+The platform already has notification/reminder plumbing — reuse it, don't reinvent:
+- Crons: `cron-engagement` (every 30 min), `detect-and-nudge`, `cron-admin-digest`, `weekly-admin-topic-check`, `recalc-leaderboard` (15 min). pg_cron + `net.http_post`.
+- Smart nudges: rate-limited + opt-out (`nudge_log`, `re_engagement_deliveries`, `homework_teacher_dm_queue`, `bot_broadcast_rate`). Respect these — do NOT spam.
+- Signals to drive/measure gamification: `daily_watch_summary`, `lesson_progress`, `streaks`, `leaderboard_cache`, badge tables, `homework_submissions`.
+- Localization: every student-facing string is uz/ru/en in the `T` table — new copy must be added in all three.
+
+## Success metrics (define + track from day one)
+Pick a few and measure before/after: 7-day active students, lesson completions/day, homework submission rate, streak retention (3/7/30-day), and re-activation of dormant users. The dashboard already surfaces several of these.
+
+## Constraints / guardrails
+- Notification fatigue is the #1 risk — respect opt-out + rate limits; prefer well-timed, personal, actionable nudges over volume.
+- Keep all changes data-safe (no destructive migrations); additive only.
+- Don't break existing flows (stats correctness, impersonation read-only, role rules).
+
 ## Deferred follow-ups (not blocking gamification)
 - `bot_sessions` is single-row-per-user: impersonate vs `teacher_broadcast` state can overwrite each other (low risk).
 - Teachers have no dedicated web UI (bot-first) — impersonating a teacher on the web shows the admin shell. Decide whether a teacher web dashboard is wanted.
