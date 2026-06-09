@@ -3971,10 +3971,8 @@ async function handleCallback(admin: any, cq: any) {
   // Teacher: re-show group picker
   // Teacher: per-module homework drilldown (thw:sub / thw:not : <groupId> : <moduleId>)
   if ((data.startsWith("thw:sub:") || data.startsWith("thw:not:")) && chatId) {
-    const profile = await findProfileByTelegramId(admin, tgId);
-    if (!profile) { await answerCallback(cq.id); return; }
-    const persona = await getPersona(admin, profile.id);
-    if (persona !== "teacher" && persona !== "admin") { await answerCallback(cq.id); return; }
+    if (!_clicker) { await answerCallback(cq.id); return; }
+    if (_effPersona !== "teacher" && _effPersona !== "admin") { await answerCallback(cq.id); return; }
     const isSubmitted = data.startsWith("thw:sub:");
     const rest = data.slice(isSubmitted ? "thw:sub:".length : "thw:not:".length);
     const sep = rest.indexOf(":");
@@ -3982,8 +3980,8 @@ async function handleCallback(admin: any, cq: any) {
     const groupId = rest.slice(0, sep);
     const moduleId = rest.slice(sep + 1);
     // Validate teacher owns group (admins ok)
-    if (persona === "teacher") {
-      const groups = await teacherGroups(admin, profile.id);
+    if (_effPersona === "teacher") {
+      const groups = await teacherGroups(admin, _effId);
       if (!groups.find((x) => x.id === groupId)) { await answerCallback(cq.id, "⛔"); return; }
     }
     await answerCallback(cq.id);
@@ -4080,43 +4078,41 @@ async function handleCallback(admin: any, cq: any) {
     return;
   }
   if ((data.startsWith("gs:list:") || data.startsWith("gs:pick:") || data.startsWith("gs:open:") || data.startsWith("tr:") || data.startsWith("thm:")) && chatId) {
-    const profile = await findProfileByTelegramId(admin, tgId);
-    if (!profile) { await answerCallback(cq.id); return; }
-    const persona = await getPersona(admin, profile.id);
-    if (persona !== "admin" && persona !== "teacher") { await answerCallback(cq.id); return; }
-    const locale: Locale = normLocale(profile.preferred_locale);
-    const isAdmin = persona === "admin";
+    if (!_clicker) { await answerCallback(cq.id); return; }
+    if (_effPersona !== "admin" && _effPersona !== "teacher") { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(_clicker.preferred_locale);
+    const isAdmin = _effPersona === "admin";
     let groupIdScope: string | null = null;
     if (!isAdmin) {
-      const { data: pr } = await admin.from("profiles").select("active_teacher_group_id").eq("id", profile.id).maybeSingle();
+      const { data: pr } = await admin.from("profiles").select("active_teacher_group_id").eq("id", _effId).maybeSingle();
       groupIdScope = pr?.active_teacher_group_id || null;
     }
     await answerCallback(cq.id);
     if (data.startsWith("gs:list:")) {
       const page = parseInt(data.slice("gs:list:".length), 10) || 0;
-      await renderStudentPicker(admin, chatId, profile.id, locale, isAdmin, page, groupIdScope);
+      await renderStudentPicker(admin, chatId, _effId, locale, isAdmin, page, groupIdScope);
     } else if (data.startsWith("gs:pick:")) {
       const sid = data.slice("gs:pick:".length);
-      await renderStudentBreakdown(admin, chatId, profile.id, sid, locale, isAdmin);
+      await renderStudentBreakdown(admin, chatId, _effId, sid, locale, isAdmin);
     } else if (data.startsWith("gs:open:")) {
       const subId = data.slice("gs:open:".length);
-      await startGradingFlow(admin, chatId, tgId, profile.id, subId, locale, isAdmin);
+      await startGradingFlow(admin, chatId, tgId, _effId, subId, locale, isAdmin);
     } else if (data.startsWith("tr:list:")) {
       const page = parseInt(data.slice("tr:list:".length), 10) || 0;
-      await renderTeacherRoster(admin, chatId, profile.id, locale, isAdmin, page, groupIdScope);
+      await renderTeacherRoster(admin, chatId, _effId, locale, isAdmin, page, groupIdScope);
     } else if (data.startsWith("tr:stu:")) {
       const sid = data.slice("tr:stu:".length);
-      await renderStudentModules(admin, chatId, profile.id, sid, locale, isAdmin);
+      await renderStudentModules(admin, chatId, _effId, sid, locale, isAdmin);
     } else if (data.startsWith("tr:mod:")) {
       const rest = data.slice("tr:mod:".length);
       const [sid, mid] = rest.split(":");
-      if (sid && mid) await renderStudentModuleDetail(admin, chatId, profile.id, sid, mid, locale, isAdmin);
+      if (sid && mid) await renderStudentModuleDetail(admin, chatId, _effId, sid, mid, locale, isAdmin);
     } else if (data.startsWith("thm:list:")) {
       const page = parseInt(data.slice("thm:list:".length), 10) || 0;
-      await renderTeacherModulePicker(admin, chatId, profile.id, locale, isAdmin, page, groupIdScope);
+      await renderTeacherModulePicker(admin, chatId, _effId, locale, isAdmin, page, groupIdScope);
     } else if (data.startsWith("thm:mod:")) {
       const mid = data.slice("thm:mod:".length);
-      if (mid) await renderTeacherModuleDetail(admin, chatId, profile.id, mid, locale, isAdmin, groupIdScope);
+      if (mid) await renderTeacherModuleDetail(admin, chatId, _effId, mid, locale, isAdmin, groupIdScope);
     }
     return;
   }
