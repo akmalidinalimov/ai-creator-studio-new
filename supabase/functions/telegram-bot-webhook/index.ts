@@ -1291,7 +1291,20 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     }
     lines.push("");
 
-    lines.push(t.statsBadges(badgesEarnedRes.count || 0, badgesTotalRes.count || 0));
+    const allBadges = (badgesAllRes.data || []) as any[];
+    const earnedIds = new Set(((userBadgesRes.data || []) as any[]).map((r) => r.badge_id));
+    const earnedBadges = allBadges.filter((b) => earnedIds.has(b.id));
+    const lockedBadges = allBadges.filter((b) => !earnedIds.has(b.id));
+    const earnedIcons = earnedBadges.map((b) => b.icon || "🏅").join(" ");
+    lines.push(t.statsBadgesShowcase(earnedIcons, earnedBadges.length, allBadges.length));
+    if (lockedBadges.length > 0) {
+      const nb = lockedBadges[0];
+      const nm = nb["name_" + locale] || nb.name_uz || "";
+      const ds = nb["description_" + locale] || nb.description_uz || "";
+      lines.push(t.statsNextBadge(nm, ds));
+    } else {
+      lines.push(t.statsBadgesAllDone);
+    }
   } catch (e) {
     console.error("buildStatsMessage error", e);
   }
