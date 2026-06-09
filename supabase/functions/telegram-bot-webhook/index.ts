@@ -4324,15 +4324,18 @@ Deno.serve(async (req) => {
         // Grading session intercepts /skip and /cancel for the in-progress flow
         if ((persona === "teacher" || persona === "admin") && profileForLocale) {
           const cmd0 = text.split(/\s+/)[0].toLowerCase();
+          const passCmd = (cmd0 === "/asteacher" || cmd0 === "/aststudent") ? text.trim() : cmd0;
           if (cmd0 === "/skip" || cmd0 === "/cancel") {
             const consumed = await handleGradingSession(admin, msg, profileForLocale.id, locale, persona === "admin");
             if (consumed) { /* done */ }
-            else { await handleCommand(admin, msg, cmd0); }
+            else { await handleCommand(admin, msg, passCmd); }
           } else {
-            await handleCommand(admin, msg, cmd0);
+            await handleCommand(admin, msg, passCmd);
           }
         } else {
-          await handleCommand(admin, msg, text.split(/\s+/)[0]);
+          const cmd0 = text.split(/\s+/)[0].toLowerCase();
+          const passCmd = (cmd0 === "/asteacher" || cmd0 === "/aststudent") ? text.trim() : cmd0;
+          await handleCommand(admin, msg, passCmd);
         }
       } else {
         // Grading conversation captures plain text replies first
