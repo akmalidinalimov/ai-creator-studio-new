@@ -10,6 +10,16 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+let __sec: string | null = null;
+async function __internalSecret(): Promise<string> {
+  if (__sec) return __sec;
+  const { data, error } = await __admin.rpc("internal_fn_secret");
+  if (error) throw error;
+  __sec = data as string;
+  return __sec;
+}
+
 type Locale = "uz" | "ru" | "en";
 const normLocale = (c?: string | null): Locale => {
   const l = (c || "").toLowerCase().slice(0, 2);
@@ -128,12 +138,17 @@ async function logNotif(admin: any, user_id: string, type: string, payload: Reco
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const __p = req.headers.get("x-internal-secret");
+  const __s = await __internalSecret();
+  if (!__p || __p !== __s) {
+    return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
 
   if (!BOT_TOKEN) {
     return new Response(JSON.stringify({ error: "bot not configured" }), { status: 200, headers: corsHeaders });
   }
 
-  const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const admin = __admin;
   const courseId = await getDefaultCourseId(admin);
   const templates = await loadTemplates(admin);
 
