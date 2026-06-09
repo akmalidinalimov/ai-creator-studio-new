@@ -1153,6 +1153,26 @@ function bar(done: number, total: number, width = 10): string {
   return "█".repeat(filled) + "░".repeat(width - filled);
 }
 
+// Named levels mapped from the 0–100 activity score. Early bands are short so
+// beginners level up fast (competence for the bottom 80%); the number always goes up.
+const LEVELS = [
+  { min: 0, emoji: "🌱" },
+  { min: 10, emoji: "📗" },
+  { min: 25, emoji: "📘" },
+  { min: 45, emoji: "🎓" },
+  { min: 70, emoji: "🏆" },
+];
+
+function levelInfo(score: number) {
+  const s = Math.max(0, Math.min(100, Math.round(score || 0)));
+  let i = 0;
+  for (let k = 0; k < LEVELS.length; k++) if (s >= LEVELS[k].min) i = k;
+  const isMax = i === LEVELS.length - 1;
+  const floor = LEVELS[i].min;
+  const ceil = isMax ? 100 : LEVELS[i + 1].min;
+  return { i, isMax, emoji: LEVELS[i].emoji, score: s, into: s - floor, span: Math.max(1, ceil - floor), nextEmoji: isMax ? "" : LEVELS[i + 1].emoji };
+}
+
 async function buildStatsMessage(admin: any, userId: string, locale: Locale): Promise<string> {
   const t = T[locale] as any;
   const lines: string[] = [t.statsTitle, ""];
