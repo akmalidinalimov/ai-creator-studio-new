@@ -159,6 +159,7 @@ const T = {
     tKbTop: "🏆 TOP talabalar",
     tKbBroadcast: "📣 Guruhga xabar",
     tKbSettings: "⚙️ Sozlamalar",
+    tKbSwitchGroup: "🔄 Guruhni almashtirish",
     tKbHomework: "📝 Vazifalar",
     tKbGrade: "📝 Baholash",
     tKbGraded: "👥 Talabalar",
