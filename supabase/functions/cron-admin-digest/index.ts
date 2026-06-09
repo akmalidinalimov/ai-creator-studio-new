@@ -140,9 +140,14 @@ async function computeMetrics(admin: any) {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const __p = req.headers.get("x-internal-secret");
+  const __s = await __internalSecret();
+  if (!__p || __p !== __s) {
+    return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
   if (!BOT_TOKEN) return new Response(JSON.stringify({ error: "bot not configured" }), { status: 200, headers: corsHeaders });
 
-  const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const admin = __admin;
   const reqBody = await req.json().catch(() => ({}));
   const force: boolean = !!reqBody?.force;
 
