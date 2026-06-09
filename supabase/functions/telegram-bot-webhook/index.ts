@@ -3810,8 +3810,7 @@ async function handleCallback(admin: any, cq: any) {
   // Student tapped a per-module button in /vazifalar — show per-SAP submit buttons for that module.
   if (data.startsWith("hw:mod:") && chatId) {
     const moduleId = data.slice("hw:mod:".length);
-    const profile = await findProfileByTelegramId(admin, tgId);
-    if (!profile) { await answerCallback(cq.id); return; }
+    if (!_clicker) { await answerCallback(cq.id); return; }
     await answerCallback(cq.id);
     const { data: allList } = await admin
       .from("homework_assignments")
@@ -3829,7 +3828,7 @@ async function handleCallback(admin: any, cq: any) {
     const { data: subs } = await admin
       .from("homework_submissions")
       .select("id, assignment_id, score")
-      .eq("user_id", profile.id)
+      .eq("user_id", _effId)
       .in("assignment_id", leafIds);
     const subMap = new Map((subs || []).map((s: any) => [s.assignment_id, s]));
     const modulePos = (list[0]?.modules?.position ?? 0) + 1;
@@ -3867,9 +3866,8 @@ async function handleCallback(admin: any, cq: any) {
   // Student tapped "🔁 qayta topshirish" — confirm with Yes/No before resetting score.
   if (data.startsWith("hw:resub_ask:") && chatId) {
     const assignmentId = data.slice("hw:resub_ask:".length);
-    const profile = await findProfileByTelegramId(admin, tgId);
-    if (!profile) { await answerCallback(cq.id); return; }
-    const locale: Locale = normLocale(profile.preferred_locale);
+    if (!_clicker) { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(_clicker.preferred_locale);
     const t = T[locale] as any;
     await answerCallback(cq.id);
     const { data: a } = await admin
@@ -3879,7 +3877,7 @@ async function handleCallback(admin: any, cq: any) {
     const { data: sub } = await admin
       .from("homework_submissions")
       .select("id, score, score_feedback")
-      .eq("user_id", profile.id).eq("assignment_id", assignmentId)
+      .eq("user_id", _effId).eq("assignment_id", assignmentId)
       .maybeSingle();
     if (!a || !sub || sub.score == null) {
       await sendMessage(chatId, t.gradeNotFound);
@@ -3895,8 +3893,7 @@ async function handleCallback(admin: any, cq: any) {
   }
 
   if (data.startsWith("hw:resub_no:") && chatId) {
-    const profile = await findProfileByTelegramId(admin, tgId);
-    const locale: Locale = normLocale(profile?.preferred_locale);
+    const locale: Locale = normLocale(_clicker?.preferred_locale);
     const t = T[locale] as any;
     await answerCallback(cq.id, "OK");
     await sendMessage(chatId, t.hwResubCancelled);
