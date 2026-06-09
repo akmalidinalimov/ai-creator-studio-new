@@ -150,6 +150,46 @@ export default function AdminUsers() {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   // Duplicate accounts (banner only shows when > 0)
   const [dupCount, setDupCount] = useState(0);
+  // Impersonation ("Log in as")
+  const isStaffAdmin = role === "admin" || role === "superadmin";
+  const [impInput, setImpInput] = useState("");
+  const [impBusy, setImpBusy] = useState(false);
+  const [impResult, setImpResult] = useState<{ url: string; name: string } | null>(null);
+
+  const runImpersonate = async (body: Record<string, unknown>) => {
+    setImpBusy(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("admin-impersonate", { body });
+      if (error) {
+        const msg = (data as any)?.error || error.message || "error";
+        if (msg === "not_found") toast.error("User not found");
+        else if (msg === "ambiguous") toast.error("Multiple users match, use the exact ID");
+        else if (msg === "cannot_impersonate_admin") toast.error("Cannot impersonate an admin");
+        else toast.error(msg);
+        return;
+      }
+      if (data?.error) {
+        const msg = data.error;
+        if (msg === "not_found") toast.error("User not found");
+        else if (msg === "ambiguous") toast.error("Multiple users match, use the exact ID");
+        else if (msg === "cannot_impersonate_admin") toast.error("Cannot impersonate an admin");
+        else toast.error(msg);
+        return;
+      }
+      setImpResult({ url: data.url, name: data.name });
+    } catch (e: any) {
+      toast.error(e?.message || String(e));
+    } finally {
+      setImpBusy(false);
+    }
+  };
+
+  const submitImpersonateInput = () => {
+    const v = impInput.trim();
+    if (!v) return;
+    if (/^\d+$/.test(v)) runImpersonate({ telegram_id: v });
+    else runImpersonate({ telegram_username: v.replace(/^@/, "") });
+  };
 
   const reload = async () => {
     setLoading(true);
