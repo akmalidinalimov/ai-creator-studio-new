@@ -3789,6 +3789,24 @@ async function handleCallback(admin: any, cq: any) {
     return;
   }
 
+  // Resolve effective actor (honor admin impersonation via bot_sessions)
+  const _clicker = await findProfileByTelegramId(admin, tgId);
+  let _effId: string | null = _clicker?.id ?? null;
+  let _effPersona: any = _clicker ? await getPersona(admin, _clicker.id) : null;
+  let _isImp = false;
+  if (_clicker && _effPersona === "admin") {
+    const { data: _imp } = await admin.from("bot_sessions").select("state, data").eq("user_id", _clicker.id).maybeSingle();
+    if (_imp?.state === "impersonate" && _imp?.data?.as_user_id) {
+      _effId = _imp.data.as_user_id;
+      _effPersona = _imp.data.as_persona;
+      _isImp = true;
+    }
+  }
+  if (_isImp && (/^grade_task:|^grade:open:|^gs:open:|^settings:|^setlang:/.test(data) || /^hw:(start|resub_yes):/.test(data))) {
+    await answerCallback(cq.id, "👁 Faqat o'qish — /admin");
+    return;
+  }
+
   // Student tapped a per-module button in /vazifalar — show per-SAP submit buttons for that module.
   if (data.startsWith("hw:mod:") && chatId) {
     const moduleId = data.slice("hw:mod:".length);
