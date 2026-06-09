@@ -4048,12 +4048,9 @@ async function handleCallback(admin: any, cq: any) {
   }
 
   if (data === "tg:switch" && chatId) {
-    const profile = await findProfileByTelegramId(admin, tgId);
-    if (!profile) { await answerCallback(cq.id); return; }
-    const persona = await getPersona(admin, profile.id);
-    if (persona !== "teacher") { await answerCallback(cq.id); return; }
-    const locale: Locale = normLocale(profile.preferred_locale);
-    const groups = await teacherGroups(admin, profile.id);
+    if (!_clicker || _effPersona !== "teacher") { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(_clicker.preferred_locale);
+    const groups = await teacherGroups(admin, _effId);
     await answerCallback(cq.id);
     if (groups.length >= 2) await showGroupPicker(chatId, locale, "switch", groups);
     return;
@@ -4065,23 +4062,20 @@ async function handleCallback(admin: any, cq: any) {
     if (idx <= 0) { await answerCallback(cq.id); return; }
     const action = rest.slice(0, idx);
     const groupId = rest.slice(idx + 1);
-    const profile = await findProfileByTelegramId(admin, tgId);
-    if (!profile) { await answerCallback(cq.id); return; }
-    const persona = await getPersona(admin, profile.id);
-    if (persona !== "teacher") { await answerCallback(cq.id); return; }
-    const locale: Locale = normLocale(profile.preferred_locale);
+    if (!_clicker || _effPersona !== "teacher") { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(_clicker.preferred_locale);
     const t = T[locale] as any;
-    // Validate ownership
-    const groups = await teacherGroups(admin, profile.id);
+    if (_isImp && action === "baholash") { await answerCallback(cq.id, "👁 Faqat o'qish — /admin"); return; }
+    const groups = await teacherGroups(admin, _effId);
     const g = groups.find((x) => x.id === groupId);
     if (!g) { await answerCallback(cq.id); return; }
-    await admin.from("profiles").update({ active_teacher_group_id: g.id }).eq("id", profile.id);
+    await admin.from("profiles").update({ active_teacher_group_id: g.id }).eq("id", _effId);
     await answerCallback(cq.id);
     if (action === "switch") {
       await sendWithKeyboard(chatId, t.tGroupSwitched(g.name), locale, false, "teacher");
     } else {
       const cmd = TEACHER_ACTION_CMD[action];
-      if (cmd) await handleTeacherCommand(admin, chatId, profile.id, locale, cmd, g.id);
+      if (cmd) await handleTeacherCommand(admin, chatId, _effId, locale, cmd, g.id);
     }
     return;
   }
