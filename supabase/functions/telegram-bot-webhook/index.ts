@@ -97,14 +97,16 @@ const T = {
     kbStreakOld: "📊 Statistikam",
     kbCertOld: "🎓 Sertifikat",
     statsTitle: "📊 <b>Statistikam</b>",
+    levelNames: ["Boshlovchi", "O'quvchi", "Bilimdon", "Usta", "Master"],
+    statsLevel: (emoji: string, name: string, score: number, barStr: string, isMax: boolean, nextEmoji: string, nextName: string) => `⭐ Daraja: ${emoji} <b>${name}</b> (${score}/100)\n${barStr}${isMax ? " — eng yuqori daraja! 🏆" : ` → ${nextEmoji} ${nextName}`}`,
     statsLessons: (d: number, tot: number, watch: string) => `📚 Darslar: <b>${d}/${tot}</b>${watch ? ` · ${watch} jami` : ""}\n${bar(d, tot)}`,
     statsStreak: (c: number, b: number) => `🔥 Streak: <b>${c} kun</b> (eng yaxshisi: ${b})`,
     statsStreakNone: "🔥 Streak: hali boshlanmadi",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Bugungi maqsad: <b>${d}/${tar}</b>${ok ? " ✅" : ""}\n${bar(d, tar)}`,
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Uy vazifalari: <b>${sub}/${totalLeaves}</b>${scored ? ` (${scored} ta baholangan)` : ""}\n${bar(sub, totalLeaves)}`,
-    statsHomeworkPoints: (earned: number, maxTotal: number) => `🎯 Ball: <b>${earned}/${maxTotal}</b>`,
+    statsHomeworkPoints: (earned: number, maxTotal: number) => `📈 Vazifa ballari: <b>${earned}/${maxTotal}</b>`,
     statsHomeworkNone: "📝 Uy vazifalari: hali topshirilmadi",
-    statsRanking: (r: number, tot: number, sc: number) => `🏆 Reyting: <b>${r}-o'rin</b> / ${tot} talaba (faollik bali ${sc}/100)`,
+    statsRanking: (r: number, tot: number, sc: number) => `🏆 Reyting: <b>${r}-o'rin</b> / ${tot} talaba`,
     statsRankingNone: "🏆 Reyting: hali sanalmadi (faollik kerak — kamida 1 ta dars ko'ring)",
     statsBadges: (e: number, tot: number) => `🏅 Nishonlar: <b>${e}/${tot}</b>`,
     btnSiteOpen: "📖 Saytda batafsil",
@@ -305,14 +307,16 @@ const T = {
     kbStreakOld: "📊 Моя статистика",
     kbCertOld: "🎓 Сертификат",
     statsTitle: "📊 <b>Моя статистика</b>",
+    levelNames: ["Новичок", "Ученик", "Знаток", "Мастер", "Магистр"],
+    statsLevel: (emoji: string, name: string, score: number, barStr: string, isMax: boolean, nextEmoji: string, nextName: string) => `⭐ Уровень: ${emoji} <b>${name}</b> (${score}/100)\n${barStr}${isMax ? " — высший уровень! 🏆" : ` → ${nextEmoji} ${nextName}`}`,
     statsLessons: (d: number, tot: number, watch: string) => `📚 Уроки: <b>${d}/${tot}</b>${watch ? ` · ${watch} всего` : ""}\n${bar(d, tot)}`,
     statsStreak: (c: number, b: number) => `🔥 Стрик: <b>${c} дн.</b> (рекорд: ${b})`,
     statsStreakNone: "🔥 Стрик: ещё не начат",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Цель на сегодня: <b>${d}/${tar}</b>${ok ? " ✅" : ""}\n${bar(d, tar)}`,
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Домашка: <b>${sub}/${totalLeaves}</b>${scored ? ` (${scored} оценено)` : ""}\n${bar(sub, totalLeaves)}`,
-    statsHomeworkPoints: (earned: number, maxTotal: number) => `🎯 Баллы: <b>${earned}/${maxTotal}</b>`,
+    statsHomeworkPoints: (earned: number, maxTotal: number) => `📈 Баллы за задания: <b>${earned}/${maxTotal}</b>`,
     statsHomeworkNone: "📝 Домашка: ещё не сдавали",
-    statsRanking: (r: number, tot: number, sc: number) => `🏆 Рейтинг: <b>${r} место</b> / ${tot} студентов (балл активности ${sc}/100)`,
+    statsRanking: (r: number, tot: number, sc: number) => `🏆 Рейтинг: <b>${r} место</b> / ${tot} студентов`,
     statsRankingNone: "🏆 Рейтинг: пока не учтён (нужна активность — посмотрите хотя бы 1 урок)",
     statsBadges: (e: number, tot: number) => `🏅 Значки: <b>${e}/${tot}</b>`,
     btnSiteOpen: "📖 Подробнее на сайте",
@@ -503,14 +507,16 @@ const T = {
     kbStreakOld: "📊 My stats",
     kbCertOld: "🎓 Certificate",
     statsTitle: "📊 <b>My stats</b>",
+    levelNames: ["Beginner", "Learner", "Scholar", "Expert", "Master"],
+    statsLevel: (emoji: string, name: string, score: number, barStr: string, isMax: boolean, nextEmoji: string, nextName: string) => `⭐ Level: ${emoji} <b>${name}</b> (${score}/100)\n${barStr}${isMax ? " — top level! 🏆" : ` → ${nextEmoji} ${nextName}`}`,
     statsLessons: (d: number, tot: number, watch: string) => `📚 Lessons: <b>${d}/${tot}</b>${watch ? ` · ${watch} total` : ""}\n${bar(d, tot)}`,
     statsStreak: (c: number, b: number) => `🔥 Streak: <b>${c} days</b> (best: ${b})`,
     statsStreakNone: "🔥 Streak: not started yet",
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Today's goal: <b>${d}/${tar}</b>${ok ? " ✅" : ""}\n${bar(d, tar)}`,
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Homework: <b>${sub}/${totalLeaves}</b>${scored ? ` (${scored} graded)` : ""}\n${bar(sub, totalLeaves)}`,
-    statsHomeworkPoints: (earned: number, maxTotal: number) => `🎯 Score: <b>${earned}/${maxTotal}</b>`,
+    statsHomeworkPoints: (earned: number, maxTotal: number) => `📈 Homework points: <b>${earned}/${maxTotal}</b>`,
     statsHomeworkNone: "📝 Homework: nothing submitted yet",
-    statsRanking: (r: number, tot: number, sc: number) => `🏆 Ranking: <b>#${r}</b> of ${tot} students (activity score ${sc}/100)`,
+    statsRanking: (r: number, tot: number, sc: number) => `🏆 Ranking: <b>#${r}</b> of ${tot} students`,
     statsRankingNone: "🏆 Ranking: not ranked yet (need activity — watch at least 1 lesson)",
     statsBadges: (e: number, tot: number) => `🏅 Badges: <b>${e}/${tot}</b>`,
     btnSiteOpen: "📖 More on site",
@@ -1223,6 +1229,14 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
       admin.from("profiles").select("weekly_goal_lessons").eq("id", userId).maybeSingle(),
       admin.from("daily_watch_summary").select("total_seconds").eq("user_id", userId),
     ]);
+
+    const lbForLevel = lbRes.data;
+    if (lbForLevel && typeof lbForLevel.score === "number") {
+      const lv = levelInfo(lbForLevel.score);
+      const names = (t.levelNames || []) as string[];
+      lines.push(t.statsLevel(lv.emoji, names[lv.i] || "", lv.score, bar(lv.into, lv.span), lv.isMax, lv.nextEmoji, lv.isMax ? "" : (names[lv.i + 1] || "")));
+      lines.push("");
+    }
 
     const completedLessons = (progressRes.data || []).length;
     const totalWatchSeconds = (watchRes.data || []).reduce((acc: number, r: any) => acc + Number(r.total_seconds || 0), 0);
