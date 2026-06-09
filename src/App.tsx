@@ -8,6 +8,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { RequireAuth } from "@/components/RequireAuth";
 import { useAuth } from "@/contexts/AuthContext";
 import { HtmlLangSync } from "@/components/HtmlLangSync";
+import ImpersonationBanner from "@/components/ImpersonationBanner";
 
 const StudentOrStaffRedirect = ({ children }: { children: JSX.Element }) => {
   const { role } = useAuth();
@@ -74,6 +75,7 @@ const AdminFallback = () => (
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
+      <ImpersonationBanner />
       <Toaster />
       <Sonner />
       <BrowserRouter>

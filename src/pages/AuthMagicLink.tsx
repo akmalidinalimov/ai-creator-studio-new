@@ -39,6 +39,11 @@ export default function AuthMagicLink() {
           if (!cancelled) setError(setErr.message);
           return;
         }
+        try {
+          if (params.get("imp") === "1") {
+            sessionStorage.setItem("impersonating", params.get("as") || "user");
+          }
+        } catch { /* ignore */ }
         if (!cancelled) navigate(data.target_path || "/dashboard", { replace: true });
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
