@@ -51,3 +51,6 @@ verify_jwt = false
 
 [functions.refresh-teacher-keyboards]
 verify_jwt = false
+
+[functions.admin-impersonate]
+verify_jwt = true
