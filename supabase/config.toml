@@ -48,3 +48,6 @@ verify_jwt = false
 
 [functions.generate-module-share-image]
 verify_jwt = false
+
+[functions.refresh-teacher-keyboards]
+verify_jwt = false
