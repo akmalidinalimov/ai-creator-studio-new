@@ -50,6 +50,21 @@ Do NOT jump to code. Work in this order:
 4. **Prioritize with me.** I pick the highest-priority items to build.
 5. **Spec → approval → build incrementally via Lovable**, verifying each change (git pull + code review; I test live in Telegram). Quick wins first, then measure, then the big levers.
 
+## Plan-first + multi-agent execution strategy
+**Always produce a written PLAN/spec and get approval before building, then execute the plan step by step.** The user has explicitly opted into multi-agent orchestration — use the Workflow tool (deterministic fan-out) and parallel Agent subagents where they genuinely save time, but be honest about the one real bottleneck.
+
+Where parallelism helps (do these concurrently):
+- **Research fan-out** — several agents research different gamification frameworks / best practices / Telegram-bot patterns in parallel → synthesize.
+- **Idea generation** — agents brainstorm from distinct lenses (motivation/SDT, retention/streaks, social/leaderboard, progression/levels, onboarding) → a judge dedupes and ranks → top-10.
+- **Drafting** — for each selected feature, an agent produces a self-contained, precise Lovable instruction + the exact code/strings (uz/ru/en) in parallel.
+- **Verification** — after each deploy, parallel agents check different aspects (data correctness, localization, no-regression, read-only/impersonation still intact).
+
+The bottleneck (serialize this — do NOT parallelize):
+- The bot is ONE file (`telegram-bot-webhook/index.ts`) deployed through Lovable's single chat; DB changes go through the one SQL editor. So **agents PREPARE in parallel, but the orchestrator DEPLOYS to Lovable and VERIFIES one change at a time** (git pull + review + user live-test between changes). Concurrent edits to the same file/chat will collide.
+- Any WEB frontend gamification (separate files) CAN be parallelized with git worktrees if in scope.
+
+Practical loop: plan → (parallel) draft feature instruction+code → deploy ONE to Lovable → verify → next. Pipeline the drafting ahead of the serial deploys so there's always a verified-ready change queued.
+
 ## Engagement infrastructure to build on (already exists)
 The platform already has notification/reminder plumbing — reuse it, don't reinvent:
 - Crons: `cron-engagement` (every 30 min), `detect-and-nudge`, `cron-admin-digest`, `weekly-admin-topic-check`, `recalc-leaderboard` (15 min). pg_cron + `net.http_post`.
