@@ -563,6 +563,7 @@ const T = {
     tKbTop: "🏆 Top students",
     tKbBroadcast: "📣 Broadcast",
     tKbSettings: "⚙️ Settings",
+    tKbSwitchGroup: "🔄 Switch group",
     tKbHomework: "📝 Homework",
     tKbGrade: "📝 Grade",
     tKbGraded: "👥 Students",
