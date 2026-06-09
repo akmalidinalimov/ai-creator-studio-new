@@ -1064,6 +1064,23 @@ export default function AdminUsers() {
           </Select>
         </div>
 
+        {isStaffAdmin && (
+          <div className="flex flex-wrap gap-2 items-center">
+            <Input
+              placeholder="@username yoki Telegram ID"
+              value={impInput}
+              onChange={(e) => setImpInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") submitImpersonateInput(); }}
+              className="max-w-[260px]"
+            />
+            <Button size="sm" variant="outline" disabled={impBusy || !impInput.trim()} onClick={submitImpersonateInput}>
+              Log in as
+            </Button>
+          </div>
+        )}
+
+
+
 
         {/* Mobile: card list */}
         <div className="md:hidden space-y-2">
