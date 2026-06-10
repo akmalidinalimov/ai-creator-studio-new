@@ -337,6 +337,8 @@ const T = {
     statsGroupRow: (rankLabel: string, name: string, score: number) => `${rankLabel} ${name} — ${score}`,
     statsGroupRowMe: (rankLabel: string, score: number) => `<b>${rankLabel} 👉 Вы — ${score}</b>`,
     statsGroupSummary: (rank: number, total: number, gap: string) => `📊 Ваше место в группе: <b>${rank}/${total}</b>${gap}`,
+    statsStar: (name: string) => `⭐ Звезда недели: <b>${name}</b>`,
+    statsStarMe: "⭐ <b>На этой неделе вы — звезда группы!</b> 🎉",
     statsGroupGap: (nextRank: number, gap: number) => ` · до ${nextRank}-го места ${gap} б.`,
     statsBadges: (e: number, tot: number) => `🏅 Значки: <b>${e}/${tot}</b>`,
     statsBadgesShowcase: (icons: string, earned: number, total: number) => `🏅 Значки: <b>${earned}/${total}</b>${icons ? `\n${icons}` : ""}`,
