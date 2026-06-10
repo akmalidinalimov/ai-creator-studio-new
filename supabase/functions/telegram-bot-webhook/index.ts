@@ -1352,6 +1352,14 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
       }
       lines.push("");
       lines.push(t.statsGroupSummary(meRow?.group_rank || 0, total, gapTxt));
+      try {
+        const { data: starRows } = await admin.rpc("current_group_star", { uid: userId });
+        const star = ((starRows || []) as any[])[0];
+        if (star) {
+          const sname = `${star.first_name}${star.last_initial ? " " + star.last_initial + "." : ""}`;
+          lines.push(star.is_me ? t.statsStarMe : t.statsStar(sname));
+        }
+      } catch (_e) { /* best-effort */ }
     } else {
       const lb = lbRes.data;
       if (lb && lb.rank) lines.push(t.statsRanking(lb.rank, totalStudentsRes.count || 0, lb.score || 0));
