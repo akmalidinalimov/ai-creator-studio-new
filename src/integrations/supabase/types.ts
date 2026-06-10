@@ -2206,6 +2206,33 @@ export type Database = {
         }
         Relationships: []
       }
+      weekly_group_star: {
+        Row: {
+          created_at: string
+          dm_sent_at: string | null
+          group_id: string
+          score: number
+          user_id: string
+          week_start: string
+        }
+        Insert: {
+          created_at?: string
+          dm_sent_at?: string | null
+          group_id: string
+          score?: number
+          user_id: string
+          week_start: string
+        }
+        Update: {
+          created_at?: string
+          dm_sent_at?: string | null
+          group_id?: string
+          score?: number
+          user_id?: string
+          week_start?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       mv_cohort_retention: {
@@ -2478,6 +2505,14 @@ export type Database = {
         Args: { _group_id: string; _uid: string }
         Returns: boolean
       }
+      current_group_star: {
+        Args: { uid: string }
+        Returns: {
+          first_name: string
+          is_me: boolean
+          last_initial: string
+        }[]
+      }
       daily_goal_progress: {
         Args: { uid: string }
         Returns: {
@@ -2609,6 +2644,7 @@ export type Database = {
         }[]
       }
       online_now_count: { Args: never; Returns: number }
+      pick_weekly_group_stars: { Args: never; Returns: undefined }
       re_engagement_eligible_count: {
         Args: never
         Returns: {
