@@ -19,25 +19,28 @@ export default function QuizPage() {
   const [submitted, setSubmitted] = useState(false);
   const [moduleTitle, setModuleTitle] = useState("");
   const [courseId, setCourseId] = useState<string | null>(null);
+  const [gradeMap, setGradeMap] = useState<Record<string, { correct_index: number; explanation: string | null; is_correct: boolean }>>({});
 
   useEffect(() => {
     (async () => {
       if (!moduleId) return;
       const { data: m } = await supabase.from("modules").select("title, course_id").eq("id", moduleId).maybeSingle();
       setModuleTitle(m?.title || ""); setCourseId(m?.course_id || null);
-      const { data } = await supabase.from("quiz_questions").select("*").eq("module_id", moduleId).order("position");
-      setQuestions(data || []);
+      const { data } = await supabase.rpc("get_quiz_questions_for_module" as any, { _module_id: moduleId });
+      setQuestions((data as any[]) || []);
     })();
   }, [moduleId]);
 
-  const score = questions.reduce((s, q) => s + (answers[q.id] === q.correct_index ? 1 : 0), 0);
-  const pct = questions.length ? Math.round((score / questions.length) * 100) : 0;
-
   const submit = async () => {
+    if (!user || !moduleId) return;
+    const { data, error } = await supabase.rpc("grade_quiz_attempt" as any, { _module_id: moduleId, _answers: answers as any });
+    if (error) { toast.error(error.message); return; }
+    const res = (data as any) || {};
+    const pct = Number(res.score || 0);
+    const map: Record<string, any> = {};
+    for (const q of (res.questions || [])) map[q.id] = q;
+    setGradeMap(map);
     setSubmitted(true);
-    if (user && moduleId) {
-      await supabase.from("quiz_attempts").insert({ user_id: user.id, module_id: moduleId, score: pct, answers });
-    }
     if (pct >= 80) toast.success(t("quiz.passedWith", { pct }));
     else toast.error(t("quiz.needToPass", { pct }));
   };
@@ -56,7 +59,8 @@ export default function QuizPage() {
             <div className="space-y-2">
               {(q.options as string[]).map((opt, oi) => {
                 const selected = answers[q.id] === oi;
-                const correct = submitted && q.correct_index === oi;
+                const g = gradeMap[q.id];
+                const correct = submitted && g && g.correct_index === oi;
                 const wrong = submitted && selected && !correct;
                 return (
                   <button key={oi} onClick={() => !submitted && setAnswers({ ...answers, [q.id]: oi })}
@@ -73,7 +77,7 @@ export default function QuizPage() {
                 );
               })}
             </div>
-            {submitted && q.explanation && <p className="text-xs text-muted-foreground pt-1">{q.explanation}</p>}
+            {submitted && gradeMap[q.id]?.explanation && <p className="text-xs text-muted-foreground pt-1">{gradeMap[q.id]?.explanation}</p>}
           </Card>
         ))}
         <div className="flex gap-3">
@@ -81,7 +85,7 @@ export default function QuizPage() {
             <Button onClick={submit} disabled={Object.keys(answers).length < questions.length}>{t("quiz.submitAnswers")}</Button>
           ) : (
             <>
-              <Button onClick={() => { setAnswers({}); setSubmitted(false); }}>{t("quiz.tryAgain")}</Button>
+              <Button onClick={() => { setAnswers({}); setSubmitted(false); setGradeMap({}); }}>{t("quiz.tryAgain")}</Button>
               {courseId && <Button variant="outline" onClick={() => nav(`/course/${courseId}`)}>{t("quiz.backToCourse")}</Button>}
             </>
           )}

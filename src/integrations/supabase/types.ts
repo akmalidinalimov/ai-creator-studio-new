@@ -2483,6 +2483,16 @@ export type Database = {
         }[]
       }
       get_public_setting: { Args: { _key: string }; Returns: Json }
+      get_quiz_questions_for_module: {
+        Args: { _module_id: string }
+        Returns: {
+          id: string
+          module_id: string
+          options: Json
+          position: number
+          question: string
+        }[]
+      }
       get_setting: { Args: { _key: string }; Returns: Json }
       get_settings: {
         Args: { _keys: string[] }
@@ -2496,6 +2506,10 @@ export type Database = {
         Returns: {
           id: string
         }[]
+      }
+      grade_quiz_attempt: {
+        Args: { _answers: Json; _module_id: string }
+        Returns: Json
       }
       group_health_score: { Args: { _group_id: string }; Returns: number }
       has_role: {
