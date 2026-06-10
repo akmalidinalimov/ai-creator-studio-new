@@ -1295,6 +1295,7 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
       const si = streakInfo(sk.current_streak || 0);
       const barStr = si.next ? bar(si.cur - si.prev, si.next - si.prev) : bar(1, 1);
       lines.push(t.statsStreak(si.cur, sk.longest_streak || 0, barStr, si.next, si.atMilestone));
+      if (typeof sk.freezes_remaining === "number") lines.push(t.statsFreezes(sk.freezes_remaining));
     } else {
       lines.push(t.statsStreakNone);
     }
