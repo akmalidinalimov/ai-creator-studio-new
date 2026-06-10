@@ -59,7 +59,8 @@ export default function QuizPage() {
             <div className="space-y-2">
               {(q.options as string[]).map((opt, oi) => {
                 const selected = answers[q.id] === oi;
-                const correct = submitted && q.correct_index === oi;
+                const g = gradeMap[q.id];
+                const correct = submitted && g && g.correct_index === oi;
                 const wrong = submitted && selected && !correct;
                 return (
                   <button key={oi} onClick={() => !submitted && setAnswers({ ...answers, [q.id]: oi })}
@@ -76,7 +77,7 @@ export default function QuizPage() {
                 );
               })}
             </div>
-            {submitted && q.explanation && <p className="text-xs text-muted-foreground pt-1">{q.explanation}</p>}
+            {submitted && gradeMap[q.id]?.explanation && <p className="text-xs text-muted-foreground pt-1">{gradeMap[q.id]?.explanation}</p>}
           </Card>
         ))}
         <div className="flex gap-3">
@@ -84,7 +85,7 @@ export default function QuizPage() {
             <Button onClick={submit} disabled={Object.keys(answers).length < questions.length}>{t("quiz.submitAnswers")}</Button>
           ) : (
             <>
-              <Button onClick={() => { setAnswers({}); setSubmitted(false); }}>{t("quiz.tryAgain")}</Button>
+              <Button onClick={() => { setAnswers({}); setSubmitted(false); setGradeMap({}); }}>{t("quiz.tryAgain")}</Button>
               {courseId && <Button variant="outline" onClick={() => nav(`/course/${courseId}`)}>{t("quiz.backToCourse")}</Button>}
             </>
           )}
