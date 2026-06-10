@@ -2012,18 +2012,21 @@ export type Database = {
       streaks: {
         Row: {
           current_streak: number
+          freezes_remaining: number
           last_active_date: string | null
           longest_streak: number
           user_id: string
         }
         Insert: {
           current_streak?: number
+          freezes_remaining?: number
           last_active_date?: string | null
           longest_streak?: number
           user_id: string
         }
         Update: {
           current_streak?: number
+          freezes_remaining?: number
           last_active_date?: string | null
           longest_streak?: number
           user_id?: string
