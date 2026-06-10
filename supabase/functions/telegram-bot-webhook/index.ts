@@ -324,6 +324,7 @@ const T = {
     statsLessons: (d: number, tot: number, watch: string) => `📚 Уроки: <b>${d}/${tot}</b>${watch ? ` · ${watch} всего` : ""}\n${bar(d, tot)}`,
     statsStreak: (cur: number, best: number, barStr: string, next: number | null, atMilestone: boolean) => `🔥 <b>${cur} дн. подряд</b>${atMilestone ? " 🎉 новый рубеж!" : ""} · рекорд: ${best}\n${barStr}${next ? ` → ${next} дн.` : " 🏆 максимум!"}`,
     statsStreakNone: "🔥 Стрик: ещё не начат",
+    statsFreezes: (n: number) => `❄️ Защита стрика: <b>${n}</b> заморозки (пропущенный день не обнулит стрик)`,
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Цель на сегодня: <b>${d}/${tar}</b>${ok ? " ✅" : ""}\n${bar(d, tar)}`,
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Домашка: <b>${sub}/${totalLeaves}</b>${scored ? ` (${scored} оценено)` : ""}\n${bar(sub, totalLeaves)}`,
     statsHomeworkPoints: (earned: number, maxTotal: number) => `📈 Баллы за задания: <b>${earned}/${maxTotal}</b>`,
