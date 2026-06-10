@@ -113,6 +113,8 @@ const T = {
     statsGroupRow: (rankLabel: string, name: string, score: number) => `${rankLabel} ${name} — ${score}`,
     statsGroupRowMe: (rankLabel: string, score: number) => `<b>${rankLabel} 👉 Siz — ${score}</b>`,
     statsGroupSummary: (rank: number, total: number, gap: string) => `📊 Guruhdagi o'rningiz: <b>${rank}/${total}</b>${gap}`,
+    statsStar: (name: string) => `⭐ Hafta yulduzi: <b>${name}</b>`,
+    statsStarMe: "⭐ <b>Bu hafta siz guruh yulduzisiz!</b> 🎉",
     statsGroupGap: (nextRank: number, gap: number) => ` · ${nextRank}-o'ringa ${gap} ball qoldi`,
     statsBadges: (e: number, tot: number) => `🏅 Nishonlar: <b>${e}/${tot}</b>`,
     statsBadgesShowcase: (icons: string, earned: number, total: number) => `🏅 Nishonlar: <b>${earned}/${total}</b>${icons ? `\n${icons}` : ""}`,
