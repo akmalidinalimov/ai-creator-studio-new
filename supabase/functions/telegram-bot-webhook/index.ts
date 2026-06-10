@@ -1263,7 +1263,7 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
       lessonIds.length
         ? admin.from("lesson_progress").select("lesson_id, completed_at").eq("user_id", userId).in("lesson_id", lessonIds).not("completed_at", "is", null)
         : Promise.resolve({ data: [] as any[] }),
-      admin.from("streaks").select("current_streak, longest_streak").eq("user_id", userId).maybeSingle(),
+      admin.from("streaks").select("current_streak, longest_streak, freezes_remaining").eq("user_id", userId).maybeSingle(),
       admin.from("lesson_progress").select("completed_at").eq("user_id", userId).gte("completed_at", new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z").toISOString()).not("completed_at", "is", null),
       moduleIds.length
         ? admin.from("homework_assignments").select("id, max_score, parent_id, is_active").eq("is_active", true).in("module_id", moduleIds)
