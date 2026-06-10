@@ -113,6 +113,8 @@ const T = {
     statsGroupRow: (rankLabel: string, name: string, score: number) => `${rankLabel} ${name} — ${score}`,
     statsGroupRowMe: (rankLabel: string, score: number) => `<b>${rankLabel} 👉 Siz — ${score}</b>`,
     statsGroupSummary: (rank: number, total: number, gap: string) => `📊 Guruhdagi o'rningiz: <b>${rank}/${total}</b>${gap}`,
+    statsStar: (name: string) => `⭐ Hafta yulduzi: <b>${name}</b>`,
+    statsStarMe: "⭐ <b>Bu hafta siz guruh yulduzisiz!</b> 🎉",
     statsGroupGap: (nextRank: number, gap: number) => ` · ${nextRank}-o'ringa ${gap} ball qoldi`,
     statsBadges: (e: number, tot: number) => `🏅 Nishonlar: <b>${e}/${tot}</b>`,
     statsBadgesShowcase: (icons: string, earned: number, total: number) => `🏅 Nishonlar: <b>${earned}/${total}</b>${icons ? `\n${icons}` : ""}`,
@@ -335,6 +337,8 @@ const T = {
     statsGroupRow: (rankLabel: string, name: string, score: number) => `${rankLabel} ${name} — ${score}`,
     statsGroupRowMe: (rankLabel: string, score: number) => `<b>${rankLabel} 👉 Вы — ${score}</b>`,
     statsGroupSummary: (rank: number, total: number, gap: string) => `📊 Ваше место в группе: <b>${rank}/${total}</b>${gap}`,
+    statsStar: (name: string) => `⭐ Звезда недели: <b>${name}</b>`,
+    statsStarMe: "⭐ <b>На этой неделе вы — звезда группы!</b> 🎉",
     statsGroupGap: (nextRank: number, gap: number) => ` · до ${nextRank}-го места ${gap} б.`,
     statsBadges: (e: number, tot: number) => `🏅 Значки: <b>${e}/${tot}</b>`,
     statsBadgesShowcase: (icons: string, earned: number, total: number) => `🏅 Значки: <b>${earned}/${total}</b>${icons ? `\n${icons}` : ""}`,
@@ -547,6 +551,8 @@ const T = {
     statsGroupRow: (rankLabel: string, name: string, score: number) => `${rankLabel} ${name} — ${score}`,
     statsGroupRowMe: (rankLabel: string, score: number) => `<b>${rankLabel} 👉 You — ${score}</b>`,
     statsGroupSummary: (rank: number, total: number, gap: string) => `📊 Your group rank: <b>${rank}/${total}</b>${gap}`,
+    statsStar: (name: string) => `⭐ Star of the week: <b>${name}</b>`,
+    statsStarMe: "⭐ <b>You're this week's group star!</b> 🎉",
     statsGroupGap: (nextRank: number, gap: number) => ` · ${gap} pts to #${nextRank}`,
     statsBadges: (e: number, tot: number) => `🏅 Badges: <b>${e}/${tot}</b>`,
     statsBadgesShowcase: (icons: string, earned: number, total: number) => `🏅 Badges: <b>${earned}/${total}</b>${icons ? `\n${icons}` : ""}`,
@@ -1346,6 +1352,14 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
       }
       lines.push("");
       lines.push(t.statsGroupSummary(meRow?.group_rank || 0, total, gapTxt));
+      try {
+        const { data: starRows } = await admin.rpc("current_group_star", { uid: userId });
+        const star = ((starRows || []) as any[])[0];
+        if (star) {
+          const sname = `${star.first_name}${star.last_initial ? " " + star.last_initial + "." : ""}`;
+          lines.push(star.is_me ? t.statsStarMe : t.statsStar(sname));
+        }
+      } catch (_e) { /* best-effort */ }
     } else {
       const lb = lbRes.data;
       if (lb && lb.rank) lines.push(t.statsRanking(lb.rank, totalStudentsRes.count || 0, lb.score || 0));
