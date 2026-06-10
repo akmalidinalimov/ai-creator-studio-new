@@ -54,3 +54,6 @@ verify_jwt = false
 
 [functions.admin-impersonate]
 verify_jwt = true
+
+[functions.student-of-week]
+verify_jwt = false
