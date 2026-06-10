@@ -102,6 +102,7 @@ const T = {
     statsLessons: (d: number, tot: number, watch: string) => `📚 Darslar: <b>${d}/${tot}</b>${watch ? ` · ${watch} jami` : ""}\n${bar(d, tot)}`,
     statsStreak: (cur: number, best: number, barStr: string, next: number | null, atMilestone: boolean) => `🔥 <b>${cur} kunlik streak</b>${atMilestone ? " 🎉 yangi bosqich!" : ""} · rekord: ${best}\n${barStr}${next ? ` → ${next} kun` : " 🏆 eng yuqori!"}`,
     statsStreakNone: "🔥 Streak: hali boshlanmadi",
+    statsFreezes: (n: number) => `❄️ Streak himoyasi: <b>${n}</b> ta muzlatish (bir kun o'tkazsangiz, streak saqlanadi)`,
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Bugungi maqsad: <b>${d}/${tar}</b>${ok ? " ✅" : ""}\n${bar(d, tar)}`,
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Uy vazifalari: <b>${sub}/${totalLeaves}</b>${scored ? ` (${scored} ta baholangan)` : ""}\n${bar(sub, totalLeaves)}`,
     statsHomeworkPoints: (earned: number, maxTotal: number) => `📈 Vazifa ballari: <b>${earned}/${maxTotal}</b>`,
