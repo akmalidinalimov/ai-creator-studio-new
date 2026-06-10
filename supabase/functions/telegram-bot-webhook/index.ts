@@ -536,6 +536,7 @@ const T = {
     statsLessons: (d: number, tot: number, watch: string) => `📚 Lessons: <b>${d}/${tot}</b>${watch ? ` · ${watch} total` : ""}\n${bar(d, tot)}`,
     statsStreak: (cur: number, best: number, barStr: string, next: number | null, atMilestone: boolean) => `🔥 <b>${cur}-day streak</b>${atMilestone ? " 🎉 milestone!" : ""} · best: ${best}\n${barStr}${next ? ` → ${next} days` : " 🏆 maxed!"}`,
     statsStreakNone: "🔥 Streak: not started yet",
+    statsFreezes: (n: number) => `❄️ Streak protection: <b>${n}</b> freezes (a missed day won't reset your streak)`,
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Today's goal: <b>${d}/${tar}</b>${ok ? " ✅" : ""}\n${bar(d, tar)}`,
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Homework: <b>${sub}/${totalLeaves}</b>${scored ? ` (${scored} graded)` : ""}\n${bar(sub, totalLeaves)}`,
     statsHomeworkPoints: (earned: number, maxTotal: number) => `📈 Homework points: <b>${earned}/${maxTotal}</b>`,
