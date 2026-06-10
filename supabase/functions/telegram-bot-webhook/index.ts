@@ -551,6 +551,8 @@ const T = {
     statsGroupRow: (rankLabel: string, name: string, score: number) => `${rankLabel} ${name} — ${score}`,
     statsGroupRowMe: (rankLabel: string, score: number) => `<b>${rankLabel} 👉 You — ${score}</b>`,
     statsGroupSummary: (rank: number, total: number, gap: string) => `📊 Your group rank: <b>${rank}/${total}</b>${gap}`,
+    statsStar: (name: string) => `⭐ Star of the week: <b>${name}</b>`,
+    statsStarMe: "⭐ <b>You're this week's group star!</b> 🎉",
     statsGroupGap: (nextRank: number, gap: number) => ` · ${gap} pts to #${nextRank}`,
     statsBadges: (e: number, tot: number) => `🏅 Badges: <b>${e}/${tot}</b>`,
     statsBadgesShowcase: (icons: string, earned: number, total: number) => `🏅 Badges: <b>${earned}/${total}</b>${icons ? `\n${icons}` : ""}`,
