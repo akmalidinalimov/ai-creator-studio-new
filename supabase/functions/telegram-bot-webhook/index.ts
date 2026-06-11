@@ -3612,18 +3612,22 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       return;
     }
 
-    // STRICT MEDIA GATE: homework is only photo or video. Any other message type
-    // (text, caption-only, document, voice, video_note, sticker, animation, audio,
-    // poll, etc.) is ignored silently — casual chat in the topic must never
-    // become a submission.
+    // STRICT MEDIA GATE: homework must be a photo, a video, or an uploaded file
+    // (document) — e.g. a video sent "as a file" to preserve quality. Any other
+    // message type (text, caption-only, voice, video_note, sticker, animation,
+    // audio, poll, etc.) is ignored silently — casual chat in the topic must
+    // never become a submission.
     let fileId: string | null = null;
-    let kind: "photo" | "video" | null = null;
+    let kind: "photo" | "video" | "document" | null = null;
     if (Array.isArray(msg.photo) && msg.photo.length) {
       fileId = msg.photo[msg.photo.length - 1].file_id;
       kind = "photo";
     } else if (msg.video) {
       fileId = msg.video.file_id;
       kind = "video";
+    } else if (msg.document) {
+      fileId = msg.document.file_id;
+      kind = "document";
     }
     if (!kind) {
       console.log("hw:group:non-media-ignored", JSON.stringify({ chatId, threadId, messageId }));
