@@ -480,6 +480,7 @@ const T = {
     btnTopicGo: (n: number) => `📌 Топик модуля ${n}`,
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Модуль ${n} — ${csvEscapeHtml(title)}</b> (${taskCount})`,
     hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ З${tn}: ${sc}/${mx}${fb ? `\n      💬 ${csvEscapeHtml(fb)}` : ""}`,
+    hwTaskResub: (tn: number, sc: number, mx: number) => `   🔄 З${tn}: ${sc}/${mx} — отправлено заново, ждёт новой оценки`,
     hwTaskUnscored: (tn: number) => `   ⏳ З${tn}: ещё не оценено`,
     hwTaskSubmitted: (tn: number) => `   📤 З${tn}: сдано, ждёт оценки`,
     hwTaskNotStarted: (tn: number) => `   📝 З${tn}: не начато`,
