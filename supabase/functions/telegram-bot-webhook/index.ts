@@ -4035,6 +4035,67 @@ async function handleCallback(admin: any, cq: any) {
     return;
   }
 
+  // --- "Confirm your name" flow callbacks ---
+  if (data.startsWith("name:") && chatId) {
+    if (!_clicker) { await answerCallback(cq.id); return; }
+    if (_isImp) { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(_clicker.preferred_locale);
+    const t = T[locale] as any;
+    const action = data.slice("name:".length);
+
+    if (action === "ok") {
+      await admin.from("profiles").update({ name_confirmed_at: new Date().toISOString() }).eq("id", _clicker.id);
+      await answerCallback(cq.id);
+      await sendMessage(chatId, t.nameConfirmedOk);
+      return;
+    }
+    if (action === "edit" || action === "retry") {
+      await admin.from("bot_conversation_state").upsert({
+        telegram_id: tgId,
+        state: "awaiting_name",
+        context: {},
+        updated_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+      });
+      await answerCallback(cq.id);
+      await sendMessage(chatId, t.nameAskInput);
+      return;
+    }
+    if (action === "later") {
+      await answerCallback(cq.id);
+      await sendMessage(chatId, t.nameLater);
+      return;
+    }
+    if (action === "yes") {
+      const { data: st } = await admin
+        .from("bot_conversation_state")
+        .select("state, context, expires_at")
+        .eq("telegram_id", tgId)
+        .maybeSingle();
+      const ctx = (st?.context || {}) as any;
+      const notExpired = st?.expires_at ? new Date(st.expires_at).getTime() > Date.now() : false;
+      if (st?.state === "confirm_name" && notExpired && typeof ctx.first === "string" && ctx.first) {
+        await admin.from("profiles").update({
+          name: ctx.first,
+          last_name: ctx.last || null,
+          name_confirmed_at: new Date().toISOString(),
+        }).eq("id", _clicker.id);
+        await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+        cacheInvalidateUser(_clicker.id);
+        await answerCallback(cq.id);
+        const disp = `${ctx.first}${ctx.last ? " " + String(ctx.last).charAt(0) + "." : ""}`;
+        await sendMessage(chatId, t.nameSaved(disp));
+      } else {
+        await answerCallback(cq.id);
+      }
+      return;
+    }
+    await answerCallback(cq.id);
+    return;
+  }
+
+
+
   // Student tapped a per-module button in /vazifalar — show per-SAP submit buttons for that module.
   if (data.startsWith("hw:mod:") && chatId) {
     const moduleId = data.slice("hw:mod:".length);
