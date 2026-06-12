@@ -278,6 +278,18 @@ const T = {
       `🆕 <b>Yangi topshiriq</b>\n👤 ${csvEscapeHtml(name)}\n📚 Modul ${mn} · V${tn} — ${csvEscapeHtml(title)}`,
     hwTeacherBtnFile: "📂 Faylni ko'rish",
     hwTeacherBtnGrade: "🎯 Hozir baholash",
+    namePrompt: (cur: string) => `👤 Reytingda ismingiz shunday ko'rinadi: <b>${cur}</b>\nTo'g'ri ko'rinishi uchun tasdiqlang:`,
+    nameBtnOk: "✅ Ismim to'g'ri",
+    nameBtnEdit: "✏️ Ismni kiritish",
+    nameBtnLater: "⏭ Keyinroq",
+    nameAskInput: "Ism va familiyangizni yozing (masalan: Aziz Karimov):",
+    nameInvalid: "Iltimos, faqat harflardan iborat ism kiriting (masalan: Aziz Karimov)",
+    namePreview: (f: string, l: string) => `Ism: <b>${f}</b>${l ? ` · Familiya: <b>${l}</b>` : ""} — to'g'rimi?`,
+    nameBtnYes: "✅ Ha, saqlash",
+    nameBtnRetry: "✏️ Qayta kiritish",
+    nameSaved: (d: string) => `✅ Saqlandi! Endi reytingda shunday ko'rinasiz: <b>${d}</b> ⭐`,
+    nameConfirmedOk: "✅ Rahmat! Ismingiz tasdiqlandi.",
+    nameLater: "OK, keyinroq so'rayman 👍",
   },
   ru: {
     expired: "Срок действия ссылки истёк. Вернитесь на сайт и попробуйте ещё раз.",
@@ -492,6 +504,18 @@ const T = {
       `🆕 <b>Новая сдача</b>\n👤 ${csvEscapeHtml(name)}\n📚 Модуль ${mn} · З${tn} — ${csvEscapeHtml(title)}`,
     hwTeacherBtnFile: "📂 Открыть файл",
     hwTeacherBtnGrade: "🎯 Оценить сейчас",
+    namePrompt: (cur: string) => `👤 В рейтинге ваше имя выглядит так: <b>${cur}</b>\nПодтвердите, чтобы оно отображалось правильно:`,
+    nameBtnOk: "✅ Имя верное",
+    nameBtnEdit: "✏️ Ввести имя",
+    nameBtnLater: "⏭ Позже",
+    nameAskInput: "Напишите имя и фамилию (например: Азиз Каримов):",
+    nameInvalid: "Пожалуйста, введите имя только из букв (например: Азиз Каримов)",
+    namePreview: (f: string, l: string) => `Имя: <b>${f}</b>${l ? ` · Фамилия: <b>${l}</b>` : ""} — верно?`,
+    nameBtnYes: "✅ Да, сохранить",
+    nameBtnRetry: "✏️ Ввести заново",
+    nameSaved: (d: string) => `✅ Сохранено! Теперь в рейтинге вы выглядите так: <b>${d}</b> ⭐`,
+    nameConfirmedOk: "✅ Спасибо! Ваше имя подтверждено.",
+    nameLater: "Хорошо, спрошу позже 👍",
   },
   en: {
     expired: "Login link expired. Return to the site and try again.",
@@ -706,6 +730,18 @@ const T = {
       `🆕 <b>New submission</b>\n👤 ${csvEscapeHtml(name)}\n📚 Module ${mn} · T${tn} — ${csvEscapeHtml(title)}`,
     hwTeacherBtnFile: "📂 Open file",
     hwTeacherBtnGrade: "🎯 Grade now",
+    namePrompt: (cur: string) => `👤 Your name appears in the rating as: <b>${cur}</b>\nConfirm so it displays correctly:`,
+    nameBtnOk: "✅ My name is correct",
+    nameBtnEdit: "✏️ Enter my name",
+    nameBtnLater: "⏭ Later",
+    nameAskInput: "Type your first and last name (e.g.: Aziz Karimov):",
+    nameInvalid: "Please enter a name with letters only (e.g.: Aziz Karimov)",
+    namePreview: (f: string, l: string) => `First name: <b>${f}</b>${l ? ` · Last name: <b>${l}</b>` : ""} — correct?`,
+    nameBtnYes: "✅ Yes, save",
+    nameBtnRetry: "✏️ Re-enter",
+    nameSaved: (d: string) => `✅ Saved! You now appear in the rating as: <b>${d}</b> ⭐`,
+    nameConfirmedOk: "✅ Thank you! Your name is confirmed.",
+    nameLater: "OK, I'll ask later 👍",
   },
 };
 
@@ -1200,6 +1236,23 @@ function bar(done: number, total: number, width = 10): string {
   const filled = Math.round(frac * width);
   return "█".repeat(filled) + "░".repeat(width - filled);
 }
+
+// Normalize a typed name: fold stylized unicode, keep letters/apostrophe/hyphen,
+// Title Case, split into first + rest. Returns null if not a plausible name.
+function normalizeNameInput(raw: string): { first: string; last: string } | null {
+  const cleaned = (raw || "").normalize("NFKC")
+    .replace(/[^\p{L}\p{M}'’\- ]/gu, " ")
+    .replace(/\s+/g, " ").trim();
+  if (cleaned.length < 2 || cleaned.length > 80) return null;
+  const words = cleaned.split(" ").slice(0, 4);
+  const tc = (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  const first = tc(words[0]);
+  if (first.replace(/[^\p{L}]/gu, "").length < 2) return null;
+  const last = words.slice(1).map(tc).join(" ");
+  return { first, last };
+}
+
+
 
 // Named levels mapped from the 0–100 activity score. Early bands are short so
 // beginners level up fast (competence for the bottom 80%); the number always goes up.
@@ -3178,6 +3231,29 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
     await sendMessage(chatId, text, { inline_keyboard: [[{ text: t.btnSiteOpen, url }]] });
     await sendKeyboardHint(chatId, locale);
     console.timeEnd(`bot:stats:${profile.id}`);
+    // One-time "confirm your name" prompt — real students only, not while impersonating.
+    try {
+      if (realPersona === "student" && !effectivePersona) {
+        const { data: np } = await admin
+          .from("profiles")
+          .select("name_confirmed_at, name_prompt_last_at")
+          .eq("id", profile.id)
+          .maybeSingle();
+        if (np && !np.name_confirmed_at) {
+          const lastP = np.name_prompt_last_at ? new Date(np.name_prompt_last_at).getTime() : 0;
+          if (Date.now() - lastP > 3 * 86400_000) {
+            await admin.from("profiles").update({ name_prompt_last_at: new Date().toISOString() }).eq("id", profile.id);
+            const disp = `${profile.name || ""} ${profile.last_name || ""}`.trim() || "—";
+            await sendMessage(chatId, t.namePrompt(disp), { inline_keyboard: [[
+              { text: t.nameBtnOk, callback_data: "name:ok" },
+              { text: t.nameBtnEdit, callback_data: "name:edit" },
+            ], [
+              { text: t.nameBtnLater, callback_data: "name:later" },
+            ]] });
+          }
+        }
+      }
+    } catch (_e) { /* best-effort */ }
     return;
   }
 
@@ -3959,6 +4035,67 @@ async function handleCallback(admin: any, cq: any) {
     return;
   }
 
+  // --- "Confirm your name" flow callbacks ---
+  if (data.startsWith("name:") && chatId) {
+    if (!_clicker) { await answerCallback(cq.id); return; }
+    if (_isImp) { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(_clicker.preferred_locale);
+    const t = T[locale] as any;
+    const action = data.slice("name:".length);
+
+    if (action === "ok") {
+      await admin.from("profiles").update({ name_confirmed_at: new Date().toISOString() }).eq("id", _clicker.id);
+      await answerCallback(cq.id);
+      await sendMessage(chatId, t.nameConfirmedOk);
+      return;
+    }
+    if (action === "edit" || action === "retry") {
+      await admin.from("bot_conversation_state").upsert({
+        telegram_id: tgId,
+        state: "awaiting_name",
+        context: {},
+        updated_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+      });
+      await answerCallback(cq.id);
+      await sendMessage(chatId, t.nameAskInput);
+      return;
+    }
+    if (action === "later") {
+      await answerCallback(cq.id);
+      await sendMessage(chatId, t.nameLater);
+      return;
+    }
+    if (action === "yes") {
+      const { data: st } = await admin
+        .from("bot_conversation_state")
+        .select("state, context, expires_at")
+        .eq("telegram_id", tgId)
+        .maybeSingle();
+      const ctx = (st?.context || {}) as any;
+      const notExpired = st?.expires_at ? new Date(st.expires_at).getTime() > Date.now() : false;
+      if (st?.state === "confirm_name" && notExpired && typeof ctx.first === "string" && ctx.first) {
+        await admin.from("profiles").update({
+          name: ctx.first,
+          last_name: ctx.last || null,
+          name_confirmed_at: new Date().toISOString(),
+        }).eq("id", _clicker.id);
+        await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+        cacheInvalidateUser(_clicker.id);
+        await answerCallback(cq.id);
+        const disp = `${ctx.first}${ctx.last ? " " + String(ctx.last).charAt(0) + "." : ""}`;
+        await sendMessage(chatId, t.nameSaved(disp));
+      } else {
+        await answerCallback(cq.id);
+      }
+      return;
+    }
+    await answerCallback(cq.id);
+    return;
+  }
+
+
+
   // Student tapped a per-module button in /vazifalar — show per-SAP submit buttons for that module.
   if (data.startsWith("hw:mod:") && chatId) {
     const moduleId = data.slice("hw:mod:".length);
@@ -4502,6 +4639,36 @@ Deno.serve(async (req) => {
         }
         if (!consumed && persona === "teacher" && profileForLocale) {
           consumed = await handleTeacherSession(admin, msg, profileForLocale.id, locale);
+        }
+        if (!consumed && profileForLocale && persona === "student") {
+          // "Confirm your name" text capture (awaiting_name → confirm_name)
+          try {
+            const { data: nst } = await admin
+              .from("bot_conversation_state")
+              .select("state, expires_at")
+              .eq("telegram_id", msg.from.id)
+              .maybeSingle();
+            if (nst?.state === "awaiting_name" && nst.expires_at && new Date(nst.expires_at).getTime() > Date.now()) {
+              const t = T[locale] as any;
+              const parsed = normalizeNameInput(text);
+              if (!parsed) {
+                await sendMessage(msg.chat.id, t.nameInvalid);
+              } else {
+                await admin.from("bot_conversation_state").upsert({
+                  telegram_id: msg.from.id,
+                  state: "confirm_name",
+                  context: { first: parsed.first, last: parsed.last },
+                  updated_at: new Date().toISOString(),
+                  expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+                });
+                await sendMessage(msg.chat.id, t.namePreview(parsed.first, parsed.last), { inline_keyboard: [[
+                  { text: t.nameBtnYes, callback_data: "name:yes" },
+                  { text: t.nameBtnRetry, callback_data: "name:retry" },
+                ]] });
+              }
+              consumed = true;
+            }
+          } catch (_e) { /* best-effort */ }
         }
         if (!consumed) {
           const mapped = buttonTextToCommand(text);
