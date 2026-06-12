@@ -253,6 +253,7 @@ const T = {
     btnTopicGo: (n: number) => `📌 Modul ${n} topikga`,
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Modul ${n} — ${csvEscapeHtml(title)}</b> (${taskCount} ta)`,
     hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ V${tn}: ${sc}/${mx}${fb ? `\n      💬 ${csvEscapeHtml(fb)}` : ""}`,
+    hwTaskResub: (tn: number, sc: number, mx: number) => `   🔄 V${tn}: ${sc}/${mx} — qayta topshirilgan, yangi baho kutilmoqda`,
     hwTaskUnscored: (tn: number) => `   ⏳ V${tn}: hali baholanmagan`,
     hwTaskSubmitted: (tn: number) => `   📤 V${tn}: topshirilgan, baholashni kuting`,
     hwTaskNotStarted: (tn: number) => `   📝 V${tn}: boshlanmadi`,
@@ -479,6 +480,7 @@ const T = {
     btnTopicGo: (n: number) => `📌 Топик модуля ${n}`,
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Модуль ${n} — ${csvEscapeHtml(title)}</b> (${taskCount})`,
     hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ З${tn}: ${sc}/${mx}${fb ? `\n      💬 ${csvEscapeHtml(fb)}` : ""}`,
+    hwTaskResub: (tn: number, sc: number, mx: number) => `   🔄 З${tn}: ${sc}/${mx} — отправлено заново, ждёт новой оценки`,
     hwTaskUnscored: (tn: number) => `   ⏳ З${tn}: ещё не оценено`,
     hwTaskSubmitted: (tn: number) => `   📤 З${tn}: сдано, ждёт оценки`,
     hwTaskNotStarted: (tn: number) => `   📝 З${tn}: не начато`,
@@ -705,6 +707,7 @@ const T = {
     btnTopicGo: (n: number) => `📌 Module ${n} topic`,
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Module ${n} — ${csvEscapeHtml(title)}</b> (${taskCount})`,
     hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ T${tn}: ${sc}/${mx}${fb ? `\n      💬 ${csvEscapeHtml(fb)}` : ""}`,
+    hwTaskResub: (tn: number, sc: number, mx: number) => `   🔄 T${tn}: ${sc}/${mx} — resubmitted, awaiting new score`,
     hwTaskUnscored: (tn: number) => `   ⏳ T${tn}: not graded yet`,
     hwTaskSubmitted: (tn: number) => `   📤 T${tn}: submitted, awaiting score`,
     hwTaskNotStarted: (tn: number) => `   📝 T${tn}: not started`,
@@ -1476,7 +1479,7 @@ async function buildHomeworkMessage(
     const aIds = list.map((a) => a.id);
     const moduleIds = Array.from(new Set(list.map((a) => a.module_id)));
     const [{ data: subs }, { data: topics }, { data: groupRow }] = await Promise.all([
-      admin.from("homework_submissions").select("assignment_id, score, score_feedback").eq("user_id", userId).in("assignment_id", aIds),
+      admin.from("homework_submissions").select("assignment_id, score, score_feedback, score_is_stale, previous_attempts").eq("user_id", userId).in("assignment_id", aIds),
       groupId
         ? admin.from("group_module_topics").select("module_id, telegram_topic_url").eq("group_id", groupId).in("module_id", moduleIds)
         : Promise.resolve({ data: [] }),
@@ -1513,8 +1516,18 @@ async function buildHomeworkMessage(
         const s: any = subMap.get(a.id);
         const parentTn = a.parent_id ? (parentTaskNum.get(a.parent_id) || 1) : (a.task_number || 1);
         const tnLabel: any = a.parent_id ? `${parentTn}.S${a.sap_number ?? "?"}` : parentTn;
+        const prevScore = (() => {
+          const arr = Array.isArray(s?.previous_attempts) ? s.previous_attempts : [];
+          for (let i = arr.length - 1; i >= 0; i--) {
+            const v = Number(arr[i]?.score);
+            if (Number.isFinite(v)) return v;
+          }
+          return null;
+        })();
         if (s && s.score != null) {
           lines.push(t.hwTaskScored(tnLabel, s.score, a.max_score || 10, s.score_feedback || ""));
+        } else if (s && prevScore != null) {
+          lines.push(t.hwTaskResub(tnLabel, prevScore, a.max_score || 10));
         } else if (s) {
           lines.push(t.hwTaskSubmitted(tnLabel));
         } else {

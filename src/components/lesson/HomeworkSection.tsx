@@ -83,7 +83,14 @@ export function HomeworkSection({ lessonId }: Props) {
           .from("group_module_topics" as any)
           .select("telegram_topic_url")
           .eq("group_id", gid).eq("module_id", l.module_id).maybeSingle();
-        setTopicUrl((gmt as any)?.telegram_topic_url || null);
+        let url = (gmt as any)?.telegram_topic_url || null;
+        if (!url) {
+          const { data: gr } = await supabase
+            .from("groups").select("homework_topic_url")
+            .eq("id", gid).maybeSingle();
+          url = (gr as any)?.homework_topic_url || null;
+        }
+        setTopicUrl(url);
       }
     })();
   }, [user, lessonId]);
