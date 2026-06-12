@@ -1694,6 +1694,8 @@ export type Database = {
           last_name: string | null
           last_streak_warning_at: string | null
           name: string | null
+          name_confirmed_at: string | null
+          name_prompt_last_at: string | null
           notifications_enabled: boolean
           onboarding_completed: boolean | null
           preferred_language: string | null
@@ -1725,6 +1727,8 @@ export type Database = {
           last_name?: string | null
           last_streak_warning_at?: string | null
           name?: string | null
+          name_confirmed_at?: string | null
+          name_prompt_last_at?: string | null
           notifications_enabled?: boolean
           onboarding_completed?: boolean | null
           preferred_language?: string | null
@@ -1756,6 +1760,8 @@ export type Database = {
           last_name?: string | null
           last_streak_warning_at?: string | null
           name?: string | null
+          name_confirmed_at?: string | null
+          name_prompt_last_at?: string | null
           notifications_enabled?: boolean
           onboarding_completed?: boolean | null
           preferred_language?: string | null
