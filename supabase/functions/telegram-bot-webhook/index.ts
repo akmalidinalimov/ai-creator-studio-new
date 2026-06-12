@@ -730,6 +730,18 @@ const T = {
       `🆕 <b>New submission</b>\n👤 ${csvEscapeHtml(name)}\n📚 Module ${mn} · T${tn} — ${csvEscapeHtml(title)}`,
     hwTeacherBtnFile: "📂 Open file",
     hwTeacherBtnGrade: "🎯 Grade now",
+    namePrompt: (cur: string) => `👤 Your name appears in the rating as: <b>${cur}</b>\nConfirm so it displays correctly:`,
+    nameBtnOk: "✅ My name is correct",
+    nameBtnEdit: "✏️ Enter my name",
+    nameBtnLater: "⏭ Later",
+    nameAskInput: "Type your first and last name (e.g.: Aziz Karimov):",
+    nameInvalid: "Please enter a name with letters only (e.g.: Aziz Karimov)",
+    namePreview: (f: string, l: string) => `First name: <b>${f}</b>${l ? ` · Last name: <b>${l}</b>` : ""} — correct?`,
+    nameBtnYes: "✅ Yes, save",
+    nameBtnRetry: "✏️ Re-enter",
+    nameSaved: (d: string) => `✅ Saved! You now appear in the rating as: <b>${d}</b> ⭐`,
+    nameConfirmedOk: "✅ Thank you! Your name is confirmed.",
+    nameLater: "OK, I'll ask later 👍",
   },
 };
 
