@@ -37,7 +37,7 @@ export default function Leaderboard() {
           <h1 className="text-3xl font-semibold tracking-tight">🏆 TOP 10 Reyting</h1>
         </div>
         <p className="text-sm text-muted-foreground">
-          Faollik bali oxirgi 30 kun ichidagi darslar, daqiqalar va streak asosida hisoblanadi (har kuni soat 02:00 da yangilanadi).
+          Faollik bali oxirgi 30 kun ichidagi darslar, daqiqalar va streak asosida hisoblanadi (har 15 daqiqada yangilanadi).
         </p>
 
         <Card className="overflow-hidden shadow-soft">
@@ -61,7 +61,7 @@ export default function Leaderboard() {
                 return (
                   <tr key={r.user_id} className={`border-t ${mine ? "bg-primary/5 font-semibold" : ""}`}>
                     <td className="px-4 py-2.5 tabular-nums">{r.rank}</td>
-                    <td className="px-4 py-2.5">Talaba {r.first_name} {r.last_initial ? r.last_initial + "." : ""}{mine && " (Siz)"}</td>
+                    <td className="px-4 py-2.5">{r.first_name} {r.last_initial ? r.last_initial + "." : ""}{mine && " (Siz)"}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums">{r.score}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums">{r.current_streak}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums">{r.lessons_30d}</td>
