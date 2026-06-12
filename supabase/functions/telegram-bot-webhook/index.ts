@@ -707,6 +707,7 @@ const T = {
     btnTopicGo: (n: number) => `📌 Module ${n} topic`,
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Module ${n} — ${csvEscapeHtml(title)}</b> (${taskCount})`,
     hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ T${tn}: ${sc}/${mx}${fb ? `\n      💬 ${csvEscapeHtml(fb)}` : ""}`,
+    hwTaskResub: (tn: number, sc: number, mx: number) => `   🔄 T${tn}: ${sc}/${mx} — resubmitted, awaiting new score`,
     hwTaskUnscored: (tn: number) => `   ⏳ T${tn}: not graded yet`,
     hwTaskSubmitted: (tn: number) => `   📤 T${tn}: submitted, awaiting score`,
     hwTaskNotStarted: (tn: number) => `   📝 T${tn}: not started`,
