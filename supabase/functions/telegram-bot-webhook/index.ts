@@ -3231,6 +3231,29 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
     await sendMessage(chatId, text, { inline_keyboard: [[{ text: t.btnSiteOpen, url }]] });
     await sendKeyboardHint(chatId, locale);
     console.timeEnd(`bot:stats:${profile.id}`);
+    // One-time "confirm your name" prompt — real students only, not while impersonating.
+    try {
+      if (realPersona === "student" && !effectivePersona) {
+        const { data: np } = await admin
+          .from("profiles")
+          .select("name_confirmed_at, name_prompt_last_at")
+          .eq("id", profile.id)
+          .maybeSingle();
+        if (np && !np.name_confirmed_at) {
+          const lastP = np.name_prompt_last_at ? new Date(np.name_prompt_last_at).getTime() : 0;
+          if (Date.now() - lastP > 3 * 86400_000) {
+            await admin.from("profiles").update({ name_prompt_last_at: new Date().toISOString() }).eq("id", profile.id);
+            const disp = `${profile.name || ""} ${profile.last_name || ""}`.trim() || "—";
+            await sendMessage(chatId, t.namePrompt(disp), { inline_keyboard: [[
+              { text: t.nameBtnOk, callback_data: "name:ok" },
+              { text: t.nameBtnEdit, callback_data: "name:edit" },
+            ], [
+              { text: t.nameBtnLater, callback_data: "name:later" },
+            ]] });
+          }
+        }
+      }
+    } catch (_e) { /* best-effort */ }
     return;
   }
 
