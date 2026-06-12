@@ -253,6 +253,7 @@ const T = {
     btnTopicGo: (n: number) => `📌 Modul ${n} topikga`,
     hwModuleHeader: (n: number, title: string, taskCount: number) => `📚 <b>Modul ${n} — ${csvEscapeHtml(title)}</b> (${taskCount} ta)`,
     hwTaskScored: (tn: number, sc: number, mx: number, fb: string) => `   ✅ V${tn}: ${sc}/${mx}${fb ? `\n      💬 ${csvEscapeHtml(fb)}` : ""}`,
+    hwTaskResub: (tn: number, sc: number, mx: number) => `   🔄 V${tn}: ${sc}/${mx} — qayta topshirilgan, yangi baho kutilmoqda`,
     hwTaskUnscored: (tn: number) => `   ⏳ V${tn}: hali baholanmagan`,
     hwTaskSubmitted: (tn: number) => `   📤 V${tn}: topshirilgan, baholashni kuting`,
     hwTaskNotStarted: (tn: number) => `   📝 V${tn}: boshlanmadi`,
