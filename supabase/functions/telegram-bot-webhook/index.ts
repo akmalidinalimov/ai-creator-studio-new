@@ -4640,6 +4640,36 @@ Deno.serve(async (req) => {
         if (!consumed && persona === "teacher" && profileForLocale) {
           consumed = await handleTeacherSession(admin, msg, profileForLocale.id, locale);
         }
+        if (!consumed && profileForLocale && persona === "student") {
+          // "Confirm your name" text capture (awaiting_name → confirm_name)
+          try {
+            const { data: nst } = await admin
+              .from("bot_conversation_state")
+              .select("state, expires_at")
+              .eq("telegram_id", msg.from.id)
+              .maybeSingle();
+            if (nst?.state === "awaiting_name" && nst.expires_at && new Date(nst.expires_at).getTime() > Date.now()) {
+              const t = T[locale] as any;
+              const parsed = normalizeNameInput(text);
+              if (!parsed) {
+                await sendMessage(msg.chat.id, t.nameInvalid);
+              } else {
+                await admin.from("bot_conversation_state").upsert({
+                  telegram_id: msg.from.id,
+                  state: "confirm_name",
+                  context: { first: parsed.first, last: parsed.last },
+                  updated_at: new Date().toISOString(),
+                  expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+                });
+                await sendMessage(msg.chat.id, t.namePreview(parsed.first, parsed.last), { inline_keyboard: [[
+                  { text: t.nameBtnYes, callback_data: "name:yes" },
+                  { text: t.nameBtnRetry, callback_data: "name:retry" },
+                ]] });
+              }
+              consumed = true;
+            }
+          } catch (_e) { /* best-effort */ }
+        }
         if (!consumed) {
           const mapped = buttonTextToCommand(text);
           if (mapped) await handleCommand(admin, msg, mapped);
