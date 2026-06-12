@@ -1237,6 +1237,23 @@ function bar(done: number, total: number, width = 10): string {
   return "█".repeat(filled) + "░".repeat(width - filled);
 }
 
+// Normalize a typed name: fold stylized unicode, keep letters/apostrophe/hyphen,
+// Title Case, split into first + rest. Returns null if not a plausible name.
+function normalizeNameInput(raw: string): { first: string; last: string } | null {
+  const cleaned = (raw || "").normalize("NFKC")
+    .replace(/[^\p{L}\p{M}'’\- ]/gu, " ")
+    .replace(/\s+/g, " ").trim();
+  if (cleaned.length < 2 || cleaned.length > 80) return null;
+  const words = cleaned.split(" ").slice(0, 4);
+  const tc = (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  const first = tc(words[0]);
+  if (first.replace(/[^\p{L}]/gu, "").length < 2) return null;
+  const last = words.slice(1).map(tc).join(" ");
+  return { first, last };
+}
+
+
+
 // Named levels mapped from the 0–100 activity score. Early bands are short so
 // beginners level up fast (competence for the bottom 80%); the number always goes up.
 const LEVELS = [
