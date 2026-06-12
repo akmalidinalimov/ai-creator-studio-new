@@ -1476,7 +1476,7 @@ async function buildHomeworkMessage(
     const aIds = list.map((a) => a.id);
     const moduleIds = Array.from(new Set(list.map((a) => a.module_id)));
     const [{ data: subs }, { data: topics }, { data: groupRow }] = await Promise.all([
-      admin.from("homework_submissions").select("assignment_id, score, score_feedback").eq("user_id", userId).in("assignment_id", aIds),
+      admin.from("homework_submissions").select("assignment_id, score, score_feedback, score_is_stale, previous_attempts").eq("user_id", userId).in("assignment_id", aIds),
       groupId
         ? admin.from("group_module_topics").select("module_id, telegram_topic_url").eq("group_id", groupId).in("module_id", moduleIds)
         : Promise.resolve({ data: [] }),
