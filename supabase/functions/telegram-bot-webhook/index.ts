@@ -1513,8 +1513,18 @@ async function buildHomeworkMessage(
         const s: any = subMap.get(a.id);
         const parentTn = a.parent_id ? (parentTaskNum.get(a.parent_id) || 1) : (a.task_number || 1);
         const tnLabel: any = a.parent_id ? `${parentTn}.S${a.sap_number ?? "?"}` : parentTn;
+        const prevScore = (() => {
+          const arr = Array.isArray(s?.previous_attempts) ? s.previous_attempts : [];
+          for (let i = arr.length - 1; i >= 0; i--) {
+            const v = Number(arr[i]?.score);
+            if (Number.isFinite(v)) return v;
+          }
+          return null;
+        })();
         if (s && s.score != null) {
           lines.push(t.hwTaskScored(tnLabel, s.score, a.max_score || 10, s.score_feedback || ""));
+        } else if (s && prevScore != null) {
+          lines.push(t.hwTaskResub(tnLabel, prevScore, a.max_score || 10));
         } else if (s) {
           lines.push(t.hwTaskSubmitted(tnLabel));
         } else {
