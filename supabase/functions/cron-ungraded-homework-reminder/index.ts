@@ -202,7 +202,9 @@ Deno.serve(async (req) => {
       }
       if (!recipients.length) { skipped++; continue; }
 
-      const prevSent = remMap.get(s.id)?.reminders_sent ?? 0;
+      const rr = remMap.get(s.id);
+      const sameCycle = !!(rr && rr.cycle_submitted_at && new Date(rr.cycle_submitted_at).getTime() === new Date(s.submitted_at).getTime());
+      const prevSent = sameCycle ? (rr?.reminders_sent ?? 0) : 0;
       const n = prevSent + 1;
 
       let anySent = false;
