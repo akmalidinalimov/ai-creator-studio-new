@@ -2357,6 +2357,23 @@ export type Database = {
           user_id: string
         }[]
       }
+      admin_dashboard_students: {
+        Args: { _course_id: string; _since30: string }
+        Returns: {
+          course_completed: boolean
+          created_at: string
+          email: string
+          id: string
+          last_auth_at: string
+          last_lesson_at: string
+          last_name: string
+          last_sign_in_at: string
+          logins_30d: number
+          name: string
+          telegram_id: number
+          telegram_username: string
+        }[]
+      }
       admin_export_group_csv: {
         Args: { _group_id: string; _include_archived?: boolean }
         Returns: {
@@ -2507,6 +2524,7 @@ export type Database = {
         }[]
       }
       award_badge: { Args: { _code: string; uid: string }; Returns: undefined }
+      bump_streak_for_user: { Args: { p_user_id: string }; Returns: undefined }
       can_see_group: {
         Args: { _group_id: string; _uid: string }
         Returns: boolean
@@ -2556,6 +2574,10 @@ export type Database = {
         Returns: Json
       }
       group_health_score: { Args: { _group_id: string }; Returns: number }
+      had_genuine_activity_on_date: {
+        Args: { p_date?: string; p_user_id: string }
+        Returns: boolean
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
