@@ -232,6 +232,7 @@ Deno.serve(async (req) => {
         submission_id: s.id,
         reminders_sent: n,
         last_reminder_at: new Date().toISOString(),
+        cycle_submitted_at: s.submitted_at,
       }, { onConflict: "submission_id" });
 
       try {
