@@ -25,11 +25,40 @@ Deno.serve(async (req) => {
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
     const { data: lesson } = await admin
       .from("lessons")
-      .select("video_provider, video_url, video_storage_path, provider_video_id, published")
+      .select("video_provider, video_url, video_storage_path, provider_video_id, published, modules:module_id(course_id)")
       .eq("id", lessonId)
       .maybeSingle();
 
     if (!lesson) return new Response(JSON.stringify({ error: "not found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+    // Authorization: admins bypass; everyone else must be enrolled AND the lesson must be published.
+    const userId = who.user.id;
+    const { data: roleRow } = await admin
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", userId)
+      .in("role", ["admin", "superadmin"])
+      .maybeSingle();
+    const isAdmin = !!roleRow;
+
+    if (!isAdmin) {
+      if (!lesson.published) {
+        return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const courseId = (lesson as any).modules?.course_id;
+      if (!courseId) {
+        return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const { data: enr } = await admin
+        .from("enrollments")
+        .select("user_id")
+        .eq("user_id", userId)
+        .eq("course_id", courseId)
+        .maybeSingle();
+      if (!enr) {
+        return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
 
     let url: string | null = null;
     let kind: "mp4" | "hls" | "iframe" = "mp4";

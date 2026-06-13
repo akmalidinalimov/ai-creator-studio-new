@@ -4,6 +4,15 @@
 //        { mode: "cron" } → invoked by pg_cron; runs all 4 types over all eligible students.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
+let __sec: string | null = null;
+async function __internalSecretFor(admin: any): Promise<string> {
+  if (__sec) return __sec;
+  const { data, error } = await admin.rpc("internal_fn_secret");
+  if (error) throw error;
+  __sec = data as string;
+  return __sec;
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -232,6 +241,15 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const mode = body?.mode || "cron";
+
+    // Cron mode requires the internal-secret header (test mode authenticates via admin JWT below).
+    if (mode !== "test") {
+      const __p = req.headers.get("x-internal-secret");
+      const __s = await __internalSecretFor(admin);
+      if (!__p || __p !== __s) {
+        return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
 
     // Load templates
     const { data: settings } = await admin.from("platform_settings").select("value").eq("key", "nudge_templates").maybeSingle();
