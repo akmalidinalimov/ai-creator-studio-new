@@ -17,9 +17,12 @@ export default function Leaderboard() {
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     (async () => {
+      // Per-course leaderboard: ranks within the student's own course only.
       const [{ data: top }, { data: mine }] = await Promise.all([
-        supabase.rpc("leaderboard_top", { _limit: 10 }),
-        user ? supabase.rpc("leaderboard_my_rank", { uid: user.id }) : Promise.resolve({ data: null } as any),
+        user
+          ? supabase.rpc("leaderboard_top_for_user" as any, { uid: user.id, _limit: 10 })
+          : supabase.rpc("leaderboard_top", { _limit: 10 }),
+        user ? supabase.rpc("leaderboard_my_rank_for_user" as any, { uid: user.id }) : Promise.resolve({ data: null } as any),
       ]);
       const tops = (top as any) || [];
       setRows(tops);
