@@ -69,6 +69,7 @@ export default function AdminGroups() {
   const [deleteGroup, setDeleteGroup] = useState<Group | null>(null);
   const [studentsGroup, setStudentsGroup] = useState<Group | null>(null);
   const [assignTeacherGroup, setAssignTeacherGroup] = useState<Group | null>(null);
+  const [courseFilter, setCourseFilter] = useState<string>("all");
 
   const reload = async () => {
     setLoading(true);
@@ -110,6 +111,9 @@ export default function AdminGroups() {
     return t.name || t.email || (t.telegram_username ? `@${t.telegram_username}` : t.id.slice(0, 8));
   };
 
+  const courseTitle = (id: string | null) => courses.find((c) => c.id === id)?.title || "—";
+  const visibleGroups = courseFilter === "all" ? groups : groups.filter((g) => g.course_id === courseFilter);
+
   return (
     <PageShell>
       <div className="space-y-6">
@@ -119,6 +123,13 @@ export default function AdminGroups() {
             <p className="text-sm text-muted-foreground">Manage student groups and assign teachers.</p>
           </div>
           <div className="flex items-center gap-2">
+            <Select value={courseFilter} onValueChange={setCourseFilter}>
+              <SelectTrigger className="w-[200px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All courses</SelectItem>
+                {courses.map((c) => <SelectItem key={c.id} value={c.id}>{c.title}</SelectItem>)}
+              </SelectContent>
+            </Select>
             <Button onClick={() => setOpenCreate(true)}><Plus className="mr-2 h-4 w-4" />Create group</Button>
           </div>
         </div>
@@ -128,6 +139,7 @@ export default function AdminGroups() {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
+                <TableHead>Course</TableHead>
                 <TableHead>Teacher</TableHead>
                 <TableHead>Students</TableHead>
                 <TableHead>Topiklar</TableHead>
@@ -137,15 +149,16 @@ export default function AdminGroups() {
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
-              ) : groups.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No groups yet.</TableCell></TableRow>
-              ) : groups.map((g) => {
+                <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
+              ) : visibleGroups.length === 0 ? (
+                <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No groups yet.</TableCell></TableRow>
+              ) : visibleGroups.map((g) => {
                 return (
                 <TableRow key={g.id}>
                   <TableCell className="font-medium">
                     <Link to={`/admin/groups/${g.id}`} className="hover:underline text-left">{g.name}</Link>
                   </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{courseTitle(g.course_id)}</TableCell>
                   <TableCell>
                     {g.teacher_id ? (
                       teacherLabel(g.teacher_id)
@@ -205,6 +218,7 @@ export default function AdminGroups() {
           group={editGroup}
           courses={courses}
           teachers={teachers}
+          defaultCourseId={courseFilter !== "all" ? courseFilter : ""}
           onClose={() => { setOpenCreate(false); setEditGroup(null); }}
           onSaved={() => { setOpenCreate(false); setEditGroup(null); reload(); }}
         />
@@ -251,16 +265,17 @@ export default function AdminGroups() {
 const TG_URL_RE = /^https:\/\/t\.me\/(c\/\d+\/\d+|\+[\w-]+)/;
 
 function GroupFormDialog({
-  group, courses, teachers, onClose, onSaved,
+  group, courses, teachers, defaultCourseId, onClose, onSaved,
 }: {
   group: Group | null;
   courses: Course[];
   teachers: ProfileLite[];
+  defaultCourseId?: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const [name, setName] = useState(group?.name || "");
-  const [courseId, setCourseId] = useState<string>(group?.course_id || "");
+  const [courseId, setCourseId] = useState<string>(group?.course_id || defaultCourseId || "");
   const [teacherInput, setTeacherInput] = useState<string>("");
   const [teacherPick, setTeacherPick] = useState<string>(group?.teacher_id || "");
   const [busy, setBusy] = useState(false);
@@ -294,6 +309,7 @@ function GroupFormDialog({
 
   const submit = async () => {
     if (!name.trim()) { toast.error("Name required"); return; }
+    if (!courseId) { toast.error("Course required — pick the course this group belongs to"); return; }
 
     let groupErr = "";
     let hwErr = "";
@@ -322,7 +338,7 @@ function GroupFormDialog({
       }
       const payload: any = {
         name: name.trim(),
-        course_id: courseId || null,
+        course_id: courseId,
         teacher_id,
         telegram_group_url: tgGroupUrl.trim() || null,
         homework_topic_url: hwTopicUrl.trim() || null,
@@ -354,9 +370,9 @@ function GroupFormDialog({
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Group A" />
           </div>
           <div>
-            <Label>Course</Label>
+            <Label>Course <span className="text-rose-500">*</span></Label>
             <Select value={courseId} onValueChange={setCourseId}>
-              <SelectTrigger><SelectValue placeholder="— none —" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="Select a course" /></SelectTrigger>
               <SelectContent>
                 {courses.map((c) => <SelectItem key={c.id} value={c.id}>{c.title}</SelectItem>)}
               </SelectContent>
