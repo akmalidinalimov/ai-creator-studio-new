@@ -575,6 +575,41 @@ export type Database = {
         }
         Relationships: []
       }
+      course_tiers: {
+        Row: {
+          course_id: string
+          created_at: string
+          id: string
+          module_limit: number | null
+          name: string
+          position: number
+        }
+        Insert: {
+          course_id: string
+          created_at?: string
+          id?: string
+          module_limit?: number | null
+          name: string
+          position?: number
+        }
+        Update: {
+          course_id?: string
+          created_at?: string
+          id?: string
+          module_limit?: number | null
+          name?: string
+          position?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_tiers_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       courses: {
         Row: {
           ai_knowledge_paths: string[] | null
@@ -670,18 +705,21 @@ export type Database = {
           course_id: string
           enrolled_at: string
           id: string
+          tier_id: string | null
           user_id: string
         }
         Insert: {
           course_id: string
           enrolled_at?: string
           id?: string
+          tier_id?: string | null
           user_id: string
         }
         Update: {
           course_id?: string
           enrolled_at?: string
           id?: string
+          tier_id?: string | null
           user_id?: string
         }
         Relationships: [
@@ -690,6 +728,13 @@ export type Database = {
             columns: ["course_id"]
             isOneToOne: false
             referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "enrollments_tier_id_fkey"
+            columns: ["tier_id"]
+            isOneToOne: false
+            referencedRelation: "course_tiers"
             referencedColumns: ["id"]
           },
         ]
@@ -2406,6 +2451,16 @@ export type Database = {
           telegram_username: string
         }[]
       }
+      admin_duplicate_course: {
+        Args: { _new_title?: string; _source_course_id: string }
+        Returns: {
+          homework_count: number
+          lessons_count: number
+          modules_count: number
+          new_course_id: string
+          quiz_count: number
+        }[]
+      }
       admin_export_group_csv: {
         Args: { _group_id: string; _include_archived?: boolean }
         Returns: {
@@ -2486,6 +2541,10 @@ export type Database = {
           telegram_id: number
           telegram_username: string
         }[]
+      }
+      admin_set_enrollment_tier: {
+        Args: { _course_id: string; _tier_id: string; _user_id: string }
+        Returns: undefined
       }
       admin_ungrouped_students: {
         Args: never
@@ -2610,6 +2669,10 @@ export type Database = {
         Args: { p_date?: string; p_user_id: string }
         Returns: boolean
       }
+      has_module_access: {
+        Args: { _module_id: string; _user_id: string }
+        Returns: boolean
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -2666,6 +2729,7 @@ export type Database = {
           similarity: number
         }[]
       }
+      my_module_limit: { Args: { _course_id: string }; Returns: number }
       nudge_candidates_inactive: {
         Args: { _days: number }
         Returns: {
