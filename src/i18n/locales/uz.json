@@ -118,6 +118,8 @@
     "backToDashboard": "← Bosh sahifa",
     "notFound": "Kurs topilmadi.",
     "moduleN": "Modul {{n}}",
+    "locked": "Qulflangan",
+    "lockedHint": "Bu modul sizning tarifingizga kirmaydi.",
     "takeQuiz": "Modul testini topshirish →",
     "yourProgress": "Sizning natijangiz",
     "continue": "Davom etish",

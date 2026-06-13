@@ -118,6 +118,8 @@
     "backToDashboard": "← Dashboard",
     "notFound": "Course not found.",
     "moduleN": "Module {{n}}",
+    "locked": "Locked",
+    "lockedHint": "This module isn't included in your plan.",
     "takeQuiz": "Take module quiz →",
     "yourProgress": "Your progress",
     "continue": "Continue",

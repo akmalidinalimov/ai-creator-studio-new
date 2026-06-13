@@ -7,7 +7,7 @@ import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { CheckCircle2, Circle, PlayCircle, Clock } from "lucide-react";
+import { CheckCircle2, Circle, PlayCircle, Clock, Lock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function CoursePage() {
@@ -17,6 +17,7 @@ export default function CoursePage() {
   const [course, setCourse] = useState<any>(null);
   const [modules, setModules] = useState<any[]>([]);
   const [completed, setCompleted] = useState<Set<string>>(new Set());
+  const [moduleLimit, setModuleLimit] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -31,6 +32,8 @@ export default function CoursePage() {
       // sort lessons within each module
       (ms || []).forEach((m: any) => m.lessons.sort((a: any, b: any) => a.position - b.position));
       setCourse(c); setModules(ms || []);
+      const { data: lim } = await supabase.rpc("my_module_limit" as any, { _course_id: courseId });
+      setModuleLimit(typeof lim === "number" ? lim : null);
       const allLessonIds = (ms || []).flatMap((m: any) => m.lessons.map((l: any) => l.id));
       if (allLessonIds.length) {
         const { data: prog } = await supabase
@@ -46,9 +49,12 @@ export default function CoursePage() {
   if (loading) return <PageShell><Skeleton className="h-64" /></PageShell>;
   if (!course) return <PageShell><p>{t("coursePage.notFound")}</p></PageShell>;
 
-  const totalLessons = modules.reduce((s, m) => s + m.lessons.length, 0);
+  const accessibleCount = moduleLimit == null ? modules.length : Math.min(moduleLimit, modules.length);
+  const accessibleModules = modules.slice(0, accessibleCount);
+  const isModuleLocked = (i: number) => moduleLimit != null && i >= moduleLimit;
+  const totalLessons = accessibleModules.reduce((s, m) => s + m.lessons.length, 0);
   const pct = totalLessons ? Math.round((completed.size / totalLessons) * 100) : 0;
-  const nextLesson = modules.flatMap((m) => m.lessons).find((l: any) => !completed.has(l.id));
+  const nextLesson = accessibleModules.flatMap((m) => m.lessons).find((l: any) => !completed.has(l.id));
 
   return (
     <PageShell>
@@ -62,31 +68,45 @@ export default function CoursePage() {
           </div>
 
           <div className="space-y-6">
-            {modules.map((m, i) => (
-              <Card key={m.id} className="overflow-hidden shadow-soft">
+            {modules.map((m, i) => {
+              const locked = isModuleLocked(i);
+              return (
+              <Card key={m.id} className={`overflow-hidden shadow-soft ${locked ? "opacity-70" : ""}`}>
                 <div className="px-4 sm:px-5 py-4 border-b bg-muted/30 min-w-0">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("coursePage.moduleN", { n: i + 1 })}</div>
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("coursePage.moduleN", { n: i + 1 })}</div>
+                    {locked && <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground"><Lock className="h-3 w-3" />{t("coursePage.locked")}</span>}
+                  </div>
                   <h3 className="text-base sm:text-lg font-semibold tracking-tight break-words mt-0.5">{m.title}</h3>
                   {m.summary && <p className="text-sm text-muted-foreground mt-1 break-words">{m.summary}</p>}
                 </div>
-                <ul className="divide-y">
-                  {m.lessons.map((l: any, j: number) => (
-                    <li key={l.id}>
-                      <Link to={`/lesson/${courseId}/${l.id}`} className="flex items-center gap-3 px-4 sm:px-5 py-3 hover:bg-muted/40 transition-colors min-h-[44px]">
-                        {completed.has(l.id) ? <CheckCircle2 className="h-4 w-4 text-foreground shrink-0" /> : <Circle className="h-4 w-4 text-muted-foreground shrink-0" />}
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium break-words">{j + 1}. {l.title}</div>
-                        </div>
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground shrink-0"><Clock className="h-3 w-3" />{Math.round((l.duration_seconds || 0) / 60)}m</div>
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-                <div className="px-4 sm:px-5 py-3 border-t bg-muted/20">
-                  <Button asChild variant="outline" size="sm" className="w-full sm:w-auto min-h-[44px] sm:min-h-0"><Link to={`/quiz/${m.id}`}>{t("coursePage.takeQuiz")}</Link></Button>
-                </div>
+                {locked ? (
+                  <div className="px-4 sm:px-5 py-4 text-sm text-muted-foreground flex items-center gap-2">
+                    <Lock className="h-4 w-4 shrink-0" /><span>{t("coursePage.lockedHint")}</span>
+                  </div>
+                ) : (
+                  <>
+                    <ul className="divide-y">
+                      {m.lessons.map((l: any, j: number) => (
+                        <li key={l.id}>
+                          <Link to={`/lesson/${courseId}/${l.id}`} className="flex items-center gap-3 px-4 sm:px-5 py-3 hover:bg-muted/40 transition-colors min-h-[44px]">
+                            {completed.has(l.id) ? <CheckCircle2 className="h-4 w-4 text-foreground shrink-0" /> : <Circle className="h-4 w-4 text-muted-foreground shrink-0" />}
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-medium break-words">{j + 1}. {l.title}</div>
+                            </div>
+                            <div className="flex items-center gap-1 text-xs text-muted-foreground shrink-0"><Clock className="h-3 w-3" />{Math.round((l.duration_seconds || 0) / 60)}m</div>
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="px-4 sm:px-5 py-3 border-t bg-muted/20">
+                      <Button asChild variant="outline" size="sm" className="w-full sm:w-auto min-h-[44px] sm:min-h-0"><Link to={`/quiz/${m.id}`}>{t("coursePage.takeQuiz")}</Link></Button>
+                    </div>
+                  </>
+                )}
               </Card>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -98,7 +118,7 @@ export default function CoursePage() {
             </div>
             <Progress value={pct} className="mt-3 h-1.5" />
             <div className="grid grid-cols-3 gap-2 mt-5 text-center">
-              <Stat n={modules.length} l={t("coursePage.stats.modules")} />
+              <Stat n={accessibleCount} l={t("coursePage.stats.modules")} />
               <Stat n={totalLessons} l={t("coursePage.stats.lessons")} />
               <Stat n={`${course.duration_hours}h`} l={t("coursePage.stats.total")} />
             </div>
