@@ -175,10 +175,17 @@ Deno.serve(async (req) => {
       const chatId = Number(u.telegram_id);
       const firstName = u.name || "";
 
-      const { data: lastProg } = await admin
-        .from("lesson_progress").select("updated_at").eq("user_id", u.id)
-        .order("updated_at", { ascending: false }).limit(1).maybeSingle();
-      const lastActivity = lastProg?.updated_at ? new Date(lastProg.updated_at) : null;
+      const [lpRes, gmRes, hwRes] = await Promise.all([
+        admin.from("lesson_progress").select("updated_at").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+        admin.from("group_message_events").select("sent_at").eq("profile_id", u.id).not("telegram_thread_id", "is", null).order("sent_at", { ascending: false }).limit(1).maybeSingle(),
+        admin.from("homework_submissions").select("submitted_at").eq("user_id", u.id).order("submitted_at", { ascending: false }).limit(1).maybeSingle(),
+      ]);
+      const tsCandidates = [
+        (lpRes.data as any)?.updated_at,
+        (gmRes.data as any)?.sent_at,
+        (hwRes.data as any)?.submitted_at,
+      ].filter(Boolean).map((t: string) => new Date(t).getTime());
+      const lastActivity = tsCandidates.length ? new Date(Math.max(...tsCandidates)) : null;
 
       function ymdInTz(date: Date): string {
         try {
