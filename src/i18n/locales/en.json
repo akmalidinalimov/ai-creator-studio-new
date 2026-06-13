@@ -135,6 +135,7 @@
     "markComplete": "Mark complete",
     "allModules": "All modules",
     "markedCompleteToast": "Lesson marked complete",
+    "watchMoreToComplete": "Watch at least half of the lesson before marking it complete.",
     "video": {
       "unavailable": "Video is not available for this lesson."
     },

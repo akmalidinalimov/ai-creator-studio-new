@@ -38,6 +38,11 @@ export default function LessonPage() {
   const [chatLoading, setChatLoading] = useState(false);
   const [protectionSettings, setProtectionSettings] = useState<any | undefined>(undefined);
   const videoRef = useRef<HTMLVideoElement>(null);
+  // Furthest watched position + duration this session (also seeded from stored
+  // progress) — used to gate manual "Mark complete" so a streak can't be earned
+  // by clicking complete without genuinely watching.
+  const watchMaxPosRef = useRef(0);
+  const watchDurRef = useRef(0);
   const [bunnyResolved, setBunnyResolved] = useState<{ lib: string; guid: string } | null>(null);
 
   // Fallback: if a Bunny lesson was saved with only a bare GUID, resolve the
@@ -84,11 +89,14 @@ export default function LessonPage() {
       (ms || []).forEach((m: any) => m.lessons.sort((a: any, b: any) => a.position - b.position));
       setModules(ms || []);
       const lessonIds = (ms || []).flatMap((m: any) => m.lessons.map((x: any) => x.id));
-      const { data: prog } = await supabase.from("lesson_progress").select("lesson_id, completed_at, last_position_seconds")
+      const { data: prog } = await supabase.from("lesson_progress").select("lesson_id, completed_at, last_position_seconds, max_position_seconds, duration_seconds_v2")
         .eq("user_id", user.id).in("lesson_id", lessonIds.length ? lessonIds : ["00000000-0000-0000-0000-000000000000"]);
       setCompleted(new Set((prog || []).filter((p: any) => p.completed_at).map((p: any) => p.lesson_id)));
       const cur = (prog || []).find((p: any) => p.lesson_id === lessonId);
       setProgress(cur || null);
+      // Seed the watch-gate from previously stored progress for this lesson.
+      watchMaxPosRef.current = Math.max(Number(cur?.max_position_seconds) || 0, Number(cur?.last_position_seconds) || 0);
+      watchDurRef.current = Number(cur?.duration_seconds_v2) || 0;
 
       const { data: hist } = await supabase.from("ai_chat_messages").select("role, content").eq("user_id", user.id).eq("lesson_id", lessonId).order("created_at").limit(50);
       setChatHistory((hist || []) as Msg[]);
@@ -116,6 +124,8 @@ export default function LessonPage() {
       const { data } = await supabase.rpc("track_video_progress", {
         p_lesson_id: lessonId, p_current_time: cur, p_duration: dur, p_delta_seconds: delta,
       });
+      if (cur > watchMaxPosRef.current) watchMaxPosRef.current = cur;
+      if (dur > 0) watchDurRef.current = dur;
       if ((data as any)?.completed) setCompleted((s) => new Set(s).add(lessonId));
       // Near-end fallback: mark complete if we're within 5s of the end.
       if (dur > 0 && cur >= dur - 5) {
@@ -152,6 +162,8 @@ export default function LessonPage() {
     const { data } = await supabase.rpc("track_video_progress", {
       p_lesson_id: lessonId, p_current_time: seconds, p_duration: duration, p_delta_seconds: delta,
     });
+    if (seconds > watchMaxPosRef.current) watchMaxPosRef.current = seconds;
+    if (duration > 0) watchDurRef.current = duration;
     if ((data as any)?.completed) setCompleted((s) => new Set(s).add(lessonId!));
   }, [user, lessonId]);
   const onBunnyEnded = useCallback(async () => {
@@ -162,13 +174,36 @@ export default function LessonPage() {
     setCompleted((s) => new Set(s).add(lessonId));
   }, [user, lessonId]);
 
-  const markComplete = async () => {
+  // Require genuinely watching ~half the lesson before a manual completion can
+  // count (prevents earning a streak by clicking "Mark complete" without watching).
+  // Lessons with no/unknown video duration are never blocked.
+  const watchedEnough = () => {
+    const dur = Number(videoRef.current?.duration) || watchDurRef.current || Number((progress as any)?.duration_seconds_v2) || 0;
+    if (!dur || dur <= 0) return true;
+    const pos = Math.max(
+      Number(videoRef.current?.currentTime) || 0,
+      watchMaxPosRef.current || 0,
+      Number((progress as any)?.max_position_seconds) || 0,
+    );
+    return pos >= dur * 0.5;
+  };
+
+  const writeComplete = async () => {
     if (!user || !lessonId) return;
     await supabase.from("lesson_progress").upsert({
       user_id: user.id, lesson_id: lessonId, completed_at: new Date().toISOString(),
       last_position_seconds: Math.floor(videoRef.current?.currentTime || 0),
     }, { onConflict: "user_id,lesson_id" });
     setCompleted((s) => new Set(s).add(lessonId));
+  };
+
+  const markComplete = async () => {
+    if (!user || !lessonId) return;
+    if (!completed.has(lessonId) && !watchedEnough()) {
+      toast.error(t("lesson.watchMoreToComplete"));
+      return;
+    }
+    await writeComplete();
     toast.success(t("lesson.markedCompleteToast"));
   };
 
@@ -178,7 +213,10 @@ export default function LessonPage() {
   const next = idx >= 0 && idx < flat.length - 1 ? flat[idx + 1] : null;
 
   const goNext = async () => {
-    await markComplete();
+    // Complete silently only if genuinely watched; otherwise just move on.
+    if (user && lessonId && (completed.has(lessonId) || watchedEnough())) {
+      await writeComplete();
+    }
     if (next) navigate(`/lesson/${courseId}/${next.id}`);
   };
 

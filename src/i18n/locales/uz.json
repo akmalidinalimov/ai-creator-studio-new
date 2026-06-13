@@ -135,6 +135,7 @@
     "markComplete": "Tugatildi",
     "allModules": "Barcha modullar",
     "markedCompleteToast": "Dars tugatildi deb belgilandi",
+    "watchMoreToComplete": "Tugatildi deb belgilashdan oldin darsning kamida yarmini ko'ring.",
     "video": {
       "unavailable": "Bu dars uchun video mavjud emas."
     },
