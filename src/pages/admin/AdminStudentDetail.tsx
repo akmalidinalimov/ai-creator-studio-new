@@ -23,7 +23,7 @@ type Profile = {
   group_id: string | null;
   archived_at: string | null;
   created_at: string;
-  groups?: { id: string; name: string } | null;
+  groups?: { id: string; name: string; course_id?: string | null } | null;
 };
 
 function fmtDate(s?: string | null) {
@@ -57,22 +57,54 @@ export default function AdminStudentDetail() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [role, setRole] = useState<string>("student");
   const [loading, setLoading] = useState(true);
+  // Course scoping: which course this student's stats are shown for, plus the id-sets used to
+  // filter every per-lesson / per-assignment read so the page is per-course (not cross-course).
+  const [courseId, setCourseId] = useState<string | null>(null);
+  const [courseOptions, setCourseOptions] = useState<{ id: string; title: string }[]>([]);
+  const [lessonIds, setLessonIds] = useState<string[] | null>(null);
+  const [assignmentIds, setAssignmentIds] = useState<string[] | null>(null);
 
   useEffect(() => {
     if (!id) return;
     (async () => {
       setLoading(true);
-      const [{ data: p }, { data: r }] = await Promise.all([
-        supabase.from("profiles").select("*, groups:group_id(id,name)").eq("id", id).maybeSingle(),
+      const [{ data: p }, { data: r }, { data: enr }, { data: allCourses }] = await Promise.all([
+        supabase.from("profiles").select("*, groups:group_id(id,name,course_id)").eq("id", id).maybeSingle(),
         supabase.from("user_roles").select("role").eq("user_id", id),
+        supabase.from("enrollments").select("course_id").eq("user_id", id),
+        supabase.from("courses").select("id,title"),
       ]);
       setProfile(p as any);
       const rank: Record<string, number> = { superadmin: 1, admin: 2, teacher: 3, student: 4 };
       const top = (r || []).map((x: any) => x.role).sort((a, b) => (rank[a] || 99) - (rank[b] || 99))[0];
       setRole(top || "student");
+      // Resolve the student's course: their group's course first, else their enrollment(s).
+      const titleById = new Map<string, string>(((allCourses as any[]) || []).map((c: any) => [c.id, c.title]));
+      const groupCourse = ((p as any)?.groups?.course_id as string | null) || null;
+      const enrolledIds = ((enr as any[]) || []).map((e: any) => e.course_id).filter(Boolean);
+      const optIds = Array.from(new Set([groupCourse, ...enrolledIds].filter(Boolean))) as string[];
+      setCourseOptions(optIds.map((cid) => ({ id: cid, title: titleById.get(cid) || "Course" })));
+      setCourseId(groupCourse || enrolledIds[0] || null);
       setLoading(false);
     })();
   }, [id]);
+
+  // Build the course's lesson + assignment id-sets whenever the active course changes.
+  // NULL = unscoped (current behavior) when the student has no resolvable course.
+  useEffect(() => {
+    if (!courseId) { setLessonIds(null); setAssignmentIds(null); return; }
+    (async () => {
+      const { data: mods } = await supabase.from("modules").select("id").eq("course_id", courseId);
+      const moduleIds = ((mods as any[]) || []).map((m: any) => m.id);
+      if (!moduleIds.length) { setLessonIds([]); setAssignmentIds([]); return; }
+      const [{ data: les }, { data: asg }] = await Promise.all([
+        supabase.from("lessons").select("id").in("module_id", moduleIds),
+        supabase.from("homework_assignments").select("id").in("module_id", moduleIds),
+      ]);
+      setLessonIds(((les as any[]) || []).map((l: any) => l.id));
+      setAssignmentIds(((asg as any[]) || []).map((a: any) => a.id));
+    })();
+  }, [courseId]);
 
   const fullName = useMemo(
     () => [profile?.name, profile?.last_name].filter(Boolean).join(" ") || profile?.email || "—",
@@ -140,6 +172,19 @@ export default function AdminStudentDetail() {
           </div>
         </Card>
 
+        {courseOptions.length > 1 && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">Kurs:</span>
+            <select
+              className="h-8 rounded-md border bg-background px-2 text-sm"
+              value={courseId || ""}
+              onChange={(e) => setCourseId(e.target.value || null)}
+            >
+              {courseOptions.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+            </select>
+          </div>
+        )}
+
         <Tabs defaultValue="overview">
           <TabsList>
             <TabsTrigger value="overview">📊 Umumiy</TabsTrigger>
@@ -150,9 +195,9 @@ export default function AdminStudentDetail() {
             <TabsTrigger value="profile">Profil</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="overview"><OverviewTab profile={profile} /></TabsContent>
-          <TabsContent value="lessons"><LessonsTab userId={profile.id} /></TabsContent>
-          <TabsContent value="homework"><HomeworkTab userId={profile.id} /></TabsContent>
+          <TabsContent value="overview"><OverviewTab profile={profile} lessonIds={lessonIds} assignmentIds={assignmentIds} /></TabsContent>
+          <TabsContent value="lessons"><LessonsTab userId={profile.id} lessonIds={lessonIds} /></TabsContent>
+          <TabsContent value="homework"><HomeworkTab userId={profile.id} assignmentIds={assignmentIds} /></TabsContent>
           <TabsContent value="telegram"><TelegramTab profile={profile} /></TabsContent>
           <TabsContent value="engagement"><EngagementTab userId={profile.id} /></TabsContent>
           <TabsContent value="profile"><ProfileTab profile={profile} role={role} /></TabsContent>
@@ -165,7 +210,7 @@ export default function AdminStudentDetail() {
 /* ───────── Overview ───────── */
 type Activity = { ts: string; kind: "homework" | "lesson" | "group" | "login"; label: string };
 
-function OverviewTab({ profile }: { profile: Profile }) {
+function OverviewTab({ profile, lessonIds, assignmentIds }: { profile: Profile; lessonIds: string[] | null; assignmentIds: string[] | null }) {
   const userId = profile.id;
   const tgId = profile.telegram_id;
   const [kpi, setKpi] = useState({
@@ -195,12 +240,20 @@ function OverviewTab({ profile }: { profile: Profile }) {
         { data: lb },
         { data: assigns },
       ] = await Promise.all([
-        supabase.from("lesson_progress")
-          .select("watch_seconds_total, completed_at, updated_at, lesson_id, lessons:lesson_id(title)")
-          .eq("user_id", userId).order("updated_at", { ascending: false }).limit(300),
-        supabase.from("homework_submissions")
-          .select("assignment_id, score, submitted_at")
-          .eq("user_id", userId).order("submitted_at", { ascending: false }).limit(300),
+        (() => {
+          let q = supabase.from("lesson_progress")
+            .select("watch_seconds_total, completed_at, updated_at, lesson_id, lessons:lesson_id(title)")
+            .eq("user_id", userId);
+          if (lessonIds) q = q.in("lesson_id", lessonIds);
+          return q.order("updated_at", { ascending: false }).limit(300);
+        })(),
+        (() => {
+          let q = supabase.from("homework_submissions")
+            .select("assignment_id, score, submitted_at")
+            .eq("user_id", userId);
+          if (assignmentIds) q = q.in("assignment_id", assignmentIds);
+          return q.order("submitted_at", { ascending: false }).limit(300);
+        })(),
         tgId
           ? supabase.from("group_message_events").select("id", { count: "exact", head: true }).eq("telegram_user_id", tgId)
           : Promise.resolve({ count: 0 } as any),
@@ -210,7 +263,11 @@ function OverviewTab({ profile }: { profile: Profile }) {
         supabase.from("auth_events").select("event, created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(15),
         supabase.from("streaks").select("current_streak, longest_streak").eq("user_id", userId).maybeSingle(),
         supabase.from("leaderboard_cache").select("rank, score").eq("user_id", userId).maybeSingle(),
-        supabase.from("homework_assignments").select("id, title, task_number").limit(500),
+        (() => {
+          let q = supabase.from("homework_assignments").select("id, title, task_number");
+          if (assignmentIds) q = q.in("id", assignmentIds);
+          return q.limit(500);
+        })(),
       ]);
 
       const lpRows = (lp || []) as any[];
@@ -256,7 +313,7 @@ function OverviewTab({ profile }: { profile: Profile }) {
       setTimeline(acts.slice(0, 30));
       setLoading(false);
     })();
-  }, [userId, tgId]);
+  }, [userId, tgId, lessonIds, assignmentIds]);
 
   const kindMeta: Record<Activity["kind"], { icon: any; cls: string }> = {
     homework: { icon: ClipboardCheck, cls: "text-emerald-600" },
@@ -271,8 +328,8 @@ function OverviewTab({ profile }: { profile: Profile }) {
         <KpiCard icon={<BookOpen className="h-4 w-4" />} label="Darslar tugatildi" value={kpi.lessonsCompleted} sub={fmtMin(kpi.watchSec)} />
         <KpiCard icon={<ClipboardCheck className="h-4 w-4" />} label="Vazifa topshirdi" value={kpi.hwSubmitted} sub={`${kpi.hwGraded} baholangan`} />
         <KpiCard icon={<MessageSquare className="h-4 w-4" />} label="Guruh xabarlari" value={kpi.groupMsgs} sub={kpi.lastGroupMsg ? `oxirgi: ${fmtAgo(kpi.lastGroupMsg)}` : "yozmagan"} />
-        <KpiCard icon={<Flame className="h-4 w-4" />} label="Streak" value={`${kpi.currentStreak}d`} />
-        <KpiCard icon={<Trophy className="h-4 w-4" />} label="Reyting" value={kpi.rank ? `#${kpi.rank}` : "—"} />
+        <KpiCard icon={<Flame className="h-4 w-4" />} label="Streak" value={`${kpi.currentStreak}d`} sub="umumiy (barcha kurslar)" />
+        <KpiCard icon={<Trophy className="h-4 w-4" />} label="Reyting" value={kpi.rank ? `#${kpi.rank}` : "—"} sub="umumiy reyting" />
         <KpiCard icon={<Clock className="h-4 w-4" />} label="Oxirgi faollik" value={fmtAgo(kpi.lastActive)} sub={kpi.lastActive ? fmtDate(kpi.lastActive) : undefined} />
       </div>
 
@@ -312,7 +369,7 @@ function KpiCard({ icon, label, value, sub }: { icon: React.ReactNode; label: st
 }
 
 /* ───────── Lessons ───────── */
-function LessonsTab({ userId }: { userId: string }) {
+function LessonsTab({ userId, lessonIds }: { userId: string; lessonIds: string[] | null }) {
   const [rows, setRows] = useState<any[]>([]);
   const [kpi, setKpi] = useState({ completed: 0, watchSec: 0, last7Sec: 0 });
   const [loading, setLoading] = useState(true);
@@ -320,11 +377,12 @@ function LessonsTab({ userId }: { userId: string }) {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const { data: progress } = await supabase
+      let pq = supabase
         .from("lesson_progress")
         .select("lesson_id, watch_seconds_total, max_position_seconds, last_position_seconds, completed_at, updated_at, lessons:lesson_id(id, title, position, duration_seconds, module_id, modules:module_id(id, title, position))")
-        .eq("user_id", userId)
-        .order("updated_at", { ascending: false });
+        .eq("user_id", userId);
+      if (lessonIds) pq = pq.in("lesson_id", lessonIds);
+      const { data: progress } = await pq.order("updated_at", { ascending: false });
       const r = (progress || []) as any[];
       r.sort((a, b) => {
         const am = a.lessons?.modules?.position ?? 0, bm = b.lessons?.modules?.position ?? 0;
@@ -344,7 +402,7 @@ function LessonsTab({ userId }: { userId: string }) {
       setKpi({ completed, watchSec, last7Sec });
       setLoading(false);
     })();
-  }, [userId]);
+  }, [userId, lessonIds]);
 
   return (
     <div className="space-y-4">
@@ -396,7 +454,7 @@ function LessonsTab({ userId }: { userId: string }) {
 }
 
 /* ───────── Homework ───────── */
-function HomeworkTab({ userId }: { userId: string }) {
+function HomeworkTab({ userId, assignmentIds }: { userId: string; assignmentIds: string[] | null }) {
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -404,8 +462,16 @@ function HomeworkTab({ userId }: { userId: string }) {
     (async () => {
       setLoading(true);
       const [{ data: assigns }, { data: subs }] = await Promise.all([
-        supabase.from("homework_assignments").select("id, title, task_number, max_score, module_id, modules:module_id(title, position)").eq("is_active", true),
-        supabase.from("homework_submissions").select("*").eq("user_id", userId).order("submitted_at", { ascending: false }),
+        (() => {
+          let q = supabase.from("homework_assignments").select("id, title, task_number, max_score, module_id, modules:module_id(title, position)").eq("is_active", true);
+          if (assignmentIds) q = q.in("id", assignmentIds);
+          return q;
+        })(),
+        (() => {
+          let q = supabase.from("homework_submissions").select("*").eq("user_id", userId);
+          if (assignmentIds) q = q.in("assignment_id", assignmentIds);
+          return q.order("submitted_at", { ascending: false });
+        })(),
       ]);
       const subsByAssign = new Map<string, any>();
       (subs || []).forEach((s: any) => { if (!subsByAssign.has(s.assignment_id)) subsByAssign.set(s.assignment_id, s); });
@@ -418,7 +484,7 @@ function HomeworkTab({ userId }: { userId: string }) {
       setRows(merged);
       setLoading(false);
     })();
-  }, [userId]);
+  }, [userId, assignmentIds]);
 
   return (
     <Card className="overflow-hidden shadow-soft">
