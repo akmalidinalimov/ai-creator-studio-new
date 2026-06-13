@@ -50,7 +50,7 @@ export default function AdminDashboard() {
   const [scopedIds, setScopedIds] = useState<string[] | null>(null);
   const [noGroups, setNoGroups] = useState(false);
 
-  const [stats, setStats] = useState({ total: 0, logins30d: 0, active7d: 0, completions: 0, activated: 0, neverLoggedIn: 0, inactive3d: 0, inactive7d: 0 });
+  const [stats, setStats] = useState({ total: 0, logins30d: 0, active7d: 0, active30d: 0, completions: 0, activated: 0, neverLoggedIn: 0, inactive3d: 0, inactive7d: 0 });
   const [neverList, setNeverList] = useState<any[]>([]);
   const [neverOpen, setNeverOpen] = useState(false);
   const [neverSort, setNeverSort] = useState<{ key: string; dir: "asc" | "desc" }>({ key: "created_at", dir: "desc" });
@@ -194,7 +194,7 @@ export default function AdminDashboard() {
       setScopedIds(visibleIds);
       if (isTeacher && visibleIds.length === 0) {
         setNoGroups(true);
-        setStats({ total: 0, logins30d: 0, active7d: 0, completions: 0, activated: 0, neverLoggedIn: 0, inactive3d: 0, inactive7d: 0 });
+        setStats({ total: 0, logins30d: 0, active7d: 0, active30d: 0, completions: 0, activated: 0, neverLoggedIn: 0, inactive3d: 0, inactive7d: 0 });
         setNeverList([]); setInactive3List([]); setInactive7List([]);
         setDailyLogins([]); setDau([]); setLessonsPerDay([]);
         setModuleEngagement([]); setModuleFunnel([]); setStuckByModule([]); setStuck([]);
@@ -332,15 +332,57 @@ export default function AdminDashboard() {
         completions = count;
       }
 
+      // ── Accurate KPIs via server-side aggregate (one row per in-scope student, so
+      // immune to the PostgREST 1000-row cap that truncates the raw fetches above).
+      // Overrides the capped values computed above and excludes staff from the lists.
+      const { data: dsRaw } = await supabase.rpc("admin_dashboard_students", { _course_id: courseId, _since30: since30 });
+      let ds = ((dsRaw || []) as any[]);
+      if (isTeacher && groupParam) ds = ds.filter((r) => visibleSet.has(r.id));
+      const nowMs = Date.now();
+      const s7 = nowMs - 7 * 86400_000;
+      const s30 = nowMs - 30 * 86400_000;
+      const lastActMs = (r: any) => Math.max(
+        r.last_auth_at ? new Date(r.last_auth_at).getTime() : 0,
+        r.last_lesson_at ? new Date(r.last_lesson_at).getTime() : 0,
+      );
+      const dsNever = ds.filter((u) => !u.last_sign_in_at).map((u) => ({
+        id: u.id,
+        name: [u.name, u.last_name].filter(Boolean).join(" ") || "—",
+        telegram_username: u.telegram_username || null,
+        telegram_id: u.telegram_id || null,
+        email: u.email || "",
+        created_at: u.created_at,
+        days_since: Math.floor((nowMs - new Date(u.created_at).getTime()) / 86400_000),
+      }));
+      const dsInactive = (thresholdMs: number) => ds
+        .filter((u) => u.last_sign_in_at)
+        .map((u) => ({ u, la: lastActMs(u) }))
+        .filter((x) => x.la < thresholdMs)
+        .map(({ u, la }) => ({
+          id: u.id,
+          name: [u.name, u.last_name].filter(Boolean).join(" ") || "—",
+          telegram_username: u.telegram_username || null,
+          telegram_id: u.telegram_id || null,
+          email: u.email || "",
+          last_activity_at: la > 0 ? new Date(la).toISOString() : null,
+          days_since: la > 0 ? Math.floor((nowMs - la) / 86400_000) : null,
+        }))
+        .sort((a, b) => (a.last_activity_at ? new Date(a.last_activity_at).getTime() : 0) - (b.last_activity_at ? new Date(b.last_activity_at).getTime() : 0));
+      const dsInactive3 = dsInactive(nowMs - 3 * 86400_000);
+      const dsInactive7 = dsInactive(s7);
+      setNeverList(dsNever);
+      setInactive3List(dsInactive3);
+      setInactive7List(dsInactive7);
       setStats({
-        total: totalUsers || 0,
-        logins30d: (events30 || []).length,
-        active7d: active7,
-        completions,
-        activated,
-        neverLoggedIn: neverList.length,
-        inactive3d: inactive3.length,
-        inactive7d: inactive7.length,
+        total: ds.length,
+        logins30d: ds.reduce((sum, r) => sum + (Number(r.logins_30d) || 0), 0),
+        active7d: ds.filter((r) => r.last_lesson_at && new Date(r.last_lesson_at).getTime() >= s7).length,
+        active30d: ds.filter((r) => lastActMs(r) >= s30).length,
+        completions: ds.filter((r) => r.course_completed).length,
+        activated: ds.filter((r) => r.last_sign_in_at).length,
+        neverLoggedIn: dsNever.length,
+        inactive3d: dsInactive3.length,
+        inactive7d: dsInactive7.length,
       });
 
       // Daily logins (30d)
@@ -579,9 +621,11 @@ export default function AdminDashboard() {
         {/* Engagement health: unified stacked bar */}
         {(() => {
           const total = stats.total || 1;
-          const active7 = stats.active7d;
-          const active30 = Math.max(0, stats.activated - stats.inactive7d - stats.neverLoggedIn); // approx
-          const loggedOnce = Math.max(0, stats.activated - active30 - active7);
+          const active7 = stats.active7d;          // watched a lesson in last 7d
+          const active30 = stats.active30d;        // any activity in last 30d (incl. the 7d set)
+          // Non-overlapping bar segments (sum to total): 7d ⊆ 30d ⊆ activated.
+          const seg30Only = Math.max(0, active30 - active7);             // active 30d but not 7d
+          const loggedOnce = Math.max(0, stats.activated - active30);    // logged in, inactive 30d
           const never = stats.neverLoggedIn;
           const seg = (n: number) => Math.max(0, Math.round((n / total) * 100));
           return (
@@ -591,9 +635,9 @@ export default function AdminDashboard() {
                 <span className="text-xs text-muted-foreground">{stats.total} talaba</span>
               </div>
               <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted">
-                <Link to="/admin/users?status=active7d" style={{ width: `${seg(active7)}%` }} className="bg-emerald-500" title={`Active 7d: ${active7}`} />
-                <Link to="/admin/users?status=active30d" style={{ width: `${seg(active30)}%` }} className="bg-blue-500" title={`Active 30d: ${active30}`} />
-                <Link to="/admin/users?status=logged_once" style={{ width: `${seg(loggedOnce)}%` }} className="bg-amber-500" title={`Logged in once: ${loggedOnce}`} />
+                <Link to="/admin/users?status=active7d" style={{ width: `${seg(active7)}%` }} className="bg-emerald-500" title={`Active 7d (watched a lesson): ${active7}`} />
+                <Link to="/admin/users?status=active30d" style={{ width: `${seg(seg30Only)}%` }} className="bg-blue-500" title={`Active 30d, not 7d: ${seg30Only}`} />
+                <Link to="/admin/users?status=logged_once" style={{ width: `${seg(loggedOnce)}%` }} className="bg-amber-500" title={`Logged in, inactive 30d: ${loggedOnce}`} />
                 <Link to="/admin/users?status=never_logged_in" style={{ width: `${seg(never)}%` }} className="bg-rose-500" title={`Never: ${never}`} />
               </div>
               <div className="mt-3 flex flex-wrap gap-4 text-xs">
