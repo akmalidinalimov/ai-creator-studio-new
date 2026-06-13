@@ -242,6 +242,15 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const mode = body?.mode || "cron";
 
+    // Cron mode requires the internal-secret header (test mode authenticates via admin JWT below).
+    if (mode !== "test") {
+      const __p = req.headers.get("x-internal-secret");
+      const __s = await __internalSecretFor(admin);
+      if (!__p || __p !== __s) {
+        return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
     // Load templates
     const { data: settings } = await admin.from("platform_settings").select("value").eq("key", "nudge_templates").maybeSingle();
     const templates = settings?.value || {};
