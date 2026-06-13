@@ -4,6 +4,15 @@
 //        { mode: "cron" } → invoked by pg_cron; runs all 4 types over all eligible students.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
+let __sec: string | null = null;
+async function __internalSecretFor(admin: any): Promise<string> {
+  if (__sec) return __sec;
+  const { data, error } = await admin.rpc("internal_fn_secret");
+  if (error) throw error;
+  __sec = data as string;
+  return __sec;
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
