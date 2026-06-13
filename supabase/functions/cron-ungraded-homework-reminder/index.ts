@@ -99,14 +99,7 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ ok: true, skipped: "quiet_hours", hour: hr }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
-  // 1. Candidate query
-  const { data: candidates, error: candErr } = await admin.rpc("__noop_does_not_exist__").then(
-    () => ({ data: null as any, error: null as any }),
-    () => ({ data: null as any, error: null as any }),
-  ).catch(() => ({ data: null, error: null })) as any;
-  void candidates; void candErr;
-
-  // Use raw select via two queries since we need a LEFT JOIN; emulate in JS.
+  // Candidate query
   const cutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   const { data: subs, error: subsErr } = await admin
     .from("homework_submissions")
