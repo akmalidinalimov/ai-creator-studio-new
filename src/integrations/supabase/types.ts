@@ -1089,6 +1089,35 @@ export type Database = {
         }
         Relationships: []
       }
+      homework_ungraded_reminders: {
+        Row: {
+          created_at: string
+          last_reminder_at: string | null
+          reminders_sent: number
+          submission_id: string
+        }
+        Insert: {
+          created_at?: string
+          last_reminder_at?: string | null
+          reminders_sent?: number
+          submission_id: string
+        }
+        Update: {
+          created_at?: string
+          last_reminder_at?: string | null
+          reminders_sent?: number
+          submission_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "homework_ungraded_reminders_submission_id_fkey"
+            columns: ["submission_id"]
+            isOneToOne: true
+            referencedRelation: "homework_submissions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       leaderboard_cache: {
         Row: {
           computed_at: string
