@@ -25,7 +25,7 @@ Deno.serve(async (req) => {
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
     const { data: lesson } = await admin
       .from("lessons")
-      .select("video_provider, video_url, video_storage_path, provider_video_id, published, modules:module_id(course_id)")
+      .select("module_id, video_provider, video_url, video_storage_path, provider_video_id, published, modules:module_id(course_id)")
       .eq("id", lessonId)
       .maybeSingle();
 
