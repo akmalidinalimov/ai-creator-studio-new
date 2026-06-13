@@ -111,8 +111,8 @@ export default function GroupDetail() {
     const [ov, mem, eng, subs] = await Promise.all([
       supabase.rpc("staff_group_overview" as any, { _group_id: id }),
       supabase.rpc("staff_group_members" as any, { _group_id: id }),
-      supabase.rpc("admin_group_engagement_stats" as any, { p_window_days: ENGAGEMENT_WINDOW_DAYS }),
-      supabase.rpc("admin_group_module_submissions" as any, {}),
+      supabase.rpc("admin_group_engagement_stats" as any, { p_window_days: ENGAGEMENT_WINDOW_DAYS, p_group_id: id }),
+      supabase.rpc("admin_group_module_submissions" as any, { p_group_id: id }),
     ]);
     const ovRow = Array.isArray(ov.data) ? ov.data[0] : ov.data;
     setOverview((ovRow as Overview) || null);
