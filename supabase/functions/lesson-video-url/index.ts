@@ -25,11 +25,16 @@ Deno.serve(async (req) => {
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
     const { data: lesson } = await admin
       .from("lessons")
-      .select("video_provider, video_url, video_storage_path, provider_video_id, published, modules:module_id(course_id)")
+      .select("module_id, video_provider, video_url, video_storage_path, provider_video_id, published, modules:module_id(course_id)")
       .eq("id", lessonId)
       .maybeSingle();
 
     if (!lesson) return new Response(JSON.stringify({ error: "not found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+    const { data: __allowed } = await admin.rpc("has_module_access", { _user_id: who.user.id, _module_id: (lesson as any).module_id });
+    if (!__allowed) {
+      return new Response(JSON.stringify({ error: "module_locked" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
 
     // Authorization: admins bypass; everyone else must be enrolled AND the lesson must be published.
     const userId = who.user.id;
