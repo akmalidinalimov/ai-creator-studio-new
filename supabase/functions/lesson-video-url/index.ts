@@ -31,6 +31,11 @@ Deno.serve(async (req) => {
 
     if (!lesson) return new Response(JSON.stringify({ error: "not found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
+    const { data: __allowed } = await admin.rpc("has_module_access", { _user_id: who.user.id, _module_id: (lesson as any).module_id });
+    if (!__allowed) {
+      return new Response(JSON.stringify({ error: "module_locked" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // Authorization: admins bypass; everyone else must be enrolled AND the lesson must be published.
     const userId = who.user.id;
     const { data: roleRow } = await admin
