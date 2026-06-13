@@ -177,6 +177,7 @@ export default function GroupDetail() {
   const saveCourse = async () => {
     if (!id) return;
     const newId = pendingCourse === "__none__" ? null : pendingCourse || null;
+    if (!newId) { toast.error("Course required — a group must belong to a course"); return; }
     const { error } = await supabase.from("groups").update({ course_id: newId }).eq("id", id);
     if (error) { toast.error(error.message); return; }
     toast.success("Course updated");
@@ -641,7 +642,6 @@ export default function GroupDetail() {
             <Select value={pendingCourse} onValueChange={setPendingCourse}>
               <SelectTrigger><SelectValue placeholder="Select course" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="__none__">— None —</SelectItem>
                 {courses.map((c) => <SelectItem key={c.id} value={c.id}>{c.title}</SelectItem>)}
               </SelectContent>
             </Select>
