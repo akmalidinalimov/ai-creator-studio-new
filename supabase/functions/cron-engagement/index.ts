@@ -114,6 +114,21 @@ async function getDefaultCourseId(admin: any): Promise<string | null> {
   return data?.id ?? null;
 }
 
+// The course a re-engagement nudge should deep-link into for THIS user:
+// their group's course, else their first enrollment, else the platform default.
+// Byte-identical to the old behavior for single (old-course) students.
+async function resolveUserCourseId(admin: any, userId: string, groupId: string | null, fallback: string | null): Promise<string | null> {
+  try {
+    if (groupId) {
+      const { data: g } = await admin.from("groups").select("course_id").eq("id", groupId).maybeSingle();
+      if (g?.course_id) return g.course_id;
+    }
+    const { data: enr } = await admin.from("enrollments").select("course_id").eq("user_id", userId).limit(1).maybeSingle();
+    if ((enr as any)?.course_id) return (enr as any).course_id;
+  } catch (_e) { /* ignore — fall through to default */ }
+  return fallback;
+}
+
 async function getNextIncompleteLesson(admin: any, userId: string, courseId: string): Promise<string | null> {
   const { data: modules } = await admin.from("modules").select("id, position").eq("course_id", courseId).order("position", { ascending: true });
   if (!modules?.length) return null;
@@ -154,7 +169,7 @@ Deno.serve(async (req) => {
 
   const { data: users, error } = await admin
     .from("profiles")
-    .select("id, name, telegram_id, timezone, reminder_time, notifications_enabled, preferred_locale, created_at, last_daily_reminder_at, last_streak_warning_at, last_inactive_warning_at, last_inactive_warning_day")
+    .select("id, name, telegram_id, timezone, reminder_time, notifications_enabled, preferred_locale, created_at, group_id, last_daily_reminder_at, last_streak_warning_at, last_inactive_warning_at, last_inactive_warning_day")
     .eq("notifications_enabled", true)
     .eq("status", "active")
     .not("telegram_id", "is", null);
@@ -174,6 +189,8 @@ Deno.serve(async (req) => {
       const locale = normLocale(u.preferred_locale);
       const chatId = Number(u.telegram_id);
       const firstName = u.name || "";
+      // Course-aware deep links: resolve THIS user's course (group → enrollment → default).
+      const userCourseId = await resolveUserCourseId(admin, u.id, (u as any).group_id ?? null, courseId);
 
       const [lpRes, gmRes, hwRes] = await Promise.all([
         admin.from("lesson_progress").select("updated_at").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(1).maybeSingle(),
@@ -202,13 +219,13 @@ Deno.serve(async (req) => {
       const [rh, rm] = (u.reminder_time || "20:00:00").split(":").map((s: string) => parseInt(s, 10));
       const withinReminder = minutesBetween(hour, minute, rh || 20, rm || 0) <= 30;
       const reminderInQuiet = (rh || 20) < 8;
-      if (withinReminder && !reminderInQuiet && !watchedToday && lastDailyYmd !== ymd && courseId) {
+      if (withinReminder && !reminderInQuiet && !watchedToday && lastDailyYmd !== ymd && userCourseId) {
         const tpl = pickTemplate(templates, "daily_reminder", locale);
         const text = interpolate(tpl.body, { first_name: firstName || "👋" });
-        const nextId = await getNextIncompleteLesson(admin, u.id, courseId);
+        const nextId = await getNextIncompleteLesson(admin, u.id, userCourseId);
         const inline: any[][] = [];
         if (nextId && tpl.button_label) {
-          const url = await magicLink(admin, u.id, `/lesson/${courseId}/${nextId}`);
+          const url = await magicLink(admin, u.id, `/lesson/${userCourseId}/${nextId}`);
           inline.push([{ text: tpl.button_label, url }]);
         }
         inline.push([{ text: locale === "ru" ? "Не сегодня" : locale === "en" ? "Not today" : "Bugun emas", callback_data: "ack:not_today" }]);
@@ -223,13 +240,13 @@ Deno.serve(async (req) => {
       if (within21 && !watchedToday && lastStreakYmd !== ymd) {
         const { data: streakRow } = await admin.from("streaks").select("current_streak").eq("user_id", u.id).maybeSingle();
         const cs = streakRow?.current_streak || 0;
-        if (cs >= 1 && courseId) {
+        if (cs >= 1 && userCourseId) {
           const tpl = pickTemplate(templates, "streak_warning", locale);
           const text = interpolate(tpl.body, { first_name: firstName, streak_days: cs });
-          const nextId = await getNextIncompleteLesson(admin, u.id, courseId);
+          const nextId = await getNextIncompleteLesson(admin, u.id, userCourseId);
           const inline: any[][] = [];
           if (nextId && tpl.button_label) {
-            const url = await magicLink(admin, u.id, `/lesson/${courseId}/${nextId}`);
+            const url = await magicLink(admin, u.id, `/lesson/${userCourseId}/${nextId}`);
             inline.push([{ text: tpl.button_label, url }]);
           }
           await tg("sendMessage", { chat_id: chatId, text, reply_markup: inline.length ? { inline_keyboard: inline } : undefined });
@@ -261,9 +278,9 @@ Deno.serve(async (req) => {
           const tpl = pickTemplate(templates, key, locale);
           const text = interpolate(tpl.body, { first_name: firstName || "👋" });
           let path = "/dashboard";
-          if (stage !== 14 && courseId) {
-            const nextId = await getNextIncompleteLesson(admin, u.id, courseId);
-            if (nextId) path = `/lesson/${courseId}/${nextId}`;
+          if (stage !== 14 && userCourseId) {
+            const nextId = await getNextIncompleteLesson(admin, u.id, userCourseId);
+            if (nextId) path = `/lesson/${userCourseId}/${nextId}`;
           }
           const url = await magicLink(admin, u.id, path);
           const reply_markup = tpl.button_label ? { inline_keyboard: [[{ text: tpl.button_label, url }]] } : undefined;

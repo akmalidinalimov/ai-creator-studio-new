@@ -1095,6 +1095,15 @@ async function getCourseIdsForUser(admin: any, userId: string): Promise<string[]
   return def ? [def] : [];
 }
 
+// The single "current" course a student is studying (Architecture A: one course at a time).
+// = their group's course, else first enrollment, else platform default. Use this instead of
+// getDefaultCourseId() for all student-facing course content so a student enrolled in a
+// duplicated course (e.g. "AI CREATORS 5.0") sees THEIR course, not the platform default.
+async function getPrimaryCourseIdForUser(admin: any, userId: string): Promise<string | null> {
+  const ids = await getCourseIdsForUser(admin, userId);
+  return ids[0] ?? null;
+}
+
 async function resolveProfileForTelegramUser(
   admin: any,
   tgId: number,
@@ -1196,25 +1205,29 @@ async function computeStats(admin: any, userId: string) {
     .eq("user_id", userId)
     .gte("watch_date", sevenAgo);
   const weekSec = (dws || []).reduce((s: number, r: any) => s + Number(r.total_seconds || 0), 0);
-  const courseId = await getDefaultCourseId(admin);
+  const courseId = await getPrimaryCourseIdForUser(admin, userId);
   let pct = 0;
   if (courseId) {
     const { data: modules } = await admin.from("modules").select("id").eq("course_id", courseId);
     const mids = (modules || []).map((m: any) => m.id);
     let total = 0;
+    let done = 0;
     if (mids.length) {
-      const { count } = await admin
+      // Published lesson ids for THIS course; progress is then scoped to them so the % is
+      // for the student's own course (not blended across any other course they've touched).
+      const { data: lessonRows } = await admin
         .from("lessons")
-        .select("id", { count: "exact", head: true })
+        .select("id")
         .in("module_id", mids)
         .eq("published", true);
-      total = count || 0;
+      const lids = new Set((lessonRows || []).map((l: any) => l.id));
+      total = lids.size;
+      const { data: progress } = await admin
+        .from("lesson_progress")
+        .select("lesson_id, completed_at")
+        .eq("user_id", userId);
+      done = (progress || []).filter((p: any) => p.completed_at && lids.has(p.lesson_id)).length;
     }
-    const { data: progress } = await admin
-      .from("lesson_progress")
-      .select("lesson_id, completed_at")
-      .eq("user_id", userId);
-    const done = (progress || []).filter((p: any) => p.completed_at).length;
     pct = total ? Math.round((done / total) * 100) : 0;
   }
   return {
@@ -1634,7 +1647,7 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
 
   // Welcome onboarding (first time only)
   if (!profile.telegram_onboarded_at) {
-    const courseId = await getDefaultCourseId(admin);
+    const courseId = await getPrimaryCourseIdForUser(admin, profile.id);
     const buttons: any[][] = [];
     if (courseId) {
       const firstLessonId = await getFirstLesson(admin, courseId);
@@ -3209,7 +3222,7 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
 
 
   if (cmd === "/davom") {
-    const courseId = await getDefaultCourseId(admin);
+    const courseId = await getPrimaryCourseIdForUser(admin, profile.id);
     if (!courseId) {
       await sendWithKeyboard(chatId, t.noCourse, locale);
       return;
@@ -3225,13 +3238,25 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   }
 
   if (cmd === "/dars") {
-    const courseId = await getDefaultCourseId(admin);
-    if (!courseId) {
+    const courseIds = await getCourseIdsForUser(admin, profile.id);
+    if (!courseIds.length) {
       await sendWithKeyboard(chatId, t.noCourse, locale);
       return;
     }
-    const url = await createMagicLink(admin, profile.id, "deeplink_course", `/course/${courseId}`);
-    await sendMessage(chatId, t.coursePage, { inline_keyboard: [[{ text: t.btnCourse, url }]] });
+    if (courseIds.length === 1) {
+      const url = await createMagicLink(admin, profile.id, "deeplink_course", `/course/${courseIds[0]}`);
+      await sendMessage(chatId, t.coursePage, { inline_keyboard: [[{ text: t.btnCourse, url }]] });
+      return;
+    }
+    // Rare: student enrolled in more than one course → one button per course (by title).
+    const { data: crows } = await admin.from("courses").select("id, title").in("id", courseIds);
+    const titleById = new Map((crows || []).map((c: any) => [c.id, c.title]));
+    const buttons: any[][] = [];
+    for (const cid of courseIds) {
+      const url = await createMagicLink(admin, profile.id, "deeplink_course", `/course/${cid}`);
+      buttons.push([{ text: titleById.get(cid) || t.btnCourse, url }]);
+    }
+    await sendMessage(chatId, t.coursePage, { inline_keyboard: buttons });
     return;
   }
 
