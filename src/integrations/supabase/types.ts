@@ -2705,8 +2705,28 @@ export type Database = {
           total: number
         }[]
       }
+      leaderboard_my_rank_for_user: {
+        Args: { uid: string }
+        Returns: {
+          rank: number
+          score: number
+          total: number
+        }[]
+      }
       leaderboard_top: {
         Args: { _limit?: number }
+        Returns: {
+          current_streak: number
+          first_name: string
+          last_initial: string
+          lessons_30d: number
+          rank: number
+          score: number
+          user_id: string
+        }[]
+      }
+      leaderboard_top_for_user: {
+        Args: { _limit?: number; uid: string }
         Returns: {
           current_streak: number
           first_name: string
