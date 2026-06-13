@@ -2492,7 +2492,11 @@ export type Database = {
             }[]
           }
         | {
-            Args: { p_caller_profile_id?: string; p_window_days?: number }
+            Args: {
+              p_caller_profile_id?: string
+              p_group_id?: string
+              p_window_days?: number
+            }
             Returns: {
               active_count: number
               group_id: string
@@ -2501,7 +2505,7 @@ export type Database = {
             }[]
           }
       admin_group_module_submissions: {
-        Args: { p_caller_profile_id?: string }
+        Args: { p_caller_profile_id?: string; p_group_id?: string }
         Returns: {
           group_id: string
           module_id: string
