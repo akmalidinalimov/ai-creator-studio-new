@@ -57,3 +57,6 @@ verify_jwt = true
 
 [functions.student-of-week]
 verify_jwt = false
+
+[functions.cron-ungraded-homework-reminder]
+verify_jwt = false
