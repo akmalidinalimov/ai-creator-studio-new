@@ -556,7 +556,7 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
 
       if (toCreate.length > 0) {
         const { data, error } = await supabase.functions.invoke("admin-create-students", {
-          body: { students: toCreate, target_group_id: group.id, csv_import: true },
+          body: { students: toCreate, target_group_id: group.id, target_course_id: group.course_id ?? undefined, csv_import: true },
         });
         if (error) {
           errors.push(`create: ${error.message}`);
@@ -733,7 +733,7 @@ function AddStudentToGroupDialog({ group, onClose, onCreated, initialRole }: { g
     try {
       // For admin role, do NOT pass target_group_id (admins not tied to group).
       // For teacher/student, pass it — backend assigns teacher_id or group_id accordingly.
-      const extra: Record<string, unknown> = role === "admin" ? {} : { target_group_id: group.id };
+      const extra: Record<string, unknown> = role === "admin" ? {} : { target_group_id: group.id, target_course_id: group.course_id ?? undefined };
       const r = await fetch(`${FN_BASE}/admin-create-students`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },

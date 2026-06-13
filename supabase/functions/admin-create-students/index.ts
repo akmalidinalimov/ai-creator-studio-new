@@ -120,12 +120,22 @@ Deno.serve(async (req) => {
     const redirectTo: string = body.redirectTo || `${SUPABASE_URL}/reset-password`;
     const isCsvImport: boolean = !!body.csv_import;
     const targetGroupId: string | null = body.target_group_id || null;
+    const targetCourseId: string | null = body.target_course_id || null;
 
     // Resolve fallback default group once (used when row has no group_name and no target_group_id)
     let defaultGroupId: string | null = null;
     {
       const { data: dg } = await admin.from("groups").select("id").eq("is_default", true).maybeSingle();
       defaultGroupId = (dg as any)?.id || null;
+    }
+
+    // The course that name-resolved / auto-created groups belong to. Explicit target_course_id wins,
+    // then the single courseId of this import, then the platform default-for-signup course. This is
+    // what keeps a 5.0 "Group A" distinct from a 4.0 "Group A" instead of silently reusing the old one.
+    let groupCourseId: string | null = targetCourseId || courseId || null;
+    if (!groupCourseId) {
+      const { data: dc } = await admin.from("courses").select("id").eq("is_default_for_signup", true).maybeSingle();
+      groupCourseId = (dc as any)?.id || null;
     }
 
     if (!Array.isArray(students) || students.length === 0) {
@@ -138,33 +148,22 @@ Deno.serve(async (req) => {
     const groupCache = new Map<string, string>(); // lowerName -> id
     const groupNameById = new Map<string, string>(); // id -> canonical name
     const autoCreatedGroups: Array<{ id: string; name: string }> = [];
-    let defaultCourseForGroup: string | null = null;
     const resolveGroupId = async (rawName?: string): Promise<string | null> => {
       const nm = (rawName || "").trim();
       if (!nm) return null;
       const key = nm.toLowerCase();
       if (groupCache.has(key)) return groupCache.get(key)!;
-      const { data: existing } = await admin.from("groups").select("id,name").ilike("name", nm).maybeSingle();
+      // Look up the group BY NAME WITHIN THE TARGET COURSE so 4.0 "Group A" and 5.0 "Group A" are distinct.
+      let lookup = admin.from("groups").select("id,name").ilike("name", nm);
+      if (groupCourseId) lookup = lookup.eq("course_id", groupCourseId);
+      const { data: existing } = await lookup.maybeSingle();
       if (existing?.id) {
         groupCache.set(key, existing.id);
         groupNameById.set(existing.id, (existing as any).name || nm);
         return existing.id;
       }
-      if (defaultCourseForGroup === null) {
-        // Prefer caller-supplied courseId, then explicit default-for-signup, then sole course.
-        if (courseId) {
-          defaultCourseForGroup = courseId;
-        } else {
-          const { data: dc } = await admin.from("courses").select("id").eq("is_default_for_signup", true).maybeSingle();
-          if (dc?.id) defaultCourseForGroup = dc.id;
-          else {
-            const { data: cs } = await admin.from("courses").select("id").limit(2);
-            defaultCourseForGroup = (cs && cs.length === 1) ? cs[0].id : "";
-          }
-        }
-      }
       const { data: ins, error: insErr } = await admin.from("groups")
-        .insert({ name: nm, course_id: defaultCourseForGroup || null, teacher_id: null })
+        .insert({ name: nm, course_id: groupCourseId, teacher_id: null })
         .select("id,name").single();
       if (insErr || !ins) { console.error("group create failed", nm, insErr); return null; }
       groupCache.set(key, ins.id);

@@ -219,6 +219,7 @@ export default function GroupDetail() {
             role: "student" as const,
           }],
           target_group_id: id,
+          target_course_id: overview?.course_id ?? undefined,
         }),
       });
       const res = await r.json();
@@ -344,6 +345,7 @@ export default function GroupDetail() {
         body: JSON.stringify({
           students: toSend,
           target_group_id: id,
+          target_course_id: overview?.course_id ?? undefined,
           send_invite: true,
           csv_import: true,
           redirectTo: `${getSiteUrl()}/reset-password`,

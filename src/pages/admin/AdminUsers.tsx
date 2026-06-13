@@ -84,7 +84,7 @@ export default function AdminUsers() {
   const isTeacher = role === "teacher";
   const isAdmin = role === "admin";
   const [users, setUsers] = useState<UserRow[]>([]);
-  const [groups, setGroups] = useState<{ id: string; name: string; teacher_id?: string | null }[]>([]);
+  const [groups, setGroups] = useState<{ id: string; name: string; teacher_id?: string | null; course_id?: string | null }[]>([]);
   const [bulkGroupId, setBulkGroupId] = useState<string>("");
   const [bulkRole, setBulkRole] = useState<{ user: UserRow; newRole: RoleName } | null>(null);
   const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
@@ -251,7 +251,7 @@ export default function AdminUsers() {
     setUsers(rows as UserRow[]);
     const [{ data: cs }, { data: gs }, { data: ts }] = await Promise.all([
       supabase.from("courses").select("id, title").order("title"),
-      supabase.from("groups").select("id, name, teacher_id").order("name"),
+      supabase.from("groups").select("id, name, teacher_id, course_id").order("name"),
       supabase.from("course_tiers" as any).select("id, course_id, name, module_limit").order("position"),
     ]);
     setCourses(cs || []);
@@ -489,7 +489,10 @@ export default function AdminUsers() {
       telegram_username: tgUserRaw || undefined,
       telegram_user_id: tgId,
       role: newRole,
-    }], newGroupId && newGroupId !== "none" ? { target_group_id: newGroupId } : {});
+    }], {
+      ...(newGroupId && newGroupId !== "none" ? { target_group_id: newGroupId } : {}),
+      ...(newCourses.size === 1 ? { target_course_id: Array.from(newCourses)[0] } : {}),
+    });
     const r = res?.results?.[0];
     const okStatuses = ["created", "updated", "matched", "skipped_already_in_group"];
     const label = newEmail.trim() || (newTgId.trim() ? `tg:${newTgId.trim()}` : "") || (newTg.trim() || "user");
@@ -1006,9 +1009,20 @@ export default function AdminUsers() {
                     <SelectValue placeholder={t("admin.users.bulkMoveTo", { defaultValue: "Guruhga ko'chirish…" })} />
                   </SelectTrigger>
                   <SelectContent>
-                    {groups.map((g) => (
-                      <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
-                    ))}
+                    {(() => {
+                      // Filter the move-to list to the selected students' course when they all share one,
+                      // so you can't bulk-move a 5.0 cohort into a 4.0 group. Label every option with its course.
+                      const cids = new Set<string>();
+                      selected.forEach((uid) => enrollMap[uid]?.forEach((c) => cids.add(c)));
+                      const only = cids.size === 1 ? Array.from(cids)[0] : null;
+                      const list = only ? groups.filter((g) => g.course_id === only) : groups;
+                      return list.map((g) => (
+                        <SelectItem key={g.id} value={g.id}>
+                          {g.name}
+                          <span className="text-xs text-muted-foreground ml-1">· {courses.find((c) => c.id === g.course_id)?.title || "—"}</span>
+                        </SelectItem>
+                      ));
+                    })()}
                   </SelectContent>
                 </Select>
               )}
@@ -1315,11 +1329,14 @@ export default function AdminUsers() {
                   <SelectTrigger><SelectValue placeholder={t("admin.users.noGroup", { defaultValue: "No group" })} /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">{t("admin.users.noGroup", { defaultValue: "No group" })}</SelectItem>
-                    {groups.map((g) => (
+                    {(newCourses.size ? groups.filter((g) => g.course_id && newCourses.has(g.course_id)) : groups).map((g) => (
                       <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {newCourses.size === 0 && (
+                  <p className="text-xs text-muted-foreground">Pick a course below to see its groups.</p>
+                )}
               </div>
             )}
             {newRole === "teacher" && (
@@ -1347,6 +1364,7 @@ export default function AdminUsers() {
                         />
                         <span className="flex-1">
                           {g.name}
+                          <span className="text-xs text-muted-foreground ml-1">· {courses.find((c) => c.id === g.course_id)?.title || "—"}</span>
                           {otherTeacherName && (
                             <span className="text-xs text-amber-600 dark:text-amber-400 ml-2">({otherTeacherName})</span>
                           )}
@@ -1366,6 +1384,11 @@ export default function AdminUsers() {
                       const s = new Set(newCourses);
                       if (v) s.add(c.id); else s.delete(c.id);
                       setNewCourses(s);
+                      // keep the selected group consistent with the chosen course(s)
+                      if (newGroupId !== "none") {
+                        const g = groups.find((gg) => gg.id === newGroupId);
+                        if (g && g.course_id && !s.has(g.course_id)) setNewGroupId("none");
+                      }
                     }} />
                     {c.title}
                   </label>
@@ -1752,6 +1775,7 @@ export default function AdminUsers() {
                               />
                               <span className="flex-1">
                                 {g.name}
+                                <span className="text-xs text-muted-foreground ml-1">· {courses.find((c) => c.id === g.course_id)?.title || "—"}</span>
                                 {otherTeacherName && (
                                   <span className="text-xs text-amber-600 dark:text-amber-400 ml-2">({otherTeacherName})</span>
                                 )}
