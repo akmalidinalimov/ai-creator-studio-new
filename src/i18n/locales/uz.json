@@ -573,7 +573,13 @@
       "titleRequired": "Sarlavha kerak",
       "courseCreated": "Kurs yaratildi",
       "coursePublished": "Kurs nashr qilindi",
-      "courseUnpublished": "Kurs nashrdan olindi"
+      "courseUnpublished": "Kurs nashrdan olindi",
+      "duplicate": "Nusxalash",
+      "duplicateTitle": "Kursdan nusxa olish",
+      "duplicateHint": "Barcha modul, dars va uy vazifalari bilan yashirin nusxa yaratadi — asl kurs va uning o'quvchilariga ta'sir qilmaydi. Tayyor bo'lganda nusxani tahrirlab, nashr qiling.",
+      "duplicating": "Nusxalanmoqda…",
+      "duplicatedToast": "Kursdan nusxa olindi",
+      "copyOf": "Nusxa:"
     },
     "courseEditor": {
       "breadcrumbCourses": "Kurslar",

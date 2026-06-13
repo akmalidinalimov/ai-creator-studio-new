@@ -573,7 +573,13 @@
       "titleRequired": "Введите название",
       "courseCreated": "Курс создан",
       "coursePublished": "Курс опубликован",
-      "courseUnpublished": "Курс снят с публикации"
+      "courseUnpublished": "Курс снят с публикации",
+      "duplicate": "Дублировать",
+      "duplicateTitle": "Дублировать курс",
+      "duplicateHint": "Создаёт скрытую копию со всеми модулями, уроками и домашними заданиями — оригинал и его студенты не затрагиваются. Отредактируйте и опубликуйте копию, когда будете готовы.",
+      "duplicating": "Дублирование…",
+      "duplicatedToast": "Курс продублирован",
+      "copyOf": "Копия"
     },
     "courseEditor": {
       "breadcrumbCourses": "Курсы",

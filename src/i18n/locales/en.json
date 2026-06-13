@@ -573,7 +573,13 @@
       "titleRequired": "Title required",
       "courseCreated": "Course created",
       "coursePublished": "Course published",
-      "courseUnpublished": "Course unpublished"
+      "courseUnpublished": "Course unpublished",
+      "duplicate": "Duplicate",
+      "duplicateTitle": "Duplicate course",
+      "duplicateHint": "Creates a hidden copy with all modules, lessons and homework — the original and its students are untouched. Edit and publish the copy when ready.",
+      "duplicating": "Duplicating…",
+      "duplicatedToast": "Course duplicated",
+      "copyOf": "Copy of"
     },
     "courseEditor": {
       "breadcrumbCourses": "Courses",

@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
-import { Plus, BookOpen, Pencil, Clock } from "lucide-react";
+import { Plus, BookOpen, Pencil, Clock, Copy, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 interface CourseRow {
@@ -29,6 +29,10 @@ export default function AdminCourses() {
   const [title, setTitle] = useState("");
   const [tagline, setTagline] = useState("");
   const [description, setDescription] = useState("");
+  // Duplicate course
+  const [dupFor, setDupFor] = useState<CourseRow | null>(null);
+  const [dupTitle, setDupTitle] = useState("");
+  const [dupBusy, setDupBusy] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -70,6 +74,25 @@ export default function AdminCourses() {
     setOpen(false);
     setTitle(""); setTagline(""); setDescription("");
     navigate(`/admin/courses/${data.id}`);
+  };
+
+  const openDuplicate = (c: CourseRow) => {
+    setDupFor(c);
+    setDupTitle(`${t("admin.courses.copyOf")} ${c.title}`);
+  };
+  const handleDuplicate = async () => {
+    if (!dupFor) return;
+    setDupBusy(true);
+    const { data, error } = await supabase.rpc("admin_duplicate_course" as any, {
+      _source_course_id: dupFor.id,
+      _new_title: dupTitle.trim() || null,
+    });
+    setDupBusy(false);
+    if (error) { toast.error(error.message); return; }
+    const newId = Array.isArray(data) ? (data[0] as any)?.new_course_id : (data as any)?.new_course_id;
+    toast.success(t("admin.courses.duplicatedToast"));
+    setDupFor(null);
+    if (newId) navigate(`/admin/courses/${newId}`); else load();
   };
 
   return (
@@ -133,15 +156,39 @@ export default function AdminCourses() {
                       <Switch checked={c.published} onCheckedChange={(v) => togglePublished(c, v)} />
                       <span className="text-xs text-muted-foreground">{c.published ? t("admin.courses.live") : t("admin.courses.hidden")}</span>
                     </div>
-                    <Button size="sm" variant="outline" onClick={() => navigate(`/admin/courses/${c.id}`)}>
-                      <Pencil className="h-3.5 w-3.5" /> {t("admin.courses.edit")}
-                    </Button>
+                    <div className="flex items-center gap-1.5">
+                      <Button size="sm" variant="ghost" onClick={() => openDuplicate(c)} title={t("admin.courses.duplicate")}>
+                        <Copy className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => navigate(`/admin/courses/${c.id}`)}>
+                        <Pencil className="h-3.5 w-3.5" /> {t("admin.courses.edit")}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </Card>
             ))}
           </div>
         )}
+
+        <Dialog open={!!dupFor} onOpenChange={(o) => { if (!o) setDupFor(null); }}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>{t("admin.courses.duplicateTitle")}</DialogTitle></DialogHeader>
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label>{t("admin.courses.fieldTitle")}</Label>
+                <Input value={dupTitle} onChange={(e) => setDupTitle(e.target.value)} />
+              </div>
+              <p className="text-xs text-muted-foreground">{t("admin.courses.duplicateHint")}</p>
+            </div>
+            <DialogFooter>
+              <Button onClick={handleDuplicate} disabled={dupBusy}>
+                {dupBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
+                {dupBusy ? t("admin.courses.duplicating") : t("admin.courses.duplicate")}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </PageShell>
   );

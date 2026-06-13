@@ -171,10 +171,22 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
     tusRef.current?.abort();
   };
 
+  // Only delete the underlying storage object if NO other lesson references the
+  // same path (e.g. a duplicated course shares the asset). Bunny lessons have no
+  // storage_path so this is a no-op for them.
+  const removeStorageIfUnshared = async (
+    bucket: "lesson-videos" | "lesson-thumbs",
+    path: string | null | undefined,
+    column: "video_storage_path" | "thumbnail_path",
+  ) => {
+    if (!path) return;
+    const { count } = await supabase.from("lessons").select("id", { count: "exact", head: true })
+      .eq(column, path).neq("id", lessonId);
+    if (!count) await supabase.storage.from(bucket).remove([path]);
+  };
+
   const removeVideo = async () => {
-    if (lesson?.video_storage_path) {
-      await supabase.storage.from("lesson-videos").remove([lesson.video_storage_path]);
-    }
+    await removeStorageIfUnshared("lesson-videos", lesson?.video_storage_path, "video_storage_path");
     await update({ video_storage_path: null, video_url: null, provider_video_id: null, thumbnail_path: null, duration_seconds: 0 });
     toast.success(t("admin.lessonDrawer.removedToast"));
   };
@@ -182,8 +194,8 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
   const deleteLesson = async () => {
     if (!confirm(t("admin.lessonDrawer.deleteConfirm"))) return;
     setSaving(true);
-    if (lesson?.video_storage_path) await supabase.storage.from("lesson-videos").remove([lesson.video_storage_path]);
-    if (lesson?.thumbnail_path) await supabase.storage.from("lesson-thumbs").remove([lesson.thumbnail_path]);
+    await removeStorageIfUnshared("lesson-videos", lesson?.video_storage_path, "video_storage_path");
+    await removeStorageIfUnshared("lesson-thumbs", lesson?.thumbnail_path, "thumbnail_path");
     const { error } = await supabase.from("lessons").delete().eq("id", lessonId);
     setSaving(false);
     if (error) { toast.error(error.message); return; }
