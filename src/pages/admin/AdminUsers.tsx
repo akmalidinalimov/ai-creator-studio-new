@@ -90,6 +90,7 @@ export default function AdminUsers() {
   const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
   const [allTiers, setAllTiers] = useState<{ id: string; course_id: string; name: string; module_limit: number | null }[]>([]);
   const [enrollMap, setEnrollMap] = useState<Record<string, Set<string>>>({});
+  const [enrollTier, setEnrollTier] = useState<Record<string, Record<string, string>>>({});
   const [search, setSearch] = useState("");
   const initialStatusFilter = (() => {
     if (typeof window === "undefined") return "active";
@@ -256,13 +257,16 @@ export default function AdminUsers() {
     setCourses(cs || []);
     setGroups(gs || []);
     setAllTiers((ts as any[]) || []);
-    const { data: enrolls } = await supabase.from("enrollments").select("user_id, course_id");
+    const { data: enrolls } = await supabase.from("enrollments").select("user_id, course_id, tier_id");
     const m: Record<string, Set<string>> = {};
+    const tierM: Record<string, Record<string, string>> = {};
     (enrolls || []).forEach((e: any) => {
       if (!m[e.user_id]) m[e.user_id] = new Set();
       m[e.user_id].add(e.course_id);
+      if (e.tier_id) { (tierM[e.user_id] ||= {})[e.course_id] = e.tier_id; }
     });
     setEnrollMap(m);
+    setEnrollTier(tierM);
 
     // Load active lockouts (emails with 5+ failures in last 10 min)
     const since = new Date(Date.now() - 10 * 60_000).toISOString();
@@ -790,6 +794,18 @@ export default function AdminUsers() {
     });
   };
 
+  const setEnrollmentTier = async (userId: string, courseId: string, val: string) => {
+    const tier_id = val === "full" ? null : val;
+    const { error } = await supabase.rpc("admin_set_enrollment_tier" as any, { _user_id: userId, _course_id: courseId, _tier_id: tier_id });
+    if (error) return toast.error(error.message);
+    setEnrollTier((prev) => {
+      const next = { ...prev, [userId]: { ...(prev[userId] || {}) } };
+      if (tier_id) next[userId][courseId] = tier_id; else delete next[userId][courseId];
+      return next;
+    });
+    toast.success(t("admin.users.tierUpdated"));
+  };
+
   const setRole = async (user: UserRow, promote: boolean) => {
     if (promote) {
       const { error } = await supabase.from("user_roles").insert({ user_id: user.id, role: "admin" });
@@ -1238,7 +1254,10 @@ export default function AdminUsers() {
       </div>
 
       {/* Add user dialog */}
-      <Dialog open={openAdd} onOpenChange={setOpenAdd}>
+      <Dialog open={openAdd} onOpenChange={(o) => {
+        setOpenAdd(o);
+        if (o) supabase.from("course_tiers" as any).select("id, course_id, name, module_limit").order("position").then(({ data }) => setAllTiers((data as any[]) || []));
+      }}>
         <DialogContent>
           <DialogHeader><DialogTitle>{t("admin.users.addTitle")}</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -1773,16 +1792,39 @@ export default function AdminUsers() {
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t("admin.users.courseAccess")}</Label>
-                  <div className="space-y-1 border rounded-md p-2">
-                    {courses.map((c) => (
-                      <label key={c.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                        <Checkbox
-                          checked={enrollMap[manageUser.id]?.has(c.id) || false}
-                          onCheckedChange={(v) => toggleEnrollment(manageUser.id, c.id, !!v)}
-                        />
-                        {c.title}
-                      </label>
-                    ))}
+                  <div className="space-y-2 border rounded-md p-2">
+                    {courses.map((c) => {
+                      const enrolled = enrollMap[manageUser.id]?.has(c.id) || false;
+                      const courseTiers = allTiers.filter((ti) => ti.course_id === c.id);
+                      return (
+                        <div key={c.id} className="space-y-1">
+                          <label className="flex items-center gap-2 text-sm cursor-pointer">
+                            <Checkbox
+                              checked={enrolled}
+                              onCheckedChange={(v) => toggleEnrollment(manageUser.id, c.id, !!v)}
+                            />
+                            {c.title}
+                          </label>
+                          {enrolled && courseTiers.length > 0 && (
+                            <div className="ml-6 flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground shrink-0">{t("admin.users.tier")}:</span>
+                              <Select
+                                value={enrollTier[manageUser.id]?.[c.id] || "full"}
+                                onValueChange={(v) => setEnrollmentTier(manageUser.id, c.id, v)}
+                              >
+                                <SelectTrigger className="h-8 w-48"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="full">{t("admin.users.tierFull")}</SelectItem>
+                                  {courseTiers.map((ti) => (
+                                    <SelectItem key={ti.id} value={ti.id}>{ti.name} · {ti.module_limit ?? t("admin.tiers.all")}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                     {courses.length === 0 && <p className="text-xs text-muted-foreground">{t("admin.users.noCourses")}</p>}
                   </div>
                 </div>

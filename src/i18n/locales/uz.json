@@ -752,6 +752,7 @@
       "enrollIn": "Kurslarga yozish",
       "tier": "Tarif",
       "tierFull": "To'liq kirish (barcha modullar)",
+      "tierUpdated": "Tarif yangilandi",
       "sendMagicLink": "Magic-link salomlashishini yuborish",
       "createUser": "Foydalanuvchi yaratish",
       "csvTitle": "CSV-dan foydalanuvchilarni import qilish",

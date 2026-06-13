@@ -752,6 +752,7 @@
       "enrollIn": "Enroll in courses",
       "tier": "Tier",
       "tierFull": "Full access (all modules)",
+      "tierUpdated": "Tier updated",
       "sendMagicLink": "Send magic-link welcome email",
       "createUser": "Create user",
       "csvTitle": "Import users from CSV",
