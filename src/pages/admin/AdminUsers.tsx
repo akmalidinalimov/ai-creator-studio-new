@@ -161,10 +161,17 @@ export default function AdminUsers() {
     try {
       const { data, error } = await supabase.functions.invoke("admin-impersonate", { body });
       if (error) {
-        const msg = (data as any)?.error || error.message || "error";
+        // On an HTTP error, supabase-js puts the response body in error.context, not `data`.
+        let msg = error.message || "error";
+        try {
+          const j = await (error as any).context?.json?.();
+          if (j?.error) msg = j.error;
+        } catch { /* ignore */ }
         if (msg === "not_found") toast.error("User not found");
         else if (msg === "ambiguous") toast.error("Multiple users match, use the exact ID");
         else if (msg === "cannot_impersonate_admin") toast.error("Cannot impersonate an admin");
+        else if (msg === "cannot_impersonate_self") toast.error("You can't impersonate yourself");
+        else if (msg === "missing_target") toast.error("Enter a @username or Telegram ID");
         else toast.error(msg);
         return;
       }
@@ -1884,13 +1891,31 @@ export default function AdminUsers() {
                 </Button>
               </div>
               <p className="text-sm text-muted-foreground">
-                Open this link in an incognito window to view as {impResult.name} (read-only). Incognito keeps your own admin session.
+                "Open here" views as {impResult.name} (read-only) in this tab; Exit returns you to admin — no re-login. Use "Copy link" to open in a different browser or incognito.
               </p>
             </div>
           )}
           <DialogFooter>
-            <Button variant="secondary" onClick={() => impResult && window.open(impResult.url, "_blank")}>
-              Open in new tab
+            <Button
+              variant="secondary"
+              onClick={async () => {
+                if (!impResult) return;
+                // Stash the admin session so Exit can restore it (localStorage is shared
+                // across tabs, so the impersonation redeem would otherwise overwrite it).
+                try {
+                  const { data: sess } = await supabase.auth.getSession();
+                  const s = sess?.session;
+                  if (s?.access_token && s?.refresh_token) {
+                    localStorage.setItem(
+                      "imp_admin_backup",
+                      JSON.stringify({ access_token: s.access_token, refresh_token: s.refresh_token })
+                    );
+                  }
+                } catch { /* ignore */ }
+                window.location.assign(impResult.url);
+              }}
+            >
+              Open here
             </Button>
             <Button onClick={() => setImpResult(null)}>Close</Button>
           </DialogFooter>

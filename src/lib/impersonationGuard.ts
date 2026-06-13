@@ -1,5 +1,5 @@
 // Side-effect import: monkey-patches the shared supabase client so that while
-// sessionStorage.getItem('impersonating') is truthy, write paths are blocked.
+// localStorage.getItem('impersonating') is truthy, write paths are blocked.
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -12,7 +12,7 @@ const WRITE_RPCS = new Set([
 
 const isImpersonating = () => {
   try {
-    return typeof window !== "undefined" && !!window.sessionStorage?.getItem("impersonating");
+    return typeof window !== "undefined" && !!window.localStorage?.getItem("impersonating");
   } catch {
     return false;
   }

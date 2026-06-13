@@ -7,7 +7,7 @@ export default function ImpersonationBanner() {
   useEffect(() => {
     const read = () => {
       try {
-        setName(sessionStorage.getItem("impersonating"));
+        setName(localStorage.getItem("impersonating"));
       } catch {
         setName(null);
       }
@@ -22,12 +22,35 @@ export default function ImpersonationBanner() {
 
   const exit = async () => {
     try {
-      sessionStorage.removeItem("impersonating");
+      localStorage.removeItem("impersonating");
     } catch {}
+    // Restore the admin's stashed session instead of signing out (no re-login).
+    let restored = false;
+    try {
+      const raw = localStorage.getItem("imp_admin_backup");
+      if (raw) {
+        const backup = JSON.parse(raw);
+        if (backup?.access_token && backup?.refresh_token) {
+          const { error } = await supabase.auth.setSession({
+            access_token: backup.access_token,
+            refresh_token: backup.refresh_token,
+          });
+          if (!error) restored = true;
+        }
+      }
+    } catch {}
+    try {
+      localStorage.removeItem("imp_admin_backup");
+    } catch {}
+    if (restored) {
+      window.location.href = "/admin/users";
+      return;
+    }
+    // Fallback: no valid stashed admin session — log out cleanly (old behavior).
     try {
       await supabase.auth.signOut();
     } catch {}
-    window.location.href = "/";
+    window.location.href = "/login";
   };
 
   return (

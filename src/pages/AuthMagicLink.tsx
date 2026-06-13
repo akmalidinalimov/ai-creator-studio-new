@@ -41,7 +41,9 @@ export default function AuthMagicLink() {
         }
         try {
           if (params.get("imp") === "1") {
-            sessionStorage.setItem("impersonating", params.get("as") || "user");
+            // Flag lives in localStorage (shared across tabs) so it agrees with the
+            // shared Supabase auth token — every tab shows the banner + read-only guard.
+            localStorage.setItem("impersonating", params.get("as") || "user");
             if (!cancelled) {
               window.location.assign(data.target_path || "/dashboard");
               return;
