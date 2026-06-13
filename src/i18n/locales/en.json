@@ -581,6 +581,17 @@
       "duplicatedToast": "Course duplicated",
       "copyOf": "Copy of"
     },
+    "tiers": {
+      "title": "Tiers (access levels)",
+      "add": "Add tier",
+      "newTier": "New tier",
+      "emptyHint": "No tiers — every enrolled student gets the full course. Add a tier to limit access (e.g. Premium = first 5 modules).",
+      "hint": "Leave the module count empty for full access to all modules.",
+      "namePh": "Tier name (e.g. Premium)",
+      "all": "All",
+      "ofModules": "of {{n}} modules",
+      "deleteConfirm": "Delete this tier? Students on it will fall back to full access."
+    },
     "courseEditor": {
       "breadcrumbCourses": "Courses",
       "notFound": "Course not found.",
@@ -737,6 +748,8 @@
       "student": "Student",
       "admin": "Admin",
       "enrollIn": "Enroll in courses",
+      "tier": "Tier",
+      "tierFull": "Full access (all modules)",
       "sendMagicLink": "Send magic-link welcome email",
       "createUser": "Create user",
       "csvTitle": "Import users from CSV",

@@ -88,6 +88,7 @@ export default function AdminUsers() {
   const [bulkGroupId, setBulkGroupId] = useState<string>("");
   const [bulkRole, setBulkRole] = useState<{ user: UserRow; newRole: RoleName } | null>(null);
   const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
+  const [allTiers, setAllTiers] = useState<{ id: string; course_id: string; name: string; module_limit: number | null }[]>([]);
   const [enrollMap, setEnrollMap] = useState<Record<string, Set<string>>>({});
   const [search, setSearch] = useState("");
   const initialStatusFilter = (() => {
@@ -125,6 +126,7 @@ export default function AdminUsers() {
   const [newTgId, setNewTgId] = useState("");
   const [newRole, setNewRole] = useState<"student" | "teacher" | "admin">("student");
   const [newCourses, setNewCourses] = useState<Set<string>>(new Set());
+  const [newTierId, setNewTierId] = useState<string>("full");
   const [newGroupId, setNewGroupId] = useState<string>("none");
   const [newTeacherGroupIds, setNewTeacherGroupIds] = useState<Set<string>>(new Set());
   const [editTeacherGroupIds, setEditTeacherGroupIds] = useState<Set<string> | null>(null);
@@ -246,12 +248,14 @@ export default function AdminUsers() {
       });
     }
     setUsers(rows as UserRow[]);
-    const [{ data: cs }, { data: gs }] = await Promise.all([
+    const [{ data: cs }, { data: gs }, { data: ts }] = await Promise.all([
       supabase.from("courses").select("id, title").order("title"),
       supabase.from("groups").select("id, name, teacher_id").order("name"),
+      supabase.from("course_tiers" as any).select("id, course_id, name, module_limit").order("position"),
     ]);
     setCourses(cs || []);
     setGroups(gs || []);
+    setAllTiers((ts as any[]) || []);
     const { data: enrolls } = await supabase.from("enrollments").select("user_id, course_id");
     const m: Record<string, Set<string>> = {};
     (enrolls || []).forEach((e: any) => {
@@ -504,9 +508,19 @@ export default function AdminUsers() {
         if (gErr) toast.error(gErr.message);
         else logAction("update_profile", { target_user_id: createdId, details: { action: "teacher_groups_updated", before: [], after: ids } });
       }
+      // Assign the chosen tier on the enrollment (if any).
+      if (createdId && newTierId && newTierId !== "full") {
+        const tier = allTiers.find((ti) => ti.id === newTierId);
+        if (tier) {
+          const { error: tErr } = await supabase.rpc("admin_set_enrollment_tier" as any, {
+            _user_id: createdId, _course_id: tier.course_id, _tier_id: tier.id,
+          });
+          if (tErr) toast.error(tErr.message);
+        }
+      }
       setOpenAdd(false);
       setNewName(""); setNewLastName(""); setNewEmail(""); setNewPassword(randPassword());
-      setNewTg(""); setNewTgId(""); setNewRole("student"); setNewCourses(new Set()); setNewGroupId("none");
+      setNewTg(""); setNewTgId(""); setNewRole("student"); setNewCourses(new Set()); setNewGroupId("none"); setNewTierId("full");
       setNewTeacherGroupIds(new Set());
       reload();
     } else {
@@ -1339,6 +1353,26 @@ export default function AdminUsers() {
                 ))}
               </div>
             </div>
+            {(() => {
+              const selTiers = allTiers.filter((ti) => newCourses.has(ti.course_id));
+              if (!selTiers.length) return null;
+              return (
+                <div className="space-y-1.5">
+                  <Label>{t("admin.users.tier")}</Label>
+                  <Select value={newTierId} onValueChange={setNewTierId}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="full">{t("admin.users.tierFull")}</SelectItem>
+                      {selTiers.map((ti) => (
+                        <SelectItem key={ti.id} value={ti.id}>
+                          {ti.name} · {ti.module_limit ?? t("admin.tiers.all")}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              );
+            })()}
             <label className="flex items-center gap-2 text-sm cursor-pointer pt-1">
               <Checkbox checked={sendInvite} onCheckedChange={(v) => setSendInvite(!!v)} />
               {t("admin.users.sendMagicLink")}

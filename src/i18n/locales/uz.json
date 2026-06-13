@@ -581,6 +581,17 @@
       "duplicatedToast": "Kursdan nusxa olindi",
       "copyOf": "Nusxa:"
     },
+    "tiers": {
+      "title": "Tariflar (kirish darajalari)",
+      "add": "Tarif qo'shish",
+      "newTier": "Yangi tarif",
+      "emptyHint": "Tariflar yo'q — har bir o'quvchi to'liq kursni oladi. Kirishni cheklash uchun tarif qo'shing (masalan, Premium = dastlabki 5 modul).",
+      "hint": "Barcha modullarga to'liq kirish uchun modul sonini bo'sh qoldiring.",
+      "namePh": "Tarif nomi (masalan, Premium)",
+      "all": "Hammasi",
+      "ofModules": "{{n}} moduldan",
+      "deleteConfirm": "Tarif o'chirilsinmi? Undagi o'quvchilar to'liq kirish oladi."
+    },
     "courseEditor": {
       "breadcrumbCourses": "Kurslar",
       "notFound": "Kurs topilmadi.",
@@ -737,6 +748,8 @@
       "student": "Talaba",
       "admin": "Administrator",
       "enrollIn": "Kurslarga yozish",
+      "tier": "Tarif",
+      "tierFull": "To'liq kirish (barcha modullar)",
       "sendMagicLink": "Magic-link salomlashishini yuborish",
       "createUser": "Foydalanuvchi yaratish",
       "csvTitle": "CSV-dan foydalanuvchilarni import qilish",

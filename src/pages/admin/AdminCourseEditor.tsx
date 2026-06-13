@@ -28,7 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  GripVertical, Plus, ChevronDown, ChevronRight, Trash2, ExternalLink, Eye, EyeOff, Image as ImageIcon, Upload, MoreVertical,
+  GripVertical, Plus, ChevronDown, ChevronRight, Trash2, ExternalLink, Eye, EyeOff, Image as ImageIcon, Upload, MoreVertical, Layers,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -228,6 +228,9 @@ export default function AdminCourseEditor() {
           </div>
         </Card>
 
+        {/* Per-course tiers (access levels) */}
+        <CourseTiers courseId={courseId!} moduleCount={modules.length} />
+
         {/* Per-course AI override */}
         <CourseAIOverride courseId={courseId!} initial={course} onSaved={(patch) => setCourse((c: any) => ({ ...c, ...patch }))} />
 
@@ -373,6 +376,81 @@ function SortableLesson({ lesson: l, index, onEdit, t }: { lesson: Lesson; index
       <span className={`text-[10px] px-2 py-0.5 rounded-full ${status.cls}`}>{status.label}</span>
       <Button variant="ghost" size="sm" onClick={onEdit}>{t("admin.common.edit")}</Button>
     </li>
+  );
+}
+
+function CourseTiers({ courseId, moduleCount }: { courseId: string; moduleCount: number }) {
+  const { t } = useTranslation();
+  const [tiers, setTiers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    const { data } = await supabase.from("course_tiers" as any).select("*").eq("course_id", courseId).order("position");
+    setTiers((data as any[]) || []);
+    setLoading(false);
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [courseId]);
+
+  const addTier = async () => {
+    const { data, error } = await (supabase.from("course_tiers" as any).insert({
+      course_id: courseId, name: t("admin.tiers.newTier"), module_limit: null, position: tiers.length,
+    }) as any).select("*").single();
+    if (error) { toast.error(error.message); return; }
+    setTiers((p) => [...p, data]);
+  };
+  const patchTier = async (id: string, patch: any) => {
+    setTiers((p) => p.map((x) => x.id === id ? { ...x, ...patch } : x));
+    const { error } = await (supabase.from("course_tiers" as any) as any).update(patch).eq("id", id);
+    if (error) toast.error(error.message);
+  };
+  const removeTier = async (id: string) => {
+    if (!confirm(t("admin.tiers.deleteConfirm"))) return;
+    const { error } = await (supabase.from("course_tiers" as any) as any).delete().eq("id", id);
+    if (error) { toast.error(error.message); return; }
+    setTiers((p) => p.filter((x) => x.id !== id));
+  };
+  const parseLimit = (v: string): number | null => v.trim() === "" ? null : Math.max(1, parseInt(v, 10) || 1);
+
+  return (
+    <Card className="p-5 md:p-6 shadow-soft space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Layers className="h-4 w-4 text-muted-foreground" />
+          <h3 className="font-semibold text-sm">{t("admin.tiers.title")}</h3>
+        </div>
+        <Button size="sm" variant="outline" onClick={addTier}><Plus className="h-3.5 w-3.5" /> {t("admin.tiers.add")}</Button>
+      </div>
+      {loading ? null : tiers.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t("admin.tiers.emptyHint")}</p>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">{t("admin.tiers.hint")}</p>
+          {tiers.map((ti) => (
+            <div key={ti.id} className="flex items-center gap-2 flex-wrap">
+              <Input
+                value={ti.name || ""}
+                onChange={(e) => setTiers((p) => p.map((x) => x.id === ti.id ? { ...x, name: e.target.value } : x))}
+                onBlur={(e) => patchTier(ti.id, { name: e.target.value })}
+                className="max-w-[200px]"
+                placeholder={t("admin.tiers.namePh")}
+              />
+              <div className="flex items-center gap-1.5">
+                <Input
+                  type="number" min={1} max={moduleCount || undefined}
+                  value={ti.module_limit ?? ""}
+                  onChange={(e) => setTiers((p) => p.map((x) => x.id === ti.id ? { ...x, module_limit: parseLimit(e.target.value) } : x))}
+                  onBlur={(e) => patchTier(ti.id, { module_limit: parseLimit(e.target.value) })}
+                  className="w-24"
+                  placeholder={t("admin.tiers.all")}
+                />
+                <span className="text-xs text-muted-foreground">{t("admin.tiers.ofModules", { n: moduleCount })}</span>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => removeTier(ti.id)}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
   );
 }
 
