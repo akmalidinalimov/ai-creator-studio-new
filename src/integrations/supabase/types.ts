@@ -1092,18 +1092,21 @@ export type Database = {
       homework_ungraded_reminders: {
         Row: {
           created_at: string
+          cycle_submitted_at: string | null
           last_reminder_at: string | null
           reminders_sent: number
           submission_id: string
         }
         Insert: {
           created_at?: string
+          cycle_submitted_at?: string | null
           last_reminder_at?: string | null
           reminders_sent?: number
           submission_id: string
         }
         Update: {
           created_at?: string
+          cycle_submitted_at?: string | null
           last_reminder_at?: string | null
           reminders_sent?: number
           submission_id?: string

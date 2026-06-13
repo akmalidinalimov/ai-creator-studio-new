@@ -99,14 +99,7 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ ok: true, skipped: "quiet_hours", hour: hr }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
-  // 1. Candidate query
-  const { data: candidates, error: candErr } = await admin.rpc("__noop_does_not_exist__").then(
-    () => ({ data: null as any, error: null as any }),
-    () => ({ data: null as any, error: null as any }),
-  ).catch(() => ({ data: null, error: null })) as any;
-  void candidates; void candErr;
-
-  // Use raw select via two queries since we need a LEFT JOIN; emulate in JS.
+  // Candidate query
   const cutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   const { data: subs, error: subsErr } = await admin
     .from("homework_submissions")
@@ -125,16 +118,17 @@ Deno.serve(async (req) => {
   const subIds = allSubs.map((s) => s.id);
   const { data: rems } = await admin
     .from("homework_ungraded_reminders")
-    .select("submission_id, reminders_sent, last_reminder_at")
+    .select("submission_id, reminders_sent, last_reminder_at, cycle_submitted_at")
     .in("submission_id", subIds);
   const remMap = new Map<string, any>((rems || []).map((r: any) => [r.submission_id, r]));
 
   const dayAgo = Date.now() - 24 * 3600 * 1000;
   const eligible = allSubs.filter((s) => {
     const r = remMap.get(s.id);
-    const sent = r?.reminders_sent ?? 0;
+    const sameCycle = !!(r && r.cycle_submitted_at && new Date(r.cycle_submitted_at).getTime() === new Date(s.submitted_at).getTime());
+    const sent = sameCycle ? (r?.reminders_sent ?? 0) : 0;
     if (sent >= 3) return false;
-    if (r?.last_reminder_at && new Date(r.last_reminder_at).getTime() >= dayAgo) return false;
+    if (sameCycle && r?.last_reminder_at && new Date(r.last_reminder_at).getTime() >= dayAgo) return false;
     return true;
   }).slice(0, 200);
 
@@ -208,7 +202,9 @@ Deno.serve(async (req) => {
       }
       if (!recipients.length) { skipped++; continue; }
 
-      const prevSent = remMap.get(s.id)?.reminders_sent ?? 0;
+      const rr = remMap.get(s.id);
+      const sameCycle = !!(rr && rr.cycle_submitted_at && new Date(rr.cycle_submitted_at).getTime() === new Date(s.submitted_at).getTime());
+      const prevSent = sameCycle ? (rr?.reminders_sent ?? 0) : 0;
       const n = prevSent + 1;
 
       let anySent = false;
@@ -236,6 +232,7 @@ Deno.serve(async (req) => {
         submission_id: s.id,
         reminders_sent: n,
         last_reminder_at: new Date().toISOString(),
+        cycle_submitted_at: s.submitted_at,
       }, { onConflict: "submission_id" });
 
       try {
