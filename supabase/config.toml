@@ -40,6 +40,9 @@ verify_jwt = false
 [functions.cron-admin-digest]
 verify_jwt = false
 
+[functions.admin-create-students]
+verify_jwt = false
+
 [functions.sheet-sync]
 verify_jwt = false
 
