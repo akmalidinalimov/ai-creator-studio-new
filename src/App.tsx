@@ -35,6 +35,7 @@ import AuthMagicLink from "./pages/AuthMagicLink";
 import Leaderboard from "./pages/Leaderboard";
 import Badges from "./pages/Badges";
 import MyActivity from "./pages/MyActivity";
+import SalesIntake from "./pages/SalesIntake";
 
 
 // Lazy-load admin pages (code-split)
@@ -88,7 +89,9 @@ const App = () => (
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/auth/magic" element={<AuthMagicLink />} />
-            
+            {/* Public sales intake form — gated by a shared access code, no platform login */}
+            <Route path="/intake" element={<SalesIntake />} />
+
             <Route path="/dashboard" element={<RequireAuth><StudentOrStaffRedirect><Dashboard /></StudentOrStaffRedirect></RequireAuth>} />
             <Route path="/course/:courseId" element={<RequireAuth><CoursePage /></RequireAuth>} />
             <Route path="/lesson/:courseId/:lessonId" element={<RequireAuth><LessonPage /></RequireAuth>} />

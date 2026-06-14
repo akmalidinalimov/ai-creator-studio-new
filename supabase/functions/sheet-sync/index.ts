@@ -42,15 +42,32 @@ Deno.serve(async (req) => {
   // Size guard.
   const raw = await req.text();
   if (raw.length > 256 * 1024) return json({ error: "payload_too_large" }, 413);
-  let body: { rows?: Row[] };
+  let body: any;
   try { body = JSON.parse(raw); } catch { return json({ error: "bad_json" }, 400); }
-  const rows = Array.isArray(body?.rows) ? body!.rows! : [];
-  if (!rows.length) return json({ results: [] });
-  if (rows.length > 200) return json({ error: "too_many_rows", max: 200 }, 413);
 
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const admin = createClient(SUPABASE_URL, SERVICE_KEY);
+
+  // OPTIONS mode: the intake form fetches courses + each course's tiers + existing groups
+  // (secret-gated, like the rest) so it can render dropdowns.
+  if (body && body.options) {
+    const [{ data: oc }, { data: ot }, { data: og }] = await Promise.all([
+      admin.from("courses").select("id, title").order("title"),
+      admin.from("course_tiers").select("course_id, name, position").order("position"),
+      admin.from("groups").select("course_id, name").order("name"),
+    ]);
+    const out = ((oc || []) as any[]).map((c) => ({
+      title: c.title,
+      tiers: ((ot || []) as any[]).filter((t) => t.course_id === c.id).map((t) => t.name),
+      groups: ((og || []) as any[]).filter((g) => g.course_id === c.id).map((g) => g.name),
+    }));
+    return json({ courses: out });
+  }
+
+  const rows = Array.isArray(body?.rows) ? (body.rows as Row[]) : [];
+  if (!rows.length) return json({ results: [] });
+  if (rows.length > 200) return json({ error: "too_many_rows", max: 200 }, 413);
 
   // Internal secret for the server-to-server call into admin-create-students.
   let internalSecret = "";
