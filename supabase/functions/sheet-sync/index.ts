@@ -112,7 +112,14 @@ Deno.serve(async (req) => {
       // 1) Create / match the student via the existing import engine (course + group).
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/admin-create-students`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-internal-secret": internalSecret },
+        headers: {
+          "Content-Type": "application/json",
+          // x-internal-secret authenticates us as a SYSTEM caller inside the function;
+          // the service-role bearer + apikey satisfy the gateway (admin-create-students is verify_jwt=true).
+          "x-internal-secret": internalSecret,
+          "Authorization": `Bearer ${SERVICE_KEY}`,
+          "apikey": SERVICE_KEY,
+        },
         body: JSON.stringify({
           students: [{
             name, last_name: lastName || undefined, email: email || undefined,
