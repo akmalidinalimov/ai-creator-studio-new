@@ -32,7 +32,7 @@ export type Database = {
       admin_actions: {
         Row: {
           action: string
-          actor_user_id: string
+          actor_user_id: string | null
           created_at: string
           details: Json
           id: string
@@ -42,7 +42,7 @@ export type Database = {
         }
         Insert: {
           action: string
-          actor_user_id: string
+          actor_user_id?: string | null
           created_at?: string
           details?: Json
           id?: string
@@ -52,7 +52,7 @@ export type Database = {
         }
         Update: {
           action?: string
-          actor_user_id?: string
+          actor_user_id?: string | null
           created_at?: string
           details?: Json
           id?: string
@@ -1775,6 +1775,7 @@ export type Database = {
           name_prompt_last_at: string | null
           notifications_enabled: boolean
           onboarding_completed: boolean | null
+          phone: string | null
           preferred_language: string | null
           preferred_locale: string
           reminder_time: string
@@ -1808,6 +1809,7 @@ export type Database = {
           name_prompt_last_at?: string | null
           notifications_enabled?: boolean
           onboarding_completed?: boolean | null
+          phone?: string | null
           preferred_language?: string | null
           preferred_locale?: string
           reminder_time?: string
@@ -1841,6 +1843,7 @@ export type Database = {
           name_prompt_last_at?: string | null
           notifications_enabled?: boolean
           onboarding_completed?: boolean | null
+          phone?: string | null
           preferred_language?: string | null
           preferred_locale?: string
           reminder_time?: string
@@ -2815,6 +2818,10 @@ export type Database = {
       }
       recalc_leaderboard: { Args: never; Returns: undefined }
       refresh_all_analytics: { Args: never; Returns: undefined }
+      set_enrollment_tier_system: {
+        Args: { _course_id: string; _tier_id: string; _user_id: string }
+        Returns: undefined
+      }
       staff_group_members: {
         Args: { _group_id: string }
         Returns: {
