@@ -479,6 +479,18 @@ Deno.serve(async (req) => {
         );
       }
 
+      // handle_new_user auto-enrolls every NEW auth user in the default-for-signup course.
+      // If this import targets OTHER courses (e.g. a 5.0-only Premium student), drop that default
+      // enrollment so the student isn't handed free full access to the default course. Only when
+      // the default isn't explicitly among courseIds (an admin can still add someone to both).
+      if (courseIds.length > 0) {
+        const { data: defCourse } = await admin.from("courses").select("id").eq("is_default_for_signup", true).maybeSingle();
+        const defId = (defCourse as any)?.id;
+        if (defId && !courseIds.includes(defId)) {
+          await admin.from("enrollments").delete().eq("user_id", userId).eq("course_id", defId);
+        }
+      }
+
       // Magic-link invite if requested OR if no password was provided.
       // Skip for synthetic placeholder emails (Telegram-only users) — they log in via the bot.
       const isPlaceholderEmail = email.endsWith("@telegram.local");
