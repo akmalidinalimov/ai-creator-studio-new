@@ -26,7 +26,15 @@ function genPassword(): string {
   return out;
 }
 
-async function logAdminAction(admin: any, actor_user_id: string, action: string, opts: {
+// Constant-time string compare for secret headers (length check leaks only length).
+function ctEq(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let r = 0;
+  for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return r === 0;
+}
+
+async function logAdminAction(admin: any, actor_user_id: string | null, action: string, opts: {
   target_user_id?: string;
   target_resource_type?: string;
   target_resource_id?: string;
@@ -53,25 +61,42 @@ Deno.serve(async (req) => {
     const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const PUB_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
-    const authHeader = req.headers.get("Authorization") || "";
-    const userClient = createClient(SUPABASE_URL, PUB_KEY, {
-      global: { headers: { Authorization: authHeader } },
-    });
-    const { data: who } = await userClient.auth.getUser(authHeader.replace("Bearer ", ""));
-    if (!who?.user) {
-      return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    }
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
-    const { data: roleRow } = await admin
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", who.user.id)
-      .eq("role", "admin")
-      .maybeSingle();
-    if (!roleRow) {
-      return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+    // Auth: EITHER an internal system caller (valid x-internal-secret, e.g. sheet-sync) — actorId=null —
+    // OR an admin user JWT (the web admin UI). The import logic below is identical for both.
+    let actorId: string | null = null;
+    let isSystem = false;
+    const internalSecretHeader = req.headers.get("x-internal-secret");
+    if (internalSecretHeader) {
+      try {
+        const { data: sec } = await admin.rpc("internal_fn_secret");
+        if (sec && ctEq(internalSecretHeader, String(sec))) isSystem = true;
+      } catch (_e) { /* fall through to 403 */ }
+      if (!isSystem) {
+        return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
     }
-    const actorId = who.user.id;
+    if (!isSystem) {
+      const authHeader = req.headers.get("Authorization") || "";
+      const userClient = createClient(SUPABASE_URL, PUB_KEY, {
+        global: { headers: { Authorization: authHeader } },
+      });
+      const { data: who } = await userClient.auth.getUser(authHeader.replace("Bearer ", ""));
+      if (!who?.user) {
+        return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const { data: roleRow } = await admin
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", who.user.id)
+        .eq("role", "admin")
+        .maybeSingle();
+      if (!roleRow) {
+        return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      actorId = who.user.id;
+    }
 
     // DELETE: remove a user
     if (req.method === "DELETE") {

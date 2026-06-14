@@ -40,6 +40,12 @@ verify_jwt = false
 [functions.cron-admin-digest]
 verify_jwt = false
 
+[functions.sheet-sync]
+verify_jwt = false
+
+[functions.cron-import-digest]
+verify_jwt = false
+
 [functions.notify-admin-new-student]
 verify_jwt = true
 
