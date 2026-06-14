@@ -25,12 +25,17 @@ type Group = {
   id: string;
   name: string;
   course_id: string | null;
+  tier_id: string | null;
   teacher_id: string | null;
   is_default: boolean;
   created_at: string;
 };
 
 type Course = { id: string; title: string };
+type CourseTier = { id: string; course_id: string; name: string; position: number };
+
+// Sentinel for "no tier / full access" inside the <Select> (Radix forbids an empty value).
+const NO_TIER = "__none__";
 
 type ProfileLite = {
   id: string;
@@ -59,6 +64,7 @@ const roleBadgeFor = (r?: string) => {
 export default function AdminGroups() {
   const [groups, setGroups] = useState<Group[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
+  const [tiers, setTiers] = useState<CourseTier[]>([]);
   const [teachers, setTeachers] = useState<ProfileLite[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [topics, setTopics] = useState<Record<string, { configured: number; total: number }>>({});
@@ -73,13 +79,15 @@ export default function AdminGroups() {
 
   const reload = async () => {
     setLoading(true);
-    const [g, c, p] = await Promise.all([
+    const [g, c, p, ct] = await Promise.all([
       supabase.from("groups").select("*").order("created_at", { ascending: false }),
       supabase.from("courses").select("id,title").order("title"),
       supabase.rpc("admin_list_users"),
+      supabase.from("course_tiers").select("id,course_id,name,position").order("position"),
     ]);
     setGroups((g.data as Group[]) || []);
     setCourses((c.data as Course[]) || []);
+    setTiers((ct.data as CourseTier[]) || []);
     const profiles = ((p.data as any[]) || []) as ProfileLite[];
     // teachers = users that already have role teacher (via has_role); fall back to anyone marked is_admin? we'll fetch from user_roles
     const { data: tr } = await supabase.from("user_roles").select("user_id").eq("role", "teacher" as any);
@@ -112,6 +120,7 @@ export default function AdminGroups() {
   };
 
   const courseTitle = (id: string | null) => courses.find((c) => c.id === id)?.title || "—";
+  const tierName = (id: string | null) => tiers.find((t) => t.id === id)?.name || "To'liq";
   const visibleGroups = courseFilter === "all" ? groups : groups.filter((g) => g.course_id === courseFilter);
 
   return (
@@ -140,6 +149,7 @@ export default function AdminGroups() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Course</TableHead>
+                <TableHead>Tarif</TableHead>
                 <TableHead>Teacher</TableHead>
                 <TableHead>Students</TableHead>
                 <TableHead>Topiklar</TableHead>
@@ -149,9 +159,9 @@ export default function AdminGroups() {
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
+                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
               ) : visibleGroups.length === 0 ? (
-                <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No groups yet.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">No groups yet.</TableCell></TableRow>
               ) : visibleGroups.map((g) => {
                 return (
                 <TableRow key={g.id}>
@@ -159,6 +169,11 @@ export default function AdminGroups() {
                     <Link to={`/admin/groups/${g.id}`} className="hover:underline text-left">{g.name}</Link>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">{courseTitle(g.course_id)}</TableCell>
+                  <TableCell>
+                    {g.tier_id
+                      ? <Badge variant="outline" className="text-[11px]">{tierName(g.tier_id)}</Badge>
+                      : <span className="text-xs text-muted-foreground">To'liq</span>}
+                  </TableCell>
                   <TableCell>
                     {g.teacher_id ? (
                       teacherLabel(g.teacher_id)
@@ -217,6 +232,7 @@ export default function AdminGroups() {
         <GroupFormDialog
           group={editGroup}
           courses={courses}
+          tiers={tiers}
           teachers={teachers}
           defaultCourseId={courseFilter !== "all" ? courseFilter : ""}
           onClose={() => { setOpenCreate(false); setEditGroup(null); }}
@@ -265,10 +281,11 @@ export default function AdminGroups() {
 const TG_URL_RE = /^https:\/\/t\.me\/(c\/\d+\/\d+|\+[\w-]+)/;
 
 function GroupFormDialog({
-  group, courses, teachers, defaultCourseId, onClose, onSaved,
+  group, courses, tiers, teachers, defaultCourseId, onClose, onSaved,
 }: {
   group: Group | null;
   courses: Course[];
+  tiers: CourseTier[];
   teachers: ProfileLite[];
   defaultCourseId?: string;
   onClose: () => void;
@@ -276,6 +293,7 @@ function GroupFormDialog({
 }) {
   const [name, setName] = useState(group?.name || "");
   const [courseId, setCourseId] = useState<string>(group?.course_id || defaultCourseId || "");
+  const [tierId, setTierId] = useState<string>(group?.tier_id || NO_TIER);
   const [teacherInput, setTeacherInput] = useState<string>("");
   const [teacherPick, setTeacherPick] = useState<string>(group?.teacher_id || "");
   const [busy, setBusy] = useState(false);
@@ -306,6 +324,9 @@ function GroupFormDialog({
     const m = hwTopicUrl.trim().match(HW_TOPIC_RE);
     return m ? Number(m[1]) : null;
   })();
+
+  // Tiers offered for the picked course (empty for non-tiered courses → only "To'liq").
+  const courseTiers = useMemo(() => tiers.filter((t) => t.course_id === courseId), [tiers, courseId]);
 
   const submit = async () => {
     if (!name.trim()) { toast.error("Name required"); return; }
@@ -339,6 +360,7 @@ function GroupFormDialog({
       const payload: any = {
         name: name.trim(),
         course_id: courseId,
+        tier_id: tierId === NO_TIER ? null : tierId,
         teacher_id,
         telegram_group_url: tgGroupUrl.trim() || null,
         homework_topic_url: hwTopicUrl.trim() || null,
@@ -371,12 +393,25 @@ function GroupFormDialog({
           </div>
           <div>
             <Label>Course <span className="text-rose-500">*</span></Label>
-            <Select value={courseId} onValueChange={setCourseId}>
+            <Select value={courseId} onValueChange={(v) => { setCourseId(v); setTierId(NO_TIER); }}>
               <SelectTrigger><SelectValue placeholder="Select a course" /></SelectTrigger>
               <SelectContent>
                 {courses.map((c) => <SelectItem key={c.id} value={c.id}>{c.title}</SelectItem>)}
               </SelectContent>
             </Select>
+          </div>
+          <div>
+            <Label>Tarif</Label>
+            <Select value={tierId} onValueChange={setTierId} disabled={!courseId}>
+              <SelectTrigger><SelectValue placeholder="To'liq (tarifsiz)" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_TIER}>To'liq (tarifsiz)</SelectItem>
+                {courseTiers.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground mt-1">
+              Bu guruhga qo'shilgan o'quvchilar shu tarifni oladi (ustozning uzaytirilgan yordami).
+            </p>
           </div>
           <div>
             <Label>Teacher (existing)</Label>

@@ -50,17 +50,29 @@ Deno.serve(async (req) => {
   const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
   // OPTIONS mode: the intake form fetches courses + each course's tiers + existing groups
-  // (secret-gated, like the rest) so it can render dropdowns.
+  // (secret-gated, like the rest) so it can render dropdowns. Each group now carries its
+  // tier name and a live student count so the form can show "name · tier · N o'quvchi".
   if (body && body.options) {
-    const [{ data: oc }, { data: ot }, { data: og }] = await Promise.all([
+    const [{ data: oc }, { data: ot }, { data: og }, { data: op }] = await Promise.all([
       admin.from("courses").select("id, title").order("title"),
-      admin.from("course_tiers").select("course_id, name, position").order("position"),
-      admin.from("groups").select("course_id, name").order("name"),
+      admin.from("course_tiers").select("id, course_id, name, position").order("position"),
+      admin.from("groups").select("id, course_id, name, tier_id").order("name"),
+      admin.from("profiles").select("group_id, status"),
     ]);
+    const tierNameById = new Map(((ot || []) as any[]).map((t) => [t.id, t.name]));
+    // Live, non-archived student tally per group (profiles.group_id is set for students only).
+    const studentCount: Record<string, number> = {};
+    ((op || []) as any[]).forEach((p) => {
+      if (p.group_id && p.status !== "archived") studentCount[p.group_id] = (studentCount[p.group_id] || 0) + 1;
+    });
     const out = ((oc || []) as any[]).map((c) => ({
       title: c.title,
       tiers: ((ot || []) as any[]).filter((t) => t.course_id === c.id).map((t) => t.name),
-      groups: ((og || []) as any[]).filter((g) => g.course_id === c.id).map((g) => g.name),
+      groups: ((og || []) as any[]).filter((g) => g.course_id === c.id).map((g) => ({
+        name: g.name,
+        tier: g.tier_id ? (tierNameById.get(g.tier_id) || "To'liq") : "To'liq",
+        students: studentCount[g.id] || 0,
+      })),
     }));
     return json({ courses: out });
   }
@@ -78,12 +90,14 @@ Deno.serve(async (req) => {
   if (!internalSecret) return json({ error: "internal_secret_unavailable" }, 500);
 
   // Lookups once per request.
-  const [{ data: courses }, { data: tiers }] = await Promise.all([
+  const [{ data: courses }, { data: tiers }, { data: groupsData }] = await Promise.all([
     admin.from("courses").select("id, title"),
     admin.from("course_tiers").select("id, course_id, name"),
+    admin.from("groups").select("id, course_id, name, tier_id"),
   ]);
   const courseList = (courses || []) as { id: string; title: string }[];
   const tierList = (tiers || []) as { id: string; course_id: string; name: string }[];
+  const groupList = (groupsData || []) as { id: string; course_id: string; name: string; tier_id: string | null }[];
 
   const resolveCourse = (val: string): string | null => {
     const v = val.trim().toLowerCase();
@@ -92,6 +106,11 @@ Deno.serve(async (req) => {
     const partial = courseList.filter((c) => (c.title || "").toLowerCase().includes(v));
     return partial.length === 1 ? partial[0].id : null;
   };
+
+  // Find a pre-created group within a course by name (case-insensitive). When it exists, ITS
+  // tier is authoritative — the sales form sends no tier, and even a passed tier is ignored.
+  const findGroup = (course_id: string, name: string) =>
+    groupList.find((g) => g.course_id === course_id && (g.name || "").trim().toLowerCase() === name.trim().toLowerCase()) || null;
 
   const results: { row?: number; status: string; message?: string }[] = [];
 
@@ -106,9 +125,10 @@ Deno.serve(async (req) => {
     const phone = norm(r.phone);
     const email = norm(r.email);
 
-    // Mandatory fields.
-    if (!name || !username || !courseVal || !tierVal || !groupName) {
-      results.push({ row: rowNum, status: "missing_field", message: "First name, @username, course, tier and group are required" });
+    // Mandatory fields. Tier is optional when the group already exists — the group's own
+    // tier is the single source of truth (the sales form sends no tier at all).
+    if (!name || !username || !courseVal || !groupName) {
+      results.push({ row: rowNum, status: "missing_field", message: "First name, @username, course and group are required" });
       continue;
     }
     if (!USERNAME_RE.test(username)) {
@@ -118,11 +138,20 @@ Deno.serve(async (req) => {
     const course_id = resolveCourse(courseVal);
     if (!course_id) { results.push({ row: rowNum, status: "unknown_course", message: `Course "${courseVal}" not found` }); continue; }
 
+    // Resolve the tier. If the group is pre-created (the sales-form path), inherit ITS tier and
+    // ignore any passed value. Only a brand-new group (the Google-Sheet bulk path) requires +
+    // resolves the passed tier name.
     let tier_id: string | null = null;
-    if (!isFullTier(tierVal)) {
-      const match = tierList.filter((t) => t.course_id === course_id && (t.name || "").toLowerCase() === tierVal.toLowerCase());
-      if (match.length !== 1) { results.push({ row: rowNum, status: "unknown_tier", message: `Tier "${tierVal}" not found for this course` }); continue; }
-      tier_id = match[0].id;
+    const existingGroup = findGroup(course_id, groupName);
+    if (existingGroup) {
+      tier_id = existingGroup.tier_id ?? null;
+    } else {
+      if (!tierVal) { results.push({ row: rowNum, status: "missing_field", message: "Tier is required when the group does not exist yet" }); continue; }
+      if (!isFullTier(tierVal)) {
+        const match = tierList.filter((t) => t.course_id === course_id && (t.name || "").toLowerCase() === tierVal.toLowerCase());
+        if (match.length !== 1) { results.push({ row: rowNum, status: "unknown_tier", message: `Tier "${tierVal}" not found for this course` }); continue; }
+        tier_id = match[0].id;
+      }
     }
 
     try {

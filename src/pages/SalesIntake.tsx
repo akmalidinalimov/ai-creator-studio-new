@@ -9,7 +9,8 @@ import { UserPlus, CheckCircle2, Loader2 } from "lucide-react";
 
 const FN = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sheet-sync`;
 
-type CourseOpt = { title: string; tiers: string[]; groups: string[] };
+type GroupOpt = { name: string; tier: string; students: number };
+type CourseOpt = { title: string; tiers: string[]; groups: GroupOpt[] };
 type Recent = { name: string; status: string; cls: string };
 
 // Public sales-intake form. Gated by a shared access code (passed as ?code= or entered once,
@@ -26,7 +27,6 @@ export default function SalesIntake() {
   const [last, setLast] = useState("");
   const [username, setUsername] = useState("");
   const [course, setCourse] = useState("");
-  const [tier, setTier] = useState("");
   const [group, setGroup] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
@@ -68,22 +68,23 @@ export default function SalesIntake() {
   }, [code]);
 
   const selCourse = useMemo(() => courses.find((c) => c.title === course), [courses, course]);
-  const tierOpts = selCourse ? [...selCourse.tiers, "Full"] : ["Full"];
+  const groupOpts = selCourse?.groups || [];
 
   const submit = async () => {
-    if (!first.trim() || !username.trim() || !course || !tier || !group.trim()) {
-      toast.error("Majburiy maydonlarni to'ldiring: ism, @username, kurs, tarif, guruh");
+    if (!first.trim() || !username.trim() || !course || !group.trim()) {
+      toast.error("Majburiy maydonlarni to'ldiring: ism, @username, kurs, guruh");
       return;
     }
     setSubmitting(true);
     try {
+      // No tier is sent: the chosen group is the single source of truth for course + tier.
       const r = await fetch(FN, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-sheet-secret": code },
         body: JSON.stringify({
           rows: [{
             name: first.trim(), last_name: last.trim(), telegram_username: username.trim(),
-            course, tier, group_name: group.trim(), phone: phone.trim(), email: email.trim(),
+            course, group_name: group.trim(), phone: phone.trim(), email: email.trim(),
           }],
         }),
       });
@@ -158,7 +159,7 @@ export default function SalesIntake() {
 
           <div className="space-y-1.5">
             <Label>Kurs <span className="text-rose-500">*</span></Label>
-            <Select value={course} onValueChange={(v) => { setCourse(v); setTier(""); setGroup(""); }}>
+            <Select value={course} onValueChange={(v) => { setCourse(v); setGroup(""); }}>
               <SelectTrigger><SelectValue placeholder="Kursni tanlang" /></SelectTrigger>
               <SelectContent>
                 {courses.map((c) => <SelectItem key={c.title} value={c.title}>{c.title}</SelectItem>)}
@@ -166,23 +167,23 @@ export default function SalesIntake() {
             </Select>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1.5">
-              <Label>Tarif <span className="text-rose-500">*</span></Label>
-              <Select value={tier} onValueChange={setTier} disabled={!course}>
-                <SelectTrigger><SelectValue placeholder="Tarif" /></SelectTrigger>
-                <SelectContent>
-                  {tierOpts.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Guruh <span className="text-rose-500">*</span></Label>
-              <Input value={group} onChange={(e) => setGroup(e.target.value)} list="grp-list" placeholder="Guruh nomi" disabled={!course} />
-              <datalist id="grp-list">
-                {(selCourse?.groups || []).map((g) => <option key={g} value={g} />)}
-              </datalist>
-            </div>
+          <div className="space-y-1.5">
+            <Label>Guruh <span className="text-rose-500">*</span></Label>
+            <Select value={group} onValueChange={setGroup} disabled={!course}>
+              <SelectTrigger><SelectValue placeholder="Guruhni tanlang" /></SelectTrigger>
+              <SelectContent>
+                {groupOpts.length === 0 ? (
+                  <div className="px-2 py-1.5 text-sm text-muted-foreground">Bu kurs uchun guruh yo'q</div>
+                ) : groupOpts.map((g) => (
+                  <SelectItem key={g.name} value={g.name}>
+                    {g.name} · {g.tier} · {g.students} o'quvchi
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              O'quvchi guruhning kursi va tarifini avtomatik oladi.
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-2">
