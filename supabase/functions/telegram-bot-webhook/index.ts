@@ -1162,14 +1162,76 @@ async function getFirstLesson(admin: any, courseId: string) {
   return lessons?.[0]?.id ?? null;
 }
 
+// --- Tier access helpers (Phase 2) -------------------------------------------
+// A student's module_limit for a course: NULL = unlimited (every AI CREATORS 4.0
+// student, plus any VIP/Full tier) → callers skip ALL filtering, so behavior is
+// byte-identical for the 489. A number N = only the first N modules (by position)
+// are accessible.
+async function moduleLimitFor(admin: any, userId: string, courseId: string): Promise<number | null> {
+  if (!userId || !courseId) return null;
+  const { data } = await admin
+    .from("enrollments")
+    .select("course_tiers(module_limit)")
+    .eq("user_id", userId).eq("course_id", courseId)
+    .maybeSingle();
+  const lim = (data as any)?.course_tiers?.module_limit;
+  return typeof lim === "number" ? lim : null;
+}
+
+// Module IDs the student CANNOT access, across all their tiered enrollments.
+// Empty for any student whose every enrollment is NULL-tier (the 489) → no filtering.
+async function getBlockedModuleIds(admin: any, userId: string): Promise<Set<string>> {
+  const blocked = new Set<string>();
+  const { data: enrs } = await admin
+    .from("enrollments")
+    .select("course_id, course_tiers(module_limit)")
+    .eq("user_id", userId);
+  for (const e of (enrs || []) as any[]) {
+    const lim = e?.course_tiers?.module_limit;
+    if (typeof lim !== "number") continue; // unlimited → nothing blocked
+    const { data: mods } = await admin
+      .from("modules")
+      .select("id")
+      .eq("course_id", e.course_id)
+      .order("position", { ascending: true })
+      .order("created_at", { ascending: true });
+    (mods || []).slice(lim).forEach((m: any) => blocked.add(m.id)); // beyond the cap
+  }
+  return blocked;
+}
+
+// True if this single module is beyond the student's tier (always false for NULL-tier).
+async function isModuleBlocked(admin: any, userId: string, moduleId: string): Promise<boolean> {
+  if (!moduleId) return false;
+  const { data: m } = await admin.from("modules").select("course_id").eq("id", moduleId).maybeSingle();
+  const courseId = (m as any)?.course_id;
+  if (!courseId) return false;
+  const limit = await moduleLimitFor(admin, userId, courseId);
+  if (limit == null) return false; // unlimited → not blocked
+  const { data: mods } = await admin
+    .from("modules").select("id").eq("course_id", courseId)
+    .order("position", { ascending: true }).order("created_at", { ascending: true });
+  const accessible = new Set((mods || []).slice(0, limit).map((x: any) => x.id));
+  return !accessible.has(moduleId);
+}
+
+const tierLockedMsg = (locale: Locale): string =>
+  locale === "ru" ? "Этот модуль недоступен в вашем тарифе."
+  : locale === "en" ? "This module is not included in your plan."
+  : "Bu modul sizning tarifingizda mavjud emas.";
+
 async function getNextIncompleteLesson(admin: any, userId: string, courseId: string) {
   // All published lessons in the course in order
-  const { data: modules } = await admin
+  const { data: modulesRaw } = await admin
     .from("modules")
     .select("id, position")
     .eq("course_id", courseId)
     .order("position", { ascending: true });
-  if (!modules?.length) return null;
+  if (!modulesRaw?.length) return null;
+  // Tier clamp (Phase 2): never recommend a lesson in a module past the student's cap.
+  const limit = await moduleLimitFor(admin, userId, courseId);
+  const modules = (limit == null) ? modulesRaw : modulesRaw.slice(0, limit);
+  if (!modules.length) return null;
   const moduleIds = modules.map((m: any) => m.id);
   const { data: lessons } = await admin
     .from("lessons")
@@ -1481,7 +1543,12 @@ async function buildHomeworkMessage(
     if (!allList.length) { lines.push(t.hwEmpty); return { text: lines.join("\n"), keyboard: null }; }
     // Compute leaves: a parent without children OR every SAP
     const parentIdsWithSap = new Set(allList.filter((a) => a.parent_id).map((a) => a.parent_id));
-    const list = allList.filter((a) => a.parent_id || !parentIdsWithSap.has(a.id));
+    // Tier filter (Phase 2): hide assignments in modules beyond the student's tier.
+    // Empty set for every NULL-tier (4.0) student → unchanged.
+    const blockedModules = await getBlockedModuleIds(admin, userId);
+    const list = allList
+      .filter((a) => a.parent_id || !parentIdsWithSap.has(a.id))
+      .filter((a) => !blockedModules.has(a.module_id));
     // Map parent task_number for label rendering
     const parentTaskNum = new Map<string, number>();
     allList.filter((a) => !a.parent_id).forEach((p) => parentTaskNum.set(p.id, p.task_number || 1));
@@ -3454,6 +3521,9 @@ async function startHomeworkIntent(
     .maybeSingle();
   if (!a) { await sendMessage(chatId, t.gradeNotFound); return; }
 
+  // 1b. Tier gate (Phase 2): block opening an intent for a module beyond the student's tier.
+  if (await isModuleBlocked(admin, profile.id, a.module_id)) { await sendMessage(chatId, tierLockedMsg(locale)); return; }
+
   // 2. Already graded? Block — unless the score is stale (student already started a resubmission).
   const { data: existing } = await admin
     .from("homework_submissions")
@@ -3803,6 +3873,14 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
         try { await sendMessage(profile.telegram_id, (T[loc] as any).hwIntentAlreadyScored); } catch (_e) { /* ignore */ }
       }
       console.log("hw:group:already-graded", JSON.stringify({ profile_id: profile.id, assignment_id: intent.assignment_id }));
+      if (intent.id) await admin.from("bot_homework_intents").delete().eq("id", intent.id);
+      return;
+    }
+
+    // Tier gate (Phase 2): never record a submission for a module beyond the student's tier
+    // (defense-in-depth — the intent path already blocks this). Consume intent and stop.
+    if (await isModuleBlocked(admin, profile.id, intent.module_id)) {
+      console.log("hw:group:tier-locked-ignored", JSON.stringify({ profile_id: profile.id, module_id: intent.module_id }));
       if (intent.id) await admin.from("bot_homework_intents").delete().eq("id", intent.id);
       return;
     }

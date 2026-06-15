@@ -129,9 +129,22 @@ async function resolveUserCourseId(admin: any, userId: string, groupId: string |
   return fallback;
 }
 
+// A student's module_limit for a course: NULL = unlimited (every 4.0 student) → no clamp.
+async function moduleLimitFor(admin: any, userId: string, courseId: string): Promise<number | null> {
+  if (!userId || !courseId) return null;
+  const { data } = await admin.from("enrollments").select("course_tiers(module_limit)")
+    .eq("user_id", userId).eq("course_id", courseId).maybeSingle();
+  const lim = (data as any)?.course_tiers?.module_limit;
+  return typeof lim === "number" ? lim : null;
+}
+
 async function getNextIncompleteLesson(admin: any, userId: string, courseId: string): Promise<string | null> {
-  const { data: modules } = await admin.from("modules").select("id, position").eq("course_id", courseId).order("position", { ascending: true });
-  if (!modules?.length) return null;
+  const { data: modulesRaw } = await admin.from("modules").select("id, position").eq("course_id", courseId).order("position", { ascending: true });
+  if (!modulesRaw?.length) return null;
+  // Tier clamp (Phase 2): never deep-link a re-engagement nudge past the student's cap.
+  const limit = await moduleLimitFor(admin, userId, courseId);
+  const modules = (limit == null) ? modulesRaw : modulesRaw.slice(0, limit);
+  if (!modules.length) return null;
   const moduleIds = modules.map((m: any) => m.id);
   const { data: lessons } = await admin.from("lessons").select("id, module_id, position").in("module_id", moduleIds).eq("published", true);
   if (!lessons?.length) return null;

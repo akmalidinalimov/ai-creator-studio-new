@@ -88,6 +88,19 @@ export default function LessonPage() {
         .order("position", { ascending: true });
       (ms || []).forEach((m: any) => m.lessons.sort((a: any, b: any) => a.position - b.position));
       setModules(ms || []);
+
+      // Tier lock (Phase 2): a direct URL into a module beyond the student's tier →
+      // bounce to the course page. Mirrors CoursePage's lock (index >= moduleLimit).
+      // NULL limit (every 4.0 student / admin / teacher) → never locked.
+      const { data: lim } = await supabase.rpc("my_module_limit" as any, { _course_id: courseId });
+      const moduleLimit = typeof lim === "number" ? lim : null;
+      const moduleIdx = (ms || []).findIndex((m: any) => m.id === (l as any)?.module_id);
+      if (moduleLimit != null && moduleIdx >= 0 && moduleIdx >= moduleLimit) {
+        toast.error(t("lesson.tierLocked", { defaultValue: "Bu modul sizning tarifingizda mavjud emas." }));
+        navigate(`/course/${courseId}`, { replace: true });
+        return;
+      }
+
       const lessonIds = (ms || []).flatMap((m: any) => m.lessons.map((x: any) => x.id));
       const { data: prog } = await supabase.from("lesson_progress").select("lesson_id, completed_at, last_position_seconds, max_position_seconds, duration_seconds_v2")
         .eq("user_id", user.id).in("lesson_id", lessonIds.length ? lessonIds : ["00000000-0000-0000-0000-000000000000"]);
