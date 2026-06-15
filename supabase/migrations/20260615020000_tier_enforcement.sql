@@ -1,8 +1,31 @@
 -- Phase 2 — tier ENFORCEMENT (the paywall) at the value-bearing RPCs.
--- Each gate uses has_module_access(uid, module): admin/teacher always pass; a NULL-tier
--- (every AI CREATORS 4.0 student) enrolled student always passes → byte-identical behavior
--- for the 489. Only a tiered (Premium/VIP) student hitting a module beyond their cap is denied.
+-- Gate semantics: is_module_tier_locked is TRUE only when the caller is enrolled in the
+-- module's course WITH a tier that has a module_limit AND the module is beyond that cap.
+-- It is FALSE for everyone else — NULL-tier students (all 489), unlimited/VIP tiers,
+-- non-enrolled accounts, and staff — so behavior is byte-identical except for a tiered
+-- student hitting a locked module. (We deliberately do NOT use has_module_access here:
+-- that also enforces enrollment, which would wrongly block legitimate non-enrolled
+-- accounts that currently track progress — e.g. the owner's own team account.)
 -- The function bodies below are the CURRENTLY DEPLOYED versions with ONLY the gate added.
+
+CREATE OR REPLACE FUNCTION public.is_module_tier_locked(_user_id uuid, _module_id uuid)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.modules m
+    JOIN public.enrollments e ON e.user_id = _user_id AND e.course_id = m.course_id
+    JOIN public.course_tiers ct ON ct.id = e.tier_id
+    WHERE m.id = _module_id
+      AND ct.module_limit IS NOT NULL
+      AND (
+        SELECT count(*) FROM public.modules m2
+        WHERE m2.course_id = m.course_id
+          AND (m2.position, m2.created_at) <= (m.position, m.created_at)
+      ) > ct.module_limit
+  );
+$$;
+GRANT EXECUTE ON FUNCTION public.is_module_tier_locked(uuid, uuid) TO authenticated, service_role;
 
 -- 1) track_video_progress: do not record progress / fire completion on a locked lesson.
 CREATE OR REPLACE FUNCTION public.track_video_progress(
@@ -24,9 +47,9 @@ DECLARE
 BEGIN
   IF uid IS NULL THEN RAISE EXCEPTION 'not authenticated'; END IF;
 
-  -- Tier gate (Phase 2): block recording on a module the student cannot access.
-  -- NULL-tier / admin / teacher → has_module_access = true → unchanged for the 489.
-  IF NOT public.has_module_access(uid, (SELECT module_id FROM public.lessons WHERE id = p_lesson_id)) THEN
+  -- Tier gate (Phase 2): block recording only on a module beyond a TIERED student's cap.
+  -- NULL-tier / non-enrolled / staff → is_module_tier_locked = false → unchanged for the 489.
+  IF public.is_module_tier_locked(uid, (SELECT module_id FROM public.lessons WHERE id = p_lesson_id)) THEN
     RAISE EXCEPTION 'module_locked';
   END IF;
 
@@ -100,7 +123,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   SELECT q.id, q.module_id, q.question, q.options, q."position"
   FROM public.quiz_questions q
   WHERE q.module_id = _module_id
-    AND public.has_module_access(auth.uid(), _module_id)
+    AND NOT public.is_module_tier_locked(auth.uid(), _module_id)
   ORDER BY q."position";
 $$;
 
@@ -119,7 +142,7 @@ DECLARE
   pct int;
 BEGIN
   IF uid IS NULL THEN RAISE EXCEPTION 'unauthorized'; END IF;
-  IF NOT public.has_module_access(uid, _module_id) THEN RAISE EXCEPTION 'module_locked'; END IF;
+  IF public.is_module_tier_locked(uid, _module_id) THEN RAISE EXCEPTION 'module_locked'; END IF;
   FOR r IN SELECT id, correct_index, explanation FROM public.quiz_questions WHERE module_id = _module_id LOOP
     total := total + 1;
     ans := NULLIF(_answers->>(r.id::text), '')::int;
