@@ -873,6 +873,7 @@ export type Database = {
           name: string
           teacher_id: string | null
           telegram_group_url: string | null
+          tier_id: string | null
           updated_at: string
         }
         Insert: {
@@ -885,6 +886,7 @@ export type Database = {
           name: string
           teacher_id?: string | null
           telegram_group_url?: string | null
+          tier_id?: string | null
           updated_at?: string
         }
         Update: {
@@ -897,6 +899,7 @@ export type Database = {
           name?: string
           teacher_id?: string | null
           telegram_group_url?: string | null
+          tier_id?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -905,6 +908,13 @@ export type Database = {
             columns: ["course_id"]
             isOneToOne: false
             referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "groups_tier_id_fkey"
+            columns: ["tier_id"]
+            isOneToOne: false
+            referencedRelation: "course_tiers"
             referencedColumns: ["id"]
           },
         ]
