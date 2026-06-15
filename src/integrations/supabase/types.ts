@@ -2702,6 +2702,10 @@ export type Database = {
         Returns: number
       }
       internal_fn_secret: { Args: never; Returns: string }
+      is_module_tier_locked: {
+        Args: { _module_id: string; _user_id: string }
+        Returns: boolean
+      }
       leaderboard_group_window: {
         Args: { _around?: number; uid: string }
         Returns: {
