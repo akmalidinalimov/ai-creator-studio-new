@@ -1,96 +1,59 @@
-## Problem
+## Why "@@" appears
 
-In `supabase/functions/telegram-bot-webhook/index.ts → handleGroupTopicMessage` (line ~3317), ANY registered student message in a homework topic currently becomes a submission:
+The Telegram column in the UI always renders as `@{telegram_username}` (it prepends an `@` for display). So if the value stored in the database is already `@FMuhitdinova`, the screen shows `@@FMuhitdinova`. The stored value should never include the leading `@`.
 
-1. Media check (line ~3422) accepts `photo`, `document`, `video`, `voice`, `video_note`, and even falls through on text/caption-only — only fully empty messages are dropped.
-2. **Auto-intent synthesis** (line ~3361, "v3.14.40"): if the student never tapped 📤 Topshirish in the bot, the webhook silently fabricates an intent on the fly for any post in the topic and writes a `homework_submissions` row + DMs the teacher.
+Two paths today let an `@` slip into the stored value:
 
-Result: casual chat ("thanks", questions, stickers, random photos shared with classmates) in groups 1–8 all fire fake submissions and teacher notifications.
+1. **`sheet-sync` edge function** — accepts `telegram_username` and forwards it verbatim to `admin-create-students`. The regex `^@?[A-Za-z0-9_]{4,32}$` allows a leading `@` but nothing strips it. Rows imported from the sales Google Sheet (e.g. group "1-GURUH VIP 5.0" in the screenshot) end up stored as `@username`.
+2. **Manual "Yangi talaba qo'shish" dialog** (`AddStudentToGroupDialog` in `src/pages/admin/AdminGroups.tsx`) — uses `tgUser.replace(/^@/, "").trim()`. If the pasted value has any leading whitespace (e.g. `" @username"`), the `^@` anchor doesn't match because the first character is a space, and after the later `.trim()` the `@` remains. The same ordering bug exists in a few other spots.
 
-## Fix — two gates, both required
+Backend `admin-create-students` then stores `telegram_username` verbatim, so a leaked `@` is persisted.
 
-A message in a homework topic is a submission **only if BOTH are true**:
+## Fix (defense in depth + cleanup)
 
-1. It is a **photo or video** (per user spec: not text, not document, not voice, not video_note, not sticker, not animation, not caption-only).
-2. The sender has an **active `bot_homework_intents` row** they created by going through `/vazifalar → 📤 Topshirish` in the bot DM (i.e. they explicitly chose which assignment to submit).
+### 1. Single normalization helper (frontend)
+Add a small util `normalizeTgUsername(input)` that:
+- Coerces to string, trims, removes surrounding quotes,
+- Strips **all** leading `@` characters (`/^@+/`),
+- Lowercases only when comparing (storage keeps original case),
+- Returns `""` for empty.
 
-If either gate fails → ignore silently. No intent synthesis. No submission row. No student ✅. No teacher DM.
+Use it everywhere we currently call `.replace(/^@/, "")` on telegram_username inputs:
+- `src/pages/admin/AdminGroups.tsx` — `AddStudentToGroupDialog` submit, CSV-paste add path (`v.replace(/^@/, "")`), search lookup.
+- `src/pages/admin/GroupDetail.tsx` — `handleAddByLookup` and CSV import row parsing.
+- `src/pages/SalesIntake.tsx` — username field before submit.
 
-### Code changes in `handleGroupTopicMessage`
-
-**A. Strict media gate — first thing after the chat/thread/message-id guard:**
-
+### 2. Backend hardening — `supabase/functions/admin-create-students/index.ts`
+Before writing `profilePatch.telegram_username`, strip leading `@`s and trim:
 ```ts
-let fileId: string | null = null;
-let kind: "photo" | "video" | null = null;
-if (Array.isArray(msg.photo) && msg.photo.length) {
-  fileId = msg.photo[msg.photo.length - 1].file_id;
-  kind = "photo";
-} else if (msg.video) {
-  fileId = msg.video.file_id;
-  kind = "video";
-}
-if (!kind) {
-  console.log("hw:group:non-media-ignored", JSON.stringify({ chatId, threadId, messageId }));
-  return;
-}
+const cleanTgUsername = (s.telegram_username || "").trim().replace(/^@+/, "");
 ```
+Use `cleanTgUsername` in the two places that currently assign the raw value (around lines 416 and 444), and in the patch-update comparison (line 368 already lowercases without `@`, so no change needed there). This guarantees nothing with a leading `@` is ever written, regardless of caller.
 
-**B. Remove the auto-intent synthesis block (lines ~3361–3413).** Replace it with a strict require:
+### 3. Backend hardening — `supabase/functions/sheet-sync/index.ts`
+After `const username = norm(r.telegram_username);`, strip the leading `@` before validation/forwarding so the Google Sheet can include or omit `@` without corrupting data.
 
-```ts
-if (!intent) {
-  console.log("hw:group:no-active-intent-ignored", JSON.stringify({
-    profile_id: profile.id, chatId, threadId, messageId,
-  }));
-  return; // student didn't go through /vazifalar → 📤 Topshirish
-}
+### 4. One-time data cleanup migration
+Existing rows already have `@username`. Run a migration to fix them:
+```sql
+UPDATE public.profiles
+SET telegram_username = regexp_replace(telegram_username, '^@+', '')
+WHERE telegram_username LIKE '@%';
 ```
+This is safe: uniqueness on `telegram_username` would only break if two rows had the same handle stored once with `@` and once without — we can check first with a SELECT and only then commit. If a collision exists we'll merge/skip as needed (rare; will surface in the read query result before the UPDATE runs).
 
-**C. Delete the now-duplicate media-extraction block at lines ~3420–3439.** `kind` / `fileId` are already set by gate A.
+### 5. Redeploy
+After the code changes, redeploy `admin-create-students` and `sheet-sync`.
 
-**D. Consume the intent on successful submission** (one-shot). After the `homework_submissions` upsert succeeds:
+## Out of scope
+- The display logic (`@${u.telegram_username}`) stays as-is — that's the correct rendering once stored values are clean.
+- No DB schema changes, no auth changes, no other edge functions touched.
 
-```ts
-if (intent.id) {
-  await admin.from("bot_homework_intents").delete().eq("id", intent.id);
-}
-```
-
-This prevents a second post in the same topic from accidentally attaching to the same intent. A resubmission requires the student to tap 📤 Topshirish again — which is the intended UX and matches the user's "submission must go through the bot" rule.
-
-### Student-facing UX (already in place, untouched)
-
-- `/vazifalar → 📤 Topshirish` already DMs: "Tap the button below to open the topic and post your photo or video. The bot will accept it automatically (within 10 minutes)." (line 247 uz, 641 en). The 10-minute window is the existing `bot_homework_intents.expires_at` default.
-- If a student posts directly in the topic without using the bot, they get no confirmation — which is now the correct signal that the post was not accepted as homework.
-
-### Grading + stats (unchanged, already correct)
-
-The grading flow (`gs:open:<id>` → `grade_comment`, line ~2743) already:
-- Updates `homework_submissions.score / score_feedback / scored_by / scored_at`.
-- Calls `cacheInvalidateUser(sub.user_id)` → refreshes `/vazifalar`, `/galaba`, profile DM, admin homework views.
-- DMs the student their grade + feedback + magic-link to `/profile`.
-- Leaderboard recomputes via the existing `leaderboard-recalc` cron from the updated rows.
-
-Resubmission path remains: new intent → new photo/video post → `attempt_number` bumps, `score_is_stale` resets, `previous_attempts` keeps prior graded attempt, new teacher DM fires (idempotent per fresh `telegram_message_url`).
-
-## Files touched
-
-- `supabase/functions/telegram-bot-webhook/index.ts` — `handleGroupTopicMessage` only. Net: remove ~50 lines of synthesis, add ~15 lines of gates + intent consume.
-
-No DB migration. No frontend change. No change to grading/stats pipelines.
-
-## Verification
-
-1. Deploy `telegram-bot-webhook`.
-2. Group 8 topic, registered student, **no bot flow first**:
-   - Send plain text → log `hw:group:non-media-ignored`, no DB write, no DMs.
-   - Send a photo → log `hw:group:no-active-intent-ignored`, no DB write, no DMs.
-   - Send a document/voice/sticker → log `hw:group:non-media-ignored`, no DB write, no DMs.
-3. Group 8, same student goes through `/vazifalar → 📤 Topshirish` for Module X Task Y, then posts a photo in the topic:
-   - `homework_submissions` row created with `telegram_message_url`, `telegram_file_id`, `telegram_file_kind='photo'`.
-   - Student gets ✅ + "submitted" DM. Teacher gets DM with "📂 Open post" + "🎯 Grade" buttons.
-   - `bot_homework_intents` row deleted.
-4. Same student posts a second random photo in the topic without re-tapping Topshirish → ignored (no active intent).
-5. Student taps Topshirish again for the same assignment and posts a new photo → `attempt_number` bumps, teacher gets a fresh DM.
-6. Teacher grades from DM → student grade DM arrives; `/vazifalar` + leaderboard reflect the new score on refresh.
+## Files changed
+- `src/lib/format.ts` (or a new `src/lib/telegram.ts`) — add `normalizeTgUsername` helper.
+- `src/pages/admin/AdminGroups.tsx`
+- `src/pages/admin/GroupDetail.tsx`
+- `src/pages/SalesIntake.tsx`
+- `supabase/functions/admin-create-students/index.ts`
+- `supabase/functions/sheet-sync/index.ts`
+- New migration: cleanup UPDATE on `public.profiles.telegram_username`.

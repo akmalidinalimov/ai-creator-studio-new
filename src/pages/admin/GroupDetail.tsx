@@ -194,7 +194,7 @@ export default function GroupDetail() {
     setAddBusy(true);
     try {
       const tgId = /^\d+$/.test(q) ? Number(q) : undefined;
-      const tgUser = !tgId ? q.replace(/^@/, "") : undefined;
+      const tgUser = !tgId ? q.replace(/^@+/, "") : undefined;
 
       // Try to find existing profile so we can pass a name (the function requires name OR contacts).
       let displayName = "";
@@ -288,7 +288,7 @@ export default function GroupDetail() {
       const last_name = get(row, "last_name", 1);
       const email = get(row, "email", 2).toLowerCase();
       const tgIdRaw = get(row, "telegram_user_id", 4);
-      let tgUser = get(row, "telegram_username", 5).replace(/^@/, "").toLowerCase();
+      let tgUser = get(row, "telegram_username", 5).trim().replace(/^@+/, "").toLowerCase();
       const tgId = tgIdRaw && /^\d+$/.test(tgIdRaw.replace(/[^\d]/g, "")) ? Number(tgIdRaw.replace(/[^\d]/g, "")) : undefined;
       const hasEmail = !!email && /^\S+@\S+\.\S+$/.test(email);
 
