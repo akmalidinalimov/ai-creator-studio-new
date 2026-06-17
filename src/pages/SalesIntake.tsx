@@ -83,7 +83,7 @@ export default function SalesIntake() {
         headers: { "Content-Type": "application/json", "x-sheet-secret": code },
         body: JSON.stringify({
           rows: [{
-            name: first.trim(), last_name: last.trim(), telegram_username: username.trim(),
+            name: first.trim(), last_name: last.trim(), telegram_username: username.trim().replace(/^@+/, ""),
             course, group_name: group.trim(), phone: phone.trim(), email: email.trim(),
           }],
         }),

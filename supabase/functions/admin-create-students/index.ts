@@ -296,9 +296,9 @@ Deno.serve(async (req) => {
       if (!resolvedGroupId && targetGroupId) resolvedGroupId = targetGroupId;
       if (!resolvedGroupId && defaultGroupId && !(isCsvImport && !targetGroupId)) resolvedGroupId = defaultGroupId;
 
-      // CSV telegram_username — preserve VERBATIM from input (keep @ if present, no lowercase, no derivation).
-      // tgUserNorm above is only for matching/synthesis; the value we store is the raw csv value.
-      const csvTgUsernameRaw = (s.telegram_username || "").trim();
+      // CSV telegram_username — preserve case, but ALWAYS strip leading "@" before storing.
+      // The UI prepends "@" at render time; storing "@username" makes it render as "@@username".
+      const csvTgUsernameRaw = (s.telegram_username || "").trim().replace(/^@+/, "");
 
       // Dedupe priority: telegram_id → telegram_username → (name + last_name pair, case-insensitive).
       // Email is optional metadata and intentionally NOT used for matching.
@@ -441,7 +441,7 @@ Deno.serve(async (req) => {
       const userId = created.user!.id;
       const profilePatch: Record<string, any> = { name: displayName || null };
       if (csvLastName !== undefined) profilePatch.last_name = csvLastName || null;
-      if (s.telegram_username && s.telegram_username.trim()) profilePatch.telegram_username = s.telegram_username.trim();
+      if (csvTgUsernameRaw) profilePatch.telegram_username = csvTgUsernameRaw;
       if (tgIdNum !== undefined) {
         const { data: dup } = await admin.from("profiles").select("id").eq("telegram_id", tgIdNum).neq("id", userId).maybeSingle();
         if (dup) {

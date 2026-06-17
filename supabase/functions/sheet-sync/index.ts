@@ -23,6 +23,7 @@ function ctEq(a: string, b: string): boolean {
 
 const USERNAME_RE = /^@?[A-Za-z0-9_]{4,32}$/;
 const norm = (s: unknown) => String(s ?? "").trim();
+const normUsername = (s: unknown) => norm(s).replace(/^@+/, "");
 // "Full" / "Full access" → no tier (full access). Otherwise look up the named tier in the course.
 const isFullTier = (t: string) => /^full(\s*access)?$/i.test(t.trim());
 
@@ -117,7 +118,7 @@ Deno.serve(async (req) => {
   for (const r of rows) {
     const rowNum = r.row;
     const name = norm(r.name);
-    const username = norm(r.telegram_username);
+    const username = normUsername(r.telegram_username);
     const courseVal = norm(r.course);
     const tierVal = norm(r.tier);
     const groupName = norm(r.group_name);

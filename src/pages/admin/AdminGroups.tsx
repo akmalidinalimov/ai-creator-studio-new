@@ -347,7 +347,7 @@ function GroupFormDialog({
     setBusy(true);
     try {
       let teacher_id: string | null = teacherPick || null;
-      const tIn = teacherInput.trim().replace(/^@/, "");
+      const tIn = teacherInput.trim().replace(/^@+/, "");
       if (tIn) {
         let q = supabase.from("profiles").select("id").limit(1);
         if (/^\d+$/.test(tIn)) q = q.eq("telegram_id", Number(tIn));
@@ -544,7 +544,7 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
   };
 
   const findProfileId = async (rawValue: string): Promise<string | null> => {
-    const v = rawValue.trim().replace(/^@/, "");
+    const v = rawValue.trim().replace(/^@+/, "");
     if (!v) return null;
     let q = supabase.from("profiles").select("id").limit(1);
     if (/^\d+$/.test(v)) q = q.eq("telegram_id", Number(v));
@@ -572,7 +572,7 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
       const toCreate: { email?: string; telegram_username?: string; telegram_user_id?: number }[] = [];
 
       for (const ident of identifiers) {
-        const v = ident.replace(/^@/, "");
+        const v = ident.replace(/^@+/, "");
         // Try existing match first
         const existingId = await findProfileId(ident);
         if (existingId) {
@@ -752,7 +752,7 @@ function AddStudentToGroupDialog({ group, onClose, onCreated, initialRole }: { g
   const submit = async () => {
     setErr(null);
     const tgIdRaw = tgId.trim();
-    const tgUserRaw = tgUser.replace(/^@/, "").trim();
+    const tgUserRaw = tgUser.trim().replace(/^@+/, "");
     const emailRaw = email.trim();
     if (!emailRaw && !tgIdRaw && !tgUserRaw) {
       setErr("Email, Telegram ID yoki Telegram username dan kamida bittasi kerak");
