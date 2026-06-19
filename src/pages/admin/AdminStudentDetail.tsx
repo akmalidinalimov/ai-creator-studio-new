@@ -683,7 +683,13 @@ function EngagementTab({ userId }: { userId: string }) {
         <div className="font-semibold text-sm mb-2">Ko'rish issiqligi (90 kun)</div>
         <div className="grid grid-cols-[repeat(90,minmax(0,1fr))] gap-0.5">
           {Array.from({ length: 90 }).map((_, i) => {
-            const date = new Date(Date.now() - (89 - i) * 86400_000).toISOString().slice(0, 10);
+            // watch_date is Asia/Tashkent — build the cell date in Tashkent so early-morning
+            // watches land in the correct day cell (was UTC, off by one for 00:00–05:00 TST).
+            const date = (() => {
+              const b = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tashkent" }).format(new Date());
+              const d = new Date(b + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() - (89 - i));
+              return d.toISOString().slice(0, 10);
+            })();
             const sec = heatmap.find((h) => h.date === date)?.sec || 0;
             const lvl = sec === 0 ? 0 : sec < 600 ? 1 : sec < 1800 ? 2 : sec < 3600 ? 3 : 4;
             const cls = ["bg-muted", "bg-primary/20", "bg-primary/40", "bg-primary/70", "bg-primary"][lvl];

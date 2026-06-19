@@ -77,3 +77,35 @@ SELECT public.recalc_leaderboard();
   editor. This file is documentation only.
 - If this damage class recurs, prefer fixing the going-forward gate (lower the 30s threshold / ensure
   Tashkent date consistency) over re-running any blanket reconcile.
+
+---
+
+## UPDATE 2026-06-19 (later) — restore SUPERSEDED by an honest recompute + audit fixes
+
+The restore above set `current_streak = longest_streak`, which (a) **masked real streak breaks**
+(@Asalkhan_8 had a genuine 4-day gap June 13–16; her honest run is 3, not 38) and (b) left
+`last_active_date` stale, so the nightly breaker would re-erode ~71 of the 118 restored streaks. A
+multi-agent audit of the streak/stats subsystem confirmed this and surfaced more issues. Owner chose an
+**honest current-run recompute** + shipping the code fixes.
+
+### Honest recompute (applied via SQL editor — DO NOT RE-RUN, relative dates)
+Recomputes `current_streak` over the RELIABLE window `[2026-06-13 .. today]` (before that,
+`daily_watch_summary.watch_date` is UTC-misfiled — see audit finding #2). Genuine day = watch ≥30s OR
+completion OR group-topic post OR homework (all Asia/Tashkent). Rule: gap in-window → honest run since
+last gap; continuous since 6/13 → keep `longest_streak` (don't truncate dedicated students past the
+unreliable boundary); no genuine activity in last 2 days → 0. Also anchors `last_active_date` to the last
+genuine day and resets `freezes_remaining = 2`.
+Result: 497 rows; Asal 39→3 (best 39 kept); 148 corrected down (106 → 0 = genuinely broken); 0 inflated;
+349 unchanged; 31 continuous kept peak (top live 50/50/49/49/48); invariant_violations = 0; 83 live / 414
+zero (all with `longest_streak` preserved as their record).
+
+### Audit code fixes (shipped via git push + Lovable redeploy/publish)
+- **#3** `telegram-bot-webhook/index.ts` daily-goal "today" window: UTC midnight → Asia/Tashkent.
+- **#12** bot stats: when `current_streak = 0` but `longest > 0`, show "Streak broken — your record: N,
+  start again" (`statsStreakBroken`, uz/ru/en) instead of an awkward "0-day streak".
+- **#4** web watch-time heatmaps now compute date windows/keys in Asia/Tashkent to match the writer:
+  `StudentAnalytics.tsx`, `MyActivity.tsx`, `AdminStudentDetail.tsx`.
+- **#5** `update_streak_for_user` trigger now bumps only when today's Tashkent rollup reaches 30s (or a
+  completion), matching `had_genuine_activity_on_date` — migration `20260619120000_streak_trigger_30s_align.sql`.
+- Deferred (lower severity): #2 historical `daily_watch_summary` backfill, #6 multi-course completion %
+  resolver, #7 breaker `last_active_date` overwrite, #2/#10/#11 latent footguns.

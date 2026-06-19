@@ -102,6 +102,7 @@ const T = {
     statsLessons: (d: number, tot: number, watch: string) => `📚 Darslar: <b>${d}/${tot}</b>${watch ? ` · ${watch} jami` : ""}\n${bar(d, tot)}`,
     statsStreak: (cur: number, best: number, barStr: string, next: number | null, atMilestone: boolean) => `🔥 <b>${cur} kunlik streak</b>${atMilestone ? " 🎉 yangi bosqich!" : ""} · rekord: ${best}\n${barStr}${next ? ` → ${next} kun` : " 🏆 eng yuqori!"}`,
     statsStreakNone: "🔥 Streak: hali boshlanmadi",
+    statsStreakBroken: (best: number) => `🔥 Streak uzildi — rekordingiz: <b>${best}</b> kun. Bugun yangi streak boshlang! 💪`,
     statsFreezes: (n: number) => `❄️ Streak himoyasi: <b>${n}</b> ta muzlatish (bir kun o'tkazsangiz, streak saqlanadi)`,
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Bugungi maqsad: <b>${d}/${tar}</b>${ok ? " ✅" : ""}\n${bar(d, tar)}`,
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Uy vazifalari: <b>${sub}/${totalLeaves}</b>${scored ? ` (${scored} ta baholangan)` : ""}\n${bar(sub, totalLeaves)}`,
@@ -339,6 +340,7 @@ const T = {
     statsLessons: (d: number, tot: number, watch: string) => `📚 Уроки: <b>${d}/${tot}</b>${watch ? ` · ${watch} всего` : ""}\n${bar(d, tot)}`,
     statsStreak: (cur: number, best: number, barStr: string, next: number | null, atMilestone: boolean) => `🔥 <b>${cur} дн. подряд</b>${atMilestone ? " 🎉 новый рубеж!" : ""} · рекорд: ${best}\n${barStr}${next ? ` → ${next} дн.` : " 🏆 максимум!"}`,
     statsStreakNone: "🔥 Стрик: ещё не начат",
+    statsStreakBroken: (best: number) => `🔥 Стрик прерван — ваш рекорд: <b>${best}</b> дн. Начните новый сегодня! 💪`,
     statsFreezes: (n: number) => `❄️ Защита стрика: <b>${n}</b> заморозки (пропущенный день не обнулит стрик)`,
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Цель на сегодня: <b>${d}/${tar}</b>${ok ? " ✅" : ""}\n${bar(d, tar)}`,
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Домашка: <b>${sub}/${totalLeaves}</b>${scored ? ` (${scored} оценено)` : ""}\n${bar(sub, totalLeaves)}`,
@@ -566,6 +568,7 @@ const T = {
     statsLessons: (d: number, tot: number, watch: string) => `📚 Lessons: <b>${d}/${tot}</b>${watch ? ` · ${watch} total` : ""}\n${bar(d, tot)}`,
     statsStreak: (cur: number, best: number, barStr: string, next: number | null, atMilestone: boolean) => `🔥 <b>${cur}-day streak</b>${atMilestone ? " 🎉 milestone!" : ""} · best: ${best}\n${barStr}${next ? ` → ${next} days` : " 🏆 maxed!"}`,
     statsStreakNone: "🔥 Streak: not started yet",
+    statsStreakBroken: (best: number) => `🔥 Streak broken — your record: <b>${best}</b> days. Start a new one today! 💪`,
     statsFreezes: (n: number) => `❄️ Streak protection: <b>${n}</b> freezes (a missed day won't reset your streak)`,
     statsDailyGoal: (d: number, tar: number, ok: boolean) => `🎯 Today's goal: <b>${d}/${tar}</b>${ok ? " ✅" : ""}\n${bar(d, tar)}`,
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Homework: <b>${sub}/${totalLeaves}</b>${scored ? ` (${scored} graded)` : ""}\n${bar(sub, totalLeaves)}`,
@@ -1401,7 +1404,7 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
         ? admin.from("lesson_progress").select("lesson_id, completed_at").eq("user_id", userId).in("lesson_id", lessonIds).not("completed_at", "is", null)
         : Promise.resolve({ data: [] as any[] }),
       admin.from("streaks").select("current_streak, longest_streak, freezes_remaining").eq("user_id", userId).maybeSingle(),
-      admin.from("lesson_progress").select("completed_at").eq("user_id", userId).gte("completed_at", new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z").toISOString()).not("completed_at", "is", null),
+      admin.from("lesson_progress").select("completed_at").eq("user_id", userId).gte("completed_at", new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tashkent" }).format(new Date()) + "T00:00:00+05:00").not("completed_at", "is", null),
       moduleIds.length
         ? admin.from("homework_assignments").select("id, max_score, parent_id, is_active").eq("is_active", true).in("module_id", moduleIds)
         : Promise.resolve({ data: [] as any[] }),
@@ -1428,10 +1431,14 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     lines.push("");
 
     const sk = streakRes.data;
-    if (sk && (sk.current_streak || sk.longest_streak)) {
-      const si = streakInfo(sk.current_streak || 0);
+    if (sk && sk.current_streak && sk.current_streak > 0) {
+      const si = streakInfo(sk.current_streak);
       const barStr = si.next ? bar(si.cur - si.prev, si.next - si.prev) : bar(1, 1);
       lines.push(t.statsStreak(si.cur, sk.longest_streak || 0, barStr, si.next, si.atMilestone));
+      if (typeof sk.freezes_remaining === "number") lines.push(t.statsFreezes(sk.freezes_remaining));
+    } else if (sk && (sk.longest_streak || 0) > 0) {
+      // Streak broken but the student has a record — celebrate it and nudge a restart
+      lines.push(t.statsStreakBroken(sk.longest_streak || 0));
       if (typeof sk.freezes_remaining === "number") lines.push(t.statsFreezes(sk.freezes_remaining));
     } else {
       lines.push(t.statsStreakNone);

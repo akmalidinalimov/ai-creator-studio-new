@@ -88,9 +88,13 @@ export default function MyActivity() {
   useEffect(() => {
     if (!user) return;
     (async () => {
-      const since90 = new Date();
-      since90.setUTCDate(since90.getUTCDate() - 89);
-      const since90Str = since90.toISOString().slice(0, 10);
+      // daily_watch_summary.watch_date is stored in Asia/Tashkent — compute windows/keys in Tashkent.
+      const tkStr = (n: number): string => {
+        const base = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tashkent" }).format(new Date());
+        const d = new Date(base + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n);
+        return d.toISOString().slice(0, 10);
+      };
+      const since90Str = tkStr(-89);
       const since30 = new Date();
       since30.setUTCDate(since30.getUTCDate() - 29);
 
@@ -194,9 +198,7 @@ export default function MyActivity() {
       (dws || []).forEach((r: any) => dwsMap.set(r.watch_date, Number(r.total_seconds) || 0));
       const out: DayCell[] = [];
       for (let i = 0; i < 90; i++) {
-        const d = new Date(since90);
-        d.setUTCDate(since90.getUTCDate() + i);
-        const key = d.toISOString().slice(0, 10);
+        const key = tkStr(-89 + i);
         out.push({ date: key, seconds: dwsMap.get(key) || 0 });
       }
       setDays(out);

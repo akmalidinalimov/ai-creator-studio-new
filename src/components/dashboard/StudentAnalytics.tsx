@@ -18,8 +18,13 @@ function fmtHM(seconds: number, locale: string) {
   return `${h}h ${m}m`;
 }
 
-function startOfDayUTC(d: Date) {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+/** Date string (YYYY-MM-DD) in Asia/Tashkent, offset by N days. daily_watch_summary.watch_date
+ *  is stored in Tashkent, so all watch-time windows/keys must be computed in Tashkent too. */
+function tashkentDateStr(offsetDays = 0): string {
+  const base = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tashkent" }).format(new Date());
+  const d = new Date(base + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + offsetDays);
+  return d.toISOString().slice(0, 10);
 }
 
 export function StudentAnalytics({ userId, courseId }: Props) {
@@ -40,9 +45,7 @@ function WeeklyStudyTimeCard({ userId }: { userId: string }) {
 
   useEffect(() => {
     (async () => {
-      const today = startOfDayUTC(new Date());
-      const start = new Date(today); start.setUTCDate(start.getUTCDate() - 6);
-      const startStr = start.toISOString().slice(0, 10);
+      const startStr = tashkentDateStr(-6);
       const { data } = await supabase
         .from("daily_watch_summary")
         .select("watch_date, total_seconds")
@@ -52,8 +55,7 @@ function WeeklyStudyTimeCard({ userId }: { userId: string }) {
       (data || []).forEach((r: any) => map.set(r.watch_date, Number(r.total_seconds) || 0));
       const out: { date: string; seconds: number }[] = [];
       for (let i = 0; i < 7; i++) {
-        const d = new Date(start); d.setUTCDate(start.getUTCDate() + i);
-        const key = d.toISOString().slice(0, 10);
+        const key = tashkentDateStr(-6 + i);
         out.push({ date: key, seconds: map.get(key) || 0 });
       }
       setDays(out);
@@ -63,7 +65,7 @@ function WeeklyStudyTimeCard({ userId }: { userId: string }) {
 
   const total = days.reduce((s, d) => s + d.seconds, 0);
   const max = Math.max(1, ...days.map((d) => d.seconds));
-  const todayKey = startOfDayUTC(new Date()).toISOString().slice(0, 10);
+  const todayKey = tashkentDateStr(0);
   const dayLabels = i18n.language === "ru"
     ? ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"]
     : i18n.language === "en"
