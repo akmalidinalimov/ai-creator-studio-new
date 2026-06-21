@@ -36,9 +36,18 @@ Everything is on `phase-0-security`. Migrations are additive; the enrollment pol
 ---
 
 ## Still open: 0.2 — Video access enforcement (M05)
-**Corrected diagnosis:** the lesson video IDs are *already* sent to the browser for legitimate playback (`LessonPage.tsx:82` selects `*`), so hiding the column alone doesn't fix it. The real hole is that **`bunny-sign` signs any `video_guid` for any authenticated user with no module-access check** — so a student can obtain a playable URL for a locked/higher-tier video. The fix:
-1. Make `bunny-sign` resolve the lesson and enforce `has_module_access` + `published` + enrollment (mirroring `lesson-video-url`) before signing.
-2. Route non-Bunny providers (YouTube/Vimeo/Mux) through the already-gated `lesson-video-url`, and stop relying on the client reading raw IDs from `lessons` for access decisions.
-3. Optionally move `video_url`/`provider_video_id`/`video_storage_path` to a staff-only table for defense-in-depth.
 
-This touches `bunny-sign`, `lesson-video-url`, `BunnyVideoPlayer`, and `LessonPage`, and must be tested on the live DB — so it is its own focused unit, not bundled here.
+**Full diagnosis (after reading the whole flow):**
+- `LessonPage.tsx:82` reads the lesson with `select("*")`, so the client receives `provider_video_id` / `video_url` directly.
+- `lessons` RLS is `"lessons read" USING(true)` — **any** authenticated user can read those columns for **any** lesson, including locked / higher-tier modules.
+- The client builds the playback URL itself for every provider: Bunny → `BunnyVideoPlayer` renders the plain `iframe.mediadelivery.net/embed/<lib>/<guid>` (it does **not** use `bunny-sign`); YouTube/Vimeo/Mux → embed URL from `provider_video_id`; upload → `video_url`.
+- `lesson-video-url` (which *does* enforce `has_module_access` + `published` + enrollment) is only used as a bare-GUID **resolver**, not as the access gate.
+
+**Net:** there is currently **no server-side access check in the real playback path** for any provider. A student can read any lesson's IDs and play locked/higher-tier videos.
+
+**Correct fix (its own focused unit — needs a staging/branch deploy to test playback for all 5 provider types):**
+1. **Route ALL playback through the gated `lesson-video-url`.** `LessonPage` stops reading `provider_video_id`/`video_url` from the table and instead calls `lesson-video-url(lessonId)`, rendering from the returned `{ url, kind }` (parse lib/guid for Bunny exactly like the existing resolver at `LessonPage.tsx:60`). This enforces access at playback for every provider.
+2. **Isolate the sensitive columns** so the table read can't bypass step 1: move `video_url` / `provider_video_id` / `video_storage_path` into a `lesson_video_sources` table with staff-only RLS (`has_role`), read by the service-role functions; update the admin editor (`AdminCourseEditor`, `LessonDrawer`, `AdminBunnyDiagnostics`) to read/write the new table. (Column-level REVOKE can't work here because admins and students are both the `authenticated` role — only a separate RLS-gated table distinguishes them.)
+3. **Bunny library token-auth:** confirm whether the Bunny library has token authentication enabled. If embeds are currently shareable/unsigned, enabling token-auth + routing through a signed URL is the durable lock (the now-cleaned `bunny-sign` can be repurposed for this, with a per-lesson access check added).
+
+**Files touched:** `LessonPage.tsx`, `BunnyVideoPlayer.tsx`, `lesson-video-url`, a new migration + `lesson_video_sources` table, `AdminCourseEditor.tsx`, `LessonDrawer.tsx`, `AdminBunnyDiagnostics.tsx`. **Must be playback-tested on a deploy before going live** — this is the one Phase-0 change that can break video for all students if shipped unverified.
