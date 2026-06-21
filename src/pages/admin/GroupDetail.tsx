@@ -87,6 +87,14 @@ export default function GroupDetail() {
   const [pendingTeacher, setPendingTeacher] = useState<string>("");
   const [pendingCourse, setPendingCourse] = useState<string>("");
 
+  // edit name / tier
+  const [editName, setEditName] = useState(false);
+  const [pendingName, setPendingName] = useState<string>("");
+  const [editTier, setEditTier] = useState(false);
+  const [pendingTier, setPendingTier] = useState<string>("");
+  const [groupTierId, setGroupTierId] = useState<string | null>(null);
+  const [allTiers, setAllTiers] = useState<{ id: string; course_id: string; name: string }[]>([]);
+
   // add by username/id
   const [openAdd, setOpenAdd] = useState(false);
   const [addQuery, setAddQuery] = useState("");
@@ -108,14 +116,16 @@ export default function GroupDetail() {
   const reload = async () => {
     if (!id) return;
     setLoading(true);
-    const [ov, mem, eng, subs] = await Promise.all([
+    const [ov, mem, eng, subs, grp] = await Promise.all([
       supabase.rpc("staff_group_overview" as any, { _group_id: id }),
       supabase.rpc("staff_group_members" as any, { _group_id: id }),
       supabase.rpc("admin_group_engagement_stats" as any, { p_window_days: ENGAGEMENT_WINDOW_DAYS, p_group_id: id }),
       supabase.rpc("admin_group_module_submissions" as any, { p_group_id: id }),
+      supabase.from("groups").select("tier_id").eq("id", id).maybeSingle(),
     ]);
     const ovRow = Array.isArray(ov.data) ? ov.data[0] : ov.data;
     setOverview((ovRow as Overview) || null);
+    setGroupTierId(((grp.data as any)?.tier_id) ?? null);
     setMembers(((mem.data as any[]) || []) as Member[]);
 
     // engagement: filter all-groups result down to this group
@@ -161,6 +171,8 @@ export default function GroupDetail() {
       setTeachers(teacherList);
       const { data: cs } = await supabase.from("courses").select("id, title").order("title");
       setCourses((cs || []) as any);
+      const { data: ts } = await supabase.from("course_tiers").select("id, course_id, name").order("position");
+      setAllTiers((ts || []) as any);
     })();
   }, []);
 
@@ -182,6 +194,27 @@ export default function GroupDetail() {
     if (error) { toast.error(error.message); return; }
     toast.success("Course updated");
     setEditCourse(false);
+    reload();
+  };
+
+  const saveName = async () => {
+    if (!id) return;
+    const nm = pendingName.trim();
+    if (!nm) { toast.error("Nom kiritilishi kerak"); return; }
+    const { error } = await supabase.from("groups").update({ name: nm }).eq("id", id);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Guruh nomi yangilandi");
+    setEditName(false);
+    reload();
+  };
+
+  const saveTier = async () => {
+    if (!id) return;
+    const newTier = pendingTier === "__none__" ? null : pendingTier || null;
+    const { error } = await supabase.from("groups").update({ tier_id: newTier }).eq("id", id);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Tarif yangilandi");
+    setEditTier(false);
     reload();
   };
 
@@ -435,7 +468,17 @@ export default function GroupDetail() {
           <>
             {/* Rich header */}
             <div className="space-y-2">
-              <h1 className="text-2xl sm:text-3xl font-semibold">{overview.group_name}</h1>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-2xl sm:text-3xl font-semibold">{overview.group_name}</h1>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => { setPendingName(overview.group_name); setEditName(true); }}
+                >
+                  <Pencil className="h-3.5 w-3.5" /> Nomini tahrirlash
+                </Button>
+              </div>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
                 <span className="inline-flex items-center gap-1">
                   Teacher: <span className="text-foreground font-medium">{overview.teacher_name || "—"}</span>
@@ -447,6 +490,13 @@ export default function GroupDetail() {
                 <span className="inline-flex items-center gap-1">
                   Course: <span className="text-foreground font-medium">{overview.course_name || "—"}</span>
                   <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setPendingCourse(overview.course_id || "__none__"); setEditCourse(true); }}>
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                </span>
+                <span>·</span>
+                <span className="inline-flex items-center gap-1">
+                  Tarif: <span className="text-foreground font-medium">{allTiers.find((t) => t.id === groupTierId)?.name || "To'liq"}</span>
+                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setPendingTier(groupTierId || "__none__"); setEditTier(true); }}>
                     <Pencil className="h-3.5 w-3.5" />
                   </Button>
                 </span>
@@ -648,6 +698,45 @@ export default function GroupDetail() {
             <DialogFooter>
               <Button variant="ghost" onClick={() => setEditCourse(false)}>Cancel</Button>
               <Button onClick={saveCourse}>Save</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Rename group dialog */}
+        <Dialog open={editName} onOpenChange={setEditName}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Guruh nomini tahrirlash</DialogTitle></DialogHeader>
+            <Input
+              autoFocus
+              value={pendingName}
+              onChange={(e) => setPendingName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") saveName(); }}
+              placeholder="Guruh nomi"
+            />
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setEditName(false)}>Cancel</Button>
+              <Button onClick={saveName}>Save</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit tier dialog */}
+        <Dialog open={editTier} onOpenChange={setEditTier}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Tarifni o'zgartirish</DialogTitle></DialogHeader>
+            <Select value={pendingTier} onValueChange={setPendingTier}>
+              <SelectTrigger><SelectValue placeholder="To'liq (tarifsiz)" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">To'liq (tarifsiz)</SelectItem>
+                {allTiers.filter((t) => t.course_id === overview?.course_id).map((t) => (
+                  <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">Bu guruhdagi o'quvchilar shu tarif darajasini oladi.</p>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setEditTier(false)}>Cancel</Button>
+              <Button onClick={saveTier}>Save</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

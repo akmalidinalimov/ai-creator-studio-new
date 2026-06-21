@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Trash2, Users as UsersIcon, Upload, RefreshCw, UserPlus } from "lucide-react";
+import { Plus, Trash2, Users as UsersIcon, Upload, RefreshCw, UserPlus, Pencil } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -206,6 +206,12 @@ export default function AdminGroups() {
                   </TableCell>
                   <TableCell className="text-right space-x-2">
                     <TooltipProvider delayDuration={150}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button variant="outline" size="sm" onClick={() => setEditGroup(g)} aria-label="Tahrirlash"><Pencil className="h-4 w-4" /></Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Tahrirlash (nom, kurs, tarif, ustoz)</TooltipContent>
+                      </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button variant="outline" size="sm" onClick={() => setStudentsGroup(g)} aria-label="Talabalar"><UsersIcon className="h-4 w-4" /></Button>
