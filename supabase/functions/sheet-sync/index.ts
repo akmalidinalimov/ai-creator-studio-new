@@ -50,6 +50,14 @@ Deno.serve(async (req) => {
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
+  // Per-IP rate limit (Phase 0 / M18) — defense-in-depth. Fail OPEN on limiter errors
+  // so a transient DB hiccup never blocks a legitimate Google-Sheet sync.
+  const ip = (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() || "unknown";
+  try {
+    const { data: hits } = await admin.rpc("bump_rate_limit", { _bucket: `sheet-sync:${ip}`, _window_seconds: 60 });
+    if (typeof hits === "number" && hits > 120) return json({ error: "rate_limited" }, 429);
+  } catch (_e) { /* fail open */ }
+
   // OPTIONS mode: the intake form fetches courses + each course's tiers + existing groups
   // (secret-gated, like the rest) so it can render dropdowns. Each group now carries its
   // tier name and a live student count so the form can show "name · tier · N o'quvchi".

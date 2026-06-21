@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "check:config": "node scripts/check-config-toml.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

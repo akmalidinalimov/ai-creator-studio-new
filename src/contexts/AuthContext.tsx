@@ -1,14 +1,15 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { AppRole, resolveRole, hasSuperadmin } from "@/lib/roles";
 import i18n from "@/i18n";
-
-type AppRole = "admin" | "teacher" | "student";
 
 interface AuthCtx {
   session: Session | null;
   user: User | null;
   role: AppRole | null;
+  /** True if the user holds the superadmin role. `role` is "admin" for them. */
+  isSuperadmin: boolean;
   loading: boolean;
   signOut: () => Promise<void>;
   refreshRole: () => Promise<void>;
@@ -18,6 +19,7 @@ const Ctx = createContext<AuthCtx>({
   session: null,
   user: null,
   role: null,
+  isSuperadmin: false,
   loading: true,
   signOut: async () => {},
   refreshRole: async () => {},
@@ -27,6 +29,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<AppRole | null>(null);
+  const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const loadRole = async (uid: string) => {
@@ -34,14 +37,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       .from("user_roles")
       .select("role")
       .eq("user_id", uid);
-    if (data && data.length > 0) {
-      const roles = data.map((r: any) => r.role);
-      if (roles.includes("admin")) setRole("admin");
-      else if (roles.includes("teacher")) setRole("teacher");
-      else setRole("student");
-    } else {
-      setRole(null);
-    }
+    const roles = (data ?? []).map((r: any) => r.role as string);
+    // Centralized precedence (handles superadmin >= admin) — see src/lib/roles.ts.
+    setRole(resolveRole(roles));
+    setIsSuperadmin(hasSuperadmin(roles));
   };
 
   useEffect(() => {
@@ -100,6 +99,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
       } else {
         setRole(null);
+        setIsSuperadmin(false);
       }
     });
 
@@ -123,7 +123,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   return (
-    <Ctx.Provider value={{ session, user, role, loading, signOut, refreshRole }}>
+    <Ctx.Provider value={{ session, user, role, isSuperadmin, loading, signOut, refreshRole }}>
       {children}
     </Ctx.Provider>
   );

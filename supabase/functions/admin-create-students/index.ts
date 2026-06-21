@@ -67,6 +67,7 @@ Deno.serve(async (req) => {
     // OR an admin user JWT (the web admin UI). The import logic below is identical for both.
     let actorId: string | null = null;
     let isSystem = false;
+    let isSuperadmin = false;
     const internalSecretHeader = req.headers.get("x-internal-secret");
     if (internalSecretHeader) {
       try {
@@ -95,6 +96,14 @@ Deno.serve(async (req) => {
       if (!roleRow) {
         return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
+      // Privilege-escalation guard (M12): only a superadmin may create/promote admins.
+      const { data: saRow } = await admin
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", who.user.id)
+        .eq("role", "superadmin")
+        .maybeSingle();
+      isSuperadmin = !!saRow;
       actorId = who.user.id;
     }
 
@@ -271,6 +280,15 @@ Deno.serve(async (req) => {
         || (tgUserNorm ? `@${tgUserNorm}` : "")
         || (s.name ? `name:${s.name}` : "")
         || "(empty)";
+
+      // Privilege-escalation guard (M12): only a superadmin may create or promote an
+      // admin. Plain admins and system callers (sheet-sync /intake) cannot mint admins.
+      if (s.role === "admin" && !isSuperadmin) {
+        const err = "Only a superadmin can create or promote an admin.";
+        results.push({ email, status: "forbidden", error: err, row_index, identifier_used });
+        auditLog(row_index, identifier_used, "forbidden_admin_creation", err);
+        continue;
+      }
 
       if (!email || !/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email)) {
         const err = "could not synthesize a valid email (need email, telegram_user_id, or ASCII telegram_username)";
