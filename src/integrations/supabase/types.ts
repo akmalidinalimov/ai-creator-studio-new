@@ -2641,11 +2641,13 @@ export type Database = {
           graded: number
           grading_med_min: number
           hours_by_day: number[]
+          last_active: string
           median_wait_min: number
           name: string
           questions: number
           teacher_id: string
           telegram_username: string
+          ungraded_backlog: number
           week_hours: number
         }[]
       }
