@@ -25,6 +25,7 @@ RETURNS TABLE(
   teacher_id uuid, name text, telegram_username text,
   active_days int, days_window int,
   hours_by_day int[], week_hours int,
+  messages_by_day int[], week_messages int,
   questions int, answered int, answer_rate numeric, median_wait_min numeric,
   graded int, grading_med_min numeric, ungraded_backlog int,
   last_active timestamptz
@@ -46,16 +47,30 @@ BEGIN
   ),
   ttg AS (SELECT t.tid, p.telegram_id AS t_tgid FROM teachers t JOIN profiles p ON p.id = t.tid),
   days AS (SELECT gs::date AS d FROM generate_series(_today - (p_days - 1), _today, interval '1 day') gs),
-  td AS (  -- teacher x day: distinct active clock-hours from group messages
-    SELECT t.tid, d.d,
-      (SELECT count(DISTINCT date_trunc('hour', g.sent_at AT TIME ZONE 'Asia/Tashkent'))
-       FROM group_message_events g
-       WHERE g.profile_id = t.tid AND (g.sent_at AT TIME ZONE 'Asia/Tashkent')::date = d.d)::int AS ah
+  msg_raw AS (  -- every teacher group message in the window (anon msgs already carry profile_id = teacher)
+    SELECT g.profile_id AS tid,
+      (g.sent_at AT TIME ZONE 'Asia/Tashkent')::date AS d,
+      date_trunc('hour', g.sent_at AT TIME ZONE 'Asia/Tashkent') AS hr
+    FROM group_message_events g
+    JOIN teachers t ON t.tid = g.profile_id
+    WHERE (g.sent_at AT TIME ZONE 'Asia/Tashkent')::date BETWEEN _today - (p_days - 1) AND _today
+  ),
+  msg_day AS (
+    SELECT tid, d, count(*)::int AS mc, count(DISTINCT hr)::int AS ah
+    FROM msg_raw GROUP BY tid, d
+  ),
+  td AS (  -- teacher x day grid, zero-filled: ah = active clock-hours, mc = message count
+    SELECT t.tid, d.d, COALESCE(m.ah, 0) AS ah, COALESCE(m.mc, 0) AS mc
     FROM teachers t CROSS JOIN days d
+    LEFT JOIN msg_day m ON m.tid = t.tid AND m.d = d.d
   ),
   hours_agg AS (
-    SELECT tid, array_agg(ah ORDER BY d) AS hours_by_day,
-      sum(ah)::int AS week_hours, count(*) FILTER (WHERE ah > 0)::int AS active_days
+    SELECT tid,
+      array_agg(ah ORDER BY d) AS hours_by_day,
+      array_agg(mc ORDER BY d) AS messages_by_day,
+      sum(ah)::int AS week_hours,
+      sum(mc)::int AS week_messages,
+      count(*) FILTER (WHERE mc > 0)::int AS active_days
     FROM td GROUP BY tid
   ),
   dq AS (  -- questions directed at the group's teacher
@@ -111,6 +126,7 @@ BEGIN
     p.telegram_username::text,
     COALESCE(h.active_days, 0)::int, p_days::int,
     COALESCE(h.hours_by_day, ARRAY[]::int[]), COALESCE(h.week_hours, 0)::int,
+    COALESCE(h.messages_by_day, ARRAY[]::int[]), COALESCE(h.week_messages, 0)::int,
     COALESCE(q.questions, 0)::int, COALESCE(q.answered, 0)::int,
     (CASE WHEN COALESCE(q.questions, 0) > 0 THEN round(100.0 * q.answered / q.questions, 0) ELSE NULL END)::numeric,
     q.median_wait_min::numeric,
