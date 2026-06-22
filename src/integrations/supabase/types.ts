@@ -743,9 +743,13 @@ export type Database = {
         Row: {
           created_at: string
           group_id: string
+          has_ustoz: boolean
           id: string
+          mentions_teacher: boolean
           module_id: string | null
           profile_id: string | null
+          reply_to_message_id: number | null
+          reply_to_user_id: number | null
           sent_at: string
           telegram_chat_id: number
           telegram_message_id: number
@@ -755,9 +759,13 @@ export type Database = {
         Insert: {
           created_at?: string
           group_id: string
+          has_ustoz?: boolean
           id?: string
+          mentions_teacher?: boolean
           module_id?: string | null
           profile_id?: string | null
+          reply_to_message_id?: number | null
+          reply_to_user_id?: number | null
           sent_at?: string
           telegram_chat_id: number
           telegram_message_id: number
@@ -767,9 +775,13 @@ export type Database = {
         Update: {
           created_at?: string
           group_id?: string
+          has_ustoz?: boolean
           id?: string
+          mentions_teacher?: boolean
           module_id?: string | null
           profile_id?: string | null
+          reply_to_message_id?: number | null
+          reply_to_user_id?: number | null
           sent_at?: string
           telegram_chat_id?: number
           telegram_message_id?: number
@@ -2562,6 +2574,80 @@ export type Database = {
       admin_set_enrollment_tier: {
         Args: { _course_id: string; _tier_id: string; _user_id: string }
         Returns: undefined
+      }
+      admin_teacher_activity_daily: {
+        Args: { p_days?: number; p_teacher_id: string }
+        Returns: {
+          day: string
+          graded: number
+          group_msgs: number
+          logins: number
+        }[]
+      }
+      admin_teacher_groups: {
+        Args: { p_days?: number; p_sla_min?: number; p_teacher_id: string }
+        Returns: {
+          answered_in_sla: number
+          graded: number
+          group_id: string
+          group_name: string
+          questions: number
+          response_rate: number
+          students: number
+          ungraded: number
+          wait_med_min: number
+        }[]
+      }
+      admin_teacher_stats: {
+        Args: { p_days?: number; p_sla_min?: number }
+        Returns: {
+          active_days: number
+          answered_in_sla: number
+          avg_active_hours: number
+          days_off: number
+          graded: number
+          grading_med_min: number
+          groups_taught: number
+          last_active: string
+          msgs_sent: number
+          name: string
+          questions: number
+          response_rate: number
+          students: number
+          teacher_id: string
+          telegram_username: string
+          unanswered: number
+          ungraded_backlog: number
+          wait_med_min: number
+        }[]
+      }
+      admin_teacher_unanswered: {
+        Args: { p_days?: number; p_sla_min?: number; p_teacher_id: string }
+        Returns: {
+          answered: boolean
+          asked_at: string
+          group_name: string
+          student_name: string
+          waited_min: number
+        }[]
+      }
+      admin_teacher_weekly: {
+        Args: { p_days?: number }
+        Returns: {
+          active_days: number
+          answer_rate: number
+          answered: number
+          days_window: number
+          graded: number
+          grading_med_min: number
+          hours_by_day: number[]
+          median_wait_min: number
+          name: string
+          questions: number
+          teacher_id: string
+          telegram_username: string
+          week_hours: number
+        }[]
       }
       admin_ungrouped_students: {
         Args: never
