@@ -130,27 +130,29 @@ BEGIN
             FILTER (WHERE a_at IS NOT NULL)::numeric, 1) AS wait_med_min
     FROM qa GROUP BY tid
   )
+  -- Explicit casts on every column so the row structure provably matches RETURNS TABLE
+  -- (avoids "structure of query does not match function result type" from int/bigint/numeric drift).
   SELECT
-    t.tid AS teacher_id,
-    COALESCE(NULLIF(TRIM(CONCAT(p.name, ' ', COALESCE(p.last_name, ''))), ''), p.email) AS name,
-    p.telegram_username,
-    COALESCE(gc.groups_taught, 0),
-    COALESCE(gs.students, 0),
-    COALESCE(aa.active_days, 0),
-    GREATEST(p_days - COALESCE(aa.active_days, 0), 0) AS days_off,
-    CASE WHEN COALESCE(aa.active_days, 0) > 0
-         THEN round(aa.active_hour_buckets::numeric / aa.active_days, 1) ELSE 0 END AS avg_active_hours,
-    aa.last_active,
-    COALESCE(m.msgs_sent, 0),
-    COALESCE(q.questions, 0),
-    COALESCE(q.answered_in_sla, 0),
-    CASE WHEN COALESCE(q.questions, 0) > 0
-         THEN round(100.0 * q.answered_in_sla / q.questions, 0) ELSE NULL END AS response_rate,
-    q.wait_med_min,
-    COALESCE(q.questions, 0) - COALESCE(q.answered_in_sla, 0) AS unanswered,
-    COALESCE(gr.graded, 0),
-    gr.grading_med_min,
-    COALESCE(bl.ungraded_backlog, 0)
+    t.tid::uuid AS teacher_id,
+    (COALESCE(NULLIF(TRIM(CONCAT(p.name, ' ', COALESCE(p.last_name, ''))), ''), p.email))::text AS name,
+    p.telegram_username::text,
+    COALESCE(gc.groups_taught, 0)::int,
+    COALESCE(gs.students, 0)::int,
+    COALESCE(aa.active_days, 0)::int,
+    GREATEST(p_days - COALESCE(aa.active_days, 0), 0)::int AS days_off,
+    (CASE WHEN COALESCE(aa.active_days, 0) > 0
+         THEN round(aa.active_hour_buckets::numeric / aa.active_days, 1) ELSE 0 END)::numeric AS avg_active_hours,
+    aa.last_active::timestamptz,
+    COALESCE(m.msgs_sent, 0)::int,
+    COALESCE(q.questions, 0)::int,
+    COALESCE(q.answered_in_sla, 0)::int,
+    (CASE WHEN COALESCE(q.questions, 0) > 0
+         THEN round(100.0 * q.answered_in_sla / q.questions, 0) ELSE NULL END)::numeric AS response_rate,
+    q.wait_med_min::numeric,
+    (COALESCE(q.questions, 0) - COALESCE(q.answered_in_sla, 0))::int AS unanswered,
+    COALESCE(gr.graded, 0)::int,
+    gr.grading_med_min::numeric,
+    COALESCE(bl.ungraded_backlog, 0)::int
   FROM teachers t
   JOIN profiles p ON p.id = t.tid
   LEFT JOIN gcount gc ON gc.tid = t.tid

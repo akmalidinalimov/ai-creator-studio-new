@@ -40,11 +40,11 @@ BEGIN
     WHERE ur.role IN ('teacher'::app_role, 'admin'::app_role, 'superadmin'::app_role)
   ),
   tg AS (SELECT id, name, homework_topic_id FROM groups WHERE teacher_id = p_teacher_id)
-  SELECT tg.name,
-    COALESCE(NULLIF(TRIM(pr.name || ' ' || COALESCE(pr.last_name, '')), ''), pr.email, '—') AS student_name,
-    gme.sent_at AS asked_at,
-    round(EXTRACT(EPOCH FROM (COALESCE(resp.sent_at, now()) - gme.sent_at)) / 60.0, 0) AS waited_min,
-    (resp.sent_at IS NOT NULL) AS answered
+  SELECT tg.name::text,
+    (COALESCE(NULLIF(TRIM(pr.name || ' ' || COALESCE(pr.last_name, '')), ''), pr.email, '—'))::text AS student_name,
+    gme.sent_at::timestamptz AS asked_at,
+    round(EXTRACT(EPOCH FROM (COALESCE(resp.sent_at, now()) - gme.sent_at)) / 60.0, 0)::numeric AS waited_min,
+    (resp.sent_at IS NOT NULL)::boolean AS answered
   FROM group_message_events gme
   JOIN tg ON tg.id = gme.group_id
   LEFT JOIN profiles pr ON pr.id = gme.profile_id
@@ -115,14 +115,14 @@ BEGIN
     FROM homework_submissions hs JOIN profiles pr ON pr.id = hs.user_id
     WHERE pr.group_id IN (SELECT id FROM tg) GROUP BY pr.group_id
   )
-  SELECT tg.id, tg.name,
-    COALESCE(st.students, 0),
-    COALESCE(q.questions, 0),
-    COALESCE(q.answered_in_sla, 0),
-    CASE WHEN COALESCE(q.questions, 0) > 0 THEN round(100.0 * q.answered_in_sla / q.questions, 0) ELSE NULL END,
-    q.wait_med_min,
-    COALESCE(gr.graded, 0),
-    COALESCE(gr.ungraded, 0)
+  SELECT tg.id::uuid, tg.name::text,
+    COALESCE(st.students, 0)::int,
+    COALESCE(q.questions, 0)::int,
+    COALESCE(q.answered_in_sla, 0)::int,
+    (CASE WHEN COALESCE(q.questions, 0) > 0 THEN round(100.0 * q.answered_in_sla / q.questions, 0) ELSE NULL END)::numeric,
+    q.wait_med_min::numeric,
+    COALESCE(gr.graded, 0)::int,
+    COALESCE(gr.ungraded, 0)::int
   FROM tg
   LEFT JOIN st ON st.gid = tg.id
   LEFT JOIN qa_agg q ON q.gid = tg.id
