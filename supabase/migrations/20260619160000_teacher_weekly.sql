@@ -26,7 +26,8 @@ RETURNS TABLE(
   active_days int, days_window int,
   hours_by_day int[], week_hours int,
   questions int, answered int, answer_rate numeric, median_wait_min numeric,
-  graded int, grading_med_min numeric, ungraded_backlog int
+  graded int, grading_med_min numeric, ungraded_backlog int,
+  last_active timestamptz
 )
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
 #variable_conflict use_column
@@ -96,6 +97,14 @@ BEGIN
     JOIN groups g ON g.id = pr.group_id
     WHERE g.teacher_id IN (SELECT tid FROM teachers) AND hs.score IS NULL AND hs.submitted_at IS NOT NULL
     GROUP BY g.teacher_id
+  ),
+  lastact AS (  -- last time the teacher did anything (group message, graded homework, or web login)
+    SELECT t.tid, GREATEST(
+      (SELECT max(g.sent_at)   FROM group_message_events g WHERE g.profile_id = t.tid),
+      (SELECT max(h.scored_at) FROM homework_submissions h WHERE h.scored_by = t.tid),
+      (SELECT max(a.created_at) FROM auth_events a WHERE a.user_id = t.tid)
+    ) AS last_active
+    FROM teachers t
   )
   SELECT t.tid::uuid,
     (COALESCE(NULLIF(TRIM(CONCAT(p.name, ' ', COALESCE(p.last_name, ''))), ''), p.email))::text,
@@ -105,12 +114,14 @@ BEGIN
     COALESCE(q.questions, 0)::int, COALESCE(q.answered, 0)::int,
     (CASE WHEN COALESCE(q.questions, 0) > 0 THEN round(100.0 * q.answered / q.questions, 0) ELSE NULL END)::numeric,
     q.median_wait_min::numeric,
-    COALESCE(gr.graded, 0)::int, gr.grading_med_min::numeric, COALESCE(bl.ungraded, 0)::int
+    COALESCE(gr.graded, 0)::int, gr.grading_med_min::numeric, COALESCE(bl.ungraded, 0)::int,
+    la.last_active::timestamptz
   FROM teachers t JOIN profiles p ON p.id = t.tid
   LEFT JOIN hours_agg h ON h.tid = t.tid
   LEFT JOIN q_agg q ON q.tid = t.tid
   LEFT JOIN grading gr ON gr.tid = t.tid
   LEFT JOIN backlog bl ON bl.tid = t.tid
+  LEFT JOIN lastact la ON la.tid = t.tid
   ORDER BY name;
 END;
 $$;

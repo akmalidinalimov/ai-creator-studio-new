@@ -21,6 +21,7 @@ type Row = {
   graded: number;
   grading_med_min: number | null;
   ungraded_backlog: number;
+  last_active: string | null;
 };
 
 const DAYS = 7;
@@ -30,6 +31,21 @@ function fmtDur(min: number | null | undefined): string {
   if (min < 60) return `${Math.round(min)}m`;
   if (min < 1440) return `${(min / 60).toFixed(1)}h`;
   return `${(min / 1440).toFixed(1)}d`;
+}
+
+/** Relative "last online" with a recency color. */
+function fmtAgo(iso: string | null | undefined): { text: string; cls: string } {
+  if (!iso) return { text: "hech qachon", cls: "text-muted-foreground" };
+  const min = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  let text: string;
+  if (min < 1) text = "hozir";
+  else if (min < 60) text = `${min} daqiqa oldin`;
+  else if (min < 1440) text = `${Math.floor(min / 60)} soat oldin`;
+  else text = `${Math.floor(min / 1440)} kun oldin`;
+  const cls = min < 1440 ? "text-emerald-600 dark:text-emerald-400"
+    : min < 4320 ? "text-amber-600 dark:text-amber-400"
+    : "text-rose-600 dark:text-rose-400";
+  return { text, cls };
 }
 
 function buildDayLabels(n: number): string[] {
@@ -99,6 +115,7 @@ export default function AdminTeacherStats() {
               <TableRow>
                 <TableHead className="whitespace-nowrap">O'qituvchi</TableHead>
                 <TableHead className="whitespace-nowrap">Holat</TableHead>
+                <TableHead className="whitespace-nowrap">Oxirgi faollik</TableHead>
                 <TableHead className="whitespace-nowrap">Baholash <span className="font-normal text-muted-foreground">(asosiy ish)</span></TableHead>
                 <TableHead className="whitespace-nowrap">Guruh chatida</TableHead>
                 <TableHead className="whitespace-nowrap">Savollarga javob</TableHead>
@@ -106,9 +123,9 @@ export default function AdminTeacherStats() {
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">Yuklanmoqda…</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">Yuklanmoqda…</TableCell></TableRow>
               ) : sorted.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">O'qituvchilar topilmadi.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">O'qituvchilar topilmadi.</TableCell></TableRow>
               ) : sorted.map((r) => {
                 const st = statusOf(r);
                 const hours = r.hours_by_day || [];
@@ -119,6 +136,9 @@ export default function AdminTeacherStats() {
                       {r.telegram_username && <span className="block text-[11px] text-muted-foreground">@{r.telegram_username}</span>}
                     </TableCell>
                     <TableCell className="align-top"><Badge variant="outline" className={`text-[11px] whitespace-nowrap ${st.cls}`}>{st.label}</Badge></TableCell>
+                    <TableCell className="align-top whitespace-nowrap">
+                      {(() => { const a = fmtAgo(r.last_active); return <span className={`text-xs ${a.cls}`} title={r.last_active ? new Date(r.last_active).toLocaleString() : ""}>{a.text}</span>; })()}
+                    </TableCell>
                     <TableCell className="align-top whitespace-nowrap">
                       <div className="text-lg font-semibold leading-none">{fmtDur(r.grading_med_min)}</div>
                       <div className="text-[11px] text-muted-foreground mt-1">
