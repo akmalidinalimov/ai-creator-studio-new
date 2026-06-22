@@ -3674,14 +3674,18 @@ async function updateInboxResolution(admin: any, inboxId: number | null, patch: 
 async function recordGroupMessageEvent(admin: any, msg: any) {
   const chatType = msg.chat?.type;
   if (chatType !== "supergroup" && chatType !== "group") return;
-  if (!msg.from || msg.from.is_bot) return;
-  // v2: capture ALL group messages, not only topic threads. Teachers who answer in the group's
-  // General / main chat (which has no message_thread_id) were previously invisible to the stats.
   const chatId: number = msg.chat?.id;
+  // v2: teachers answer ANONYMOUSLY ("as the group"). Telegram delivers those via GroupAnonymousBot
+  // with sender_chat == the group itself, so the is_bot guard below was silently dropping EVERY
+  // anonymous teacher answer. Detect anonymous-admin and keep it; all other bot messages still drop.
+  const isAnonAdmin: boolean = !!(msg.sender_chat && chatId && msg.sender_chat.id === chatId);
+  if (!isAnonAdmin && (!msg.from || msg.from.is_bot)) return;
+  // capture ALL group messages, not only topic threads (General/main chat has no message_thread_id).
   const threadId: number | null = msg.message_thread_id ?? null;
   const messageId: number = msg.message_id;
-  const tgUserId: number = msg.from.id;
-  if (!chatId || !messageId || !tgUserId) return;
+  const tgUserId: number | null = msg.from?.id ?? null;
+  const authorSignature: string | null = msg.author_signature ?? null;
+  if (!chatId || !messageId) return;
 
   // v3.14.33: use multi-pattern resolver (groups.telegram_group_url is invite-link only)
   const { groupId } = await resolveGroupFromChatId(admin, chatId);
@@ -3699,14 +3703,19 @@ async function recordGroupMessageEvent(admin: any, msg: any) {
     moduleId = topicRow?.module_id || null;
   }
 
-  // Resolve profile (don't backfill here; bot identity gate handles that)
+  // Resolve profile. Anonymous admin = the group's staff answering → attribute to the group's teacher.
   let profileId: string | null = null;
-  const tgUsername = (msg.from.username || "").toLowerCase();
-  const byId = await findProfileByTelegramId(admin, tgUserId);
-  if (byId) profileId = byId.id;
-  else if (tgUsername) {
-    const byU = await findProfileByUsername(admin, tgUsername);
-    if (byU) profileId = byU.id;
+  if (isAnonAdmin) {
+    const { data: gRow } = await admin.from("groups").select("teacher_id").eq("id", groupId).maybeSingle();
+    profileId = (gRow as any)?.teacher_id ?? null;
+  } else {
+    const tgUsername = (msg.from?.username || "").toLowerCase();
+    const byId = tgUserId != null ? await findProfileByTelegramId(admin, tgUserId) : null;
+    if (byId) profileId = byId.id;
+    else if (tgUsername) {
+      const byU = await findProfileByUsername(admin, tgUsername);
+      if (byU) profileId = byU.id;
+    }
   }
 
   // v2 teacher-stats signals: identify questions DIRECTED at the group's teacher (reply / @tag /
@@ -3753,6 +3762,8 @@ async function recordGroupMessageEvent(admin: any, msg: any) {
       reply_to_user_id: replyUserId,
       mentions_teacher: mentionsTeacher,
       has_ustoz: hasUstoz,
+      is_anon_admin: isAnonAdmin,
+      author_signature: authorSignature,
     }, { onConflict: "telegram_chat_id,telegram_message_id" });
 }
 
