@@ -39,31 +39,34 @@ BEGIN
     SELECT DISTINCT ur.user_id AS sid FROM user_roles ur
     WHERE ur.role IN ('teacher'::app_role, 'admin'::app_role, 'superadmin'::app_role)
   ),
-  tg AS (SELECT id, name, homework_topic_id FROM groups WHERE teacher_id = p_teacher_id)
+  tg AS (SELECT id, name, homework_topic_id FROM groups WHERE teacher_id = p_teacher_id),
+  dmsgs AS (
+    SELECT gme.group_id AS gid, gme.telegram_chat_id AS chat, gme.telegram_thread_id AS thread,
+      gme.sent_at, gme.profile_id, (gme.profile_id IN (SELECT sid FROM staff_ids)) AS is_staff
+    FROM group_message_events gme
+    JOIN tg ON tg.id = gme.group_id
+    WHERE gme.sent_at >= now() - make_interval(days => p_days)
+      AND gme.telegram_thread_id IS NOT NULL AND gme.profile_id IS NOT NULL
+      AND gme.module_id IS NULL
+      AND (tg.homework_topic_id IS NULL OR gme.telegram_thread_id <> tg.homework_topic_id)
+  ),
+  dmsgs_next AS (
+    SELECT d.*, min(CASE WHEN is_staff THEN sent_at END) OVER (
+      PARTITION BY chat, thread ORDER BY sent_at DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS next_staff_at
+    FROM dmsgs d
+  )
   SELECT tg.name::text,
     (COALESCE(NULLIF(TRIM(pr.name || ' ' || COALESCE(pr.last_name, '')), ''), pr.email, '—'))::text AS student_name,
-    gme.sent_at::timestamptz AS asked_at,
-    round(EXTRACT(EPOCH FROM (COALESCE(resp.sent_at, now()) - gme.sent_at)) / 60.0, 0)::numeric AS waited_min,
-    (resp.sent_at IS NOT NULL)::boolean AS answered
-  FROM group_message_events gme
-  JOIN tg ON tg.id = gme.group_id
-  LEFT JOIN profiles pr ON pr.id = gme.profile_id
-  LEFT JOIN LATERAL (
-    SELECT g2.sent_at FROM group_message_events g2
-    WHERE g2.telegram_chat_id = gme.telegram_chat_id
-      AND g2.telegram_thread_id = gme.telegram_thread_id
-      AND g2.sent_at > gme.sent_at
-      AND g2.profile_id IN (SELECT sid FROM staff_ids)
-    ORDER BY g2.sent_at ASC LIMIT 1
-  ) resp ON true
-  WHERE gme.sent_at >= now() - make_interval(days => p_days)
-    AND gme.telegram_thread_id IS NOT NULL
-    AND gme.profile_id IS NOT NULL
-    AND gme.profile_id NOT IN (SELECT sid FROM staff_ids)
-    AND gme.module_id IS NULL
-    AND (tg.homework_topic_id IS NULL OR gme.telegram_thread_id <> tg.homework_topic_id)
-    AND (resp.sent_at IS NULL OR EXTRACT(EPOCH FROM (resp.sent_at - gme.sent_at)) / 60.0 > p_sla_min)
-  ORDER BY gme.sent_at DESC
+    m.sent_at::timestamptz AS asked_at,
+    round(EXTRACT(EPOCH FROM (COALESCE(m.next_staff_at, now()) - m.sent_at)) / 60.0, 0)::numeric AS waited_min,
+    (m.next_staff_at IS NOT NULL)::boolean AS answered
+  FROM dmsgs_next m
+  JOIN tg ON tg.id = m.gid
+  LEFT JOIN profiles pr ON pr.id = m.profile_id
+  WHERE NOT m.is_staff
+    AND (m.next_staff_at IS NULL OR EXTRACT(EPOCH FROM (m.next_staff_at - m.sent_at)) / 60.0 > p_sla_min)
+  ORDER BY m.sent_at DESC
   LIMIT 100;
 END;
 $$;
@@ -85,21 +88,26 @@ BEGIN
   tg AS (SELECT id, name, homework_topic_id FROM groups WHERE teacher_id = p_teacher_id),
   st AS (SELECT tg.id AS gid, count(*)::int AS students
          FROM tg JOIN profiles pr ON pr.group_id = tg.id AND pr.status = 'active' GROUP BY tg.id),
-  qa AS (
-    SELECT gme.group_id AS gid, resp.sent_at AS a_at,
-      EXTRACT(EPOCH FROM (resp.sent_at - gme.sent_at)) / 60.0 AS wait_min
+  dmsgs AS (
+    SELECT gme.group_id AS gid, gme.telegram_chat_id AS chat, gme.telegram_thread_id AS thread,
+      gme.sent_at, (gme.profile_id IN (SELECT sid FROM staff_ids)) AS is_staff
     FROM group_message_events gme
     JOIN tg ON tg.id = gme.group_id
-    LEFT JOIN LATERAL (
-      SELECT g2.sent_at FROM group_message_events g2
-      WHERE g2.telegram_chat_id = gme.telegram_chat_id AND g2.telegram_thread_id = gme.telegram_thread_id
-        AND g2.sent_at > gme.sent_at AND g2.profile_id IN (SELECT sid FROM staff_ids)
-      ORDER BY g2.sent_at ASC LIMIT 1
-    ) resp ON true
     WHERE gme.sent_at >= _from AND gme.telegram_thread_id IS NOT NULL
-      AND gme.profile_id IS NOT NULL AND gme.profile_id NOT IN (SELECT sid FROM staff_ids)
-      AND gme.module_id IS NULL
+      AND gme.profile_id IS NOT NULL AND gme.module_id IS NULL
       AND (tg.homework_topic_id IS NULL OR gme.telegram_thread_id <> tg.homework_topic_id)
+  ),
+  dmsgs_next AS (
+    SELECT gid, sent_at, is_staff,
+      min(CASE WHEN is_staff THEN sent_at END) OVER (
+        PARTITION BY chat, thread ORDER BY sent_at DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+      ) AS next_staff_at
+    FROM dmsgs
+  ),
+  qa AS (
+    SELECT gid, next_staff_at AS a_at,
+      EXTRACT(EPOCH FROM (next_staff_at - sent_at)) / 60.0 AS wait_min
+    FROM dmsgs_next WHERE NOT is_staff
   ),
   qa_agg AS (
     SELECT gid, count(*)::int AS questions,

@@ -96,30 +96,34 @@ BEGIN
     WHERE hs.score IS NULL AND hs.submitted_at IS NOT NULL
     GROUP BY tg.tid
   ),
-  -- student QUESTIONS in each teacher's groups' DISCUSSION topics + first staff reply after.
-  -- Homework topics are excluded (student posts there are submissions, not questions): both
-  -- per-module topics (gme.module_id set) and the group's shared homework topic.
-  qa AS (
-    SELECT tg.tid,
-      resp.sent_at AS a_at,
-      EXTRACT(EPOCH FROM (resp.sent_at - gme.sent_at)) / 60.0 AS wait_min
+  -- Student questions in DISCUSSION topics + time to the next staff reply. Computed with a fast
+  -- running-min window (suffix min of staff timestamps per topic) instead of a per-message LATERAL,
+  -- which exceeded statement_timeout. Homework topics excluded (per-module via module_id, shared via
+  -- homework_topic_id).
+  dmsgs AS (
+    SELECT g.teacher_id AS tid, gme.telegram_chat_id AS chat, gme.telegram_thread_id AS thread,
+      gme.sent_at, (gme.profile_id IN (SELECT sid FROM staff_ids)) AS is_staff
     FROM group_message_events gme
-    JOIN tgroups tg ON tg.group_id = gme.group_id
-    JOIN groups g ON g.id = gme.group_id
-    LEFT JOIN LATERAL (
-      SELECT g2.sent_at FROM group_message_events g2
-      WHERE g2.telegram_chat_id = gme.telegram_chat_id
-        AND g2.telegram_thread_id = gme.telegram_thread_id
-        AND g2.sent_at > gme.sent_at
-        AND g2.profile_id IN (SELECT sid FROM staff_ids)
-      ORDER BY g2.sent_at ASC LIMIT 1
-    ) resp ON true
+    JOIN groups g ON g.id = gme.group_id AND g.teacher_id IS NOT NULL
     WHERE gme.sent_at >= _from
       AND gme.telegram_thread_id IS NOT NULL
       AND gme.profile_id IS NOT NULL
-      AND gme.profile_id NOT IN (SELECT sid FROM staff_ids)   -- student message only
-      AND gme.module_id IS NULL                                -- not a per-module homework topic
-      AND (g.homework_topic_id IS NULL OR gme.telegram_thread_id <> g.homework_topic_id)  -- not the shared homework topic
+      AND gme.module_id IS NULL
+      AND (g.homework_topic_id IS NULL OR gme.telegram_thread_id <> g.homework_topic_id)
+  ),
+  dmsgs_next AS (
+    SELECT tid, sent_at, is_staff,
+      min(CASE WHEN is_staff THEN sent_at END) OVER (
+        PARTITION BY chat, thread ORDER BY sent_at DESC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+      ) AS next_staff_at
+    FROM dmsgs
+  ),
+  qa AS (
+    SELECT tid, next_staff_at AS a_at,
+      EXTRACT(EPOCH FROM (next_staff_at - sent_at)) / 60.0 AS wait_min
+    FROM dmsgs_next
+    WHERE NOT is_staff
   ),
   qa_agg AS (
     SELECT tid,
