@@ -185,7 +185,7 @@ export default function AdminTeacherStats() {
         <div className="text-xs text-muted-foreground space-y-1">
           <p><b>Holat</b> — "Baholaydi" = uy ishlarini tekshiradi, lekin guruh chatida yozmaydi; "Chatda faol" = chatda ham bor; "Faol emas" = 7 kunda baholamagan ham, chatda ham yo'q.</p>
           <p><b>Baholash (asosiy ish)</b> — uy ishini o'rtacha qancha vaqtda baholaydi · nechta baholadi · nechtasi navbatda. Ko'p o'qituvchining asosiy ishi shu.</p>
-          <p><b>Guruh chatida</b> — 7 kunda nechta kun va o'sha kuni necha soat chatda faol bo'lgan (faqat guruh <b>mavzularidagi</b> xabarlar; shaxsiy DM hisobga olinmaydi).</p>
+          <p><b>Guruh chatida</b> — 7 kunda nechta kun va o'sha kuni necha soat chatda faol bo'lgan (guruhdagi <b>barcha</b> xabarlar — mavzular va umumiy chat; shaxsiy DM hisobga olinmaydi). Umumiy chat bugundan to'planadi.</p>
           <p><b>Savollarga javob</b> — o'quvchi o'qituvchini belgilagan (@), unga javob bergan yoki "ustoz" degan savollardan nechtasiga javob berilgan. Bugundan to'planadi.</p>
         </div>
       </div>

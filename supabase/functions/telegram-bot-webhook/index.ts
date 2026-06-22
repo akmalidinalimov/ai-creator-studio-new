@@ -3674,26 +3674,30 @@ async function updateInboxResolution(admin: any, inboxId: number | null, patch: 
 async function recordGroupMessageEvent(admin: any, msg: any) {
   const chatType = msg.chat?.type;
   if (chatType !== "supergroup" && chatType !== "group") return;
-  if (!msg.is_topic_message || !msg.message_thread_id) return;
   if (!msg.from || msg.from.is_bot) return;
+  // v2: capture ALL group messages, not only topic threads. Teachers who answer in the group's
+  // General / main chat (which has no message_thread_id) were previously invisible to the stats.
   const chatId: number = msg.chat?.id;
-  const threadId: number = msg.message_thread_id;
+  const threadId: number | null = msg.message_thread_id ?? null;
   const messageId: number = msg.message_id;
   const tgUserId: number = msg.from.id;
-  if (!chatId || !threadId || !messageId || !tgUserId) return;
+  if (!chatId || !messageId || !tgUserId) return;
 
   // v3.14.33: use multi-pattern resolver (groups.telegram_group_url is invite-link only)
   const { groupId } = await resolveGroupFromChatId(admin, chatId);
   if (!groupId) return; // unknown group, skip
 
-  // Resolve module via topic mapping
-  const { data: topicRow } = await admin
-    .from("group_module_topics")
-    .select("module_id")
-    .eq("group_id", groupId)
-    .eq("telegram_topic_id", threadId)
-    .maybeSingle();
-  const moduleId = topicRow?.module_id || null;
+  // Resolve module via topic mapping (only for topic messages; General/main chat has no thread)
+  let moduleId: string | null = null;
+  if (threadId != null) {
+    const { data: topicRow } = await admin
+      .from("group_module_topics")
+      .select("module_id")
+      .eq("group_id", groupId)
+      .eq("telegram_topic_id", threadId)
+      .maybeSingle();
+    moduleId = topicRow?.module_id || null;
+  }
 
   // Resolve profile (don't backfill here; bot identity gate handles that)
   let profileId: string | null = null;
