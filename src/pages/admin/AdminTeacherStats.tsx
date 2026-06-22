@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { GraduationCap } from "lucide-react";
 
@@ -19,6 +20,7 @@ type Row = {
   median_wait_min: number | null;
   graded: number;
   grading_med_min: number | null;
+  ungraded_backlog: number;
 };
 
 const DAYS = 7;
@@ -30,7 +32,6 @@ function fmtDur(min: number | null | undefined): string {
   return `${(min / 1440).toFixed(1)}d`;
 }
 
-/** Weekday labels (uz) for the last n days, oldest→newest, in Asia/Tashkent. */
 function buildDayLabels(n: number): string[] {
   const WD = ["Ya", "Du", "Se", "Cho", "Pa", "Ju", "Sha"]; // 0=Sun
   const base = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tashkent" }).format(new Date());
@@ -44,10 +45,17 @@ function buildDayLabels(n: number): string[] {
 }
 
 function hourCellCls(h: number): string {
-  if (h <= 0) return "bg-muted text-muted-foreground";
-  if (h <= 1) return "bg-primary/20 text-foreground";
-  if (h <= 3) return "bg-primary/45 text-foreground";
-  return "bg-primary/75 text-primary-foreground";
+  if (h <= 0) return "bg-muted text-muted-foreground/50";
+  if (h <= 1) return "bg-primary/25 text-foreground";
+  if (h <= 3) return "bg-primary/50 text-foreground";
+  return "bg-primary/80 text-primary-foreground";
+}
+
+/** Status from what the teacher actually does. */
+function statusOf(r: Row): { label: string; cls: string } {
+  if (r.week_hours > 0) return { label: "💬 Chatda faol", cls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30" };
+  if (r.graded > 0) return { label: "✅ Baholaydi", cls: "bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/30" };
+  return { label: "⚠️ Faol emas", cls: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30" };
 }
 
 export default function AdminTeacherStats() {
@@ -65,15 +73,18 @@ export default function AdminTeacherStats() {
   };
   useEffect(() => { reload(); /* eslint-disable-next-line */ }, []);
 
-  // sort by who's most present in chat this week
-  const sorted = useMemo(() => [...rows].sort((a, b) => b.week_hours - a.week_hours || a.name.localeCompare(b.name)), [rows]);
+  // most-working first: by homework graded, then chat hours
+  const sorted = useMemo(
+    () => [...rows].sort((a, b) => b.graded - a.graded || b.week_hours - a.week_hours || a.name.localeCompare(b.name)),
+    [rows]
+  );
 
   return (
     <PageShell>
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-semibold flex items-center gap-2"><GraduationCap className="h-6 w-6" /> Teacher Statistics</h1>
-          <p className="text-sm text-muted-foreground">So'nggi 7 kun — har bir o'qituvchi guruh chatida qancha vaqt bo'lgan va savollarga javob berganmi.</p>
+          <p className="text-sm text-muted-foreground">So'nggi 7 kun — har bir o'qituvchining asosiy ishi (baholash) va guruh chatidagi faolligi.</p>
         </div>
 
         {err && (
@@ -87,47 +98,53 @@ export default function AdminTeacherStats() {
             <TableHeader>
               <TableRow>
                 <TableHead className="whitespace-nowrap">O'qituvchi</TableHead>
-                <TableHead className="whitespace-nowrap text-center">Faol kunlar</TableHead>
-                <TableHead className="text-center">Har kuni soat (chatda) · so'nggi 7 kun</TableHead>
-                <TableHead className="whitespace-nowrap text-center">Hafta jami</TableHead>
-                <TableHead className="whitespace-nowrap text-center">Savollarga javob</TableHead>
-                <TableHead className="whitespace-nowrap text-center">Baholash</TableHead>
+                <TableHead className="whitespace-nowrap">Holat</TableHead>
+                <TableHead className="whitespace-nowrap">Baholash <span className="font-normal text-muted-foreground">(asosiy ish)</span></TableHead>
+                <TableHead className="whitespace-nowrap">Guruh chatida</TableHead>
+                <TableHead className="whitespace-nowrap">Savollarga javob</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">Yuklanmoqda…</TableCell></TableRow>
+                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">Yuklanmoqda…</TableCell></TableRow>
               ) : sorted.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">O'qituvchilar topilmadi.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">O'qituvchilar topilmadi.</TableCell></TableRow>
               ) : sorted.map((r) => {
+                const st = statusOf(r);
                 const hours = r.hours_by_day || [];
                 return (
                   <TableRow key={r.teacher_id}>
-                    <TableCell className="font-medium whitespace-nowrap">
+                    <TableCell className="font-medium whitespace-nowrap align-top">
                       {r.name}
                       {r.telegram_username && <span className="block text-[11px] text-muted-foreground">@{r.telegram_username}</span>}
                     </TableCell>
-                    <TableCell className="text-center whitespace-nowrap">
-                      <span className="font-semibold">{r.active_days}</span>
-                      <span className="text-muted-foreground text-xs"> / {r.days_window}</span>
+                    <TableCell className="align-top"><Badge variant="outline" className={`text-[11px] whitespace-nowrap ${st.cls}`}>{st.label}</Badge></TableCell>
+                    <TableCell className="align-top whitespace-nowrap">
+                      <div className="text-lg font-semibold leading-none">{fmtDur(r.grading_med_min)}</div>
+                      <div className="text-[11px] text-muted-foreground mt-1">
+                        {r.graded} ta baholandi
+                        {r.ungraded_backlog > 0 && <span className="text-amber-600 dark:text-amber-400"> · {r.ungraded_backlog} navbatda</span>}
+                      </div>
                     </TableCell>
-                    <TableCell>
-                      <div className="flex items-center justify-center gap-1">
+                    <TableCell className="align-top">
+                      <div className="text-xs whitespace-nowrap mb-1">
+                        <span className="font-semibold">{r.active_days}/{r.days_window}</span> kun · <span className="font-semibold">{r.week_hours}h</span>
+                      </div>
+                      <div className="flex items-end gap-0.5">
                         {labels.map((lbl, i) => {
                           const h = hours[i] ?? 0;
                           return (
-                            <div key={i} className="flex flex-col items-center gap-0.5 w-9">
-                              <div className="text-[10px] text-muted-foreground">{lbl}</div>
-                              <div className={`w-8 h-8 rounded flex items-center justify-center text-xs font-medium ${hourCellCls(h)}`} title={`${lbl}: ${h} soat faol`}>
+                            <div key={i} className="flex flex-col items-center gap-0.5">
+                              <div className={`w-5 h-5 rounded-sm flex items-center justify-center text-[10px] font-medium ${hourCellCls(h)}`} title={`${lbl}: ${h} soat`}>
                                 {h > 0 ? h : ""}
                               </div>
+                              <div className="text-[8px] text-muted-foreground leading-none">{lbl}</div>
                             </div>
                           );
                         })}
                       </div>
                     </TableCell>
-                    <TableCell className="text-center whitespace-nowrap font-semibold">{r.week_hours}h</TableCell>
-                    <TableCell className="text-center whitespace-nowrap">
+                    <TableCell className="align-top whitespace-nowrap">
                       {r.questions > 0 ? (
                         <span>
                           <span className="font-semibold">{r.answer_rate}%</span>
@@ -138,7 +155,6 @@ export default function AdminTeacherStats() {
                         <span className="text-muted-foreground text-xs">ma'lumot yig'ilmoqda</span>
                       )}
                     </TableCell>
-                    <TableCell className="text-center whitespace-nowrap">{fmtDur(r.grading_med_min)}<span className="block text-[11px] text-muted-foreground">{r.graded} ta</span></TableCell>
                   </TableRow>
                 );
               })}
@@ -147,10 +163,10 @@ export default function AdminTeacherStats() {
         </Card>
 
         <div className="text-xs text-muted-foreground space-y-1">
-          <p><b>Faol kunlar</b> — 7 kundan nechtasida o'qituvchi guruhga kamida bitta xabar yozgan.</p>
-          <p><b>Har kuni soat</b> — o'sha kuni chatda faol bo'lgan soatlar soni (bir xabar yozgan har xil soat = 1). Bu sekundomer emas — qachon yozganiga qarab hisoblanadi.</p>
-          <p><b>Savollarga javob</b> — o'quvchi o'qituvchini <b>belgilagan (@), unga javob bergan yoki "ustoz" degan</b> savollardan nechtasiga o'qituvchi/admin javob bergan. Bu bugundan boshlab to'planadi (eski xabarlarda bu ma'lumot yo'q).</p>
-          <p><b>Baholash</b> — uy ishlarini o'rtacha qancha vaqtda baholaydi (asosiy ish — ko'p o'qituvchi chatdan ko'ra shu bilan band).</p>
+          <p><b>Holat</b> — "Baholaydi" = uy ishlarini tekshiradi, lekin guruh chatida yozmaydi; "Chatda faol" = chatda ham bor; "Faol emas" = 7 kunda baholamagan ham, chatda ham yo'q.</p>
+          <p><b>Baholash (asosiy ish)</b> — uy ishini o'rtacha qancha vaqtda baholaydi · nechta baholadi · nechtasi navbatda. Ko'p o'qituvchining asosiy ishi shu.</p>
+          <p><b>Guruh chatida</b> — 7 kunda nechta kun va o'sha kuni necha soat chatda faol bo'lgan (faqat guruh <b>mavzularidagi</b> xabarlar; shaxsiy DM hisobga olinmaydi).</p>
+          <p><b>Savollarga javob</b> — o'quvchi o'qituvchini belgilagan (@), unga javob bergan yoki "ustoz" degan savollardan nechtasiga javob berilgan. Bugundan to'planadi.</p>
         </div>
       </div>
     </PageShell>

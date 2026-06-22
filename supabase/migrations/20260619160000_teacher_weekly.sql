@@ -19,13 +19,14 @@ CREATE INDEX IF NOT EXISTS idx_gme_reply ON public.group_message_events (telegra
 --    questions/...   = questions DIRECTED at the teacher (mentions_teacher OR has_ustoz OR reply-to-teacher)
 --                      and whether a staff reply followed in that topic (builds up as the bot captures signals)
 --    graded/...      = kept as essential context (most teachers grade rather than chat)
+DROP FUNCTION IF EXISTS public.admin_teacher_weekly(int);
 CREATE OR REPLACE FUNCTION public.admin_teacher_weekly(p_days int DEFAULT 7)
 RETURNS TABLE(
   teacher_id uuid, name text, telegram_username text,
   active_days int, days_window int,
   hours_by_day int[], week_hours int,
   questions int, answered int, answer_rate numeric, median_wait_min numeric,
-  graded int, grading_med_min numeric
+  graded int, grading_med_min numeric, ungraded_backlog int
 )
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
 #variable_conflict use_column
@@ -87,6 +88,14 @@ BEGIN
     FROM homework_submissions hs
     WHERE hs.scored_at >= _from AND hs.scored_by IN (SELECT tid FROM teachers) AND hs.submitted_at IS NOT NULL
     GROUP BY hs.scored_by
+  ),
+  backlog AS (  -- current ungraded submissions by students in the teacher's groups (not windowed)
+    SELECT g.teacher_id AS tid, count(*)::int AS ungraded
+    FROM homework_submissions hs
+    JOIN profiles pr ON pr.id = hs.user_id
+    JOIN groups g ON g.id = pr.group_id
+    WHERE g.teacher_id IN (SELECT tid FROM teachers) AND hs.score IS NULL AND hs.submitted_at IS NOT NULL
+    GROUP BY g.teacher_id
   )
   SELECT t.tid::uuid,
     (COALESCE(NULLIF(TRIM(CONCAT(p.name, ' ', COALESCE(p.last_name, ''))), ''), p.email))::text,
@@ -96,11 +105,12 @@ BEGIN
     COALESCE(q.questions, 0)::int, COALESCE(q.answered, 0)::int,
     (CASE WHEN COALESCE(q.questions, 0) > 0 THEN round(100.0 * q.answered / q.questions, 0) ELSE NULL END)::numeric,
     q.median_wait_min::numeric,
-    COALESCE(gr.graded, 0)::int, gr.grading_med_min::numeric
+    COALESCE(gr.graded, 0)::int, gr.grading_med_min::numeric, COALESCE(bl.ungraded, 0)::int
   FROM teachers t JOIN profiles p ON p.id = t.tid
   LEFT JOIN hours_agg h ON h.tid = t.tid
   LEFT JOIN q_agg q ON q.tid = t.tid
   LEFT JOIN grading gr ON gr.tid = t.tid
+  LEFT JOIN backlog bl ON bl.tid = t.tid
   ORDER BY name;
 END;
 $$;
