@@ -32,7 +32,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-interface Lesson { id: string; title: string; position: number; published: boolean; video_storage_path: string | null; video_url: string | null; provider_video_id: string | null; video_provider: string; duration_seconds: number | null; }
+interface Lesson { id: string; title: string; position: number; published: boolean; video_provider: string; duration_seconds: number | null; has_video?: boolean; }
 interface Module { id: string; title: string; summary: string | null; position: number; lessons: Lesson[] }
 
 export default function AdminCourseEditor() {
@@ -58,9 +58,8 @@ export default function AdminCourseEditor() {
     setLoading(true);
     const { data: c } = await supabase.from("courses").select("*").eq("id", courseId).maybeSingle();
     setCourse(c);
-    const { data: ms } = await supabase
-      .from("modules")
-      .select("*, lessons(id, title, position, published, video_storage_path, video_url, provider_video_id, video_provider, duration_seconds)")
+    const { data: ms } = await (supabase.from("modules") as any)
+      .select("*, lessons(id, title, position, published, video_provider, duration_seconds, has_video)")
       .eq("course_id", courseId)
       .order("position", { ascending: true });
     const sorted: Module[] = (ms || []).map((m: any) => ({
@@ -81,9 +80,9 @@ export default function AdminCourseEditor() {
 
   const addModule = async () => {
     const pos = modules.length;
-    const { data, error } = await supabase.from("modules").insert({
+    const { data, error } = await (supabase.from("modules") as any).insert({
       course_id: courseId!, title: "New module", position: pos,
-    }).select("*, lessons(id, title, position, published, video_storage_path, video_url, provider_video_id, video_provider, duration_seconds)").single();
+    }).select("*, lessons(id, title, position, published, video_provider, duration_seconds, has_video)").single();
     if (error) { toast.error(error.message); return; }
     const m: Module = { ...(data as any), lessons: [] };
     setModules((prev) => [...prev, m]);
@@ -109,9 +108,9 @@ export default function AdminCourseEditor() {
     const mod = modules.find((m) => m.id === moduleId);
     if (!mod) return;
     const pos = mod.lessons.length;
-    const { data, error } = await supabase.from("lessons").insert({
+    const { data, error } = await (supabase.from("lessons") as any).insert({
       module_id: moduleId, title: "New lesson", position: pos, video_provider: "upload", published: false,
-    }).select("id, title, position, published, video_storage_path, video_url, provider_video_id, video_provider, duration_seconds").single();
+    }).select("id, title, position, published, video_provider, duration_seconds, has_video").single();
     if (error) { toast.error(error.message); return; }
     setModules((prev) => prev.map((m) => m.id === moduleId ? { ...m, lessons: [...m.lessons, data as Lesson] } : m));
     setDrawerLessonId(data.id);
@@ -361,7 +360,7 @@ function SortableLesson({ lesson: l, index, onEdit, t }: { lesson: Lesson; index
     transition,
     opacity: isDragging ? 0.6 : 1,
   };
-  const hasVideo = !!l.video_storage_path || !!l.provider_video_id || !!l.video_url;
+  const hasVideo = !!l.has_video;
   const status = !l.published ? { label: t("admin.courseEditor.lessonStatus.draft"), cls: "bg-muted text-muted-foreground" }
                 : !hasVideo ? { label: t("admin.courseEditor.lessonStatus.noVideo"), cls: "bg-amber-100 text-amber-900" }
                 : { label: t("admin.courseEditor.lessonStatus.hasVideo"), cls: "bg-foreground text-background" };

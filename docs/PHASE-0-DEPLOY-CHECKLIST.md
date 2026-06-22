@@ -35,7 +35,7 @@ Everything is on `phase-0-security`. Migrations are additive; the enrollment pol
 
 ---
 
-## Still open: 0.2 — Video access enforcement (M05)
+## 0.2 — Video access enforcement (M05) — ✅ IMPLEMENTED (playback test required on deploy)
 
 **Full diagnosis (after reading the whole flow):**
 - `LessonPage.tsx:82` reads the lesson with `select("*")`, so the client receives `provider_video_id` / `video_url` directly.
@@ -45,9 +45,19 @@ Everything is on `phase-0-security`. Migrations are additive; the enrollment pol
 
 **Net:** there is currently **no server-side access check in the real playback path** for any provider. A student can read any lesson's IDs and play locked/higher-tier videos.
 
-**Correct fix (its own focused unit — needs a staging/branch deploy to test playback for all 5 provider types):**
-1. **Route ALL playback through the gated `lesson-video-url`.** `LessonPage` stops reading `provider_video_id`/`video_url` from the table and instead calls `lesson-video-url(lessonId)`, rendering from the returned `{ url, kind }` (parse lib/guid for Bunny exactly like the existing resolver at `LessonPage.tsx:60`). This enforces access at playback for every provider.
-2. **Isolate the sensitive columns** so the table read can't bypass step 1: move `video_url` / `provider_video_id` / `video_storage_path` into a `lesson_video_sources` table with staff-only RLS (`has_role`), read by the service-role functions; update the admin editor (`AdminCourseEditor`, `LessonDrawer`, `AdminBunnyDiagnostics`) to read/write the new table. (Column-level REVOKE can't work here because admins and students are both the `authenticated` role — only a separate RLS-gated table distinguishes them.)
-3. **Bunny library token-auth:** confirm whether the Bunny library has token authentication enabled. If embeds are currently shareable/unsigned, enabling token-auth + routing through a signed URL is the durable lock (the now-cleaned `bunny-sign` can be repurposed for this, with a per-lesson access check added).
+**What was implemented (this branch):**
+1. **All playback routes through the gated `lesson-video-url`.** `LessonPage` no longer reads `provider_video_id`/`video_url` from the table — it selects only safe columns and calls `lesson-video-url(lessonId)` (now also returns `provider` + `bunny {lib,guid}`), rendering from the response. A 403 (locked / higher tier) shows a "locked" state.
+2. **Column-level REVOKE + staff helpers** (chosen over a table move — fully reversible, no data moved, no DB-dependency risk). Migration `20260622030000_phase0_lesson_media_protection.sql`: `REVOKE SELECT (video_url, provider_video_id, video_storage_path)` from `anon, authenticated`; a generated `has_video` boolean for the admin tree; and `SECURITY DEFINER` helpers `staff_get_lesson`, `staff_list_pending_bunny`, `staff_count_lessons_by_storage_path`. REVOKE *can* distinguish admin from student here **because** the admin reads now go through those definer helpers (`LessonDrawer`, `AdminCourseEditor`, `AdminBunnyDiagnostics` were updated); the `service_role` (edge functions) keeps full access.
 
-**Files touched:** `LessonPage.tsx`, `BunnyVideoPlayer.tsx`, `lesson-video-url`, a new migration + `lesson_video_sources` table, `AdminCourseEditor.tsx`, `LessonDrawer.tsx`, `AdminBunnyDiagnostics.tsx`. **Must be playback-tested on a deploy before going live** — this is the one Phase-0 change that can break video for all students if shipped unverified.
+**Files:** migration `20260622030000_*` · `lesson-video-url` · `LessonPage.tsx` · `LessonDrawer.tsx` · `AdminCourseEditor.tsx` · `AdminBunnyDiagnostics.tsx`. Verified locally: `tsc` clean, `vite build` OK, 21/21 tests.
+
+**Deploy ORDER matters:** deploy the `lesson-video-url` function + the frontend FIRST, then apply the migration. If you REVOKE before the new admin frontend is live, the course editor / lesson drawer / Bunny diagnostics will throw "permission denied for column" until the frontend deploys.
+
+**Verify (must test playback on the deploy — all 5 provider types):**
+- Student WITH access: every lesson plays (bunny / youtube / vimeo / mux / upload); resume + completion still work.
+- Student WITHOUT access (higher tier): the lesson shows the locked message; `supabase.from('lessons').select('provider_video_id')` returns a permission error.
+- Admin: course-editor tree shows the "has video" indicator; opening a lesson drawer loads its video config; Bunny diagnostics lists pending uploads; editing/removing video still works.
+
+**Rollback (instant, no data loss):** `GRANT SELECT (video_url, provider_video_id, video_storage_path) ON public.lessons TO authenticated, anon;` then redeploy the previous frontend. (Optionally drop `has_video` + the 3 helpers.)
+
+**Residual / follow-up:** for Bunny, the embed URL is shareable if the Bunny library doesn't enforce token authentication. Enabling token-auth in the Bunny dashboard + signing through the now-clean `bunny-sign` (with a per-lesson access check) is the durable lock — a Bunny-config + small-code follow-up.

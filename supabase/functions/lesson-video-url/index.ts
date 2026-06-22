@@ -67,6 +67,7 @@ Deno.serve(async (req) => {
 
     let url: string | null = null;
     let kind: "mp4" | "hls" | "iframe" = "mp4";
+    let bunny: { lib: string; guid: string } | null = null;
 
     switch (lesson.video_provider) {
       case "upload": {
@@ -104,13 +105,15 @@ Deno.serve(async (req) => {
           const lib = Deno.env.get("BUNNY_LIBRARY_ID") || "";
           if (lib) id = `${lib}/${id}`;
         }
+        const [blib, bguid] = id.split("/");
+        if (blib && bguid) bunny = { lib: blib, guid: bguid };
         url = `https://iframe.mediadelivery.net/embed/${id}`;
         kind = "iframe";
         break;
       }
     }
 
-    return new Response(JSON.stringify({ url, kind }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ url, kind, provider: lesson.video_provider, bunny }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     console.error(e);
     return new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });

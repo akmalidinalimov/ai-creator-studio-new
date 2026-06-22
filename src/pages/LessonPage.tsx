@@ -43,28 +43,26 @@ export default function LessonPage() {
   // by clicking complete without genuinely watching.
   const watchMaxPosRef = useRef(0);
   const watchDurRef = useRef(0);
-  const [bunnyResolved, setBunnyResolved] = useState<{ lib: string; guid: string } | null>(null);
+  // Access-gated video data. The browser NEVER reads raw video IDs from the
+  // lessons table anymore (those columns are revoked from students — M05); the
+  // only way to get a playable URL is the lesson-video-url edge function, which
+  // enforces has_module_access + published + enrollment server-side.
+  type VideoData = { url?: string; kind?: string; provider?: string; bunny?: { lib: string; guid: string }; locked?: boolean };
+  const [videoData, setVideoData] = useState<VideoData | null>(null);
 
-  // Fallback: if a Bunny lesson was saved with only a bare GUID, resolve the
-  // library ID server-side (lesson-video-url prepends BUNNY_LIBRARY_ID).
   useEffect(() => {
-    if (!lessonId || !lesson) return;
-    if (lesson.video_provider !== "bunny") { setBunnyResolved(null); return; }
-    const raw: string = lesson.provider_video_id || lesson.video_url || "";
-    if (!raw || raw.includes("/")) { setBunnyResolved(null); return; }
+    if (!lessonId) return;
     let cancelled = false;
+    setVideoData(null);
     (async () => {
-      try {
-        const { data } = await supabase.functions.invoke("lesson-video-url", { body: { lessonId } });
-        const url: string | undefined = data?.url;
-        const m = url?.match(/iframe\.mediadelivery\.net\/embed\/(\d+)\/([0-9a-f-]{36})/i);
-        if (!cancelled && m) setBunnyResolved({ lib: m[1], guid: m[2] });
-      } catch (e) {
-        console.error("bunny resolve failed", e);
-      }
+      const { data, error } = await supabase.functions.invoke("lesson-video-url", { body: { lessonId } });
+      if (cancelled) return;
+      // A 403 (module_locked / forbidden) or any error → treat as locked/unavailable.
+      if (error || !data) { setVideoData({ locked: true }); return; }
+      setVideoData(data as VideoData);
     })();
     return () => { cancelled = true; };
-  }, [lessonId, lesson?.video_provider, lesson?.provider_video_id, lesson?.video_url]);
+  }, [lessonId]);
 
 
   // Load protection settings
@@ -79,7 +77,9 @@ export default function LessonPage() {
   useEffect(() => {
     if (!lessonId || !user || !courseId) return;
     (async () => {
-      const { data: l } = await supabase.from("lessons").select("*, modules(course_id)").eq("id", lessonId).maybeSingle();
+      const { data: l } = await supabase.from("lessons")
+        .select("id, title, description, module_id, position, published, video_provider, modules(course_id)")
+        .eq("id", lessonId).maybeSingle();
       setLesson(l);
       const { data: ms } = await supabase
         .from("modules")
@@ -319,26 +319,27 @@ export default function LessonPage() {
 
   if (!lesson) return <PageShell><div className="text-muted-foreground">{t("lesson.loading")}</div></PageShell>;
 
-  const provider = lesson.video_provider || "upload";
-  const bunnyRaw: string = lesson.provider_video_id || lesson.video_url || "";
-  const bunnyDirect = bunnyRaw.includes("/") ? bunnyRaw.split("/") : ["", ""];
-  const bunnyLib = bunnyDirect[0] || bunnyResolved?.lib || "";
-  const bunnyGuid = bunnyDirect[1] || bunnyResolved?.guid || "";
-
   const renderPlayer = () => {
-    if (provider === "bunny") {
-      if (!bunnyLib || !bunnyGuid) {
-        return (
-          <div className="aspect-video w-full bg-black flex items-center justify-center p-6 text-center text-white/80 text-sm">
-            {t("lesson.bunny.invalidId")}
-          </div>
-        );
-      }
+    if (videoData?.locked) {
+      return (
+        <div className="aspect-video w-full bg-black flex items-center justify-center p-6 text-center text-white/80 text-sm">
+          {t("lesson.video.locked", "Bu dars sizning tarifingizda mavjud emas.")}
+        </div>
+      );
+    }
+    if (!videoData) {
+      return (
+        <div className="aspect-video w-full bg-black flex items-center justify-center text-white/60 text-sm">
+          {t("lesson.loading")}
+        </div>
+      );
+    }
+    if (videoData.provider === "bunny" && videoData.bunny?.lib && videoData.bunny?.guid) {
       return (
         <BunnyVideoPlayer
           ref={(h) => { (videoRef as any).current = h?.video || null; }}
-          libraryId={bunnyLib}
-          videoGuid={bunnyGuid}
+          libraryId={videoData.bunny.lib}
+          videoGuid={videoData.bunny.guid}
           watermarkEmail={user?.email || "student"}
           resumeSeconds={progress?.last_position_seconds || 0}
           onTimeUpdate={onBunnyTime}
@@ -346,39 +347,20 @@ export default function LessonPage() {
         />
       );
     }
-    if (provider === "youtube" && lesson.provider_video_id) {
+    if (videoData.kind === "iframe" && videoData.url) {
       return (
         <iframe
           className="w-full aspect-video"
-          src={`https://www.youtube.com/embed/${lesson.provider_video_id}?rel=0&modestbranding=1`}
+          src={videoData.url}
           title={lesson.title}
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
           allowFullScreen
         />
       );
     }
-    if (provider === "vimeo" && lesson.provider_video_id) {
+    if ((videoData.kind === "hls" || videoData.kind === "mp4") && videoData.url) {
       return (
-        <iframe
-          className="w-full aspect-video"
-          src={`https://player.vimeo.com/video/${lesson.provider_video_id}`}
-          title={lesson.title}
-          allow="autoplay; fullscreen; picture-in-picture"
-          allowFullScreen
-        />
-      );
-    }
-    if (provider === "mux" && lesson.provider_video_id) {
-      // Mux HLS could be wired similarly to Bunny; for now use ProtectedVideo with the URL.
-      const muxUrl = `https://stream.mux.com/${lesson.provider_video_id}.m3u8`;
-      return (
-        <ProtectedVideo src={muxUrl} videoRef={videoRef} watermarkText={user?.email || "student"} settings={protectionSettings} />
-      );
-    }
-    // Upload / direct URL
-    if (lesson.video_url) {
-      return (
-        <ProtectedVideo src={lesson.video_url} videoRef={videoRef} watermarkText={user?.email || "student"} settings={protectionSettings} />
+        <ProtectedVideo src={videoData.url} videoRef={videoRef} watermarkText={user?.email || "student"} settings={protectionSettings} />
       );
     }
     return (

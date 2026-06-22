@@ -26,12 +26,8 @@ export default function AdminBunnyDiagnostics() {
   const [migrateLog, setMigrateLog] = useState<Record<string, string>>({});
 
   const loadPending = async () => {
-    const { data, error } = await supabase
-      .from("lessons")
-      .select("id, title, video_storage_path")
-      .eq("video_provider", "upload")
-      .not("video_storage_path", "is", null)
-      .order("title", { ascending: true });
+    // video_storage_path is revoked from direct reads (M05); use the staff helper.
+    const { data, error } = await (supabase as any).rpc("staff_list_pending_bunny");
     if (error) { toast.error(error.message); return; }
     setPending((data || []) as PendingLesson[]);
   };

@@ -30,13 +30,16 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
   const tusRef = useRef<tus.Upload | null>(null);
 
   const load = useCallback(async () => {
-    const { data } = await supabase.from("lessons").select("*").eq("id", lessonId).maybeSingle();
-    setLesson(data);
-    if (data && !tabInitRef.current) {
+    // Media columns are revoked from direct table reads (M05); staff read the full
+    // row (incl. video pointers) via the SECURITY DEFINER staff_get_lesson helper.
+    const { data } = await (supabase as any).rpc("staff_get_lesson", { _lesson_id: lessonId });
+    const row = Array.isArray(data) ? data[0] : data;
+    setLesson(row);
+    if (row && !tabInitRef.current) {
       tabInitRef.current = true;
-      const p = data.video_provider;
+      const p = row.video_provider;
       // Embed tab for external URL providers; Upload tab for direct uploads (incl. bunny uploads with stored thumbnail).
-      const isUploaded = p === "upload" || (p === "bunny" && !!data.thumbnail_path);
+      const isUploaded = p === "upload" || (p === "bunny" && !!row.thumbnail_path);
       setTab(isUploaded || !p ? "upload" : "embed");
     }
   }, [lessonId]);
@@ -180,9 +183,17 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
     column: "video_storage_path" | "thumbnail_path",
   ) => {
     if (!path) return;
-    const { count } = await supabase.from("lessons").select("id", { count: "exact", head: true })
-      .eq(column, path).neq("id", lessonId);
-    if (!count) await supabase.storage.from(bucket).remove([path]);
+    let shared = 0;
+    if (column === "video_storage_path") {
+      // video_storage_path is revoked from direct reads (M05) — count via staff helper.
+      const { data } = await (supabase as any).rpc("staff_count_lessons_by_storage_path", { _path: path, _exclude: lessonId });
+      shared = Number(data) || 0;
+    } else {
+      const { count } = await supabase.from("lessons").select("id", { count: "exact", head: true })
+        .eq(column, path).neq("id", lessonId);
+      shared = count || 0;
+    }
+    if (!shared) await supabase.storage.from(bucket).remove([path]);
   };
 
   const removeVideo = async () => {
