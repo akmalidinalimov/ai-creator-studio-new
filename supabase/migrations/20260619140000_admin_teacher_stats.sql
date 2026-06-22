@@ -119,16 +119,15 @@ BEGIN
       AND gme.profile_id IS NOT NULL
       AND gme.profile_id NOT IN (SELECT sid FROM staff_ids)   -- student message only
       AND gme.module_id IS NULL                                -- not a per-module homework topic
-      AND (g.homework_topic_url IS NULL
-           OR g.homework_topic_url !~ '/[0-9]+$'
-           OR gme.telegram_thread_id <> regexp_replace(g.homework_topic_url, '^.*/', '')::bigint)  -- not the shared homework topic
+      AND (g.homework_topic_id IS NULL OR gme.telegram_thread_id <> g.homework_topic_id)  -- not the shared homework topic
   ),
   qa_agg AS (
     SELECT tid,
       count(*)::int AS questions,
       count(*) FILTER (WHERE a_at IS NOT NULL AND wait_min <= p_sla_min)::int AS answered_in_sla,
+      -- median wait over ALL answered questions (incl. late) so a slow teacher's typical wait is honest
       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY wait_min)
-            FILTER (WHERE a_at IS NOT NULL AND wait_min <= p_sla_min)::numeric, 1) AS wait_med_min
+            FILTER (WHERE a_at IS NOT NULL)::numeric, 1) AS wait_med_min
     FROM qa GROUP BY tid
   )
   SELECT

@@ -39,7 +39,7 @@ BEGIN
     SELECT DISTINCT ur.user_id AS sid FROM user_roles ur
     WHERE ur.role IN ('teacher'::app_role, 'admin'::app_role, 'superadmin'::app_role)
   ),
-  tg AS (SELECT id, name, homework_topic_url FROM groups WHERE teacher_id = p_teacher_id)
+  tg AS (SELECT id, name, homework_topic_id FROM groups WHERE teacher_id = p_teacher_id)
   SELECT tg.name,
     COALESCE(NULLIF(TRIM(pr.name || ' ' || COALESCE(pr.last_name, '')), ''), pr.email, '—') AS student_name,
     gme.sent_at AS asked_at,
@@ -61,8 +61,7 @@ BEGIN
     AND gme.profile_id IS NOT NULL
     AND gme.profile_id NOT IN (SELECT sid FROM staff_ids)
     AND gme.module_id IS NULL
-    AND (tg.homework_topic_url IS NULL OR tg.homework_topic_url !~ '/[0-9]+$'
-         OR gme.telegram_thread_id <> regexp_replace(tg.homework_topic_url, '^.*/', '')::bigint)
+    AND (tg.homework_topic_id IS NULL OR gme.telegram_thread_id <> tg.homework_topic_id)
     AND (resp.sent_at IS NULL OR EXTRACT(EPOCH FROM (resp.sent_at - gme.sent_at)) / 60.0 > p_sla_min)
   ORDER BY gme.sent_at DESC
   LIMIT 100;
@@ -83,7 +82,7 @@ BEGIN
     SELECT DISTINCT ur.user_id AS sid FROM user_roles ur
     WHERE ur.role IN ('teacher'::app_role, 'admin'::app_role, 'superadmin'::app_role)
   ),
-  tg AS (SELECT id, name, homework_topic_url FROM groups WHERE teacher_id = p_teacher_id),
+  tg AS (SELECT id, name, homework_topic_id FROM groups WHERE teacher_id = p_teacher_id),
   st AS (SELECT tg.id AS gid, count(*)::int AS students
          FROM tg JOIN profiles pr ON pr.group_id = tg.id AND pr.status = 'active' GROUP BY tg.id),
   qa AS (
@@ -100,14 +99,13 @@ BEGIN
     WHERE gme.sent_at >= _from AND gme.telegram_thread_id IS NOT NULL
       AND gme.profile_id IS NOT NULL AND gme.profile_id NOT IN (SELECT sid FROM staff_ids)
       AND gme.module_id IS NULL
-      AND (tg.homework_topic_url IS NULL OR tg.homework_topic_url !~ '/[0-9]+$'
-           OR gme.telegram_thread_id <> regexp_replace(tg.homework_topic_url, '^.*/', '')::bigint)
+      AND (tg.homework_topic_id IS NULL OR gme.telegram_thread_id <> tg.homework_topic_id)
   ),
   qa_agg AS (
     SELECT gid, count(*)::int AS questions,
       count(*) FILTER (WHERE a_at IS NOT NULL AND wait_min <= p_sla_min)::int AS answered_in_sla,
       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY wait_min)
-            FILTER (WHERE a_at IS NOT NULL AND wait_min <= p_sla_min)::numeric, 1) AS wait_med_min
+            FILTER (WHERE a_at IS NOT NULL)::numeric, 1) AS wait_med_min
     FROM qa GROUP BY gid
   ),
   grade AS (

@@ -67,11 +67,13 @@ export default function AdminTeacherStats() {
   const [sortKey, setSortKey] = useState<SortKey>("grading_med_min");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [detail, setDetail] = useState<Row | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
   const reload = async () => {
-    setLoading(true);
+    setLoading(true); setErr(null);
     const { data, error } = await supabase.rpc("admin_teacher_stats" as any, { p_days: days, p_sla_min: slaMin });
-    if (!error) setRows(((data as any[]) || []) as Row[]);
+    if (error) setErr(error.message || "Ma'lumotni yuklab bo'lmadi");
+    else setRows(((data as any[]) || []) as Row[]);
     setLoading(false);
   };
   useEffect(() => { reload(); /* eslint-disable-next-line */ }, [days, slaMin]);
@@ -141,10 +143,17 @@ export default function AdminTeacherStats() {
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Card className="p-4"><div className="text-xs text-muted-foreground">O'qituvchilar</div><div className="text-2xl font-semibold">{summary.n}</div></Card>
-          <Card className="p-4"><div className="text-xs text-muted-foreground">O'rtacha baholash vaqti</div><div className="text-2xl font-semibold">{fmtDur(summary.medGrade)}</div></Card>
+          <Card className="p-4"><div className="text-xs text-muted-foreground">Median baholash vaqti</div><div className="text-2xl font-semibold">{fmtDur(summary.medGrade)}</div></Card>
           <Card className="p-4"><div className="text-xs text-muted-foreground">Baholanmagan (jami)</div><div className="text-2xl font-semibold">{summary.backlog}</div></Card>
-          <Card className="p-4"><div className="text-xs text-muted-foreground">SLA ichida javobsiz savollar</div><div className="text-2xl font-semibold">{summary.unanswered}</div></Card>
+          <Card className="p-4"><div className="text-xs text-muted-foreground">SLA: javobsiz xabarlar</div><div className="text-2xl font-semibold">{summary.unanswered}</div></Card>
         </div>
+
+        {err && (
+          <div className="rounded border border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-400 text-sm p-3">
+            ⚠️ {err}
+            <button className="underline ml-2" onClick={reload}>Qayta urinish</button>
+          </div>
+        )}
 
         <Card className="p-0 overflow-x-auto">
           <Table>
@@ -194,9 +203,12 @@ export default function AdminTeacherStats() {
         </Card>
 
         <p className="text-xs text-muted-foreground">
-          ℹ️ "Guruh javoblari", "Javob %" va "Kutish" faqat <b>muhokama mavzularidagi</b> savollar bo'yicha hisoblanadi
-          (vazifa topshiriladigan mavzular hisobga olinmaydi). Javob = o'qituvchi/adminning o'sha mavzudagi keyingi xabari.
-          "Soat/kun" — faol kunlardagi o'rtacha faol soatlar (taxminiy).
+          ℹ️ Eng ishonchli baho — <b>baholash vaqti, hajmi va navbat</b> (har bir o'qituvchi uchun aniq).
+          "Guruh javoblari / Javob % / Kutish" — <b>muhokama mavzularidagi</b> o'quvchi xabarlari bo'yicha
+          (vazifa mavzulari chiqarib tashlanadi); javob = o'qituvchi/adminning o'sha mavzudagi keyingi xabari.
+          Bu chatdagi faollik o'lchovi — har bir xabar savol bo'lmasligi mumkin, shuning uchun past "Javob %"
+          ko'pincha o'qituvchi guruh chatida deyarli yozmasligini bildiradi (u baholash bilan shug'ullanadi).
+          "Soat/kun" — faol soatlar (taxminiy, ish vaqti emas).
         </p>
       </div>
 
@@ -215,19 +227,26 @@ function TeacherDetailDialog({ row, days, slaMin, onClose }: { row: Row; days: n
   const [unans, setUnans] = useState<Unanswered[]>([]);
   const [groups, setGroups] = useState<GroupRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [derr, setDerr] = useState(false);
 
   useEffect(() => {
     (async () => {
-      setLoading(true);
-      const [d, u, g] = await Promise.all([
-        supabase.rpc("admin_teacher_activity_daily" as any, { p_teacher_id: row.teacher_id, p_days: days }),
-        supabase.rpc("admin_teacher_unanswered" as any, { p_teacher_id: row.teacher_id, p_days: days, p_sla_min: slaMin }),
-        supabase.rpc("admin_teacher_groups" as any, { p_teacher_id: row.teacher_id, p_days: days, p_sla_min: slaMin }),
-      ]);
-      setDaily(((d.data as any[]) || []) as DayRow[]);
-      setUnans(((u.data as any[]) || []) as Unanswered[]);
-      setGroups(((g.data as any[]) || []) as GroupRow[]);
-      setLoading(false);
+      setLoading(true); setDerr(false);
+      try {
+        const [d, u, g] = await Promise.all([
+          supabase.rpc("admin_teacher_activity_daily" as any, { p_teacher_id: row.teacher_id, p_days: days }),
+          supabase.rpc("admin_teacher_unanswered" as any, { p_teacher_id: row.teacher_id, p_days: days, p_sla_min: slaMin }),
+          supabase.rpc("admin_teacher_groups" as any, { p_teacher_id: row.teacher_id, p_days: days, p_sla_min: slaMin }),
+        ]);
+        if (d.error || u.error || g.error) { setDerr(true); return; }
+        setDaily(((d.data as any[]) || []) as DayRow[]);
+        setUnans(((u.data as any[]) || []) as Unanswered[]);
+        setGroups(((g.data as any[]) || []) as GroupRow[]);
+      } catch {
+        setDerr(true);
+      } finally {
+        setLoading(false);
+      }
     })();
   }, [row.teacher_id, days, slaMin]);
 
@@ -252,7 +271,9 @@ function TeacherDetailDialog({ row, days, slaMin, onClose }: { row: Row; days: n
           <Card className="p-3"><div className="text-[11px] text-muted-foreground flex items-center gap-1"><AlertTriangle className="h-3 w-3" />Navbatda</div><div className="text-lg font-semibold">{row.ungraded_backlog}</div></Card>
         </div>
 
-        {loading ? <p className="text-sm text-muted-foreground py-4">Yuklanmoqda…</p> : (
+        {loading ? <p className="text-sm text-muted-foreground py-4">Yuklanmoqda…</p> : derr ? (
+          <p className="text-sm text-rose-600 dark:text-rose-400 py-4">⚠️ Ma'lumotni yuklab bo'lmadi. Dialogni yopib qayta oching.</p>
+        ) : (
           <>
             {/* Activity heatmap */}
             <div>
@@ -274,7 +295,7 @@ function TeacherDetailDialog({ row, days, slaMin, onClose }: { row: Row; days: n
                     <TableRow>
                       <TableHead>Guruh</TableHead>
                       <TableHead>Talaba</TableHead>
-                      <TableHead>Savollar</TableHead>
+                      <TableHead>Xabarlar</TableHead>
                       <TableHead>Javob %</TableHead>
                       <TableHead>Kutish (med)</TableHead>
                       <TableHead>Baholandi</TableHead>
@@ -301,8 +322,8 @@ function TeacherDetailDialog({ row, days, slaMin, onClose }: { row: Row; days: n
 
             {/* Unanswered questions */}
             <div>
-              <div className="font-semibold text-sm mb-2">SLA ichida javobsiz qolgan savollar ({unans.length})</div>
-              {unans.length === 0 ? <p className="text-sm text-muted-foreground">Hammasi o'z vaqtida javob olgan 🎉</p> : (
+              <div className="font-semibold text-sm mb-2">Staff javob bermagan o'quvchi xabarlari · SLA ({unans.length}{unans.length >= 100 ? "+ (birinchi 100)" : ""})</div>
+              {unans.length === 0 ? <p className="text-sm text-muted-foreground">Barcha xabarlarga o'z vaqtida javob berilgan 🎉</p> : (
                 <div className="max-h-72 overflow-y-auto border rounded-md divide-y">
                   {unans.map((u, i) => (
                     <div key={i} className="p-2 text-sm flex items-center justify-between gap-2">
