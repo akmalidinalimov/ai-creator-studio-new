@@ -3705,6 +3705,35 @@ async function recordGroupMessageEvent(admin: any, msg: any) {
     if (byU) profileId = byU.id;
   }
 
+  // v2 teacher-stats signals: identify questions DIRECTED at the group's teacher (reply / @tag /
+  // "ustoz") so we can measure if/when they're answered. Best-effort, never throws.
+  const replyMsgId = msg.reply_to_message?.message_id ?? null;
+  const replyUserId = msg.reply_to_message?.from?.id ?? null;
+  const _txt = ((msg.text || msg.caption || "") + "").toLowerCase();
+  const hasUstoz = _txt.includes("ustoz");
+  let mentionsTeacher = false;
+  const _ents = [...(msg.entities || []), ...(msg.caption_entities || [])]
+    .filter((e: any) => e.type === "mention" || e.type === "text_mention");
+  if (_ents.length) {
+    try {
+      const { data: _g } = await admin.from("groups").select("teacher_id").eq("id", groupId).maybeSingle();
+      const _tid = (_g as any)?.teacher_id;
+      if (_tid) {
+        const { data: _tp } = await admin.from("profiles").select("telegram_id, telegram_username").eq("id", _tid).maybeSingle();
+        const _ttg = (_tp as any)?.telegram_id != null ? Number((_tp as any).telegram_id) : null;
+        const _tuser = ((_tp as any)?.telegram_username || "").toLowerCase();
+        const _full = msg.text || msg.caption || "";
+        for (const e of _ents) {
+          if (e.type === "text_mention" && e.user?.id && _ttg != null && Number(e.user.id) === _ttg) { mentionsTeacher = true; break; }
+          if (e.type === "mention" && _tuser) {
+            const mu = String(_full).slice(e.offset, e.offset + e.length).replace(/^@/, "").toLowerCase();
+            if (mu === _tuser) { mentionsTeacher = true; break; }
+          }
+        }
+      }
+    } catch (_e) { /* best-effort */ }
+  }
+
   await admin
     .from("group_message_events")
     .upsert({
@@ -3716,6 +3745,10 @@ async function recordGroupMessageEvent(admin: any, msg: any) {
       telegram_message_id: messageId,
       telegram_thread_id: threadId,
       sent_at: msg.date ? new Date(msg.date * 1000).toISOString() : new Date().toISOString(),
+      reply_to_message_id: replyMsgId,
+      reply_to_user_id: replyUserId,
+      mentions_teacher: mentionsTeacher,
+      has_ustoz: hasUstoz,
     }, { onConflict: "telegram_chat_id,telegram_message_id" });
 }
 
