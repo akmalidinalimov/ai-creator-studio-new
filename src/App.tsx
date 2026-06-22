@@ -60,6 +60,7 @@ const GroupDetail = lazy(() => import("./pages/admin/GroupDetail"));
 const AdminHomework = lazy(() => import("./pages/admin/AdminHomework"));
 const TeacherHomework = lazy(() => import("./pages/TeacherHomework"));
 const AdminEngagement = lazy(() => import("./pages/admin/AdminEngagement"));
+const AdminTeacherStats = lazy(() => import("./pages/admin/AdminTeacherStats"));
 
 const AdminAnalytics = lazy(() => import("./pages/admin/AdminAnalytics"));
 const AnalyticsFunnel = lazy(() => import("./pages/admin/AnalyticsFunnel"));
@@ -125,6 +126,7 @@ const App = () => (
             <Route path="/admin/groups" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminGroups /></Suspense></RequireAuth>} />
             <Route path="/admin/groups/:id" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><GroupDetail /></Suspense></RequireAuth>} />
             <Route path="/admin/engagement" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminEngagement /></Suspense></RequireAuth>} />
+            <Route path="/admin/teacher-stats" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminTeacherStats /></Suspense></RequireAuth>} />
             {/* Legacy routes → merged engagement hub */}
             <Route path="/admin/reengagement" element={<Navigate to="/admin/engagement?tab=reengagement" replace />} />
             <Route path="/admin/nudges" element={<Navigate to="/admin/engagement" replace />} />
