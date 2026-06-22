@@ -741,10 +741,12 @@ export type Database = {
       }
       group_message_events: {
         Row: {
+          author_signature: string | null
           created_at: string
           group_id: string
           has_ustoz: boolean
           id: string
+          is_anon_admin: boolean
           mentions_teacher: boolean
           module_id: string | null
           profile_id: string | null
@@ -757,10 +759,12 @@ export type Database = {
           telegram_user_id: number
         }
         Insert: {
+          author_signature?: string | null
           created_at?: string
           group_id: string
           has_ustoz?: boolean
           id?: string
+          is_anon_admin?: boolean
           mentions_teacher?: boolean
           module_id?: string | null
           profile_id?: string | null
@@ -773,10 +777,12 @@ export type Database = {
           telegram_user_id: number
         }
         Update: {
+          author_signature?: string | null
           created_at?: string
           group_id?: string
           has_ustoz?: boolean
           id?: string
+          is_anon_admin?: boolean
           mentions_teacher?: boolean
           module_id?: string | null
           profile_id?: string | null
