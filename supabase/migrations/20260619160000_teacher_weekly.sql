@@ -24,7 +24,7 @@ RETURNS TABLE(
   teacher_id uuid, name text, telegram_username text,
   group_id uuid, group_name text,
   active_days int, days_window int,
-  hours_by_day int[], week_hours int,
+  active_min_by_day int[], week_active_min int,
   messages_by_day int[], week_messages int,
   questions int, answered int, answer_rate numeric, median_wait_min numeric,
   graded int, grading_med_min numeric, ungraded_backlog int,
@@ -56,29 +56,36 @@ BEGIN
   ),
   days AS (SELECT gs::date AS d FROM generate_series(_today - (p_days - 1), _today, interval '1 day') gs),
   -- messages attributed to a (teacher, group): anonymous OR the teacher's own named account, in that group
-  pair_raw AS (
+  pair_msgs AS (  -- each (teacher,group) message + gap to the teacher's previous message in that group
     SELECT tg.tid, tg.gid,
       (e.sent_at AT TIME ZONE 'Asia/Tashkent')::date AS d,
-      date_trunc('hour', e.sent_at AT TIME ZONE 'Asia/Tashkent') AS hr
+      e.sent_at - lag(e.sent_at) OVER (PARTITION BY tg.tid, tg.gid ORDER BY e.sent_at) AS gap
     FROM group_message_events e
     JOIN tg ON tg.gid = e.group_id
     WHERE (e.sent_at AT TIME ZONE 'Asia/Tashkent')::date BETWEEN _today - (p_days - 1) AND _today
       AND (e.is_anon_admin OR (tg.t_tgid IS NOT NULL AND e.telegram_user_id = tg.t_tgid))
   ),
+  pair_contrib AS (  -- estimated ACTIVE SECONDS per message: within-session gap (<=10 min counts as
+    -- continuous engagement) + 60s for each session start (gap NULL or >10 min = a fresh check-in).
+    SELECT tid, gid, d,
+      (CASE WHEN gap IS NOT NULL AND gap <= interval '10 minutes' THEN extract(epoch FROM gap) ELSE 0 END
+       + CASE WHEN gap IS NULL OR gap > interval '10 minutes' THEN 60 ELSE 0 END) AS secs
+    FROM pair_msgs
+  ),
   pair_day AS (
-    SELECT tid, gid, d, count(*)::int AS mc, count(DISTINCT hr)::int AS ah
-    FROM pair_raw GROUP BY tid, gid, d
+    SELECT tid, gid, d, count(*)::int AS mc, round(sum(secs) / 60.0)::int AS am  -- am = active minutes
+    FROM pair_contrib GROUP BY tid, gid, d
   ),
   pair_grid AS (  -- (teacher,group) x day grid, zero-filled
-    SELECT tg.gid, tg.tid, d.d, COALESCE(pd.ah, 0) AS ah, COALESCE(pd.mc, 0) AS mc
+    SELECT tg.gid, tg.tid, d.d, COALESCE(pd.am, 0) AS am, COALESCE(pd.mc, 0) AS mc
     FROM tg CROSS JOIN days d
     LEFT JOIN pair_day pd ON pd.tid = tg.tid AND pd.gid = tg.gid AND pd.d = d.d
   ),
   hours_agg AS (
     SELECT gid, tid,
-      array_agg(ah ORDER BY d) AS hours_by_day,
+      array_agg(am ORDER BY d) AS active_min_by_day,
       array_agg(mc ORDER BY d) AS messages_by_day,
-      sum(ah)::int AS week_hours,
+      sum(am)::int AS week_active_min,
       sum(mc)::int AS week_messages,
       count(*) FILTER (WHERE mc > 0)::int AS active_days
     FROM pair_grid GROUP BY gid, tid
@@ -136,7 +143,7 @@ BEGIN
     p.telegram_username::text,
     tg.gid::uuid, tg.gname::text,
     COALESCE(h.active_days, 0)::int, p_days::int,
-    COALESCE(h.hours_by_day, ARRAY[]::int[]), COALESCE(h.week_hours, 0)::int,
+    COALESCE(h.active_min_by_day, ARRAY[]::int[]), COALESCE(h.week_active_min, 0)::int,
     COALESCE(h.messages_by_day, ARRAY[]::int[]), COALESCE(h.week_messages, 0)::int,
     COALESCE(q.questions, 0)::int, COALESCE(q.answered, 0)::int,
     (CASE WHEN COALESCE(q.questions, 0) > 0 THEN round(100.0 * q.answered / q.questions, 0) ELSE NULL END)::numeric,

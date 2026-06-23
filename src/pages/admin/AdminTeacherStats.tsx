@@ -14,8 +14,8 @@ type Row = {
   group_name: string;
   active_days: number;
   days_window: number;
-  hours_by_day: number[];
-  week_hours: number;
+  active_min_by_day: number[];
+  week_active_min: number;
   messages_by_day: number[];
   week_messages: number;
   questions: number;
@@ -35,6 +35,14 @@ function fmtDur(min: number | null | undefined): string {
   if (min < 60) return `${Math.round(min)}m`;
   if (min < 1440) return `${(min / 60).toFixed(1)}h`;
   return `${(min / 1440).toFixed(1)}d`;
+}
+
+/** Estimated active time, minutes → "1h 25m" / "40m". */
+function fmtActive(min: number | null | undefined): string {
+  if (min == null || min <= 0) return "0m";
+  if (min < 60) return `${min}m`;
+  const h = Math.floor(min / 60), m = min % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
 }
 
 /** Relative "last online" with a recency color. */
@@ -104,7 +112,7 @@ export default function AdminTeacherStats() {
 
   // ranking: most hours in the group over the window first (then messages, then grading)
   const sorted = useMemo(
-    () => [...rows].sort((a, b) => b.week_hours - a.week_hours || b.week_messages - a.week_messages || b.graded - a.graded || a.name.localeCompare(b.name)),
+    () => [...rows].sort((a, b) => b.week_active_min - a.week_active_min || b.week_messages - a.week_messages || b.graded - a.graded || a.name.localeCompare(b.name)),
     [rows]
   );
 
@@ -113,7 +121,7 @@ export default function AdminTeacherStats() {
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-semibold flex items-center gap-2"><GraduationCap className="h-6 w-6" /> Teacher Statistics</h1>
-          <p className="text-sm text-muted-foreground">So'nggi 7 kun — <b>har bir guruh alohida qator</b> (bir o'qituvchi 2 guruhga biriktirilgan bo'lsa, 2 qator chiqadi). Guruhda eng ko'p soat o'tkazganlar yuqorida (reyting). Har kungi katakda — o'sha kuni nechta xabar; <span className="text-rose-600 dark:text-rose-400 font-medium">qizil = o'sha kuni bironta ham xabar yo'q</span>.</p>
+          <p className="text-sm text-muted-foreground">So'nggi 7 kun — <b>har bir guruh alohida qator</b> (bir o'qituvchi 2 guruhga biriktirilgan bo'lsa, 2 qator chiqadi). Guruhda eng ko'p <b>faol vaqt</b> o'tkazganlar yuqorida (reyting). Har kungi katakda — o'sha kuni nechta xabar; <span className="text-rose-600 dark:text-rose-400 font-medium">qizil = o'sha kuni bironta ham xabar yo'q</span>.</p>
         </div>
 
         {err && (
@@ -141,7 +149,7 @@ export default function AdminTeacherStats() {
                 <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">O'qituvchilar topilmadi.</TableCell></TableRow>
               ) : sorted.map((r, idx) => {
                 const st = statusOf(r);
-                const hours = r.hours_by_day || [];
+                const mins = r.active_min_by_day || [];
                 const msgs = r.messages_by_day || [];
                 return (
                   <TableRow key={`${r.teacher_id}-${r.group_id}`}>
@@ -168,15 +176,15 @@ export default function AdminTeacherStats() {
                     </TableCell>
                     <TableCell className="align-top">
                       <div className="text-xs whitespace-nowrap mb-1">
-                        <span className="font-semibold">{r.active_days}/{r.days_window}</span> kun · <span className="font-semibold">{r.week_hours}h</span> · <span className="font-semibold">{r.week_messages}</span> xabar
+                        <span className="font-semibold">{r.active_days}/{r.days_window}</span> kun · <span className="font-semibold">{fmtActive(r.week_active_min)}</span> faol · <span className="font-semibold">{r.week_messages}</span> xabar
                       </div>
                       <div className="flex items-end gap-0.5">
                         {labels.map((lbl, i) => {
                           const m = msgs[i] ?? 0;
-                          const h = hours[i] ?? 0;
+                          const am = mins[i] ?? 0;
                           return (
                             <div key={i} className="flex flex-col items-center gap-0.5">
-                              <div className={`w-6 h-6 rounded-sm flex items-center justify-center text-[10px] font-semibold ${msgCellCls(m)}`} title={`${lbl}: ${m} xabar · ${h} soat faol`}>
+                              <div className={`w-6 h-6 rounded-sm flex items-center justify-center text-[10px] font-semibold ${msgCellCls(m)}`} title={`${lbl}: ${m} xabar · ~${fmtActive(am)} faol`}>
                                 {m}
                               </div>
                               <div className="text-[8px] text-muted-foreground leading-none">{lbl}</div>
@@ -206,7 +214,7 @@ export default function AdminTeacherStats() {
         <div className="text-xs text-muted-foreground space-y-1">
           <p><b>Holat</b> — "Baholaydi" = uy ishlarini tekshiradi, lekin guruh chatida yozmaydi; "Chatda faol" = chatda ham bor; "Faol emas" = 7 kunda baholamagan ham, chatda ham yo'q.</p>
           <p><b>Baholash (asosiy ish)</b> — uy ishini o'rtacha qancha vaqtda baholaydi · nechta baholadi · nechtasi navbatda. Ko'p o'qituvchining asosiy ishi shu.</p>
-          <p><b>Guruh chatida</b> — har kungi katak = o'sha kuni yuborilgan <b>xabarlar soni</b>; <span className="text-rose-600 dark:text-rose-400 font-medium">qizil katak = o'sha kuni bironta ham xabar yubormagan</span>. Tepadagi qator: faol kunlar · jami soat · jami xabar. <b>Reyting</b> (chap tomondagi raqam) guruhda o'tkazgan <b>soat</b> bo'yicha. O'qituvchining <b>anonim</b> (guruh nomidan / guruh rasmi bilan) javoblari ham to'liq hisobga olinadi — barcha mavzular va umumiy chat. Shaxsiy DM kirmaydi.</p>
+          <p><b>Guruh chatida</b> — har kungi katak = o'sha kuni yuborilgan <b>xabarlar soni</b>; <span className="text-rose-600 dark:text-rose-400 font-medium">qizil katak = o'sha kuni bironta ham xabar yubormagan</span>. Tepadagi qator: faol kunlar · <b>faol vaqt</b> · jami xabar. <b>Reyting</b> (chap raqam) guruhda o'tkazgan <b>faol vaqt</b> bo'yicha. <b>Faol vaqt</b> = xabar vaqtlaridan taxminiy hisoblanadi: ketma-ket xabarlar 10 daqiqa ichida bo'lsa — bitta seans (o'sha vaqt qo'shiladi); 10 daqiqadan ko'p tanaffus — yangi seans. Bu "online bo'lgan" emas, "faol yozgan" vaqt (Telegram online vaqtni bermaydi). O'qituvchining <b>anonim</b> (guruh nomidan) javoblari ham hisobga olinadi; shaxsiy DM kirmaydi.</p>
           <p><b>Savollarga javob</b> — o'quvchi o'qituvchini belgilagan (@), unga javob bergan yoki "ustoz" degan savollardan nechtasiga javob berilgan. Bugundan to'planadi.</p>
         </div>
       </div>
