@@ -25,6 +25,11 @@ type Row = {
   graded: number;
   grading_med_min: number | null;
   ungraded_backlog: number;
+  avg_score_pct: number | null;
+  pct_top: number | null;
+  feedback_rate: number | null;
+  resubmit_rate: number | null;
+  oldest_pending_hours: number | null;
   last_active: string | null;
 };
 
@@ -35,6 +40,13 @@ function fmtDur(min: number | null | undefined): string {
   if (min < 60) return `${Math.round(min)}m`;
   if (min < 1440) return `${(min / 60).toFixed(1)}h`;
   return `${(min / 1440).toFixed(1)}d`;
+}
+
+/** Hours → "5 soat" / "3 kun" (for oldest-pending age). */
+function fmtHours(h: number | null | undefined): string {
+  if (h == null) return "";
+  if (h < 24) return `${Math.round(h)} soat`;
+  return `${Math.round(h / 24)} kun`;
 }
 
 /** Estimated active time, minutes → "1h 25m" / "40m". */
@@ -171,8 +183,22 @@ export default function AdminTeacherStats() {
                       <div className="text-lg font-semibold leading-none">{fmtDur(r.grading_med_min)}</div>
                       <div className="text-[11px] text-muted-foreground mt-1">
                         {r.graded} ta baholandi
-                        {r.ungraded_backlog > 0 && <span className="text-amber-600 dark:text-amber-400"> · {r.ungraded_backlog} navbatda</span>}
+                        {r.ungraded_backlog > 0 && (
+                          <span className={(r.oldest_pending_hours ?? 0) >= 48 ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"}>
+                            {" "}· {r.ungraded_backlog} navbatda
+                            {(r.oldest_pending_hours ?? 0) >= 24 && <span title="Eng eski javobsiz vazifa"> (eng eskisi {fmtHours(r.oldest_pending_hours)})</span>}
+                          </span>
+                        )}
                       </div>
+                      {r.graded > 0 && (
+                        <div className="text-[10px] text-muted-foreground mt-0.5">
+                          o'rt <span className="font-medium text-foreground">{r.avg_score_pct ?? "—"}%</span>
+                          {(r.pct_top ?? 0) >= 90 && <span className="text-amber-600 dark:text-amber-400" title="Deyarli hammaga to'liq ball"> (top {r.pct_top}%)</span>}
+                          {" · izoh "}
+                          <span className={(r.feedback_rate ?? 0) >= 50 ? "font-medium text-emerald-600 dark:text-emerald-400" : "font-medium text-foreground"}>{r.feedback_rate ?? 0}%</span>
+                          {r.resubmit_rate != null && <span className="text-muted-foreground"> · qayta {r.resubmit_rate}%</span>}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="align-top">
                       <div className="text-xs whitespace-nowrap mb-1">
@@ -213,7 +239,7 @@ export default function AdminTeacherStats() {
 
         <div className="text-xs text-muted-foreground space-y-1">
           <p><b>Holat</b> — "Baholaydi" = uy ishlarini tekshiradi, lekin guruh chatida yozmaydi; "Chatda faol" = chatda ham bor; "Faol emas" = 7 kunda baholamagan ham, chatda ham yo'q.</p>
-          <p><b>Baholash (asosiy ish)</b> — uy ishini o'rtacha qancha vaqtda baholaydi · nechta baholadi · nechtasi navbatda. Ko'p o'qituvchining asosiy ishi shu.</p>
+          <p><b>Baholash</b> — o'rtacha baholash vaqti · nechta baholandi · navbatda (48 soatdan oshsa qizil, eng eski javobsiz vazifa yoshi bilan). Pastki qator = baholash <b>sifati</b>: <b>o'rt</b> = o'rtacha ball (max'dan %); <b>(top X%)</b> = deyarli hammaga to'liq ball qo'ygan (e'tibor bering); <b>izoh</b> = nechta % baholarda yozma izoh bor (50%+ yashil); <b>qayta</b> = nechta % vazifa qayta topshirilgan.</p>
           <p><b>Guruh chatida</b> — har kungi katak = o'sha kuni yuborilgan <b>xabarlar soni</b>; <span className="text-rose-600 dark:text-rose-400 font-medium">qizil katak = o'sha kuni bironta ham xabar yubormagan</span>. Tepadagi qator: faol kunlar · <b>faol vaqt</b> · jami xabar. <b>Reyting</b> (chap raqam) guruhda o'tkazgan <b>faol vaqt</b> bo'yicha. <b>Faol vaqt</b> = xabar vaqtlaridan taxminiy hisoblanadi: ketma-ket xabarlar 10 daqiqa ichida bo'lsa — bitta seans (o'sha vaqt qo'shiladi); 10 daqiqadan ko'p tanaffus — yangi seans. Bu "online bo'lgan" emas, "faol yozgan" vaqt (Telegram online vaqtni bermaydi). O'qituvchining <b>anonim</b> (guruh nomidan) javoblari ham hisobga olinadi; shaxsiy DM kirmaydi.</p>
           <p><b>Savollarga javob</b> — o'quvchi o'qituvchini belgilagan (@), unga javob bergan yoki "ustoz" degan savollardan nechtasiga javob berilgan. Bugundan to'planadi.</p>
         </div>

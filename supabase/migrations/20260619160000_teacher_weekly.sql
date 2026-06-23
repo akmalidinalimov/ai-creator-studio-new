@@ -28,6 +28,8 @@ RETURNS TABLE(
   messages_by_day int[], week_messages int,
   questions int, answered int, answer_rate numeric, median_wait_min numeric,
   graded int, grading_med_min numeric, ungraded_backlog int,
+  avg_score_pct numeric, pct_top numeric, feedback_rate numeric,
+  resubmit_rate numeric, oldest_pending_hours numeric,
   last_active timestamptz
 )
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
@@ -113,22 +115,39 @@ BEGIN
             FILTER (WHERE a_at IS NOT NULL)::numeric, 1) AS median_wait_min
     FROM dq_ans GROUP BY tid, gid
   ),
-  grading AS (  -- per group: homework graded for that group's students (window)
+  grading AS (  -- per group: graded homework (window) + QUALITY signals (not just speed)
     SELECT g.teacher_id AS tid, g.id AS gid, count(*)::int AS graded,
       round(percentile_cont(0.5) WITHIN GROUP (
-        ORDER BY EXTRACT(EPOCH FROM (hs.scored_at - hs.submitted_at)) / 60.0)::numeric, 1) AS grading_med_min
+        ORDER BY EXTRACT(EPOCH FROM (hs.scored_at - hs.submitted_at)) / 60.0)::numeric, 1) AS grading_med_min,
+      round(avg(100.0 * hs.score / NULLIF(ha.max_score, 0))::numeric, 0) AS avg_score_pct,            -- leniency
+      round((100.0 * count(*) FILTER (WHERE hs.score = ha.max_score) / NULLIF(count(*), 0))::numeric, 0) AS pct_top,  -- rubber-stamp flag
+      round((100.0 * count(*) FILTER (WHERE btrim(COALESCE(hs.score_feedback, '')) <> '') / NULLIF(count(*), 0))::numeric, 0) AS feedback_rate  -- wrote feedback
     FROM homework_submissions hs
+    JOIN homework_assignments ha ON ha.id = hs.assignment_id
     JOIN profiles pr ON pr.id = hs.user_id
     JOIN groups g ON g.id = pr.group_id AND g.teacher_id IS NOT NULL
-    WHERE hs.scored_at >= _from AND hs.submitted_at IS NOT NULL
+    WHERE hs.scored_at >= _from AND hs.submitted_at IS NOT NULL AND hs.score IS NOT NULL
     GROUP BY g.teacher_id, g.id
   ),
-  backlog AS (  -- per group: current ungraded submissions by that group's students
-    SELECT g.teacher_id AS tid, g.id AS gid, count(*)::int AS ungraded
+  backlog AS (  -- per group: current ungraded submissions + age (hours) of the OLDEST one waiting
+    SELECT g.teacher_id AS tid, g.id AS gid, count(*)::int AS ungraded,
+      round((EXTRACT(EPOCH FROM (now() - min(hs.submitted_at))) / 3600.0)::numeric, 1) AS oldest_pending_hours
     FROM homework_submissions hs
     JOIN profiles pr ON pr.id = hs.user_id
     JOIN groups g ON g.id = pr.group_id AND g.teacher_id IS NOT NULL
     WHERE hs.score IS NULL AND hs.submitted_at IS NOT NULL
+    GROUP BY g.teacher_id, g.id
+  ),
+  resub AS (  -- per group: % of submissions (window) that were resubmitted (had to redo)
+    SELECT g.teacher_id AS tid, g.id AS gid,
+      round((100.0 * count(*) FILTER (
+        WHERE COALESCE(hs.attempt_number, 1) > 1
+           OR jsonb_array_length(COALESCE(hs.previous_attempts, '[]'::jsonb)) > 0
+      ) / NULLIF(count(*), 0))::numeric, 0) AS resubmit_rate
+    FROM homework_submissions hs
+    JOIN profiles pr ON pr.id = hs.user_id
+    JOIN groups g ON g.id = pr.group_id AND g.teacher_id IS NOT NULL
+    WHERE hs.submitted_at >= _from
     GROUP BY g.teacher_id, g.id
   ),
   lastact AS (  -- last message the teacher sent in THIS group (anon or own account)
@@ -149,12 +168,15 @@ BEGIN
     (CASE WHEN COALESCE(q.questions, 0) > 0 THEN round(100.0 * q.answered / q.questions, 0) ELSE NULL END)::numeric,
     q.median_wait_min::numeric,
     COALESCE(gr.graded, 0)::int, gr.grading_med_min::numeric, COALESCE(bl.ungraded, 0)::int,
+    gr.avg_score_pct::numeric, gr.pct_top::numeric, gr.feedback_rate::numeric,
+    rs.resubmit_rate::numeric, bl.oldest_pending_hours::numeric,
     la.last_active::timestamptz
   FROM tg JOIN profiles p ON p.id = tg.tid
   LEFT JOIN hours_agg h ON h.gid = tg.gid AND h.tid = tg.tid
   LEFT JOIN q_agg q ON q.gid = tg.gid AND q.tid = tg.tid
   LEFT JOIN grading gr ON gr.gid = tg.gid AND gr.tid = tg.tid
   LEFT JOIN backlog bl ON bl.gid = tg.gid AND bl.tid = tg.tid
+  LEFT JOIN resub rs ON rs.gid = tg.gid AND rs.tid = tg.tid
   LEFT JOIN lastact la ON la.gid = tg.gid AND la.tid = tg.tid
   ORDER BY 2, 5;
 END;
