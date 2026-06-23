@@ -10,6 +10,8 @@ type Row = {
   teacher_id: string;
   name: string;
   telegram_username: string | null;
+  group_id: string;
+  group_name: string;
   active_days: number;
   days_window: number;
   hours_by_day: number[];
@@ -111,7 +113,7 @@ export default function AdminTeacherStats() {
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-semibold flex items-center gap-2"><GraduationCap className="h-6 w-6" /> Teacher Statistics</h1>
-          <p className="text-sm text-muted-foreground">So'nggi 7 kun — guruhda eng ko'p soat o'tkazgan o'qituvchilar yuqorida (reyting). Har kungi katakda — o'sha kuni nechta xabar; <span className="text-rose-600 dark:text-rose-400 font-medium">qizil = o'sha kuni bironta ham xabar yo'q</span>.</p>
+          <p className="text-sm text-muted-foreground">So'nggi 7 kun — <b>har bir guruh alohida qator</b> (bir o'qituvchi 2 guruhga biriktirilgan bo'lsa, 2 qator chiqadi). Guruhda eng ko'p soat o'tkazganlar yuqorida (reyting). Har kungi katakda — o'sha kuni nechta xabar; <span className="text-rose-600 dark:text-rose-400 font-medium">qizil = o'sha kuni bironta ham xabar yo'q</span>.</p>
         </div>
 
         {err && (
@@ -142,13 +144,14 @@ export default function AdminTeacherStats() {
                 const hours = r.hours_by_day || [];
                 const msgs = r.messages_by_day || [];
                 return (
-                  <TableRow key={r.teacher_id}>
+                  <TableRow key={`${r.teacher_id}-${r.group_id}`}>
                     <TableCell className="font-medium whitespace-nowrap align-top">
                       <div className="flex items-center gap-2">
                         <span className={`inline-flex items-center justify-center w-5 h-5 shrink-0 rounded-full text-[11px] font-bold ${rankCls(idx)}`} title={`Reyting: #${idx + 1} (guruhda soat bo'yicha)`}>{idx + 1}</span>
                         <span>
                           {r.name}
-                          {r.telegram_username && <span className="block text-[11px] text-muted-foreground">@{r.telegram_username}</span>}
+                          <span className="block text-[11px] font-medium text-primary">{r.group_name}</span>
+                          {r.telegram_username && <span className="block text-[10px] text-muted-foreground">@{r.telegram_username}</span>}
                         </span>
                       </div>
                     </TableCell>
