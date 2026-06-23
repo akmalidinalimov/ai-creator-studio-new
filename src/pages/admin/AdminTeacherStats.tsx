@@ -90,7 +90,7 @@ function rankCls(i: number): string {
 
 /** Status from what the teacher actually does. */
 function statusOf(r: Row): { label: string; cls: string } {
-  if (r.week_hours > 0) return { label: "💬 Chatda faol", cls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30" };
+  if (r.week_active_min > 0) return { label: "💬 Chatda faol", cls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30" };
   if (r.graded > 0) return { label: "✅ Baholaydi", cls: "bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/30" };
   return { label: "⚠️ Faol emas", cls: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30" };
 }
