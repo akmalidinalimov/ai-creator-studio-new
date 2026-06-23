@@ -47,17 +47,26 @@ BEGIN
   ),
   ttg AS (SELECT t.tid, p.telegram_id AS t_tgid FROM teachers t JOIN profiles p ON p.id = t.tid),
   days AS (SELECT gs::date AS d FROM generate_series(_today - (p_days - 1), _today, interval '1 day') gs),
-  msg_raw AS (  -- every teacher group message in the window (anon msgs already carry profile_id = teacher)
-    SELECT g.profile_id AS tid,
-      (g.sent_at AT TIME ZONE 'Asia/Tashkent')::date AS d,
-      date_trunc('hour', g.sent_at AT TIME ZONE 'Asia/Tashkent') AS hr
-    FROM group_message_events g
-    JOIN teachers t ON t.tid = g.profile_id
-    WHERE (g.sent_at AT TIME ZONE 'Asia/Tashkent')::date BETWEEN _today - (p_days - 1) AND _today
+  msg_raw AS (  -- attribute each group message to a teacher, robust to BOTH chat modes:
+    --  (1) anonymous (posted "as the group") OR the teacher's OWN named account, in their group
+    --      → that group's teacher  (reads non-anon teachers like @shahrizoda_0_8 AND anon teachers);
+    --  (2) else, if it was already attributed to a teacher profile → that teacher (cross-group help).
+    SELECT
+      (CASE
+         WHEN e.is_anon_admin OR (ttg.t_tgid IS NOT NULL AND e.telegram_user_id = ttg.t_tgid) THEN gr.teacher_id
+         WHEN tprof.tid IS NOT NULL THEN e.profile_id
+       END) AS tid,
+      (e.sent_at AT TIME ZONE 'Asia/Tashkent')::date AS d,
+      date_trunc('hour', e.sent_at AT TIME ZONE 'Asia/Tashkent') AS hr
+    FROM group_message_events e
+    LEFT JOIN groups gr ON gr.id = e.group_id
+    LEFT JOIN ttg ON ttg.tid = gr.teacher_id
+    LEFT JOIN teachers tprof ON tprof.tid = e.profile_id
+    WHERE (e.sent_at AT TIME ZONE 'Asia/Tashkent')::date BETWEEN _today - (p_days - 1) AND _today
   ),
   msg_day AS (
     SELECT tid, d, count(*)::int AS mc, count(DISTINCT hr)::int AS ah
-    FROM msg_raw GROUP BY tid, d
+    FROM msg_raw WHERE tid IS NOT NULL GROUP BY tid, d
   ),
   td AS (  -- teacher x day grid, zero-filled: ah = active clock-hours, mc = message count
     SELECT t.tid, d.d, COALESCE(m.ah, 0) AS ah, COALESCE(m.mc, 0) AS mc
