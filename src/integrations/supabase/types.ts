@@ -2641,20 +2641,29 @@ export type Database = {
         Args: { p_days?: number }
         Returns: {
           active_days: number
+          active_min_by_day: number[]
           answer_rate: number
           answered: number
+          avg_score_pct: number
           days_window: number
+          feedback_rate: number
           graded: number
           grading_med_min: number
-          hours_by_day: number[]
+          group_id: string
+          group_name: string
           last_active: string
           median_wait_min: number
+          messages_by_day: number[]
           name: string
+          oldest_pending_hours: number
+          pct_top: number
           questions: number
+          resubmit_rate: number
           teacher_id: string
           telegram_username: string
           ungraded_backlog: number
-          week_hours: number
+          week_active_min: number
+          week_messages: number
         }[]
       }
       admin_ungrouped_students: {
