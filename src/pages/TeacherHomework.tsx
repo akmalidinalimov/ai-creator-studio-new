@@ -32,6 +32,8 @@ export default function TeacherHomework() {
   const { user, role } = useAuth();
   const isAdmin = role === "admin";
   const [groups, setGroups] = useState<Group[]>([]);
+  const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
+  const [selectedCourse, setSelectedCourse] = useState<string>("");
   const [selectedGroup, setSelectedGroup] = useState<string>("");
   const [pending, setPending] = useState<Row[]>([]);
   const [scored, setScored] = useState<Row[]>([]);
@@ -58,6 +60,16 @@ export default function TeacherHomework() {
       setGroupNameMap(new Map(gs.map((g) => [g.id, g.name])));
       if (gs.length && !selectedGroup) setSelectedGroup(isAdmin ? ALL : gs[0].id);
       if (!gs.length && isAdmin) setSelectedGroup(ALL);
+      // course filter (admin): default to last-opened, else first course
+      if (isAdmin) {
+        const { data: cs } = await supabase.from("courses").select("id, title").order("created_at");
+        const courseList = ((cs as any) || []) as { id: string; title: string }[];
+        setCourses(courseList);
+        if (courseList.length) {
+          const saved = localStorage.getItem("hw_course");
+          setSelectedCourse((prev) => prev || (saved && courseList.some((c) => c.id === saved) ? saved : courseList[0].id));
+        }
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, isAdmin]);
@@ -69,12 +81,10 @@ export default function TeacherHomework() {
       if (!user || !selectedGroup) return;
       let pq = supabase.from("profiles").select("id, name, last_name, group_id, telegram_username");
       if (selectedGroup === ALL) {
-        if (!isAdmin) {
-          // Teacher in ALL shouldn't happen, but guard
-          const gIds = groups.map((g) => g.id);
-          if (!gIds.length) { setStudents([]); setScopeIds([]); return; }
-          pq = pq.in("group_id", gIds);
-        }
+        // scope to the selected course's groups (admin) so it's one clean course at a time
+        const gIds = groups.filter((g) => !isAdmin || !selectedCourse || g.course_id === selectedCourse).map((g) => g.id);
+        if (!gIds.length) { setStudents([]); setScopeIds([]); return; }
+        pq = pq.in("group_id", gIds);
       } else {
         pq = pq.eq("group_id", selectedGroup);
       }
@@ -84,7 +94,7 @@ export default function TeacherHomework() {
       setStudents(sts);
       setScopeIds(sts.map((s) => s.id));
     })();
-  }, [selectedGroup, user, isAdmin, groups]);
+  }, [selectedGroup, user, isAdmin, groups, selectedCourse]);
 
   // Load modules + assignments based on group's course (or all if admin/ALL)
   useEffect(() => {
@@ -93,6 +103,8 @@ export default function TeacherHomework() {
       if (selectedGroup && selectedGroup !== ALL) {
         const g = groups.find((x) => x.id === selectedGroup);
         if (g?.course_id) courseIds = [g.course_id];
+      } else if (selectedCourse) {
+        courseIds = [selectedCourse];
       }
       let mq = supabase.from("modules").select("id, title, position, course_id").order("position");
       if (courseIds) mq = mq.in("course_id", courseIds);
@@ -107,7 +119,7 @@ export default function TeacherHomework() {
         .eq("is_active", true);
       setAssignments((asgns || []) as Assignment[]);
     })();
-  }, [selectedGroup, groups]);
+  }, [selectedGroup, groups, selectedCourse]);
 
   const load = async () => {
     if (scopeIds === null) return;
@@ -239,13 +251,24 @@ export default function TeacherHomework() {
       <div className="max-w-6xl space-y-5">
         <div className="flex items-end justify-between gap-4 flex-wrap">
           <h1 className="text-3xl font-semibold tracking-tight">📝 Uy vazifalari</h1>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {isAdmin && courses.length > 1 && (
+              <>
+                <Label className="text-sm text-muted-foreground">Kurs</Label>
+                <Select value={selectedCourse} onValueChange={(v) => { setSelectedCourse(v); localStorage.setItem("hw_course", v); setSelectedGroup(ALL); }}>
+                  <SelectTrigger className="w-[200px]"><SelectValue placeholder="Kurs" /></SelectTrigger>
+                  <SelectContent>
+                    {courses.map((c) => <SelectItem key={c.id} value={c.id}>{c.title}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </>
+            )}
             <Label className="text-sm text-muted-foreground">Guruh</Label>
             <Select value={selectedGroup} onValueChange={setSelectedGroup}>
               <SelectTrigger className="w-[220px]"><SelectValue placeholder="Guruhni tanlang" /></SelectTrigger>
               <SelectContent>
                 {isAdmin && <SelectItem value={ALL}>Barcha guruhlar</SelectItem>}
-                {groups.map((g) => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
+                {groups.filter((g) => !isAdmin || !selectedCourse || g.course_id === selectedCourse).map((g) => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
