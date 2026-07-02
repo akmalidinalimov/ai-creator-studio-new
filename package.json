@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "check:config": "node scripts/check-config-toml.mjs"
   },
   "dependencies": {
