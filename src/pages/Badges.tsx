@@ -17,17 +17,35 @@ export default function Badges() {
   const { i18n } = useTranslation();
   const [badges, setBadges] = useState<Badge[]>([]);
   const [earned, setEarned] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(false);
     (async () => {
-      const [{ data: all }, { data: mine }] = await Promise.all([
-        supabase.from("badges").select("*").order("position"),
-        user ? supabase.from("user_badges").select("badge_id").eq("user_id", user.id) : Promise.resolve({ data: [] } as any),
-      ]);
-      setBadges((all as any) || []);
-      setEarned(new Set(((mine as any) || []).map((r: any) => r.badge_id)));
+      try {
+        const [allRes, mineRes] = await Promise.all([
+          supabase.from("badges").select("*").order("position"),
+          user ? supabase.from("user_badges").select("badge_id").eq("user_id", user.id) : Promise.resolve({ data: [], error: null } as any),
+        ]);
+        if (allRes.error) throw allRes.error;
+        if ((mineRes as any).error) throw (mineRes as any).error;
+        if (cancelled) return;
+        setBadges((allRes.data as any) || []);
+        setEarned(new Set((((mineRes as any).data) || []).map((r: any) => r.badge_id)));
+      } catch (e) {
+        if (cancelled) return;
+        console.error("[Badges] load failed", e);
+        setError(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     })();
-  }, [user]);
+    return () => { cancelled = true; };
+  }, [user, reloadKey]);
 
   const lng = (i18n.language || "uz").slice(0, 2);
   const pickName = (b: Badge) => (lng === "ru" ? b.name_ru : lng === "en" ? b.name_en : b.name_uz);
@@ -42,6 +60,29 @@ export default function Badges() {
           <h1 className="text-3xl font-semibold tracking-tight">🏅 Nishonlar</h1>
           <p className="text-sm text-muted-foreground mt-1">{earnedCount} / {badges.length} olingan</p>
         </div>
+        {loading && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Card key={i} className="p-5 h-28 animate-pulse bg-muted/40" />
+            ))}
+          </div>
+        )}
+        {!loading && error && (
+          <Card className="p-8 text-center">
+            <p className="text-sm text-muted-foreground">Nishonlarni yuklab bo'lmadi.</p>
+            <button
+              type="button"
+              onClick={() => setReloadKey((k) => k + 1)}
+              className="mt-3 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+            >
+              Qayta urinish
+            </button>
+          </Card>
+        )}
+        {!loading && !error && badges.length === 0 && (
+          <Card className="p-8 text-center text-sm text-muted-foreground">Hali nishonlar yo'q</Card>
+        )}
+        {!loading && !error && badges.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {badges.map((b) => {
             const got = earned.has(b.id);
@@ -54,6 +95,7 @@ export default function Badges() {
             );
           })}
         </div>
+        )}
       </div>
     </PageShell>
   );

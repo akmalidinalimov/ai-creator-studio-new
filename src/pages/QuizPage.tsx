@@ -20,20 +20,42 @@ export default function QuizPage() {
   const [moduleTitle, setModuleTitle] = useState("");
   const [courseId, setCourseId] = useState<string | null>(null);
   const [gradeMap, setGradeMap] = useState<Record<string, { correct_index: number; explanation: string | null; is_correct: boolean }>>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
+    if (!moduleId) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(false);
     (async () => {
-      if (!moduleId) return;
-      const { data: m } = await supabase.from("modules").select("title, course_id").eq("id", moduleId).maybeSingle();
-      setModuleTitle(m?.title || ""); setCourseId(m?.course_id || null);
-      const { data } = await supabase.rpc("get_quiz_questions_for_module" as any, { _module_id: moduleId });
-      setQuestions((data as any[]) || []);
+      try {
+        const { data: m, error: mErr } = await supabase.from("modules").select("title, course_id").eq("id", moduleId).maybeSingle();
+        if (mErr) throw mErr;
+        if (cancelled) return;
+        setModuleTitle(m?.title || ""); setCourseId(m?.course_id || null);
+        const { data, error: qErr } = await supabase.rpc("get_quiz_questions_for_module" as any, { _module_id: moduleId });
+        if (qErr) throw qErr;
+        if (cancelled) return;
+        setQuestions((data as any[]) || []);
+      } catch (e) {
+        if (cancelled) return;
+        console.error("[QuizPage] load failed", e);
+        setError(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     })();
-  }, [moduleId]);
+    return () => { cancelled = true; };
+  }, [moduleId, reloadKey]);
 
   const submit = async () => {
-    if (!user || !moduleId) return;
+    if (!user || !moduleId || submitting) return;
+    setSubmitting(true);
     const { data, error } = await supabase.rpc("grade_quiz_attempt" as any, { _module_id: moduleId, _answers: answers as any });
+    setSubmitting(false);
     if (error) { toast.error(error.message); return; }
     const res = (data as any) || {};
     const pct = Number(res.score || 0);
@@ -53,18 +75,33 @@ export default function QuizPage() {
           <h1 className="text-3xl font-semibold tracking-tight mt-2">{t("quiz.headerWith", { title: moduleTitle })}</h1>
           <p className="text-muted-foreground mt-1">{t("quiz.passLine")}</p>
         </div>
-        {questions.map((q, i) => (
+        {loading && (
+          <div className="space-y-3">
+            {Array.from({ length: 3 }).map((_, i) => <Card key={i} className="p-5 h-32 animate-pulse bg-muted/40" />)}
+          </div>
+        )}
+        {!loading && error && (
+          <Card className="p-8 text-center">
+            <p className="text-sm text-muted-foreground">Testni yuklab bo'lmadi.</p>
+            <Button variant="outline" className="mt-3" onClick={() => setReloadKey((k) => k + 1)}>Qayta urinish</Button>
+          </Card>
+        )}
+        {!loading && !error && questions.length === 0 && (
+          <Card className="p-8 text-center text-sm text-muted-foreground">Bu modul uchun test yo'q</Card>
+        )}
+        {!loading && !error && questions.map((q, i) => (
           <Card key={q.id} className="p-5 shadow-soft space-y-3">
-            <div className="font-medium">{i + 1}. {q.question}</div>
-            <div className="space-y-2">
+            <div className="font-medium" id={`q-${q.id}`}>{i + 1}. {q.question}</div>
+            <div className="space-y-2" role="radiogroup" aria-labelledby={`q-${q.id}`}>
               {(q.options as string[]).map((opt, oi) => {
                 const selected = answers[q.id] === oi;
                 const g = gradeMap[q.id];
                 const correct = submitted && g && g.correct_index === oi;
                 const wrong = submitted && selected && !correct;
                 return (
-                  <button key={oi} onClick={() => !submitted && setAnswers({ ...answers, [q.id]: oi })}
-                    className={`w-full text-left text-sm px-3 py-2.5 rounded-md border transition-colors ${
+                  <button key={oi} type="button" role="radio" aria-checked={selected} disabled={submitted}
+                    onClick={() => !submitted && setAnswers({ ...answers, [q.id]: oi })}
+                    className={`w-full text-left text-sm px-3 py-2.5 rounded-md border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
                       submitted ? (correct ? "border-foreground bg-muted" : wrong ? "border-destructive/40 bg-destructive/5" : "border-border")
                       : selected ? "border-foreground bg-muted" : "border-border hover:bg-muted/40"
                     }`}>
@@ -80,9 +117,10 @@ export default function QuizPage() {
             {submitted && gradeMap[q.id]?.explanation && <p className="text-xs text-muted-foreground pt-1">{gradeMap[q.id]?.explanation}</p>}
           </Card>
         ))}
+        {!loading && !error && questions.length > 0 && (
         <div className="flex gap-3">
           {!submitted ? (
-            <Button onClick={submit} disabled={Object.keys(answers).length < questions.length}>{t("quiz.submitAnswers")}</Button>
+            <Button onClick={submit} disabled={submitting || Object.keys(answers).length < questions.length}>{submitting ? "…" : t("quiz.submitAnswers")}</Button>
           ) : (
             <>
               <Button onClick={() => { setAnswers({}); setSubmitted(false); setGradeMap({}); }}>{t("quiz.tryAgain")}</Button>
@@ -90,6 +128,7 @@ export default function QuizPage() {
             </>
           )}
         </div>
+        )}
       </div>
     </PageShell>
   );

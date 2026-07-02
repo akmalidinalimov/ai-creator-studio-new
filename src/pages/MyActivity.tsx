@@ -70,6 +70,8 @@ export default function MyActivity() {
   const { user } = useAuth();
   const { t, i18n } = useTranslation();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   const [totalSeconds, setTotalSeconds] = useState(0);
   const [completedCount, setCompletedCount] = useState(0);
@@ -87,7 +89,11 @@ export default function MyActivity() {
 
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(false);
     (async () => {
+     try {
       // daily_watch_summary.watch_date is stored in Asia/Tashkent — compute windows/keys in Tashkent.
       const tkStr = (n: number): string => {
         const base = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tashkent" }).format(new Date());
@@ -214,10 +220,14 @@ export default function MyActivity() {
       );
 
       setLogins((authRows || []).filter((r: any) => r.event === "login" || r.event === "magic_login"));
-
-      setLoading(false);
+     } catch (e) {
+       if (!cancelled) { console.error("[MyActivity] load failed", e); setError(true); }
+     } finally {
+       if (!cancelled) setLoading(false);
+     }
     })();
-  }, [user, i18n.language]);
+    return () => { cancelled = true; };
+  }, [user, i18n.language, reloadKey]);
 
   const maxDay = Math.max(1, ...days.map((d) => d.seconds));
   const cellShade = (s: number) => {
@@ -236,6 +246,19 @@ export default function MyActivity() {
           <h1 className="text-3xl font-semibold tracking-tight">{t("activity.title")}</h1>
           <p className="text-muted-foreground mt-1">{t("activity.subtitle")}</p>
         </div>
+
+        {!loading && error && (
+          <Card className="p-6 text-center">
+            <p className="text-sm text-muted-foreground">Faoliyat ma'lumotlarini yuklab bo'lmadi.</p>
+            <button
+              type="button"
+              onClick={() => setReloadKey((k) => k + 1)}
+              className="mt-3 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+            >
+              Qayta urinish
+            </button>
+          </Card>
+        )}
 
         {/* Lifetime tiles */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
