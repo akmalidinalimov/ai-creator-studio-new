@@ -1,7 +1,8 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { AppRole, resolveRole, hasSuperadmin } from "@/lib/roles";
+import { isGenuineSignIn } from "@/lib/authEvents";
 import i18n from "@/i18n";
 
 interface AuthCtx {
@@ -32,11 +33,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // Monotonic token so a slower role fetch can't overwrite a newer one
+  // (both onAuthStateChange and getSession call loadRole — latest wins).
+  const roleReqRef = useRef(0);
+  // Last user id we've seen, to tell a genuine interactive sign-in apart from
+  // a session restore / token refresh / tab-focus re-emit of SIGNED_IN.
+  const prevUserIdRef = useRef<string | null>(null);
+
   const loadRole = async (uid: string) => {
+    const reqId = ++roleReqRef.current;
     const { data } = await supabase
       .from("user_roles")
       .select("role")
       .eq("user_id", uid);
+    // A newer load (or a sign-out) superseded this one — drop the stale result.
+    if (reqId !== roleReqRef.current) return;
     const roles = (data ?? []).map((r: any) => r.role as string);
     // Centralized precedence (handles superadmin >= admin) — see src/lib/roles.ts.
     setRole(resolveRole(roles));
@@ -49,14 +60,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setSession(s);
       setUser(s?.user ?? null);
       if (s?.user) {
+        // Capture the id once so async closures below can't read a stale user.
+        const uid = s.user.id;
         // defer DB call
-        setTimeout(() => loadRole(s.user.id), 0);
+        setTimeout(() => loadRole(uid), 0);
         // Sync preferred language from profile
         setTimeout(() => {
           supabase
             .from("profiles")
             .select("preferred_language")
-            .eq("id", s.user.id)
+            .eq("id", uid)
             .maybeSingle()
             .then(({ data }) => {
               const lng = (data as any)?.preferred_language;
@@ -65,20 +78,24 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               }
             });
         }, 0);
-        if (event === "SIGNED_IN") {
+        // Only fire login side effects on a GENUINE sign-in — not on a token
+        // refresh, tab-focus re-emit, or a page-reload session restore (those
+        // keep the same uid or arrive as INITIAL_SESSION), which would spam
+        // admin notifications and inflate the auth_events login count.
+        if (isGenuineSignIn(event, prevUserIdRef.current, uid)) {
           // Notify admins on first sign-in (new student) — fire-and-forget.
           setTimeout(() => {
             supabase
               .from("profiles")
               .select("created_at")
-              .eq("id", s.user.id)
+              .eq("id", uid)
               .maybeSingle()
               .then(({ data }) => {
                 const created = (data as any)?.created_at;
                 if (!created) return;
                 if (Date.now() - new Date(created).getTime() < 5 * 60 * 1000) {
                   supabase.functions.invoke("notify-admin-new-student", {
-                    body: { user_id: s.user.id },
+                    body: { user_id: uid },
                   }).catch(() => {});
                 }
               });
@@ -90,14 +107,18 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             }).catch(() => {
               // Fallback: client-side insert (no IP)
               supabase.from("auth_events").insert({
-                user_id: s.user.id,
+                user_id: uid,
                 event: "sign_in",
                 user_agent: navigator.userAgent.slice(0, 200),
               } as any).then(() => {});
             });
           }, 0);
         }
+        prevUserIdRef.current = uid;
       } else {
+        // Sign-out: invalidate any in-flight role load and reset.
+        roleReqRef.current++;
+        prevUserIdRef.current = null;
         setRole(null);
         setIsSuperadmin(false);
       }
@@ -107,8 +128,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     supabase.auth.getSession().then(({ data: { session: s } }) => {
       setSession(s);
       setUser(s?.user ?? null);
-      if (s?.user) loadRole(s.user.id).finally(() => setLoading(false));
-      else setLoading(false);
+      if (s?.user) {
+        // Mark this session as already-known so the listener's INITIAL_SESSION/
+        // SIGNED_IN re-emit for the same user isn't treated as a new login.
+        prevUserIdRef.current = s.user.id;
+        loadRole(s.user.id).finally(() => setLoading(false));
+      } else setLoading(false);
     });
 
     return () => sub.subscription.unsubscribe();

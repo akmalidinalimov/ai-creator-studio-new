@@ -9,6 +9,7 @@ import { RequireAuth } from "@/components/RequireAuth";
 import { useAuth } from "@/contexts/AuthContext";
 import { HtmlLangSync } from "@/components/HtmlLangSync";
 import ImpersonationBanner from "@/components/ImpersonationBanner";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 const StudentOrStaffRedirect = ({ children }: { children: JSX.Element }) => {
   const { role } = useAuth();
@@ -81,6 +82,7 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <HtmlLangSync />
+        <ErrorBoundary label="app-root">
         <AuthProvider>
           <Routes>
             <Route path="/" element={<Landing />} />
@@ -136,6 +138,7 @@ const App = () => (
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>
+        </ErrorBoundary>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>

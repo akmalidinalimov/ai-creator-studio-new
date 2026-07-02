@@ -15,22 +15,41 @@ export default function Leaderboard() {
   const [rows, setRows] = useState<Row[]>([]);
   const [my, setMy] = useState<{ rank: number | null; total: number; score: number | null } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(false);
     (async () => {
-      // Per-course leaderboard: ranks within the student's own course only.
-      const [{ data: top }, { data: mine }] = await Promise.all([
-        user
-          ? supabase.rpc("leaderboard_top_for_user" as any, { uid: user.id, _limit: 10 })
-          : supabase.rpc("leaderboard_top", { _limit: 10 }),
-        user ? supabase.rpc("leaderboard_my_rank_for_user" as any, { uid: user.id }) : Promise.resolve({ data: null } as any),
-      ]);
-      const tops = (top as any) || [];
-      setRows(tops);
-      const m: any = Array.isArray(mine) ? mine[0] : (mine as any)?.[0];
-      if (m) setMy({ rank: m.rank, total: m.total, score: m.score });
-      setLoading(false);
+      try {
+        // Per-course leaderboard: ranks within the student's own course only.
+        const [topRes, mineRes] = await Promise.all([
+          user
+            ? supabase.rpc("leaderboard_top_for_user" as any, { uid: user.id, _limit: 10 })
+            : supabase.rpc("leaderboard_top", { _limit: 10 }),
+          user ? supabase.rpc("leaderboard_my_rank_for_user" as any, { uid: user.id }) : Promise.resolve({ data: null, error: null } as any),
+        ]);
+        if (topRes.error) throw topRes.error;
+        if ((mineRes as any).error) throw (mineRes as any).error;
+        if (cancelled) return;
+        const tops = (topRes.data as any) || [];
+        setRows(tops);
+        const mine = (mineRes as any).data;
+        const m: any = Array.isArray(mine) ? mine[0] : (mine as any)?.[0];
+        setMy(m ? { rank: m.rank, total: m.total, score: m.score } : null);
+      } catch (e) {
+        if (cancelled) return;
+        console.error("[Leaderboard] load failed", e);
+        setError(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     })();
-  }, [user]);
+    return () => {
+      cancelled = true;
+    };
+  }, [user, reloadKey]);
 
   return (
     <PageShell>
@@ -56,10 +75,22 @@ export default function Leaderboard() {
             </thead>
             <tbody>
               {loading && <tr><td colSpan={5} className="px-4 py-6 text-center text-muted-foreground">Yuklanmoqda…</td></tr>}
-              {!loading && rows.length === 0 && (
+              {!loading && error && (
+                <tr><td colSpan={5} className="px-4 py-6 text-center">
+                  <p className="text-sm text-muted-foreground">Reytingni yuklab bo'lmadi.</p>
+                  <button
+                    type="button"
+                    onClick={() => setReloadKey((k) => k + 1)}
+                    className="mt-2 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                  >
+                    Qayta urinish
+                  </button>
+                </td></tr>
+              )}
+              {!loading && !error && rows.length === 0 && (
                 <tr><td colSpan={5} className="px-4 py-6 text-center text-muted-foreground">Hali ma'lumot yo'q</td></tr>
               )}
-              {rows.map((r) => {
+              {!error && rows.map((r) => {
                 const mine = r.user_id === user?.id;
                 return (
                   <tr key={r.user_id} className={`border-t ${mine ? "bg-primary/5 font-semibold" : ""}`}>

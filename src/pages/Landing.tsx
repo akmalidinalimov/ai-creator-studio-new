@@ -27,14 +27,12 @@ interface LandingCopy {
   faq?: { q: string; a: string }[];
 }
 
-const SHOWCASE = [
-  { url: "https://images.unsplash.com/photo-1542831371-29b0f74f9713?w=800&q=80", name: "Aziza · Tashkent", type: "Mini-film · Module 3" },
-  { url: "https://images.unsplash.com/photo-1635776062127-d379bfcba9f8?w=800&q=80", name: "Bekzod · Samarkand", type: "Brand identity · Module 2" },
-  { url: "https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?w=800&q=80", name: "Madina · Almaty", type: "Editorial series · Module 2" },
-  { url: "https://images.unsplash.com/photo-1633101585272-9e0b0c3d9c3c?w=800&q=80", name: "Rustam · Bishkek", type: "Music video · Module 3" },
-  { url: "https://images.unsplash.com/photo-1655720828018-edd2daec9349?w=800&q=80", name: "Nilufar · Bukhara", type: "Product launch · Module 5" },
-  { url: "https://images.unsplash.com/photo-1614729939124-032d1e6d7b48?w=800&q=80", name: "Diyor · Khiva", type: "Short film · Module 4" },
-];
+// Real student work only. The previous entries were fabricated names/cities
+// over Unsplash stock photos — invented social proof on a real school's page,
+// which is a trust/legal risk. Populate this with consented student projects
+// (self-hosted assets), or wire it to a curated table. Until then the showcase
+// section stays hidden (guarded by SHOWCASE.length below) rather than faked.
+const SHOWCASE: { url: string; name: string; type: string }[] = [];
 
 const Brand = ({ to = "/" }: { to?: string }) => (
   <Link to={to} className="flex items-center gap-2 font-semibold tracking-tight">
@@ -311,6 +309,7 @@ export default function Landing() {
         </div>
       </section>
 
+      {SHOWCASE.length > 0 && (
       <section id="showcase" className="py-20 md:py-28">
         <div className="container">
           <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-3">{t("landing.showcase.heading")}</h2>
@@ -332,6 +331,7 @@ export default function Landing() {
           </div>
         </div>
       </section>
+      )}
 
       <section id="pricing" className="py-20 md:py-28 bg-secondary/30">
         <div className="container max-w-xl">
