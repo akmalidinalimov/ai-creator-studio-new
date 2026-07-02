@@ -3,6 +3,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { computeLeaves, pickNextLeaf } from "./homework-routing.ts";
 import { effectiveLeafGrades, summarizeHomework } from "./homework-stats.ts";
+import { isDuplicateError, parseUpdateId } from "./idempotency.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -4653,6 +4654,20 @@ Deno.serve(async (req) => {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const admin = createClient(SUPABASE_URL, SERVICE_KEY);
+
+  // Idempotency (M10 / BOT-1): Telegram retries any update we don't 200 within
+  // ~60s. Record each update_id once; a unique violation means this is a retry,
+  // so ack and stop before re-running side effects. Fail-OPEN: any other error
+  // (e.g. the table not migrated yet) falls through to normal processing.
+  const updateId = parseUpdateId(update);
+  if (updateId !== null) {
+    const { error: dedupeErr } = await admin
+      .from("bot_processed_updates")
+      .insert({ update_id: updateId });
+    if (isDuplicateError(dedupeErr)) {
+      return new Response("ok (duplicate update)", { status: 200, headers: corsHeaders });
+    }
+  }
 
   // Diagnostic: log every incoming update shape (top-level keys + chat type/thread)
   try {
