@@ -106,7 +106,7 @@ export default function LessonPage() {
         .eq("user_id", user.id).in("lesson_id", lessonIds.length ? lessonIds : ["00000000-0000-0000-0000-000000000000"]);
       setCompleted(new Set((prog || []).filter((p: any) => p.completed_at).map((p: any) => p.lesson_id)));
       const cur = (prog || []).find((p: any) => p.lesson_id === lessonId);
-      setProgress(cur || null);
+      setProgress(cur ? { last_position_seconds: cur.last_position_seconds ?? 0 } : null);
       // Seed the watch-gate from previously stored progress for this lesson.
       watchMaxPosRef.current = Math.max(Number(cur?.max_position_seconds) || 0, Number(cur?.last_position_seconds) || 0);
       watchDurRef.current = Number(cur?.duration_seconds_v2) || 0;

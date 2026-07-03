@@ -15,11 +15,11 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
-    /* Linting */
-    "strict": false,
+    /* Linting — strict on (codebase is strict-clean as of 2026-07-03). */
+    "strict": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noImplicitAny": false,
+    "noImplicitAny": true,
     "noFallthroughCasesInSwitch": false,
 
     "paths": {

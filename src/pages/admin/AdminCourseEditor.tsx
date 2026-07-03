@@ -246,11 +246,11 @@ export default function AdminCourseEditor() {
                   onToggle={() => setExpandedModules((s) => {
                     const n = new Set(s); n.has(m.id) ? n.delete(m.id) : n.add(m.id); return n;
                   })}
-                  onUpdate={(patch) => updateModule(m.id, patch)}
+                  onUpdate={(patch: any) => updateModule(m.id, patch)}
                   onDelete={() => deleteModule(m.id)}
                   onAddLesson={() => addLesson(m.id)}
-                  onEditLesson={(id) => setDrawerLessonId(id)}
-                  onLessonDragEnd={(e) => onLessonDragEnd(m.id, e)}
+                  onEditLesson={(id: string) => setDrawerLessonId(id)}
+                  onLessonDragEnd={(e: any) => onLessonDragEnd(m.id, e)}
                   sensors={sensors}
                   onOpenQuiz={() => setQuizModuleId(m.id)}
                   t={t}
