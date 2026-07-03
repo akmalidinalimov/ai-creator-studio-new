@@ -6,6 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { SuzaniStar } from "@/components/landing/SuzaniStar";
+import { PixelDissolve } from "@/components/landing/PixelDissolve";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import {
   ArrowRight, Play, CheckCircle2, Film, Wand2, DollarSign,
@@ -122,63 +123,99 @@ export default function Landing() {
   const outcomeIcons = [Film, Wand2, DollarSign];
   const stepIcons = [UserPlus, BookOpen, Rocket];
 
+  const renderHeadlineDark = (text: string) => {
+    const parts = text.split(/(\{[^}]+\})/g);
+    return parts.map((p, i) =>
+      p.startsWith("{") && p.endsWith("}")
+        ? <span key={i} className="text-[#6FE6CE]">{p.slice(1, -1)}</span>
+        : <span key={i}>{p}</span>
+    );
+  };
+
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className={`fixed top-0 inset-x-0 z-40 transition-all duration-300 ${scrolled ? "bg-background/85 backdrop-blur-md border-b border-border" : "bg-transparent"}`}>
+    <div className="min-h-screen bg-background text-foreground font-brandbody">
+      <header className={`fixed top-0 inset-x-0 z-40 transition-all duration-300 ${scrolled ? "bg-[#0A0D0C]/85 backdrop-blur-md border-b border-white/10" : "bg-transparent"}`}>
         <div className="container flex h-16 items-center justify-between gap-4">
-          <Brand />
-          <nav className="hidden md:flex items-center gap-7 text-sm">
-            <a href="#curriculum" className="text-muted-foreground hover:text-foreground transition-colors">{t("landing.nav.curriculum")}</a>
-            <a href="#instructor" className="text-muted-foreground hover:text-foreground transition-colors">{t("landing.nav.instructor")}</a>
-            <a href="#pricing" className="text-muted-foreground hover:text-foreground transition-colors">{t("landing.nav.pricing")}</a>
-            <a href="#faq" className="text-muted-foreground hover:text-foreground transition-colors">{t("landing.nav.faq")}</a>
+          <Link to="/" className="flex items-center gap-2 font-display text-[19px] font-semibold text-white tracking-tight">
+            <span className="text-[#2FB39B]">✦</span> AI Creators
+          </Link>
+          <nav className="hidden md:flex items-center gap-8 text-sm font-brandbody">
+            <a href="#curriculum" className="text-[#8DA39D] hover:text-white transition-colors">{t("landing.nav.curriculum")}</a>
+            <a href="#instructor" className="text-[#8DA39D] hover:text-white transition-colors">{t("landing.nav.instructor")}</a>
+            <a href="#pricing" className="text-[#8DA39D] hover:text-white transition-colors">{t("landing.nav.pricing")}</a>
+            <a href="#faq" className="text-[#8DA39D] hover:text-white transition-colors">{t("landing.nav.faq")}</a>
           </nav>
           <div className="flex items-center gap-2">
             <LanguageSwitcher />
-            <Button asChild variant="outline" size="sm" className="hidden sm:inline-flex">
+            <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex text-white hover:bg-white/10 hover:text-white">
               <Link to="/login">{t("landing.nav.signIn")}</Link>
             </Button>
-            <Button asChild size="sm">
+            <Button asChild size="sm" className="bg-gradient-to-b from-[#6FE6CE] to-[#2FB39B] text-[#052220] hover:opacity-90">
               <Link to="/signup">{t("landing.nav.startFree")} <ArrowRight className="h-3.5 w-3.5" /></Link>
             </Button>
           </div>
         </div>
       </header>
 
-      <section className="relative pt-28 md:pt-32 pb-16 md:pb-24 overflow-hidden">
-        <div className="absolute top-32 -left-16 text-primary/[0.07] pointer-events-none hidden md:block">
-          <SuzaniStar size={520} />
-        </div>
-        <div className="container relative grid md:grid-cols-2 gap-10 lg:gap-16 items-center">
-          <div className="space-y-6 max-w-xl">
-            <h1 className="font-serif text-[40px] md:text-[56px] leading-[1.05] font-semibold tracking-tight">{renderHeadline(headline)}</h1>
-            <p className="text-lg text-muted-foreground leading-relaxed">{sub}</p>
-            <div className="flex flex-wrap gap-3 pt-2">
-              <Button asChild size="lg" className="gap-2"><Link to="/signup">{t("landing.hero.startLearning")} <ArrowRight className="h-4 w-4" /></Link></Button>
-              <Button asChild size="lg" variant="outline"><a href="#curriculum">{t("landing.hero.viewCurriculum")}</a></Button>
+      <section className="relative overflow-hidden bg-[#0A0D0C] text-[#F3F7F5]">
+        <div aria-hidden className="pointer-events-none absolute -top-[10%] -right-[8%] w-[70%] h-[80%] blur-2xl"
+          style={{ background: "radial-gradient(closest-side, rgba(47,179,155,.18), transparent 70%)" }} />
+        <div aria-hidden className="pointer-events-none absolute inset-0 opacity-50"
+          style={{
+            backgroundImage: "linear-gradient(rgba(120,180,168,.10) 1px,transparent 1px),linear-gradient(90deg,rgba(120,180,168,.10) 1px,transparent 1px)",
+            backgroundSize: "72px 72px",
+            maskImage: "radial-gradient(120% 100% at 20% 20%,#000,transparent 75%)",
+            WebkitMaskImage: "radial-gradient(120% 100% at 20% 20%,#000,transparent 75%)",
+          }} />
+        <PixelDissolve className="absolute inset-0 w-full h-full" />
+
+        <div className="container relative z-[3] grid lg:grid-cols-[1.15fr_.85fr] gap-10 items-center min-h-screen pt-28 pb-16">
+          <div className="hero-rise max-w-2xl">
+            <span className="inline-flex items-center gap-2.5 text-[13.5px] font-semibold text-[#6FE6CE] border border-white/10 bg-[rgba(47,179,155,.06)] rounded-full px-4 py-2">
+              <span className="w-[7px] h-[7px] rounded-full bg-[#6FE6CE] shadow-[0_0_12px_#6FE6CE]" /> {t("landing.hero.badge", "14-hour curriculum · Telegram-first")}
+            </span>
+            <h1 className="font-display font-semibold text-[clamp(44px,6.4vw,88px)] leading-[.98] mt-6 text-balance">
+              {renderHeadlineDark(headline)} <span className="text-[#2FB39B] text-[.7em] align-[.06em]">✦</span>
+            </h1>
+            <p className="mt-6 text-[clamp(17px,1.5vw,20px)] leading-relaxed text-[#C4D3CE] max-w-[52ch]">{sub}</p>
+            <div className="mt-9 flex flex-wrap gap-3.5">
+              <Button asChild size="lg" className="bg-gradient-to-b from-[#6FE6CE] to-[#2FB39B] text-[#052220] shadow-[0_10px_30px_rgba(47,179,155,.32)] hover:-translate-y-0.5 transition-transform">
+                <Link to="/signup">{t("landing.hero.startLearning")} <ArrowRight className="h-4 w-4" /></Link>
+              </Button>
+              <Button asChild size="lg" variant="outline" className="border-white/15 bg-transparent text-white hover:bg-white/10 hover:text-white">
+                <a href="#curriculum">{t("landing.hero.viewCurriculum")}</a>
+              </Button>
             </div>
-            <div className="flex items-center gap-3 pt-4">
-              <div className="flex -space-x-2">
-                {[0, 1, 2, 3].map((i) => (
-                  <div key={i} className="w-8 h-8 rounded-full border-2 border-background" style={{ background: `hsl(${174 + i * 20}, 50%, ${40 + i * 8}%)` }} />
+            <div className="mt-11 flex items-center gap-5 flex-wrap">
+              <div className="flex -space-x-3">
+                {["A", "M", "N", "R"].map((c, i) => (
+                  <span key={i} className="w-11 h-11 rounded-full border-2 border-[#0A0D0C] flex items-center justify-center font-bold text-[15px] text-[#052220]" style={{ background: "linear-gradient(150deg,#6FE6CE,#0F766E)" }}>{c}</span>
                 ))}
               </div>
-              <p className="text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">{t("landing.hero.trustCountStrong")}</span> · 4.9/5 {t("landing.trust.rating")}
+              <p className="text-sm text-[#8DA39D] leading-snug">
+                <span className="text-white font-bold">{t("landing.hero.trustCountStrong")}</span> {t("landing.trust.building", "already building")}<br />
+                <span className="text-[#D9B45A] tracking-widest">★★★★★</span> 4.9 · {t("landing.trust.rating")}
               </p>
             </div>
           </div>
 
-          <div className="relative aspect-[5/4] rounded-[22px] overflow-hidden shadow-elevated"
-               style={{ background: "linear-gradient(135deg, hsl(174 78% 26%) 0%, hsl(180 60% 8%) 100%)" }}>
-            <div className="absolute inset-0 opacity-60" style={{ background: "radial-gradient(circle at 70% 30%, hsl(43 89% 38% / 0.35) 0%, transparent 60%)" }} />
-            <div className="absolute inset-0 flex items-center justify-center">
-              <button aria-label={t("landing.hero.playLabel")} className="w-20 h-20 rounded-full bg-primary/95 text-primary-foreground flex items-center justify-center shadow-[0_0_0_8px_hsl(172_66%_50%/0.2)] hover:scale-105 transition-transform">
-                <Play className="h-8 w-8 ml-1" fill="currentColor" />
-              </button>
-            </div>
-            <div className="absolute bottom-4 left-4 px-3 py-1.5 rounded-full bg-background/90 text-xs font-medium backdrop-blur-sm">
-              {t("landing.hero.sampleBadge")}
+          {/* Floating product card — the loop itself is the hero */}
+          <div className="hidden lg:flex hero-rise justify-center" style={{ animationDelay: ".1s" }}>
+            <div className="w-[330px] rounded-[26px] p-7 border border-white/10 shadow-[0_40px_90px_rgba(0,0,0,.55)]"
+              style={{ background: "linear-gradient(160deg,rgba(20,32,30,.9),rgba(10,16,15,.92))", backdropFilter: "blur(6px)" }}>
+              <div className="flex items-center gap-3.5">
+                <div className="w-16 h-16 rounded-full flex items-center justify-center font-display font-semibold text-[28px] text-[#052220]" style={{ background: "linear-gradient(150deg,#6FE6CE,#0F766E)" }}>A</div>
+                <div><div className="font-display font-semibold text-[19px] text-white">Akmal Alimov</div><div className="text-[13px] text-[#8DA39D] mt-0.5">AI Creator · Level 4</div></div>
+              </div>
+              <div className="font-display font-bold text-[64px] leading-none mt-6 text-white">30<span className="text-[#6FE6CE] text-[26px]">-day</span></div>
+              <div className="text-sm text-[#8DA39D] mt-1.5">streak · top 5% this month</div>
+              <div className="h-2 rounded-md bg-white/[.06] mt-5 overflow-hidden"><div className="h-full w-[72%]" style={{ background: "linear-gradient(90deg,#2FB39B,#6FE6CE)" }} /></div>
+              <div className="flex justify-between mt-3.5 text-[12.5px] text-[#8DA39D]"><span>Module 3 of 5</span><span>72% complete</span></div>
+              <div className="flex gap-2 mt-5">
+                {[["#4", "Rank"], ["27", "Lessons"], ["8", "Badges"]].map(([n, l]) => (
+                  <div key={l} className="flex-1 text-center border border-white/10 rounded-2xl py-3"><div className="font-display font-semibold text-[24px] text-[#6FE6CE]">{n}</div><div className="text-[11px] text-[#8DA39D] mt-0.5 uppercase tracking-wider">{l}</div></div>
+                ))}
+              </div>
             </div>
           </div>
         </div>

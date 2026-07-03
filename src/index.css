@@ -161,3 +161,12 @@
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* Brand type utilities (landing) */
+.font-display { font-family: 'Clash Display', ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.02em; }
+.font-brandbody { font-family: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif; }
+
+/* hero entrance */
+@keyframes heroRise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+.hero-rise { animation: heroRise 0.7s cubic-bezier(0.16,1,0.3,1) both; }
+@media (prefers-reduced-motion: reduce) { .hero-rise { animation: none; } }
