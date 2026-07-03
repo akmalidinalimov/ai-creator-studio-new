@@ -3,76 +3,100 @@ import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ProgressRing } from "@/components/dashboard/ProgressRing";
+import { Flame, Target, Award, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 
 export function EngagementTiles() {
   const { user } = useAuth();
+  const [loading, setLoading] = useState(true);
   const [streak, setStreak] = useState(0);
   const [goal, setGoal] = useState({ target: 1, done: 0 });
   const [badgeStats, setBadgeStats] = useState({ earned: 0, total: 0 });
 
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
     (async () => {
-      const [{ data: s }, { data: g }, { data: badges }, { data: mine }] = await Promise.all([
-        supabase.from("streaks").select("current_streak").eq("user_id", user.id).maybeSingle(),
-        supabase.rpc("daily_goal_progress", { uid: user.id }),
-        supabase.from("badges").select("id"),
-        supabase.from("user_badges").select("badge_id, earned_at").eq("user_id", user.id),
-      ]);
-      setStreak(s?.current_streak || 0);
-      const row: any = Array.isArray(g) ? g[0] : (g as any);
-      if (row) setGoal({ target: row.target ?? 1, done: row.done ?? 0 });
-      setBadgeStats({ earned: (mine || []).length, total: (badges || []).length });
+      try {
+        const [{ data: s }, { data: g }, { data: badges }, { data: mine }] = await Promise.all([
+          supabase.from("streaks").select("current_streak").eq("user_id", user.id).maybeSingle(),
+          supabase.rpc("daily_goal_progress", { uid: user.id }),
+          supabase.from("badges").select("id"),
+          supabase.from("user_badges").select("badge_id, earned_at").eq("user_id", user.id),
+        ]);
+        if (cancelled) return;
+        setStreak(s?.current_streak || 0);
+        const row: any = Array.isArray(g) ? g[0] : (g as any);
+        if (row) setGoal({ target: row.target ?? 1, done: row.done ?? 0 });
+        setBadgeStats({ earned: (mine || []).length, total: (badges || []).length });
 
-      // Toast newly-earned badges (last 1 hour)
-      const recent = (mine || []).filter((b: any) => new Date(b.earned_at).getTime() > Date.now() - 3600_000);
-      if (recent.length) {
-        const seen = JSON.parse(localStorage.getItem("seen_badges") || "[]");
-        const namesById: Record<string, string> = {};
-        const { data: bn } = await supabase.from("badges").select("id, name_uz");
-        (bn || []).forEach((b: any) => { namesById[b.id] = b.name_uz; });
-        recent.forEach((b: any) => {
-          if (!seen.includes(b.badge_id)) {
-            toast.success(`Yangi nishon: ${namesById[b.badge_id] || ""} 🎉`);
-            seen.push(b.badge_id);
-          }
-        });
-        localStorage.setItem("seen_badges", JSON.stringify(seen));
+        // Toast newly-earned badges (last 1 hour)
+        const recent = (mine || []).filter((b: any) => new Date(b.earned_at).getTime() > Date.now() - 3600_000);
+        if (recent.length) {
+          const seen = JSON.parse(localStorage.getItem("seen_badges") || "[]");
+          const namesById: Record<string, string> = {};
+          const { data: bn } = await supabase.from("badges").select("id, name_uz");
+          (bn || []).forEach((b: any) => { namesById[b.id] = b.name_uz; });
+          recent.forEach((b: any) => {
+            if (!seen.includes(b.badge_id)) {
+              toast.success(`Yangi nishon: ${namesById[b.badge_id] || ""} 🎉`);
+              seen.push(b.badge_id);
+            }
+          });
+          localStorage.setItem("seen_badges", JSON.stringify(seen));
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
+    return () => { cancelled = true; };
   }, [user]);
 
-  const streakColor = streak === 0 ? "text-red-500" : streak < 7 ? "text-orange-500" : "text-green-500";
+  if (loading) {
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {[0, 1, 2].map((i) => <Skeleton key={i} className="h-24 rounded-xl" />)}
+      </div>
+    );
+  }
+
+  // Positive-only streak treatment: never alarm-red. Warms as it grows.
+  const streakTone = streak >= 7 ? "text-primary" : streak > 0 ? "text-orange-500" : "text-muted-foreground";
   const goalPct = Math.min(100, (goal.done / Math.max(goal.target, 1)) * 100);
-  const radius = 22, circ = 2 * Math.PI * radius;
+  const goalDone = goal.done >= goal.target;
 
   return (
-    <div className="grid grid-cols-3 gap-3">
-      <Card className="p-4 shadow-soft">
-        <div className="text-xs text-muted-foreground">🔥 Streak</div>
-        <div className={`text-2xl font-bold tabular-nums mt-1 ${streakColor}`}>{streak}</div>
-        <div className="text-xs text-muted-foreground">kun</div>
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <Card className="p-4 shadow-soft flex items-center gap-3">
+        <span className={`inline-flex items-center justify-center w-11 h-11 rounded-xl bg-muted ${streakTone}`}>
+          <Flame className="h-5 w-5" />
+        </span>
+        <div>
+          <div className="text-xs text-muted-foreground font-medium">Streak</div>
+          <div className="text-2xl font-bold tabular-nums leading-tight">{streak} <span className="text-sm font-medium text-muted-foreground">kun</span></div>
+        </div>
       </Card>
 
       <Card className="p-4 shadow-soft flex items-center justify-between gap-2">
         <div>
-          <div className="text-xs text-muted-foreground">🎯 Bugungi maqsad</div>
-          <div className="text-lg font-bold tabular-nums mt-1">{goal.done}/{goal.target}</div>
-          <div className="text-xs text-muted-foreground">dars</div>
+          <div className="text-xs text-muted-foreground font-medium flex items-center gap-1.5"><Target className="h-3.5 w-3.5" /> Bugungi maqsad</div>
+          <div className="text-2xl font-bold tabular-nums mt-1 leading-tight">{goal.done}<span className="text-muted-foreground">/{goal.target}</span> <span className="text-sm font-medium text-muted-foreground">dars</span></div>
         </div>
-        <svg width="56" height="56" className="-rotate-90 shrink-0">
-          <circle cx="28" cy="28" r={radius} fill="none" stroke="hsl(var(--muted))" strokeWidth="5" />
-          <circle cx="28" cy="28" r={radius} fill="none" stroke="hsl(var(--primary))" strokeWidth="5"
-            strokeDasharray={circ} strokeDashoffset={circ - (circ * goalPct) / 100} strokeLinecap="round" />
-        </svg>
+        <ProgressRing value={goalPct} size={52} stroke={5} className="shrink-0" label={goalDone ? "✓" : `${Math.round(goalPct)}%`} />
       </Card>
 
-      <Link to="/badges" className="block">
-        <Card className="p-4 shadow-soft hover:bg-muted/40 transition cursor-pointer h-full">
-          <div className="text-xs text-muted-foreground">🏅 Nishonlar</div>
-          <div className="text-2xl font-bold tabular-nums mt-1">{badgeStats.earned}<span className="text-muted-foreground text-base">/{badgeStats.total}</span></div>
-          <div className="text-xs text-muted-foreground">olingan</div>
+      <Link to="/badges" className="block rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+        <Card className="p-4 shadow-soft hover:bg-muted/40 hover:shadow-elevated transition-all duration-200 cursor-pointer h-full flex items-center gap-3">
+          <span className="inline-flex items-center justify-center w-11 h-11 rounded-xl bg-muted text-primary">
+            <Award className="h-5 w-5" />
+          </span>
+          <div className="flex-1">
+            <div className="text-xs text-muted-foreground font-medium">Nishonlar</div>
+            <div className="text-2xl font-bold tabular-nums leading-tight">{badgeStats.earned}<span className="text-muted-foreground text-base font-semibold">/{badgeStats.total}</span></div>
+          </div>
+          <ArrowRight className="h-4 w-4 text-muted-foreground" />
         </Card>
       </Link>
     </div>

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface Props {
   userId: string;
@@ -80,21 +81,25 @@ function WeeklyStudyTimeCard({ userId }: { userId: string }) {
   return (
     <Card className="rounded-2xl border bg-card p-4">
       <div className="text-sm font-medium text-muted-foreground">{t("weekly_study_time.title")}</div>
-      <div className="text-2xl font-semibold mt-1 tabular-nums">
-        {loading ? "—" : total > 0 ? fmtHM(total, i18n.language) : "0" + (i18n.language === "uz" ? "d" : i18n.language === "ru" ? "м" : "m")}
-      </div>
+      {loading ? (
+        <Skeleton className="h-8 w-24 mt-1" />
+      ) : (
+        <div className="text-2xl font-semibold mt-1 tabular-nums">
+          {total > 0 ? fmtHM(total, i18n.language) : "0" + (i18n.language === "uz" ? "d" : i18n.language === "ru" ? "м" : "m")}
+        </div>
+      )}
       <div className="mt-3 flex items-end gap-1.5 h-16">
-        {days.map((d) => {
+        {(loading ? Array.from({ length: 7 }, (_, i) => ({ date: String(i), seconds: 0 })) : days).map((d) => {
           const isToday = d.date === todayKey;
-          const h = d.seconds > 0 ? Math.max(8, (d.seconds / max) * 100) : 4;
+          const h = loading ? 30 + ((Number(d.date) * 17) % 60) : d.seconds > 0 ? Math.max(10, (d.seconds / max) * 100) : 5;
           return (
             <div key={d.date} className="flex-1 flex flex-col items-center gap-1 min-w-0">
               <div
-                className={`w-full rounded-t-md transition-colors ${isToday ? "bg-primary" : "bg-muted-foreground/30"}`}
+                className={`w-full rounded-md transition-[height] duration-500 ease-out ${loading ? "bg-muted animate-pulse" : isToday ? "bg-primary" : "bg-primary/25"}`}
                 style={{ height: `${h}%` }}
               />
               <div className={`text-[10px] ${isToday ? "text-primary font-medium" : "text-muted-foreground"}`}>
-                {dayLabels[dayIndex(d.date)]}
+                {loading ? "" : dayLabels[dayIndex(d.date)]}
               </div>
             </div>
           );
@@ -150,7 +155,7 @@ function CompletionForecastCard({ userId, courseId }: { userId: string; courseId
   return (
     <Card className="rounded-2xl border bg-card p-4">
       <div className="text-sm font-medium text-muted-foreground">{t("forecast.title")}</div>
-      {state.kind === "loading" && <div className="text-2xl font-semibold mt-1">—</div>}
+      {state.kind === "loading" && <Skeleton className="h-8 w-32 mt-1" />}
       {state.kind === "done" && (
         <>
           <div className="text-2xl font-semibold mt-1">{t("forecast.complete")}</div>
@@ -214,7 +219,9 @@ function ModuleProgressCard({ userId, courseId }: { userId: string; courseId?: s
     <Card className="rounded-2xl border bg-card p-4">
       <div className="text-sm font-medium text-muted-foreground">{t("modules.progress_title")}</div>
       {loading ? (
-        <div className="text-2xl font-semibold mt-1">—</div>
+        <div className="mt-3 space-y-3">
+          {[0, 1, 2].map((i) => <Skeleton key={i} className="h-8 w-full" />)}
+        </div>
       ) : rows.length === 0 ? (
         <div className="text-sm text-muted-foreground mt-2">{t("modules.not_started")}</div>
       ) : (
@@ -228,7 +235,7 @@ function ModuleProgressCard({ userId, courseId }: { userId: string; courseId?: s
                   <span className="text-sm font-semibold tabular-nums">{pct}%</span>
                 </div>
                 <div className="text-xs text-muted-foreground truncate">{m.title}</div>
-                <Progress value={pct} className="h-1.5" />
+                <Progress value={pct} className="h-2" />
               </div>
             );
           })}
