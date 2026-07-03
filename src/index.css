@@ -179,3 +179,38 @@
 @keyframes livepulse { 0% { box-shadow: 0 0 0 0 rgba(111,230,206,.55); } 70% { box-shadow: 0 0 0 8px rgba(111,230,206,0); } 100% { box-shadow: 0 0 0 0 rgba(111,230,206,0); } }
 .livepulse { animation: livepulse 2s ease-out infinite; }
 @media (prefers-reduced-motion: reduce) { .floaty, .scrollcue, .livepulse { animation: none; } }
+
+/* ============================================================
+   Landing dark theme — scoped token override. Applying
+   .landing-dark to the landing root flips every semantic color
+   to the dark AI-Creators brand so all sections stay cohesive.
+   ============================================================ */
+.landing-dark {
+  --background: 165 14% 5%;
+  --foreground: 156 16% 96%;
+  --card: 168 18% 8%;
+  --card-foreground: 156 16% 96%;
+  --popover: 168 18% 8%;
+  --popover-foreground: 156 16% 96%;
+  --primary: 168 59% 44%;
+  --primary-foreground: 168 76% 8%;
+  --secondary: 170 16% 10%;
+  --secondary-foreground: 156 16% 96%;
+  --muted: 170 14% 12%;
+  --muted-foreground: 165 12% 66%;
+  --accent: 170 32% 16%;
+  --accent-foreground: 168 70% 72%;
+  --destructive: 17 62% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 150 55% 48%;
+  --success-foreground: 168 76% 8%;
+  --warning: 43 80% 58%;
+  --warning-foreground: 168 76% 8%;
+  --border: 168 12% 16%;
+  --input: 168 12% 18%;
+  --ring: 168 59% 44%;
+  --gold: 43 74% 62%;
+  --shadow-soft: 0 1px 2px hsl(0 0% 0% / 0.3), 0 8px 24px hsl(0 0% 0% / 0.35);
+  --shadow-elevated: 0 2px 6px hsl(0 0% 0% / 0.4), 0 24px 60px hsl(0 0% 0% / 0.5);
+  --gradient-cream: linear-gradient(180deg, hsl(165 14% 5%) 0%, hsl(170 16% 8%) 100%);
+}

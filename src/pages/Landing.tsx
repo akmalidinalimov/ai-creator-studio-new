@@ -115,7 +115,7 @@ export default function Landing() {
     const parts = text.split(/(\{[^}]+\})/g);
     return parts.map((p, i) => {
       if (p.startsWith("{") && p.endsWith("}")) {
-        return <em key={i} className="text-primary not-italic font-serif italic">{p.slice(1, -1)}</em>;
+        return <em key={i} className="text-primary not-italic font-display italic">{p.slice(1, -1)}</em>;
       }
       return <span key={i}>{p}</span>;
     });
@@ -134,7 +134,7 @@ export default function Landing() {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground font-brandbody">
+    <div className="landing-dark min-h-screen bg-background text-foreground font-brandbody">
       <header className={`fixed top-0 inset-x-0 z-40 transition-all duration-300 ${scrolled ? "bg-[#0A0D0C]/85 backdrop-blur-md border-b border-white/10" : "bg-transparent"}`}>
         <div className="container flex h-16 items-center justify-between gap-4">
           <Link to="/" className="flex items-center gap-2 font-display text-[19px] font-semibold text-white tracking-tight">
@@ -265,7 +265,7 @@ export default function Landing() {
 
       <section id="outcomes" className="py-20 md:py-28">
         <div className="container">
-          <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-3">{t("landing.outcomes.heading")}</h2>
+          <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight mb-3">{t("landing.outcomes.heading")}</h2>
           <p className="text-muted-foreground mb-12 max-w-2xl">{t("landing.outcomes.subheading")}</p>
           <div className="grid md:grid-cols-3 gap-6">
             {outcomes.map((item, i) => {
@@ -275,7 +275,7 @@ export default function Landing() {
                   <div className="w-11 h-11 rounded-xl bg-accent/60 flex items-center justify-center mb-5">
                     <Icon className="h-5 w-5 text-primary" />
                   </div>
-                  <h3 className="font-serif text-2xl font-semibold mb-2">{item.title}</h3>
+                  <h3 className="font-display text-2xl font-semibold mb-2">{item.title}</h3>
                   <p className="text-muted-foreground leading-relaxed">{item.body}</p>
                 </div>
               );
@@ -286,7 +286,7 @@ export default function Landing() {
 
       <section id="curriculum" className="py-20 md:py-28 bg-secondary/30">
         <div className="container">
-          <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-3">{t("landing.curriculum.heading")}</h2>
+          <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight mb-3">{t("landing.curriculum.heading")}</h2>
           <p className="text-muted-foreground mb-10 max-w-2xl">{t("landing.curriculum.sub")}</p>
 
           {modules.length === 0 ? (
@@ -302,7 +302,7 @@ export default function Landing() {
                   <AccordionItem key={m.id} value={m.id} className="border border-border rounded-xl bg-card px-5 shadow-soft">
                     <AccordionTrigger className="hover:no-underline py-5">
                       <div className="flex items-center gap-4 text-left">
-                        <span className="font-serif text-2xl text-primary tabular-nums">0{i + 1}</span>
+                        <span className="font-display text-2xl text-primary tabular-nums">0{i + 1}</span>
                         <div>
                           <div className="font-semibold text-base">{m.title}</div>
                           <div className="text-xs text-muted-foreground mt-0.5">{t("landing.curriculum.lessonsCount", { n: m.lessons.length, min: totalMin })}</div>
@@ -332,7 +332,7 @@ export default function Landing() {
       <section id="instructor" className="py-20 md:py-28">
         <div className="container grid md:grid-cols-[1fr_240px] gap-10 md:gap-16 items-center">
           <div>
-            <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-5">{t("landing.instructor.heading")}</h2>
+            <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight mb-5">{t("landing.instructor.heading")}</h2>
             <div className="space-y-4 text-muted-foreground leading-relaxed prose-tight max-w-2xl">
               {(copy.instructorBio || t("landing.instructor.bioDefault")).split("\n\n").map((p, i) => <p key={i}>{p}</p>)}
             </div>
@@ -346,8 +346,8 @@ export default function Landing() {
               {copy.instructorPhotoUrl ? (
                 <img src={copy.instructorPhotoUrl} alt="Instructor" className="w-full h-full object-cover" />
               ) : (
-                <div className="w-full h-full bg-cream-gradient flex items-center justify-center">
-                  <span className="font-serif text-6xl text-primary">A</span>
+                <div className="w-full h-full flex items-center justify-center" style={{ background: "linear-gradient(150deg,#14211E,#0A0D0C)" }}>
+                  <span className="font-display text-6xl text-primary">A</span>
                 </div>
               )}
             </div>
@@ -357,14 +357,14 @@ export default function Landing() {
 
       <section className="py-20 md:py-28 bg-secondary/30">
         <div className="container">
-          <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-12">{t("landing.howItWorks.heading")}</h2>
+          <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight mb-12">{t("landing.howItWorks.heading")}</h2>
           <div className="grid md:grid-cols-3 gap-8">
             {howSteps.map((s, i) => {
               const Icon = stepIcons[i] || Rocket;
               return (
                 <div key={i} className="space-y-4">
                   <div className="flex items-baseline gap-3">
-                    <span className="font-serif text-5xl text-primary tabular-nums leading-none">0{i + 1}</span>
+                    <span className="font-display text-5xl text-primary tabular-nums leading-none">0{i + 1}</span>
                     <Icon className="h-5 w-5 text-muted-foreground" />
                   </div>
                   <h3 className="font-semibold text-lg">{s.title}</h3>
@@ -379,7 +379,7 @@ export default function Landing() {
       {SHOWCASE.length > 0 && (
       <section id="showcase" className="py-20 md:py-28">
         <div className="container">
-          <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-3">{t("landing.showcase.heading")}</h2>
+          <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight mb-3">{t("landing.showcase.heading")}</h2>
           <p className="text-muted-foreground mb-10 max-w-2xl">{t("landing.showcase.sub")}</p>
         </div>
         <div className="overflow-x-auto scrollbar-hide snap-x snap-mandatory">
@@ -402,11 +402,11 @@ export default function Landing() {
 
       <section id="pricing" className="py-20 md:py-28 bg-secondary/30">
         <div className="container max-w-xl">
-          <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight text-center mb-12">{t("landing.pricing.heading")}</h2>
+          <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight text-center mb-12">{t("landing.pricing.heading")}</h2>
           <div className="rounded-2xl border-2 border-primary/20 bg-card p-8 shadow-elevated">
             <div className="text-xs uppercase tracking-wider text-primary font-semibold mb-2">{t("landing.pricing.label")}</div>
             <div className="flex items-baseline gap-2 mb-6">
-              <span className="font-serif text-5xl font-semibold">{t("landing.pricing.price")}</span>
+              <span className="font-display text-5xl font-semibold">{t("landing.pricing.price")}</span>
               <span className="text-muted-foreground text-sm">{t("landing.pricing.priceSuffix")}</span>
             </div>
             <ul className="space-y-3 mb-8">
@@ -425,7 +425,7 @@ export default function Landing() {
 
       <section id="faq" className="py-20 md:py-28">
         <div className="container max-w-3xl">
-          <h2 className="font-serif text-[36px] md:text-[44px] font-semibold tracking-tight mb-10 text-center">{t("landing.faq.heading")}</h2>
+          <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight mb-10 text-center">{t("landing.faq.heading")}</h2>
           <Accordion type="single" collapsible className="space-y-2">
             {faq.map((item, i) => (
               <AccordionItem key={i} value={`q-${i}`} className="border border-border rounded-xl bg-card px-5">
@@ -439,7 +439,7 @@ export default function Landing() {
 
       <section className="py-20 md:py-28 bg-secondary/60 border-y border-border">
         <div className="container max-w-2xl text-center space-y-6">
-          <h2 className="font-serif text-[36px] md:text-[48px] font-semibold tracking-tight">{t("landing.finalCta.heading")}</h2>
+          <h2 className="font-display text-[36px] md:text-[48px] font-semibold tracking-tight">{t("landing.finalCta.heading")}</h2>
           <p className="text-muted-foreground text-lg">{t("landing.finalCta.sub")}</p>
           <Button asChild size="lg" className="text-base h-12 px-8"><Link to="/signup">{t("landing.finalCta.button")} <ArrowRight className="h-5 w-5" /></Link></Button>
         </div>
