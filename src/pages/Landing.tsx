@@ -10,7 +10,7 @@ import { PixelDissolve } from "@/components/landing/PixelDissolve";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import {
   ArrowRight, Play, CheckCircle2, Film, Wand2, DollarSign,
-  UserPlus, BookOpen, Rocket, Star, MessageCircle, Twitter,
+  UserPlus, BookOpen, Rocket, Star, MessageCircle, Twitter, Menu, X, ChevronDown,
 } from "lucide-react";
 
 interface Module {
@@ -50,6 +50,7 @@ export default function Landing() {
   const [modules, setModules] = useState<Module[]>([]);
   const [courseTitle, setCourseTitle] = useState("AI Creators");
   const [copy, setCopy] = useState<LandingCopy>({});
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     if (!authLoading && user) {
@@ -140,21 +141,43 @@ export default function Landing() {
             <span className="text-[#2FB39B]">✦</span> AI Creators
           </Link>
           <nav className="hidden md:flex items-center gap-8 text-sm font-brandbody">
-            <a href="#curriculum" className="text-[#8DA39D] hover:text-white transition-colors">{t("landing.nav.curriculum")}</a>
-            <a href="#instructor" className="text-[#8DA39D] hover:text-white transition-colors">{t("landing.nav.instructor")}</a>
-            <a href="#pricing" className="text-[#8DA39D] hover:text-white transition-colors">{t("landing.nav.pricing")}</a>
-            <a href="#faq" className="text-[#8DA39D] hover:text-white transition-colors">{t("landing.nav.faq")}</a>
+            <a href="#curriculum" className="text-[#9FB2AD] hover:text-white transition-colors">{t("landing.nav.curriculum")}</a>
+            <a href="#instructor" className="text-[#9FB2AD] hover:text-white transition-colors">{t("landing.nav.instructor")}</a>
+            <a href="#pricing" className="text-[#9FB2AD] hover:text-white transition-colors">{t("landing.nav.pricing")}</a>
+            <a href="#faq" className="text-[#9FB2AD] hover:text-white transition-colors">{t("landing.nav.faq")}</a>
           </nav>
           <div className="flex items-center gap-2">
             <LanguageSwitcher />
             <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex text-white hover:bg-white/10 hover:text-white">
               <Link to="/login">{t("landing.nav.signIn")}</Link>
             </Button>
-            <Button asChild size="sm" className="bg-gradient-to-b from-[#6FE6CE] to-[#2FB39B] text-[#052220] hover:opacity-90">
+            <Button asChild size="sm" className="hidden sm:inline-flex bg-gradient-to-b from-[#6FE6CE] to-[#2FB39B] text-[#052220] hover:opacity-90">
               <Link to="/signup">{t("landing.nav.startFree")} <ArrowRight className="h-3.5 w-3.5" /></Link>
             </Button>
+            <button
+              type="button"
+              aria-label={menuOpen ? "Close menu" : "Open menu"}
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((o) => !o)}
+              className="md:hidden inline-flex items-center justify-center w-10 h-10 rounded-lg text-white hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6FE6CE]"
+            >
+              {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
           </div>
         </div>
+        {menuOpen && (
+          <div className="md:hidden border-t border-white/10 bg-[#0A0D0C]/95 backdrop-blur-md">
+            <nav className="container flex flex-col py-3 font-brandbody">
+              {[["#curriculum", t("landing.nav.curriculum")], ["#instructor", t("landing.nav.instructor")], ["#pricing", t("landing.nav.pricing")], ["#faq", t("landing.nav.faq")]].map(([href, label]) => (
+                <a key={href} href={href} onClick={() => setMenuOpen(false)} className="py-3 text-[15px] text-[#C4D3CE] hover:text-white">{label}</a>
+              ))}
+              <div className="flex gap-2 pt-2 pb-1">
+                <Button asChild variant="outline" className="flex-1 border-white/15 bg-transparent text-white hover:bg-white/10 hover:text-white"><Link to="/login" onClick={() => setMenuOpen(false)}>{t("landing.nav.signIn")}</Link></Button>
+                <Button asChild className="flex-1 bg-gradient-to-b from-[#6FE6CE] to-[#2FB39B] text-[#052220]"><Link to="/signup" onClick={() => setMenuOpen(false)}>{t("landing.nav.startFree")}</Link></Button>
+              </div>
+            </nav>
+          </div>
+        )}
       </header>
 
       <section className="relative overflow-hidden bg-[#0A0D0C] text-[#F3F7F5]">
@@ -170,55 +193,62 @@ export default function Landing() {
         <PixelDissolve className="absolute inset-0 w-full h-full" />
 
         <div className="container relative z-[3] grid lg:grid-cols-[1.15fr_.85fr] gap-10 items-center min-h-screen pt-28 pb-16">
-          <div className="hero-rise max-w-2xl">
-            <span className="inline-flex items-center gap-2.5 text-[13.5px] font-semibold text-[#6FE6CE] border border-white/10 bg-[rgba(47,179,155,.06)] rounded-full px-4 py-2">
+          <div className="max-w-2xl">
+            <span className="hero-rise inline-flex items-center gap-2.5 text-[13.5px] font-semibold text-[#6FE6CE] border border-white/10 bg-[rgba(47,179,155,.06)] rounded-full px-4 py-2" style={{ animationDelay: "0s" }}>
               <span className="w-[7px] h-[7px] rounded-full bg-[#6FE6CE] shadow-[0_0_12px_#6FE6CE]" /> {t("landing.hero.badge", "14-hour curriculum · Telegram-first")}
             </span>
-            <h1 className="font-display font-semibold text-[clamp(44px,6.4vw,88px)] leading-[.98] mt-6 text-balance">
+            <h1 className="hero-rise font-display font-semibold text-[clamp(44px,6.4vw,88px)] leading-[.98] mt-6 text-balance" style={{ animationDelay: ".06s" }}>
               {renderHeadlineDark(headline)} <span className="text-[#2FB39B] text-[.7em] align-[.06em]">✦</span>
             </h1>
-            <p className="mt-6 text-[clamp(17px,1.5vw,20px)] leading-relaxed text-[#C4D3CE] max-w-[52ch]">{sub}</p>
-            <div className="mt-9 flex flex-wrap gap-3.5">
-              <Button asChild size="lg" className="bg-gradient-to-b from-[#6FE6CE] to-[#2FB39B] text-[#052220] shadow-[0_10px_30px_rgba(47,179,155,.32)] hover:-translate-y-0.5 transition-transform">
+            <p className="hero-rise mt-6 text-[clamp(17px,1.5vw,20px)] leading-relaxed text-[#CBD9D4] max-w-[52ch]" style={{ animationDelay: ".12s" }}>{sub}</p>
+            <div className="hero-rise mt-9 flex flex-wrap gap-3.5" style={{ animationDelay: ".18s" }}>
+              <Button asChild size="lg" className="bg-gradient-to-b from-[#6FE6CE] to-[#2FB39B] text-[#052220] shadow-[0_10px_30px_rgba(47,179,155,.32)] hover:-translate-y-0.5 transition-transform focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6FE6CE]">
                 <Link to="/signup">{t("landing.hero.startLearning")} <ArrowRight className="h-4 w-4" /></Link>
               </Button>
-              <Button asChild size="lg" variant="outline" className="border-white/15 bg-transparent text-white hover:bg-white/10 hover:text-white">
+              <Button asChild size="lg" variant="outline" className="border-white/15 bg-transparent text-white hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6FE6CE]">
                 <a href="#curriculum">{t("landing.hero.viewCurriculum")}</a>
               </Button>
             </div>
-            <div className="mt-11 flex items-center gap-5 flex-wrap">
+            <div className="hero-rise mt-11 flex items-center gap-5 flex-wrap" style={{ animationDelay: ".24s" }}>
               <div className="flex -space-x-3">
                 {["A", "M", "N", "R"].map((c, i) => (
                   <span key={i} className="w-11 h-11 rounded-full border-2 border-[#0A0D0C] flex items-center justify-center font-bold text-[15px] text-[#052220]" style={{ background: "linear-gradient(150deg,#6FE6CE,#0F766E)" }}>{c}</span>
                 ))}
               </div>
-              <p className="text-sm text-[#8DA39D] leading-snug">
+              <p className="text-sm text-[#9FB2AD] leading-snug">
                 <span className="text-white font-bold">{t("landing.hero.trustCountStrong")}</span> {t("landing.trust.building", "already building")}<br />
-                <span className="text-[#D9B45A] tracking-widest">★★★★★</span> 4.9 · {t("landing.trust.rating")}
+                <span className="text-[#E0BE6A] tracking-widest">★★★★★</span> 4.9 · {t("landing.trust.rating")}
               </p>
             </div>
           </div>
 
           {/* Floating product card — the loop itself is the hero */}
           <div className="hidden lg:flex hero-rise justify-center" style={{ animationDelay: ".1s" }}>
-            <div className="w-[330px] rounded-[26px] p-7 border border-white/10 shadow-[0_40px_90px_rgba(0,0,0,.55)]"
+            <div className="floaty w-[330px] rounded-[26px] p-7 border border-white/10 shadow-[0_40px_90px_rgba(0,0,0,.55)]"
               style={{ background: "linear-gradient(160deg,rgba(20,32,30,.9),rgba(10,16,15,.92))", backdropFilter: "blur(6px)" }}>
               <div className="flex items-center gap-3.5">
-                <div className="w-16 h-16 rounded-full flex items-center justify-center font-display font-semibold text-[28px] text-[#052220]" style={{ background: "linear-gradient(150deg,#6FE6CE,#0F766E)" }}>A</div>
-                <div><div className="font-display font-semibold text-[19px] text-white">Akmal Alimov</div><div className="text-[13px] text-[#8DA39D] mt-0.5">AI Creator · Level 4</div></div>
+                <div className="relative">
+                  <div className="w-16 h-16 rounded-full flex items-center justify-center font-display font-semibold text-[28px] text-[#052220]" style={{ background: "linear-gradient(150deg,#6FE6CE,#0F766E)" }}>A</div>
+                  <span className="livepulse absolute bottom-0.5 right-0.5 w-3.5 h-3.5 rounded-full bg-[#6FE6CE] border-2 border-[#0E1413]" aria-hidden />
+                </div>
+                <div><div className="font-display font-semibold text-[19px] text-white">Akmal Alimov</div><div className="text-[13px] text-[#9FB2AD] mt-0.5">AI Creator · Level 4</div></div>
               </div>
               <div className="font-display font-bold text-[64px] leading-none mt-6 text-white">30<span className="text-[#6FE6CE] text-[26px]">-day</span></div>
-              <div className="text-sm text-[#8DA39D] mt-1.5">streak · top 5% this month</div>
+              <div className="text-sm text-[#9FB2AD] mt-1.5">streak · top 5% this month</div>
               <div className="h-2 rounded-md bg-white/[.06] mt-5 overflow-hidden"><div className="h-full w-[72%]" style={{ background: "linear-gradient(90deg,#2FB39B,#6FE6CE)" }} /></div>
-              <div className="flex justify-between mt-3.5 text-[12.5px] text-[#8DA39D]"><span>Module 3 of 5</span><span>72% complete</span></div>
+              <div className="flex justify-between mt-3.5 text-[12.5px] text-[#9FB2AD]"><span>Module 3 of 5</span><span>72% complete</span></div>
               <div className="flex gap-2 mt-5">
                 {[["#4", "Rank"], ["27", "Lessons"], ["8", "Badges"]].map(([n, l]) => (
-                  <div key={l} className="flex-1 text-center border border-white/10 rounded-2xl py-3"><div className="font-display font-semibold text-[24px] text-[#6FE6CE]">{n}</div><div className="text-[11px] text-[#8DA39D] mt-0.5 uppercase tracking-wider">{l}</div></div>
+                  <div key={l} className="flex-1 text-center border border-white/10 rounded-2xl py-3"><div className="font-display font-semibold text-[24px] text-[#6FE6CE]">{n}</div><div className="text-[11px] text-[#9FB2AD] mt-0.5 uppercase tracking-wider">{l}</div></div>
                 ))}
               </div>
             </div>
           </div>
         </div>
+        <a href="#curriculum" aria-label={t("landing.hero.viewCurriculum")} className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[3] hidden md:flex flex-col items-center gap-1.5 text-[#9FB2AD] hover:text-white transition-colors">
+          <span className="text-[11px] uppercase tracking-[.2em]">Scroll</span>
+          <ChevronDown className="scrollcue h-5 w-5" />
+        </a>
       </section>
 
       <section className="border-y border-border bg-secondary/40">

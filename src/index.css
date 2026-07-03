@@ -170,3 +170,12 @@
 @keyframes heroRise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
 .hero-rise { animation: heroRise 0.7s cubic-bezier(0.16,1,0.3,1) both; }
 @media (prefers-reduced-motion: reduce) { .hero-rise { animation: none; } }
+
+/* hero card gentle float + scroll cue */
+@keyframes floaty { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+.floaty { animation: floaty 6s cubic-bezier(0.45,0,0.55,1) infinite; }
+@keyframes scrollcue { 0% { transform: translateY(0); opacity: .8; } 50% { transform: translateY(7px); opacity: .3; } 100% { transform: translateY(0); opacity: .8; } }
+.scrollcue { animation: scrollcue 1.8s ease-in-out infinite; }
+@keyframes livepulse { 0% { box-shadow: 0 0 0 0 rgba(111,230,206,.55); } 70% { box-shadow: 0 0 0 8px rgba(111,230,206,0); } 100% { box-shadow: 0 0 0 0 rgba(111,230,206,0); } }
+.livepulse { animation: livepulse 2s ease-out infinite; }
+@media (prefers-reduced-motion: reduce) { .floaty, .scrollcue, .livepulse { animation: none; } }
