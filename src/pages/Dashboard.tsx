@@ -23,17 +23,25 @@ export default function Dashboard() {
   const { t } = useTranslation();
   const [courses, setCourses] = useState<CourseRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [streak, setStreak] = useState(0);
   const [displayName, setDisplayName] = useState("");
 
   useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(false);
     (async () => {
-      if (!user) return;
-      const [{ data: profile }, { data: streakRow }, { data: enrollments }] = await Promise.all([
+     try {
+      const [profRes, streakRes, enrollRes] = await Promise.all([
         supabase.from("profiles").select("name, last_name").eq("id", user.id).maybeSingle(),
         supabase.from("streaks").select("current_streak").eq("user_id", user.id).maybeSingle(),
         supabase.from("enrollments").select("course_id, courses(*)").eq("user_id", user.id),
       ]);
+      if (enrollRes.error) throw enrollRes.error;
+      const profile = profRes.data; const streakRow = streakRes.data; const enrollments = enrollRes.data;
       const first = (profile?.name || "").trim();
       const last = ((profile as any)?.last_name || "").trim();
       const full = [first, last].filter(Boolean).join(" ");
@@ -64,10 +72,16 @@ export default function Dashboard() {
           nextLessonId: next?.id, nextCourseId: c.id,
         });
       }
+      if (cancelled) return;
       setCourses(rows);
-      setLoading(false);
+     } catch (e) {
+       if (!cancelled) { console.error("[Dashboard] load failed", e); setError(true); }
+     } finally {
+       if (!cancelled) setLoading(false);
+     }
     })();
-  }, [user]);
+    return () => { cancelled = true; };
+  }, [user, reloadKey]);
 
   return (
     <PageShell>
@@ -97,6 +111,13 @@ export default function Dashboard() {
           <div className="grid md:grid-cols-2 gap-4">
             {[0, 1].map((i) => <Skeleton key={i} className="h-48 rounded-xl" />)}
           </div>
+        ) : error ? (
+          <Card className="p-10 text-center">
+            <p className="text-muted-foreground">{t("dashboard.loadError", "Kurslarni yuklab bo'lmadi.")}</p>
+            <Button variant="outline" size="sm" className="mt-4" onClick={() => setReloadKey((k) => k + 1)}>
+              {t("common.retry", "Qayta urinish")}
+            </Button>
+          </Card>
         ) : courses.length === 0 ? (
           <Card className="p-10 text-center"><p className="text-muted-foreground">{t("dashboard.noCourses")}</p></Card>
         ) : (

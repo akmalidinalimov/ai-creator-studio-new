@@ -19,20 +19,30 @@ export default function CoursePage() {
   const [completed, setCompleted] = useState<Set<string>>(new Set());
   const [moduleLimit, setModuleLimit] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    if (!courseId || !user) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(false);
     (async () => {
-      if (!courseId || !user) return;
-      const { data: c } = await supabase.from("courses").select("*").eq("id", courseId).maybeSingle();
-      const { data: ms } = await supabase
+     try {
+      const { data: c, error: cErr } = await supabase.from("courses").select("*").eq("id", courseId).maybeSingle();
+      if (cErr) throw cErr;
+      const { data: ms, error: mErr } = await supabase
         .from("modules")
         .select("*, lessons(id, title, position, duration_seconds)")
         .eq("course_id", courseId)
         .order("position", { ascending: true });
+      if (mErr) throw mErr;
       // sort lessons within each module
       (ms || []).forEach((m: any) => m.lessons.sort((a: any, b: any) => a.position - b.position));
+      if (cancelled) return;
       setCourse(c); setModules(ms || []);
       const { data: lim } = await supabase.rpc("my_module_limit" as any, { _course_id: courseId });
+      if (cancelled) return;
       setModuleLimit(typeof lim === "number" ? lim : null);
       const allLessonIds = (ms || []).flatMap((m: any) => m.lessons.map((l: any) => l.id));
       if (allLessonIds.length) {
@@ -40,13 +50,27 @@ export default function CoursePage() {
           .from("lesson_progress")
           .select("lesson_id, completed_at")
           .eq("user_id", user.id).in("lesson_id", allLessonIds);
+        if (cancelled) return;
         setCompleted(new Set((prog || []).filter((p: any) => p.completed_at).map((p: any) => p.lesson_id)));
       }
-      setLoading(false);
+     } catch (e) {
+       if (!cancelled) { console.error("[CoursePage] load failed", e); setError(true); }
+     } finally {
+       if (!cancelled) setLoading(false);
+     }
     })();
-  }, [courseId, user]);
+    return () => { cancelled = true; };
+  }, [courseId, user, reloadKey]);
 
   if (loading) return <PageShell><Skeleton className="h-64" /></PageShell>;
+  if (error) return (
+    <PageShell>
+      <div className="text-center py-16">
+        <p className="text-muted-foreground">{t("coursePage.loadError", "Kursni yuklab bo'lmadi.")}</p>
+        <Button variant="outline" size="sm" className="mt-4" onClick={() => setReloadKey((k) => k + 1)}>{t("common.retry", "Qayta urinish")}</Button>
+      </div>
+    </PageShell>
+  );
   if (!course) return <PageShell><p>{t("coursePage.notFound")}</p></PageShell>;
 
   const accessibleCount = moduleLimit == null ? modules.length : Math.min(moduleLimit, modules.length);
