@@ -19,4 +19,18 @@ export default defineConfig(({ mode }) => ({
     },
     dedupe: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime", "@tanstack/react-query", "@tanstack/query-core"],
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Split heavy third-party groups out of the main bundle so the initial
+        // chunk shrinks (was ~935 kB). Charts are large and only used on a few
+        // analytics pages, so keep them isolated from the app entry.
+        manualChunks: {
+          "react-vendor": ["react", "react-dom", "react-router-dom"],
+          "supabase": ["@supabase/supabase-js"],
+          "charts": ["recharts"],
+        },
+      },
+    },
+  },
 }));

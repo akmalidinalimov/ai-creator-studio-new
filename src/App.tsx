@@ -25,18 +25,20 @@ import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
-import Dashboard from "./pages/Dashboard";
-import CoursePage from "./pages/CoursePage";
-import LessonPage from "./pages/LessonPage";
-import QuizPage from "./pages/QuizPage";
-import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 import Landing from "./pages/Landing";
 import AuthMagicLink from "./pages/AuthMagicLink";
-import Leaderboard from "./pages/Leaderboard";
-import Badges from "./pages/Badges";
-import MyActivity from "./pages/MyActivity";
 import SalesIntake from "./pages/SalesIntake";
+
+// Lazy-load the authenticated pages so they stay out of the initial bundle.
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const CoursePage = lazy(() => import("./pages/CoursePage"));
+const LessonPage = lazy(() => import("./pages/LessonPage"));
+const QuizPage = lazy(() => import("./pages/QuizPage"));
+const Settings = lazy(() => import("./pages/Settings"));
+const Leaderboard = lazy(() => import("./pages/Leaderboard"));
+const Badges = lazy(() => import("./pages/Badges"));
+const MyActivity = lazy(() => import("./pages/MyActivity"));
 
 
 // Lazy-load admin pages (code-split)
@@ -84,6 +86,7 @@ const App = () => (
         <HtmlLangSync />
         <ErrorBoundary label="app-root">
         <AuthProvider>
+          <Suspense fallback={<AdminFallback />}>
           <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login />} />
@@ -137,6 +140,7 @@ const App = () => (
 
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </Suspense>
         </AuthProvider>
         </ErrorBoundary>
       </BrowserRouter>
