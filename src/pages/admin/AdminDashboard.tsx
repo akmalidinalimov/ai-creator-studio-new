@@ -868,11 +868,16 @@ const StatCard = ({ icon, label, value, tooltip, variant, onClick }: { icon: Rea
   const isWarn = variant === "warning";
   const card = (
     <Card
-      className={`p-5 shadow-soft h-full ${isWarn ? "border-amber-500/40 bg-amber-500/5" : ""} ${onClick ? "cursor-pointer hover:bg-muted/30 transition-colors" : ""}`}
+      className={`p-5 shadow-soft h-full ${isWarn ? "border-amber-500/40 bg-amber-500/5" : ""} ${onClick ? "cursor-pointer hover:shadow-elevated hover:bg-muted/20 transition-all duration-200" : ""}`}
       onClick={onClick}
     >
-      <div className={`flex items-center gap-1.5 text-xs ${isWarn ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}>{icon}{label}</div>
-      <div className={`text-3xl font-semibold tracking-tight mt-1 tabular-nums ${isWarn ? "text-amber-700 dark:text-amber-400" : ""}`}>{value}</div>
+      <div className="flex items-start gap-3">
+        <span className={`inline-flex items-center justify-center w-10 h-10 rounded-xl shrink-0 ${isWarn ? "bg-amber-500/15 text-amber-600 dark:text-amber-400" : "bg-muted text-primary"}`}>{icon}</span>
+        <div className="min-w-0">
+          <div className={`text-xs font-medium truncate ${isWarn ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}>{label}</div>
+          <div className={`text-3xl font-semibold tracking-tight tabular-nums mt-0.5 ${isWarn ? "text-amber-700 dark:text-amber-400" : ""}`}>{value}</div>
+        </div>
+      </div>
     </Card>
   );
   if (!tooltip) return card;
