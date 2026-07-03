@@ -7,11 +7,12 @@ import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Flame, PlayCircle, BookOpen, ArrowRight } from "lucide-react";
+import { Flame, PlayCircle, BookOpen, ArrowRight, Sparkles } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StudentAnalytics } from "@/components/dashboard/StudentAnalytics";
 import { EngagementTiles } from "@/components/dashboard/EngagementTiles";
 import { ModuleCelebrationModal } from "@/components/ModuleCelebrationModal";
+import { ProgressRing } from "@/components/dashboard/ProgressRing";
 
 interface CourseRow {
   id: string; title: string; tagline: string | null; cover_url: string | null; duration_hours: number | null;
@@ -99,6 +100,34 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {(() => {
+          if (loading || error || courses.length === 0) return null;
+          const resume = courses.find((c) => c.nextLessonId && c.completed < c.total) || courses.find((c) => c.nextLessonId);
+          if (!resume?.nextLessonId) return null;
+          const pct = resume.total > 0 ? Math.round((resume.completed / resume.total) * 100) : 0;
+          const fresh = resume.completed === 0;
+          return (
+            <Card className="relative overflow-hidden p-0 border-primary/20 shadow-soft">
+              <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.06] to-transparent pointer-events-none" />
+              <div className="relative flex flex-col sm:flex-row items-start sm:items-center gap-5 p-6">
+                <ProgressRing value={pct} size={72} stroke={6} className="shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-primary uppercase tracking-wide">
+                    <Sparkles className="h-3.5 w-3.5" /> {fresh ? t("dashboard.startTitle", "Start here") : t("dashboard.resumeTitle", "Continue where you left off")}
+                  </div>
+                  <h2 className="text-xl font-semibold tracking-tight mt-1 truncate">{resume.title}</h2>
+                  <p className="text-sm text-muted-foreground mt-0.5">{resume.completed}/{resume.total} {t("dashboard.lessons")} · {pct}% {t("dashboard.complete")}</p>
+                </div>
+                <Button asChild size="lg" className="w-full sm:w-auto shrink-0">
+                  <Link to={`/lesson/${resume.id}/${resume.nextLessonId}`}>
+                    <PlayCircle className="h-5 w-5" /> {fresh ? t("dashboard.startCourse") : t("dashboard.continueLearning")}
+                  </Link>
+                </Button>
+              </div>
+            </Card>
+          );
+        })()}
+
         <EngagementTiles />
 
         <div className="flex justify-end">
@@ -126,22 +155,18 @@ export default function Dashboard() {
               {courses.map((c) => {
                 const pct = c.total > 0 ? Math.round((c.completed / c.total) * 100) : 0;
                 return (
-                  <Card key={c.id} className="p-6 shadow-soft hover:shadow-elevated transition-shadow">
-                    <div className="flex items-start justify-between gap-4">
+                  <Card key={c.id} className="p-6 shadow-soft hover:shadow-elevated transition-shadow duration-200">
+                    <div className="flex items-start gap-4">
+                      <ProgressRing value={pct} size={60} stroke={5} className="shrink-0 mt-0.5" />
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1.5">
                           <BookOpen className="h-3.5 w-3.5" />
                           <span>{c.duration_hours}h • {c.total} {t("dashboard.lessons")}</span>
                         </div>
-                        <h3 className="text-xl font-semibold tracking-tight">{c.title}</h3>
+                        <h3 className="text-lg font-semibold tracking-tight leading-snug">{c.title}</h3>
                         <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{c.tagline}</p>
                       </div>
-                      <div className="text-right">
-                        <div className="text-2xl font-semibold tabular-nums">{pct}%</div>
-                        <div className="text-xs text-muted-foreground">{t("dashboard.complete")}</div>
-                      </div>
                     </div>
-                    <Progress value={pct} className="mt-4 h-1.5" />
                     <div className="mt-5 flex items-center justify-between gap-3">
                       <Button asChild variant="default" size="sm">
                         <Link to={c.nextLessonId ? `/lesson/${c.id}/${c.nextLessonId}` : `/course/${c.id}`}>
