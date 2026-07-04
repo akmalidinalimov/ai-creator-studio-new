@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { translateAuthError } from "@/lib/authErrors";
 import { Loader2, Mail, Lock } from "lucide-react";
 import { TelegramDeeplinkButton } from "@/components/TelegramDeeplinkButton";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
@@ -130,7 +131,7 @@ export default function Login() {
       options: { emailRedirectTo: `${getSiteUrl()}/dashboard` },
     });
     setLoading(false);
-    if (error) toast.error(error.message);
+    if (error) toast.error(translateAuthError(t, error.message));
     else toast.success(t("auth.magicSent"));
   };
 
@@ -152,7 +153,7 @@ export default function Login() {
     callGuard("record", { success: !error });
 
     if (error) {
-      toast.error(error.message);
+      toast.error(translateAuthError(t, error.message));
       const recheck = await callGuard("check");
       if (recheck.status === 429 && recheck.data?.locked) {
         setLockedUntil(recheck.data.locked_until_ms);

@@ -76,7 +76,15 @@
     "statTutor": "AI ustoz",
     "rememberMe": "Eslab qol (30 kun)",
     "telegramQuickTitle": "Telegram orqali tezda kirish",
-    "telegramQuickSub": "Botga o'ting va Start tugmasini bosing"
+    "telegramQuickSub": "Botga o'ting va Start tugmasini bosing",
+    "errors": {
+      "invalidCredentials": "Email yoki parol noto'g'ri",
+      "emailNotConfirmed": "Avval emailingizni tasdiqlang — pochtangizni tekshiring",
+      "userExists": "Bu email bilan hisob allaqachon mavjud",
+      "invalidEmail": "Email manzili noto'g'ri ko'rinadi",
+      "rateLimited": "Urinishlar juda ko'p — bir necha daqiqadan so'ng qayta urinib ko'ring",
+      "generic": "Xatolik yuz berdi — qayta urinib ko'ring"
+    }
   },
   "dashboard": {
     "welcome": "Xush kelibsiz, {{name}}",

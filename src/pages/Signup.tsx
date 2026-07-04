@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AuthShell } from "./Login";
 import { toast } from "sonner";
+import { translateAuthError } from "@/lib/authErrors";
 import { Loader2 } from "lucide-react";
 import { TelegramDeeplinkButton } from "@/components/TelegramDeeplinkButton";
 
@@ -38,7 +39,7 @@ export default function Signup() {
       },
     });
     setLoading(false);
-    if (error) { toast.error(error.message); return; }
+    if (error) { toast.error(translateAuthError(t, error.message)); return; }
     if (lastName && data.user) {
       await supabase.from("profiles").update({ last_name: lastName } as any).eq("id", data.user.id);
     }

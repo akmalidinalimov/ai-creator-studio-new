@@ -76,7 +76,15 @@
     "statTutor": "AI tutor",
     "rememberMe": "Remember me (30 days)",
     "telegramQuickTitle": "Quick login with Telegram",
-    "telegramQuickSub": "Open the bot and tap Start"
+    "telegramQuickSub": "Open the bot and tap Start",
+    "errors": {
+      "invalidCredentials": "Wrong email or password",
+      "emailNotConfirmed": "Please confirm your email first — check your inbox",
+      "userExists": "An account with this email already exists",
+      "invalidEmail": "This email address looks invalid",
+      "rateLimited": "Too many attempts — please wait a few minutes and try again",
+      "generic": "Something went wrong — please try again"
+    }
   },
   "dashboard": {
     "welcome": "Welcome back, {{name}}",

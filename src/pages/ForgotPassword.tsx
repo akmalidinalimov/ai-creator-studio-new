@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AuthShell } from "./Login";
 import { toast } from "sonner";
+import { translateAuthError } from "@/lib/authErrors";
 
 export default function ForgotPassword() {
   const { t } = useTranslation();
@@ -18,7 +19,7 @@ export default function ForgotPassword() {
     setLoading(true);
     const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${getSiteUrl()}/reset-password` });
     setLoading(false);
-    if (error) toast.error(error.message);
+    if (error) toast.error(translateAuthError(t, error.message));
     else toast.success(t("auth.resetSent"));
   };
   return (

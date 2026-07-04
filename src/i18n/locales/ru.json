@@ -76,7 +76,15 @@
     "statTutor": "AI наставник",
     "rememberMe": "Запомнить меня (30 дней)",
     "telegramQuickTitle": "Быстрый вход через Telegram",
-    "telegramQuickSub": "Откройте бот и нажмите Start"
+    "telegramQuickSub": "Откройте бот и нажмите Start",
+    "errors": {
+      "invalidCredentials": "Неверный email или пароль",
+      "emailNotConfirmed": "Сначала подтвердите email — проверьте почту",
+      "userExists": "Аккаунт с этим email уже существует",
+      "invalidEmail": "Похоже, email указан неверно",
+      "rateLimited": "Слишком много попыток — подождите несколько минут и попробуйте снова",
+      "generic": "Что-то пошло не так — попробуйте ещё раз"
+    }
   },
   "dashboard": {
     "welcome": "С возвращением, {{name}}",
