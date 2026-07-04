@@ -37,7 +37,7 @@ const SHOWCASE: { url: string; name: string; type: string }[] = [];
 
 const Brand = ({ to = "/" }: { to?: string }) => (
   <Link to={to} className="flex items-center gap-2 font-semibold tracking-tight">
-    <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-primary text-primary-foreground text-[13px] font-bold ring-[3px] ring-primary/10">A</span>
+    <span aria-hidden="true" className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-primary text-primary-foreground text-[13px] font-bold ring-[3px] ring-primary/10">A</span>
     <span className="text-[15px]">AI Creators</span>
   </Link>
 );
