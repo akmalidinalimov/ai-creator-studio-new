@@ -10,7 +10,7 @@ import { PixelDissolve } from "@/components/landing/PixelDissolve";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import {
   ArrowRight, Play, CheckCircle2, Film, Wand2, DollarSign,
-  UserPlus, BookOpen, Rocket, Star, MessageCircle, Twitter, Menu, X, ChevronDown,
+  UserPlus, BookOpen, Rocket, Star, Menu, X, ChevronDown,
 } from "lucide-react";
 
 interface Module {
@@ -450,10 +450,6 @@ export default function Landing() {
           <div className="space-y-4">
             <Brand />
             <p className="text-sm text-muted-foreground max-w-xs">{t("landing.footer.tagline")}</p>
-            <div className="flex gap-3">
-              <a href="https://t.me" target="_blank" rel="noreferrer" aria-label="Telegram" className="text-muted-foreground hover:text-primary transition-colors"><MessageCircle className="h-5 w-5" /></a>
-              <a href="https://twitter.com" target="_blank" rel="noreferrer" aria-label="Twitter" className="text-muted-foreground hover:text-primary transition-colors"><Twitter className="h-5 w-5" /></a>
-            </div>
           </div>
           <div className="space-y-3 text-sm">
             <div className="font-semibold text-xs uppercase tracking-wider text-muted-foreground">{t("landing.footer.course")}</div>
