@@ -124,12 +124,23 @@ Deno.serve(async (req) => {
     if (lessonId) {
       const { data: lesson } = await admin
         .from("lessons")
-        .select("title, description, transcript, modules(title, course_id, courses(id, title, ai_system_prompt, ai_knowledge_paths))")
+        .select("title, description, transcript, module_id, published, modules(title, course_id, courses(id, title, ai_system_prompt, ai_knowledge_paths))")
         .eq("id", lessonId).maybeSingle();
       if (lesson) {
         courseTitle = (lesson as any).modules?.courses?.title ?? courseTitle;
-        transcript = String(lesson.transcript ?? lesson.description ?? "").slice(0, 4000);
         courseRow = (lesson as any).modules?.courses ?? null;
+        // Access gate: never feed transcript for a lesson the student can't
+        // reach (unpublished, not enrolled, or beyond their tier). Otherwise the
+        // tutor would echo locked/paid-tier content to anyone with a lesson id.
+        let allowed = (lesson as any).published !== false;
+        const modId = (lesson as any).module_id;
+        if (allowed && modId) {
+          const { data: ok } = await admin.rpc("has_module_access", { _user_id: userId, _module_id: modId });
+          allowed = !!ok;
+        }
+        if (allowed) {
+          transcript = String(lesson.transcript ?? lesson.description ?? "").slice(0, 4000);
+        }
       }
     }
 

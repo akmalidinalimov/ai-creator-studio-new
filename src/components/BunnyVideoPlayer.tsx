@@ -51,6 +51,7 @@ export const BunnyVideoPlayer = forwardRef<BunnyPlayerHandle, Props>(function Bu
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const lastTickRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
+  const lastTickPosRef = useRef<number>(0);
   const durationRef = useRef<number>(0);
   const endedFiredRef = useRef<boolean>(false);
 
@@ -109,6 +110,15 @@ export const BunnyVideoPlayer = forwardRef<BunnyPlayerHandle, Props>(function Bu
           const now = Date.now();
           if (now - lastTickRef.current < 4500) return;
           if (lastTimeRef.current <= 0) return;
+          // Only count time if playback actually advanced since the last tick.
+          // Bunny's `timeupdate` stops firing when paused, so a paused/backgrounded
+          // tab would otherwise farm ~5s of watch-time per tick (inflating streaks,
+          // daily goal and leaderboard). A stalled position ⇒ skip this tick.
+          if (lastTimeRef.current <= lastTickPosRef.current + 0.5) {
+            lastTickPosRef.current = lastTimeRef.current;
+            return;
+          }
+          lastTickPosRef.current = lastTimeRef.current;
           lastTickRef.current = now;
           onTimeUpdate?.(lastTimeRef.current, durationRef.current || 0);
           if (
