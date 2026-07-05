@@ -5,7 +5,9 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-internal-secret",
 };
 
-const GATEWAY_URL = "https://connector-gateway.lovable.dev/telegram";
+// Sends via the Telegram Bot API directly (was Lovable's connector gateway,
+// which needed LOVABLE_API_KEY + TELEGRAM_API_KEY — not available off Lovable).
+const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 
 const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 let __sec: string | null = null;
@@ -26,8 +28,6 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-  const TELEGRAM_API_KEY = Deno.env.get("TELEGRAM_API_KEY");
   const admin = __admin;
 
   let dryRun = false;
@@ -69,15 +69,11 @@ Deno.serve(async (req) => {
         : `Salom, ${name}! 📊 Bu hafta natijalaringiz:\n• ${minutes} daqiqa o'rgandingiz\n• ${lessons} ta dars tugatdingiz\n• Streak: 🔥 ${cur} kun\n• Reyting: ${r}-o'rin`;
 
       if (dryRun) { sent++; continue; }
-      if (!LOVABLE_API_KEY || !TELEGRAM_API_KEY) { errors++; continue; }
+      if (!BOT_TOKEN) { errors++; continue; }
 
-      const r2 = await fetch(`${GATEWAY_URL}/sendMessage`, {
+      const r2 = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
         method: "POST",
-        headers: {
-          "Authorization": `Bearer ${LOVABLE_API_KEY}`,
-          "X-Connection-Api-Key": TELEGRAM_API_KEY,
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ chat_id: p.telegram_id, text: txt }),
       });
       if (!r2.ok) errors++; else sent++;
