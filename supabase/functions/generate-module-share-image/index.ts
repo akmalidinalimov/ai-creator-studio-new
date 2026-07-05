@@ -10,7 +10,9 @@ const corsHeaders = {
 };
 
 const INSTAGRAM_HANDLE = "@aicreators_uz";
-const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY") || "";
+// Was Lovable's AI gateway (needs LOVABLE_API_KEY, unavailable off Lovable).
+// Now uses OpenAI's image API directly with the platform's OPENAI_API_KEY.
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
 
 function captionFor(moduleNumber: number, moduleTitle: string, fullName: string) {
   return [
@@ -22,9 +24,9 @@ function captionFor(moduleNumber: number, moduleTitle: string, fullName: string)
   ].join("\n");
 }
 
-function dataUrlToBytes(dataUrl: string): Uint8Array {
-  const base64 = dataUrl.split(",")[1] || "";
-  const bin = atob(base64);
+function base64ToBytes(base64: string): Uint8Array {
+  const clean = base64.includes(",") ? base64.split(",")[1] : base64; // tolerate data: URLs
+  const bin = atob(clean || "");
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return bytes;
@@ -53,8 +55,8 @@ Deno.serve(async (req) => {
       headers: corsHeaders,
     });
   }
-  if (!LOVABLE_API_KEY) {
-    return new Response(JSON.stringify({ error: "LOVABLE_API_KEY not configured" }), {
+  if (!OPENAI_API_KEY) {
+    return new Response(JSON.stringify({ error: "OPENAI_API_KEY not configured" }), {
       status: 500,
       headers: corsHeaders,
     });
@@ -101,37 +103,37 @@ Deno.serve(async (req) => {
 
     const prompt = `Create a celebratory 1:1 square Instagram card. Brand: AI Creators (modern, bold, vibrant violet to pink gradient background). Big bold headline at center: "Modul ${moduleNumber} tamomlandi!". Subhead with the module title in clean sans-serif: "${module.title}". Below it, the student name in a smaller elegant style: "${fullName}". Bottom-right corner footer text: "${INSTAGRAM_HANDLE} · aicreators". Modern minimal typography, no extra decorations, no watermarks, no other text. High contrast, optimized for Instagram feed.`;
 
-    const aiResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const aiResp = await fetch("https://api.openai.com/v1/images/generations", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash-image",
-        messages: [{ role: "user", content: prompt }],
-        modalities: ["image", "text"],
+        model: "gpt-image-1",
+        prompt,
+        size: "1024x1024",
+        n: 1,
       }),
     });
     if (!aiResp.ok) {
       const txt = await aiResp.text();
-      console.error("AI gateway error", aiResp.status, txt);
-      return new Response(JSON.stringify({ error: "ai gateway failed", status: aiResp.status }), {
+      console.error("OpenAI image error", aiResp.status, txt);
+      return new Response(JSON.stringify({ error: "image generation failed", status: aiResp.status }), {
         status: 502,
         headers: corsHeaders,
       });
     }
     const aiData = await aiResp.json();
-    const dataUrl: string | undefined =
-      aiData?.choices?.[0]?.message?.images?.[0]?.image_url?.url;
-    if (!dataUrl) {
+    const b64: string | undefined = aiData?.data?.[0]?.b64_json;
+    if (!b64) {
       return new Response(JSON.stringify({ error: "no image returned" }), {
         status: 502,
         headers: corsHeaders,
       });
     }
 
-    const bytes = dataUrlToBytes(dataUrl);
+    const bytes = base64ToBytes(b64);
     const path = `${user_id}/${module_id}.png`;
     const { error: upErr } = await admin.storage
       .from("module-shares")
