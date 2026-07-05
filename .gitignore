@@ -24,3 +24,5 @@ dist-ssr
 *.sw?
 .gstack/
 supabase/.temp/
+
+.env.local
