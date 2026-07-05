@@ -1082,15 +1082,19 @@ async function getDefaultCourseId(admin: any): Promise<string | null> {
 //   3. fallback to platform default course
 async function getCourseIdsForUser(admin: any, userId: string): Promise<string[]> {
   try {
+    // The bot runs service-role (bypasses RLS), so deactivation must be enforced
+    // here: only PUBLISHED courses are ever in scope. A student in a deactivated
+    // course's group keeps their enrollment (not kicked) but sees no lessons.
     const { data: prof } = await admin
       .from("profiles").select("group_id").eq("id", userId).maybeSingle();
     if (prof?.group_id) {
       const { data: g } = await admin
-        .from("groups").select("course_id").eq("id", prof.group_id).maybeSingle();
-      if (g?.course_id) return [g.course_id];
+        .from("groups").select("course_id, courses(published)").eq("id", prof.group_id).maybeSingle();
+      if (g?.course_id && (g as any).courses?.published) return [g.course_id];
+      // group's course is deactivated → fall through to any other published enrollment
     }
     const { data: enr } = await admin
-      .from("enrollments").select("course_id").eq("user_id", userId);
+      .from("enrollments").select("course_id, courses!inner(published)").eq("user_id", userId).eq("courses.published", true);
     const ids = (enr || []).map((r: any) => r.course_id).filter(Boolean);
     if (ids.length) return Array.from(new Set(ids));
   } catch (_e) { /* fall through */ }
