@@ -99,41 +99,21 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ ok: true, skipped: "quiet_hours", hour: hr }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
-  // Candidate query
+  // Candidate query — the RPC does the anti-join in SQL (excludes rows already
+  // at 3 reminders in their current cycle, or reminded in the last 24h) BEFORE
+  // the limit, so exhausted old rows can't starve newer ungraded homework.
   const cutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   const { data: subs, error: subsErr } = await admin
-    .from("homework_submissions")
-    .select("id, user_id, assignment_id, submitted_at")
-    .is("score", null)
-    .lt("submitted_at", cutoff)
-    .order("submitted_at", { ascending: true })
-    .limit(500);
+    .rpc("ungraded_reminder_candidates", { p_cutoff: cutoff, p_limit: 200 });
   if (subsErr) {
     return new Response(JSON.stringify({ ok: false, error: subsErr.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
-  const allSubs = (subs || []) as any[];
-  if (!allSubs.length) {
-    return new Response(JSON.stringify({ ok: true, processed: 0 }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-  }
-  const subIds = allSubs.map((s) => s.id);
-  const { data: rems } = await admin
-    .from("homework_ungraded_reminders")
-    .select("submission_id, reminders_sent, last_reminder_at, cycle_submitted_at")
-    .in("submission_id", subIds);
-  const remMap = new Map<string, any>((rems || []).map((r: any) => [r.submission_id, r]));
-
-  const dayAgo = Date.now() - 24 * 3600 * 1000;
-  const eligible = allSubs.filter((s) => {
-    const r = remMap.get(s.id);
-    const sameCycle = !!(r && r.cycle_submitted_at && new Date(r.cycle_submitted_at).getTime() === new Date(s.submitted_at).getTime());
-    const sent = sameCycle ? (r?.reminders_sent ?? 0) : 0;
-    if (sent >= 3) return false;
-    if (sameCycle && r?.last_reminder_at && new Date(r.last_reminder_at).getTime() >= dayAgo) return false;
-    return true;
-  }).slice(0, 200);
+  const eligible = ((subs || []) as any[]).map((s) => ({
+    id: s.id, user_id: s.user_id, assignment_id: s.assignment_id, submitted_at: s.submitted_at,
+  }));
 
   if (!eligible.length) {
-    return new Response(JSON.stringify({ ok: true, processed: 0, total_candidates: allSubs.length }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ ok: true, processed: 0 }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
   // Bulk load related rows

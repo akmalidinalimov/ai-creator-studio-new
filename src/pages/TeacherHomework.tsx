@@ -124,12 +124,22 @@ export default function TeacherHomework() {
   const load = async () => {
     if (scopeIds === null) return;
     if (scopeIds.length === 0) { setPending([]); setScored([]); setSubmissions([]); return; }
-    const { data: subs } = await supabase
-      .from("homework_submissions")
-      .select("*")
-      .in("user_id", scopeIds)
-      .order("submitted_at", { ascending: false });
-    const all = (subs || []) as any[];
+    // Paginate: PostgREST caps a single response at 1000 rows. At 560 students
+    // (esp. admin "Barcha guruhlar") one query silently truncated, hiding
+    // submitted work and dropping the oldest-ungraded items from the Pending tab.
+    const pageSize = 1000;
+    let all: any[] = [];
+    for (let from = 0; ; from += pageSize) {
+      const { data: page } = await supabase
+        .from("homework_submissions")
+        .select("*")
+        .in("user_id", scopeIds)
+        .order("submitted_at", { ascending: false })
+        .range(from, from + pageSize - 1);
+      const rows = (page || []) as any[];
+      all = all.concat(rows);
+      if (rows.length < pageSize) break;
+    }
     setSubmissions(all);
     if (!all.length) { setPending([]); setScored([]); return; }
     const aIds = Array.from(new Set(all.map((s) => s.assignment_id)));
@@ -164,8 +174,11 @@ export default function TeacherHomework() {
         user_group: p.group_id ? (groupNameMap.get(p.group_id) as string) : null,
       };
     });
-    setPending(enriched.filter((r) => r.score == null));
-    setScored(enriched.filter((r) => r.score != null));
+    // A resubmitted item keeps its old score but has score_is_stale=true; treat
+    // it as pending so re-opened work resurfaces for grading instead of hiding
+    // in "Baholangan" looking done.
+    setPending(enriched.filter((r) => r.score == null || (r as any).score_is_stale === true));
+    setScored(enriched.filter((r) => r.score != null && (r as any).score_is_stale !== true));
   };
   useEffect(() => { load(); }, [scopeIds]);
 

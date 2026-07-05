@@ -2414,7 +2414,11 @@ async function loadGradingSubmissions(admin: any, graderId: string, isAdmin: boo
   if (ids && ids.length === 0) return [];
   let q = admin.from("homework_submissions").select("id, assignment_id, user_id, submitted_at, score, score_feedback, scored_at, is_late");
   if (ids) q = q.in("user_id", ids);
-  q = opts.scored ? q.not("score", "is", null).order("scored_at", { ascending: false }) : q.is("score", null).order("submitted_at", { ascending: true });
+  // Pending = ungraded OR re-opened (score_is_stale); scored excludes stale, so
+  // resubmissions resurface for grading instead of hiding in "graded".
+  q = opts.scored
+    ? q.not("score", "is", null).not("score_is_stale", "is", true).order("scored_at", { ascending: false })
+    : q.or("score.is.null,score_is_stale.is.true").order("submitted_at", { ascending: true });
   if (opts.limit) q = q.limit(opts.limit);
   const { data: subs } = await q;
   const list = (subs || []) as any[];
