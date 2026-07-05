@@ -2981,6 +2981,18 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
     await sendMessage(chatId, t.gradeNotFound);
     return;
   }
+  // C2: a teacher may only grade students in their own groups. The grading LIST
+  // functions scope by gradingScopeIds, but this open-by-id path (reached from
+  // forgeable / stale callback buttons) did not — so a teacher could grade
+  // another group's students. The bot runs service-role, bypassing RLS, so this
+  // check must be explicit.
+  if (!isAdmin) {
+    const scope = await gradingScopeIds(admin, graderId, false);
+    if (!scope || !scope.includes(sub.user_id)) {
+      await sendMessage(chatId, t.gradeNotFound);
+      return;
+    }
+  }
   const { data: a } = await admin.from("homework_assignments").select("id, title, max_score, task_number").eq("id", sub.assignment_id).maybeSingle();
   const { data: p } = await admin.from("profiles").select("id, name, last_name").eq("id", sub.user_id).maybeSingle();
   const name = [p?.name, p?.last_name].filter(Boolean).join(" ") || "—";
@@ -3063,6 +3075,16 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
     if (sub) cacheInvalidateUser(sub.user_id);
       await sendWithKeyboard(msg.chat.id, t.gradeCancelled, locale, isAdmin, isAdmin ? "admin" : "teacher");
       return true;
+    }
+    // C2: re-check scope at commit time (teachers only) — the submission owner
+    // must still be in the grader's groups.
+    if (sub && !isAdmin) {
+      const scope = await gradingScopeIds(admin, profileId, false);
+      if (!scope || !scope.includes(sub.user_id)) {
+        await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+        await sendMessage(msg.chat.id, t.gradeNotFound);
+        return true;
+      }
     }
     const feedback = text === "/skip" ? null : text;
     const score = Number(ctx.score);
