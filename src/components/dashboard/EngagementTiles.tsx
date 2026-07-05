@@ -74,7 +74,7 @@ export function EngagementTiles() {
           <Flame className="h-5 w-5" />
         </span>
         <div>
-          <div className="text-xs text-muted-foreground font-medium">Streak</div>
+          <div className="text-xs text-muted-foreground font-medium">Seriya</div>
           <div className="text-2xl font-bold tabular-nums leading-tight">{streak} <span className="text-sm font-medium text-muted-foreground">kun</span></div>
         </div>
       </Card>
