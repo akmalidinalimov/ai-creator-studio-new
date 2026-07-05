@@ -39,7 +39,7 @@ export default function Dashboard() {
       const [profRes, streakRes, enrollRes] = await Promise.all([
         supabase.from("profiles").select("name, last_name").eq("id", user.id).maybeSingle(),
         supabase.from("streaks").select("current_streak").eq("user_id", user.id).maybeSingle(),
-        supabase.from("enrollments").select("course_id, courses(*)").eq("user_id", user.id),
+        supabase.from("enrollments").select("course_id, tier_id, courses(*), course_tiers(module_limit)").eq("user_id", user.id),
       ]);
       if (enrollRes.error) throw enrollRes.error;
       const profile = profRes.data; const streakRow = streakRes.data; const enrollments = enrollRes.data;
@@ -53,12 +53,25 @@ export default function Dashboard() {
       for (const e of enrollments || []) {
         const c: any = (e as any).courses;
         if (!c) continue;
+        // Tier cap: null = unlimited. Modules are ranked by position (matching
+        // has_module_access); only the first `limit` modules are accessible.
+        const limit: number | null = (e as any).course_tiers?.module_limit ?? null;
         const { data: lessons } = await supabase
           .from("lessons")
-          .select("id, position, modules!inner(course_id, position)")
-          .eq("modules.course_id", c.id)
-          .order("position", { ascending: true });
-        const lessonIds = (lessons || []).map((l: any) => l.id);
+          .select("id, position, modules!inner(id, course_id, position)")
+          .eq("modules.course_id", c.id);
+        const raw = (lessons || []).map((l: any) => ({
+          id: l.id, lp: l.position ?? 0, mid: l.modules?.id, mp: l.modules?.position ?? 0,
+        }));
+        // Rank modules by position so the cap matches the backend's rank logic.
+        const modRank = new Map<string, number>();
+        Array.from(new Map(raw.map((l) => [l.mid, l.mp])).entries())
+          .sort((a, b) => a[1] - b[1])
+          .forEach(([mid], i) => modRank.set(mid, i + 1));
+        let ordered = raw
+          .sort((a, b) => (modRank.get(a.mid)! - modRank.get(b.mid)!) || a.lp - b.lp);
+        if (limit != null) ordered = ordered.filter((l) => (modRank.get(l.mid) ?? 1e9) <= limit);
+        const lessonIds = ordered.map((l) => l.id);
         const total = lessonIds.length;
         const { data: progress } = await supabase
           .from("lesson_progress")
@@ -66,7 +79,7 @@ export default function Dashboard() {
           .eq("user_id", user.id)
           .in("lesson_id", lessonIds.length ? lessonIds : ["00000000-0000-0000-0000-000000000000"]);
         const completedSet = new Set((progress || []).filter((p: any) => p.completed_at).map((p: any) => p.lesson_id));
-        const next = (lessons || []).find((l: any) => !completedSet.has(l.id));
+        const next = ordered.find((l) => !completedSet.has(l.id));
         rows.push({
           id: c.id, title: c.title, tagline: c.tagline, cover_url: c.cover_url, duration_hours: c.duration_hours,
           total, completed: completedSet.size,

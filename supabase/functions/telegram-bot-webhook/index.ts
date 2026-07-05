@@ -1273,8 +1273,17 @@ async function computeStats(admin: any, userId: string) {
   const courseId = await getPrimaryCourseIdForUser(admin, userId);
   let pct = 0;
   if (courseId) {
-    const { data: modules } = await admin.from("modules").select("id").eq("course_id", courseId);
-    const mids = (modules || []).map((m: any) => m.id);
+    // Tier cap: only the modules the student can actually reach count toward %,
+    // otherwise a tier-capped (Premium/VIP) student can never hit 100% and the
+    // certificate stays unreachable. Modules ranked by position, first `limit`.
+    const { data: modules } = await admin.from("modules").select("id")
+      .eq("course_id", courseId)
+      .order("position", { ascending: true })
+      .order("created_at", { ascending: true });
+    let modList = (modules || []) as any[];
+    const _limit = await moduleLimitFor(admin, userId, courseId);
+    if (typeof _limit === "number") modList = modList.slice(0, _limit);
+    const mids = modList.map((m: any) => m.id);
     let total = 0;
     let done = 0;
     if (mids.length) {
