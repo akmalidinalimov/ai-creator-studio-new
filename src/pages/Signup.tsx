@@ -40,9 +40,6 @@ export default function Signup() {
     });
     setLoading(false);
     if (error) { toast.error(translateAuthError(t, error.message)); return; }
-    if (lastName && data.user) {
-      await supabase.from("profiles").update({ last_name: lastName } as any).eq("id", data.user.id);
-    }
     if (data.session) {
       toast.success(t("auth.welcomeToast"));
       nav("/dashboard");
