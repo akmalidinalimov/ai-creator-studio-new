@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
+import { translateAuthError } from "@/lib/authErrors";
 import { Monitor, LogOut, ShieldOff } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { SUPPORTED_LANGUAGES, type LanguageCode } from "@/i18n";
@@ -108,13 +109,13 @@ export default function Settings() {
       .from("profiles")
       .update({ name, last_name: lastName || null, timezone, weekly_goal_lessons: goal } as any)
       .eq("id", user.id);
-    if (error) toast.error(error.message); else toast.success(t("settings.saved"));
+    if (error) toast.error(translateAuthError(t, error.message)); else toast.success(t("settings.saved"));
   };
 
   const updatePassword = async () => {
     if (pw.length < 8) { toast.error(t("settings.minChars")); return; }
     const { error } = await supabase.auth.updateUser({ password: pw });
-    if (error) toast.error(error.message); else { toast.success(t("auth.passwordUpdated")); setPw(""); }
+    if (error) toast.error(translateAuthError(t, error.message)); else { toast.success(t("auth.passwordUpdated")); setPw(""); }
   };
 
   const onLanguageChange = async (code: LanguageCode) => {
@@ -126,7 +127,7 @@ export default function Settings() {
         .from("profiles")
         .update({ preferred_language: code } as any)
         .eq("id", user.id);
-      if (error) toast.error(error.message);
+      if (error) toast.error(translateAuthError(t, error.message));
       else toast.success(t("settings.languageUpdated"));
     }
   };
@@ -135,7 +136,7 @@ export default function Settings() {
     setSigningOutOthers(true);
     const { error } = await supabase.auth.signOut({ scope: "others" });
     setSigningOutOthers(false);
-    if (error) toast.error(error.message); else toast.success(t("settings.signedOutOthers"));
+    if (error) toast.error(translateAuthError(t, error.message)); else toast.success(t("settings.signedOutOthers"));
   };
 
   const signOutEverywhere = async () => {
@@ -149,7 +150,7 @@ export default function Settings() {
       } as any).then(() => {});
     }
     const { error } = await supabase.auth.signOut({ scope: "global" });
-    if (error) toast.error(error.message);
+    if (error) toast.error(translateAuthError(t, error.message));
   };
 
   const mostRecentId = useMemo(() => events[0]?.id, [events]);
@@ -201,7 +202,7 @@ export default function Settings() {
               setDigestOptIn(v);
               if (!user) return;
               const { error } = await supabase.from("profiles").update({ digest_opt_in: v } as any).eq("id", user.id);
-              if (error) toast.error(error.message); else toast.success(v ? "Digest yoqildi" : "Digest o'chirildi");
+              if (error) toast.error(translateAuthError(t, error.message)); else toast.success(v ? "Digest yoqildi" : "Digest o'chirildi");
             }}
           />
         </Card>

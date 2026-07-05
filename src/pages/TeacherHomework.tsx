@@ -393,7 +393,7 @@ function StudentMatrix({
             <th className="text-left px-3 py-2 sticky left-0 bg-muted/40 z-10">Talaba</th>
             {showGroup && <th className="text-left px-3 py-2">Guruh</th>}
             {modules.map((m) => (
-              <th key={m.id} className="text-left px-3 py-2 whitespace-nowrap">{m.position}-modul</th>
+              <th key={m.id} className="text-left px-3 py-2 whitespace-nowrap">{m.position + 1}-modul</th>
             ))}
           </tr>
         </thead>
