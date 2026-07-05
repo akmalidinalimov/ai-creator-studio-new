@@ -30,6 +30,7 @@ export default function LessonPage() {
   const language = normalizeAssistantLang(i18n.language);
 
   const [lesson, setLesson] = useState<any>(null);
+  const [notFound, setNotFound] = useState(false);
   const [modules, setModules] = useState<any[]>([]);
   const [completed, setCompleted] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState<{ last_position_seconds: number } | null>(null);
@@ -80,6 +81,9 @@ export default function LessonPage() {
       const { data: l } = await supabase.from("lessons")
         .select("id, title, description, module_id, position, published, video_provider, modules(course_id)")
         .eq("id", lessonId).maybeSingle();
+      // A lesson that was unpublished/deleted (or a stale bot/bookmark deeplink)
+      // returns null; without this the page span forever on the loading spinner.
+      if (!l) { setNotFound(true); return; }
       setLesson(l);
       const { data: ms } = await supabase
         .from("modules")
@@ -317,6 +321,16 @@ export default function LessonPage() {
   }, [chatLoading, chatHistory, lessonId, language, session]);
 
 
+  if (notFound) return (
+    <PageShell>
+      <div className="max-w-md mx-auto text-center py-16 space-y-4">
+        <div className="text-4xl">📭</div>
+        <h1 className="text-xl font-semibold">{t("lesson.unavailableTitle", { defaultValue: "Dars mavjud emas" })}</h1>
+        <p className="text-muted-foreground">{t("lesson.unavailableBody", { defaultValue: "Bu dars o'chirilgan yoki hozircha mavjud emas." })}</p>
+        <Button asChild><Link to={courseId ? `/course/${courseId}` : "/dashboard"}>{t("lesson.backToCourse", { defaultValue: "Kursga qaytish" })}</Link></Button>
+      </div>
+    </PageShell>
+  );
   if (!lesson) return <PageShell><div className="text-muted-foreground">{t("lesson.loading")}</div></PageShell>;
 
   const renderPlayer = () => {

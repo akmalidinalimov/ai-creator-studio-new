@@ -155,7 +155,15 @@ export function HomeworkSection({ lessonId }: Props) {
         ) : null}
         <div className="border-t pt-3">
           <div className="text-xs font-semibold text-muted-foreground mb-1">Sizning natijangiz</div>
-          {effScore != null ? (
+          {/* Resubmitted: live score is null but a previous attempt was scored.
+              Show a distinct "awaiting re-grade" state (the old score, no green
+              tick, no resubmit button) instead of the previous grade as current. */}
+          {effScore != null && (s?.score == null) ? (
+            <div className="space-y-1">
+              <Badge className="bg-amber-500 text-white">🔄 Qayta topshirildi — yangi baholashni kuting</Badge>
+              <div className="text-xs text-muted-foreground">Oldingi natija: {effScore}/{leaf.max_score}</div>
+            </div>
+          ) : effScore != null ? (
             <div className="space-y-2">
               <Badge className="bg-green-600 text-white">✅ {effScore}/{leaf.max_score}</Badge>
               {effFeedback && (
