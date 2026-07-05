@@ -1536,16 +1536,21 @@ async function buildHomeworkMessage(
   const lines: string[] = [t.hwTitle, ""];
   const buttons: any[][] = [];
   try {
-    // Parallel: profile (group_id) + active assignments
-    const [profRes, assignsRes] = await Promise.all([
+    // Resolve the student's course scope FIRST (group's course, else enrollments).
+    // Without this, the query returned every course's homework, so students in a
+    // 2-course catalog saw each module's homework twice (one per course).
+    const [profRes, courseIds] = await Promise.all([
       admin.from("profiles").select("group_id").eq("id", userId).maybeSingle(),
-      admin.from("homework_assignments")
-        .select("id, title, max_score, task_number, sap_number, parent_id, module_id, is_active, modules(id, title, position, course_id)")
-        .eq("is_active", true)
-        .order("task_number", { ascending: true })
-        .order("sap_number", { ascending: true, nullsFirst: true }),
+      getCourseIdsForUser(admin, userId),
     ]);
     const groupId = (profRes as any).data?.group_id || null;
+    let assignsQuery = admin.from("homework_assignments")
+      .select("id, title, max_score, task_number, sap_number, parent_id, module_id, is_active, modules!inner(id, title, position, course_id)")
+      .eq("is_active", true)
+      .order("task_number", { ascending: true })
+      .order("sap_number", { ascending: true, nullsFirst: true });
+    if (courseIds.length) assignsQuery = assignsQuery.in("modules.course_id", courseIds);
+    const assignsRes = await assignsQuery;
     const allList = ((assignsRes as any).data || []) as any[];
     if (!allList.length) { lines.push(t.hwEmpty); return { text: lines.join("\n"), keyboard: null }; }
     // Compute leaves: a parent without children OR every SAP
