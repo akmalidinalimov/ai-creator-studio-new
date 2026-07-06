@@ -1141,6 +1141,27 @@
       "Usta",
       "Master"
     ],
-    "groupDesc": "Guruhdoshlaringiz orasidagi o'rningiz — XP bo'yicha hisoblanadi"
+    "groupDesc": "Guruhdoshlaringiz orasidagi o'rningiz — XP bo'yicha hisoblanadi",
+    "tTabHome": "Boshqaruv",
+    "tTabQueue": "Navbat",
+    "tTabRoster": "Talabalar",
+    "tTabStats": "Statistika",
+    "tQueueCount": "{{n}} ta kutmoqda",
+    "tQueueEmpty": "Baholanmagan vazifalar yo'q",
+    "tQueueNote": "Barcha guruhlaringiz · eng eskisi birinchi · bitta bosishda baho qo'yiladi",
+    "tBroadcast": "Guruhga xabar",
+    "tInBot": "Telegram botda",
+    "tBroadcastHint": "Guruhga xabar yuborish uchun botdagi 📣 tugmasidan foydalaning",
+    "tAttention": "E'tibor kerak",
+    "tOldestPending": "Eng eski vazifa {{days}} kundan beri kutmoqda",
+    "tInactiveCount": "{{n}} talaba 3+ kun faolsiz",
+    "tAllGood": "Hammasi joyida — kutayotgan ishlar yo'q!",
+    "tGrade": "Baholash",
+    "tGradeFailed": "Baho saqlanmadi — qayta urinib ko'ring",
+    "tDaysAgo": "{{n}} kun",
+    "tViewImage": "Rasmni ko'rish",
+    "tFeedback": "Izoh",
+    "tFeedbackPh": "Talabaga izoh (ixtiyoriy)…",
+    "tSend": "Yuborish"
   }
 }

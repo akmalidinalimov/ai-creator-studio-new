@@ -1163,14 +1163,14 @@ function getAdminKeyboard(locale: Locale) {
 
 function getTeacherKeyboard(locale: Locale) {
   const t = T[locale] as any;
+  // Mission Control redesign: 11 buttons -> 4. Reading (stats/roster/TOP/
+  // inactive/homework lists) lives in the 👤 Profil mini-app; the bot keeps
+  // only chat-native quick actions. Old cached buttons still route via
+  // buttonTextToCommand, so nothing breaks for un-refreshed keyboards.
   return {
     keyboard: [
-      [{ text: t.tKbGrade }, { text: t.tKbHomework }],
-      [{ text: t.tKbStats }, { text: t.tKbTop }],
-      [{ text: t.tKbStudents }, { text: t.tKbInactive }],
-      [{ text: t.tKbBroadcast }, { text: t.tKbSettings }],
-      [{ text: t.tKbSwitchGroup }, { text: PROF_T[locale].kbProfil }],
-      [{ text: t.kbLang }],
+      [{ text: PROF_T[locale].kbProfil }, { text: t.tKbGrade }],
+      [{ text: t.tKbBroadcast }, { text: t.kbLang }],
     ],
     resize_keyboard: true,
     is_persistent: true,

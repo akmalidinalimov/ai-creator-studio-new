@@ -1141,6 +1141,27 @@
       "Expert",
       "Master"
     ],
-    "groupDesc": "Your place among your group-mates — ranked by XP"
+    "groupDesc": "Your place among your group-mates — ranked by XP",
+    "tTabHome": "Dashboard",
+    "tTabQueue": "Queue",
+    "tTabRoster": "Students",
+    "tTabStats": "Statistics",
+    "tQueueCount": "{{n}} waiting",
+    "tQueueEmpty": "No ungraded homework",
+    "tQueueNote": "All your groups · oldest first · one-tap scoring",
+    "tBroadcast": "Message group",
+    "tInBot": "in the Telegram bot",
+    "tBroadcastHint": "Use the 📣 button in the bot to broadcast to a group",
+    "tAttention": "Needs attention",
+    "tOldestPending": "Oldest homework has waited {{days}} days",
+    "tInactiveCount": "{{n}} students inactive 3+ days",
+    "tAllGood": "All clear — nothing waiting!",
+    "tGrade": "Grade",
+    "tGradeFailed": "Couldn't save the grade — try again",
+    "tDaysAgo": "{{n}}d",
+    "tViewImage": "View image",
+    "tFeedback": "Feedback",
+    "tFeedbackPh": "Feedback for the student (optional)…",
+    "tSend": "Send"
   }
 }
