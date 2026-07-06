@@ -6,8 +6,8 @@
 
 @layer base {
   :root {
-    /* Samarkand Teal — warm cream + Persian teal */
-    --background: 42 32% 97%;            /* #FAF8F3 cream */
+    /* Samarkand Teal — light mint + Persian teal (owner: light, premium, dotted) */
+    --background: 160 32% 96%;           /* #F0F7F4 light mint */
     --foreground: 180 50% 11%;           /* #0E2A2A deep teal-black */
 
     --card: 0 0% 100%;
@@ -37,8 +37,8 @@
     --warning: 43 89% 38%;               /* saffron */
     --warning-foreground: 0 0% 100%;
 
-    --border: 42 36% 86%;                /* #E8DFCC warm cream-gold border */
-    --input: 42 36% 86%;
+    --border: 160 22% 87%;               /* mint-tinted border (matches light-mint bg) */
+    --input: 160 22% 87%;
     --ring: 174 78% 26%;
 
     --gold: 43 89% 38%;                  /* #B8860B deep saffron */
@@ -282,3 +282,12 @@
 .dark .profile-page-bg::after {
   background-image: radial-gradient(hsl(285 40% 82% / 0.07) 1px, transparent 1.5px);
 }
+
+/* ===== Platform backdrop: light mint + premium dot grid (light theme only).
+   Dots sit on the page body behind all cards; dark theme stays clean. ===== */
+body {
+  background-image: radial-gradient(hsl(174 45% 32% / 0.07) 1px, transparent 1.4px);
+  background-size: 20px 20px;
+  background-attachment: fixed;
+}
+.dark body { background-image: none; }
