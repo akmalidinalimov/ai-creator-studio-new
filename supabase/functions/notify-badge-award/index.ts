@@ -1,5 +1,11 @@
-// Sends celebratory Telegram DMs for newly awarded badges. Drains badge_award_queue.
-// Triggered by pg_cron every minute and also callable on-demand for testing.
+// Sends celebratory Telegram badge CARDS (images) for newly awarded badges.
+// Drains badge_award_queue (populated by the queue_badge_dm trigger on
+// user_badges, with quiet-hours scheduling). Triggered by pg_cron every minute
+// and also callable on-demand for testing.
+//
+// The badge card is rendered by Cloudinary: a pre-baked 1080x1920 background
+// (aicreators/badge_<img>) with the student's FIRST name overlaid as the only
+// variable. No server-side image rendering — Cloudinary composites on delivery.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -10,6 +16,23 @@ const corsHeaders = {
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 const SITE_URL = (Deno.env.get("SITE_URL") || "https://aicreator.academy").replace(/\/$/, "");
+const CLOUD = Deno.env.get("CLOUDINARY_CLOUD") || "lnx5igsj";
+
+// badge.code -> Cloudinary background public_id (under folder "aicreators/").
+const CODE_TO_IMG: Record<string, string> = {
+  first_lesson: "badge_first_lesson",
+  first_homework: "badge_first_homework",
+  five_lessons: "badge_five_lessons",
+  ten_lessons: "badge_ten_lessons",
+  module_complete: "badge_module",
+  streak_3: "badge_streak_3",
+  streak_7: "badge_streak_7",
+  streak_14: "badge_streak_14",
+  streak_30: "badge_streak_30",
+  streak_60: "badge_streak_60",
+  streak_100: "badge_streak_100",
+  course_complete: "badge_course_complete",
+};
 
 function tg(method: string, body: unknown) {
   return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
@@ -17,6 +40,20 @@ function tg(method: string, body: unknown) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+function firstName(n: string | null): string {
+  return (n || "").trim().split(/\s+/)[0] || "Talaba";
+}
+
+// Cloudinary name overlay. Only the first name varies; y_1030 aligns with the
+// background's empty name slot; c_fit,w_880 keeps long names inside the canvas.
+function badgeImageUrl(code: string, name: string | null): string | null {
+  const img = CODE_TO_IMG[code];
+  if (!img) return null;
+  const raw = firstName(name).slice(0, 24);
+  const nm = encodeURIComponent(raw).replace(/'/g, "%27").replace(/\./g, "%2E");
+  return `https://res.cloudinary.com/${CLOUD}/image/upload/l_text:Arial_64_bold:${nm},co_rgb:F7F1E4,g_north,y_1030,c_fit,w_880/aicreators/${img}.png`;
 }
 
 function randomToken(len = 32): string {
@@ -37,28 +74,40 @@ const SINGLE_INTROS = [
   "✨ Ofarin, {{name}}!",
 ];
 
-// Badge-specific celebratory text by code
+// Badge-specific celebratory tail by code.
 const BADGE_VARIANTS: Record<string, string> = {
   first_lesson: "Birinchi darsingizni tugatdingiz! Sayohat boshlandi 🚀",
+  first_homework: "Birinchi uy vazifangizni topshirdingiz! A'lo ish 📝",
   five_lessons: "5 ta darsni tugatdingiz! Sur'atingiz a'lo.",
   ten_lessons: "10 ta darsni tugatdingiz! Siz haqiqiy o'rganuvchisiz ⭐",
-  module_complete: "Birinchi modulni tugatdingiz! Endi keyingisi sari!",
+  module_complete: "Modulni to'liq tugatdingiz! Endi keyingisi sari!",
+  streak_3: "3 kun ketma-ket! Odat shakllanmoqda 🔥",
+  streak_7: "7 kun ketma-ket o'qidingiz! Disipplina — muvaffaqiyat kaliti 🔥",
+  streak_14: "14 kun ketma-ket! Bu endi odat emas — bu SIZ 🔥",
+  streak_30: "30 kun ketma-ket! Siz 1% ichidasiz 🔥",
+  streak_60: "60 kun ketma-ket! Kamdan-kam uchraydigan sabr 🔥",
+  streak_100: "100 kun ketma-ket! Bu — afsona 👑",
   course_complete: "Butun kursni tugatdingiz! Bu — katta yutuq 🏆",
-  streak_7: "7 kun ketma-ket o'qidingiz! Disipplina — muvaffaqiyat kaliti.",
-  streak_30: "30 kun ketma-ket! Bu allaqachon odat — tabriklaymiz! 🔥",
-  first_homework: "Birinchi uy vazifangizni topshirdingiz! A'lo ish 📝",
 };
 
-function buildSingleMessage(name: string, badge: { code: string; name_uz: string; description_uz: string | null; icon: string | null }): string {
-  const intro = SINGLE_INTROS[Math.floor(Math.random() * SINGLE_INTROS.length)].replace("{{name}}", name || "talaba");
-  const tail = BADGE_VARIANTS[badge.code] || badge.description_uz || "Yangi muvaffaqiyat!";
-  const emoji = badge.icon || "🏅";
-  return `${intro}\n\nSiz yangi nishonni qo'lga kiritdingiz: ${emoji} <b>${badge.name_uz}</b>\n\n${tail}\n\nDavom eting — sizning faolligingiz boshqa talabalarga ham ilhom beradi! 💪`;
+function tail(badge: { code: string; description_uz: string | null }): string {
+  return BADGE_VARIANTS[badge.code] || badge.description_uz || "Yangi yutuq!";
 }
 
-function buildBatchMessage(name: string, badges: { name_uz: string; icon: string | null }[]): string {
+function singleCaption(name: string | null, badge: { code: string; name_uz: string; description_uz: string | null }): string {
+  const intro = SINGLE_INTROS[Math.floor(Math.random() * SINGLE_INTROS.length)].replace("{{name}}", firstName(name));
+  return `${intro}\n\n🏅 <b>${badge.name_uz}</b>\n${tail(badge)}\n\n📲 Rasmni Story'ngizga qo'ying — do'stlaringizni ham ilhomlantiring!`;
+}
+
+// Fallback text (no image mapping / image path failed).
+function fallbackText(name: string | null, badges: { code: string; name_uz: string; description_uz: string | null; icon: string | null }[]): string {
+  if (badges.length === 1) {
+    const b = badges[0];
+    const intro = SINGLE_INTROS[Math.floor(Math.random() * SINGLE_INTROS.length)].replace("{{name}}", firstName(name));
+    return `${intro}\n\nSiz yangi nishonni qo'lga kiritdingiz: ${b.icon || "🏅"} <b>${b.name_uz}</b>\n\n${tail(b)}`;
+  }
   const lines = badges.map((b) => `• ${b.icon || "🏅"} ${b.name_uz}`).join("\n");
-  return `🎉 Tabriklayman, ${name || "talaba"}! Bugun <b>${badges.length} ta yangi nishon</b> qo'lga kiritdingiz!\n\n${lines}\n\nZo'r ish, davom eting! 🚀`;
+  return `🎉 Tabriklayman, ${firstName(name)}! Bugun <b>${badges.length} ta yangi nishon</b> qo'lga kiritdingiz!\n\n${lines}\n\nZo'r ish, davom eting! 🚀`;
 }
 
 Deno.serve(async (req) => {
@@ -135,34 +184,60 @@ Deno.serve(async (req) => {
       continue;
     }
 
+    // Dedupe badges within this user's batch (same badge can't repeat, but be safe)
+    const seen = new Set<string>();
     const enriched = items
       .map((i: any) => badgeById.get(i.badge_id))
-      .filter(Boolean);
+      .filter((b: any) => b && !seen.has(b.id) && seen.add(b.id));
     if (!enriched.length) { await markSent(); processed += items.length; continue; }
 
     const chatId = Number(prof.telegram_id);
     const url = await magicLink(admin, uid, `/profile?tab=badges`);
-    const reply_markup = { inline_keyboard: [[{ text: "🏅 Barcha nishonlarim", url }]] };
+    const button = { inline_keyboard: [[{ text: "🏅 Barcha nishonlarim", url }]] };
 
-    let text: string;
-    if (enriched.length >= 3) {
-      text = buildBatchMessage(prof.name || "", enriched);
-    } else if (enriched.length === 2) {
-      text = buildBatchMessage(prof.name || "", enriched);
-    } else {
-      text = buildSingleMessage(prof.name || "", enriched[0]);
-    }
+    // Split into image-backed badges and text-only fallbacks.
+    const withImg = enriched.filter((b: any) => badgeImageUrl(b.code, prof.name));
+    const noImg = enriched.filter((b: any) => !badgeImageUrl(b.code, prof.name));
 
     try {
-      const resp = await tg("sendMessage", { chat_id: chatId, text, parse_mode: "HTML", reply_markup });
-      if (!resp.ok) {
-        const errTxt = await resp.text().catch(() => "");
-        console.error("badge dm send fail", uid, resp.status, errTxt);
+      if (withImg.length === 1 && noImg.length === 0) {
+        await tg("sendPhoto", {
+          chat_id: chatId,
+          photo: badgeImageUrl(withImg[0].code, prof.name),
+          caption: singleCaption(prof.name, withImg[0]),
+          parse_mode: "HTML",
+          reply_markup: button,
+        });
+      } else if (withImg.length >= 1) {
+        // Album of badge cards (Telegram media groups: 2..10, no buttons) + a
+        // follow-up message carrying the button and any text-only fallbacks.
+        const media = withImg.slice(0, 10).map((b: any, i: number) => ({
+          type: "photo",
+          media: badgeImageUrl(b.code, prof.name),
+          caption: i === 0
+            ? `🎉 Tabriklayman, ${firstName(prof.name)}! Yangi nishonlar 🏅`
+            : `🏅 ${b.name_uz}`,
+          parse_mode: "HTML",
+        }));
+        if (media.length === 1) {
+          await tg("sendPhoto", { chat_id: chatId, photo: media[0].media, caption: media[0].caption, parse_mode: "HTML" });
+        } else {
+          await tg("sendMediaGroup", { chat_id: chatId, media });
+        }
+        const extra = noImg.length ? `\n\n${noImg.map((b: any) => `• ${b.icon || "🏅"} ${b.name_uz}`).join("\n")}` : "";
+        await tg("sendMessage", {
+          chat_id: chatId,
+          text: `📲 Nishonlaringizni Story'ngizga qo'ying — do'stlaringizni ilhomlantiring!${extra}`,
+          parse_mode: "HTML",
+          reply_markup: button,
+        });
       } else {
-        sent += enriched.length;
+        // No images at all — plain text (legacy path).
+        await tg("sendMessage", { chat_id: chatId, text: fallbackText(prof.name, enriched), parse_mode: "HTML", reply_markup: button });
       }
+      sent += enriched.length;
     } catch (e) {
-      console.error("badge dm exception", uid, e);
+      console.error("badge card send exception", uid, e);
     }
 
     await markSent();
@@ -180,6 +255,7 @@ Deno.serve(async (req) => {
           badge_ids: badgeIdsForUser,
           batched: enriched.length > 1,
           count: enriched.length,
+          as_image: withImg.length > 0,
           sent_at: new Date().toISOString(),
           queued_for_quiet_hours: items.some((i: any) => new Date(i.scheduled_for).getTime() - new Date(i.awarded_at).getTime() > 60_000),
         },
