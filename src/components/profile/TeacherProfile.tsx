@@ -7,7 +7,7 @@ import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
 import { Camera, Pencil, Settings as SettingsIcon, Users } from "lucide-react";
 import { toast } from "sonner";
-import { BrandCover } from "@/pages/Profile";
+import { ProfileBackground } from "@/pages/Profile";
 
 interface TeacherStats { groups_count: number; students_total: number; graded_total: number; avg_score_given: number | null }
 interface TeacherGroup {
@@ -108,7 +108,8 @@ export default function TeacherProfile() {
   if (loading) {
     return (
       <PageShell>
-        <div className="max-w-2xl mx-auto space-y-4">
+        <ProfileBackground />
+        <div className="relative z-10 max-w-2xl mx-auto space-y-4">
           <Card className="h-64 animate-pulse bg-muted/40" />
           <Card className="h-40 animate-pulse bg-muted/40" />
         </div>
@@ -118,15 +119,14 @@ export default function TeacherProfile() {
 
   return (
     <PageShell>
-      <div className="max-w-2xl mx-auto space-y-4">
-        {/* header — gold mentor treatment */}
-        <Card className="overflow-hidden">
-          <BrandCover>
-            <Link to="/settings" className="absolute right-3 top-3 z-10 rounded-full bg-white/10 p-1.5 text-white hover:bg-white/20" aria-label={t("nav.mySettings")}>
-              <SettingsIcon className="h-4 w-4" />
-            </Link>
-          </BrandCover>
-          <div className="px-5 pb-5 -mt-10">
+      <ProfileBackground />
+      <div className="relative z-10 max-w-2xl mx-auto space-y-4">
+        {/* header — transparent, sits on the page wash */}
+        <div className="relative">
+          <Link to="/settings" className="absolute right-1 top-1 z-10 rounded-full bg-foreground/5 p-1.5 text-foreground/70 hover:bg-foreground/10" aria-label={t("nav.mySettings")}>
+            <SettingsIcon className="h-4 w-4" />
+          </Link>
+          <div className="px-5 pb-5 pt-8">
             <div className="flex flex-col items-center">
               <button type="button" onClick={() => fileRef.current?.click()}
                 className="relative rounded-full p-[3px] bg-gradient-to-tr from-amber-400 via-yellow-300 to-amber-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
@@ -169,7 +169,7 @@ export default function TeacherProfile() {
             </div>
 
             {/* mentor stat row */}
-            <div className="mt-4 grid grid-cols-4 divide-x rounded-lg border">
+            <div className="mt-4 grid grid-cols-4 divide-x rounded-lg border bg-card/85 shadow-soft">
               {[
                 { v: stats?.groups_count ?? 0, l: t("profile.tGroups") },
                 { v: stats?.students_total ?? 0, l: t("profile.tStudents") },
@@ -183,7 +183,7 @@ export default function TeacherProfile() {
               ))}
             </div>
           </div>
-        </Card>
+        </div>
 
         {/* group switcher — one tap per group */}
         {groups.length === 0 ? (

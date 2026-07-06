@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Camera, Pencil, Settings as SettingsIcon, Share2 } from "lucide-react";
 import { toast } from "sonner";
 import TeacherProfile from "@/components/profile/TeacherProfile";
-import { PixelDissolve } from "@/components/landing/PixelDissolve";
 
 /* ------------------------------------------------------------------ types */
 
@@ -44,27 +43,10 @@ type Tab = "achievements" | "group" | "about" | "stats";
 
 const prevThreshold = (level: number) => 50 * Math.max(level - 1, 0) * level;
 
-/** Static brand cover — the landing hero's look: deep teal-black, faint grid,
- *  soft teal glow, and the logo's pixel-dissolve squares. Same for everyone. */
-export function BrandCover({ className = "h-24", children }: {
-  className?: string; children?: React.ReactNode;
-}) {
-  return (
-    <div className={`relative overflow-hidden bg-[#0A0D0C] ${className}`}>
-      <div aria-hidden className="pointer-events-none absolute -top-[40%] -right-[6%] w-[70%] h-[170%] blur-2xl"
-        style={{ background: "radial-gradient(closest-side, rgba(47,179,155,.22), transparent 70%)" }} />
-      <div aria-hidden className="pointer-events-none absolute inset-0 opacity-50"
-        style={{
-          backgroundImage:
-            "linear-gradient(rgba(120,180,168,.10) 1px,transparent 1px),linear-gradient(90deg,rgba(120,180,168,.10) 1px,transparent 1px)",
-          backgroundSize: "36px 36px",
-          maskImage: "radial-gradient(120% 100% at 20% 20%,#000,transparent 75%)",
-          WebkitMaskImage: "radial-gradient(120% 100% at 20% 20%,#000,transparent 75%)",
-        }} />
-      <PixelDissolve className="absolute inset-0 w-full h-full" density={1400} />
-      {children}
-    </div>
-  );
+/** Full-viewport warm blush wash + dot grid behind the whole profile page —
+ *  identical style in light and dark (see .profile-page-bg in index.css). */
+export function ProfileBackground() {
+  return <div className="profile-page-bg fixed inset-0 z-0 pointer-events-none" aria-hidden />;
 }
 
 /** Conic streak ring: fills toward a full ring at a 30-day streak. */
@@ -247,7 +229,8 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
   if (loading) {
     return (
       <PageShell>
-        <div className="max-w-2xl mx-auto space-y-4">
+        <ProfileBackground />
+        <div className="relative z-10 max-w-2xl mx-auto space-y-4">
           <Card className="h-64 animate-pulse bg-muted/40" />
           <Card className="h-40 animate-pulse bg-muted/40" />
         </div>
@@ -257,15 +240,14 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
 
   return (
     <PageShell>
-      <div className="max-w-2xl mx-auto space-y-4">
-        {/* ---------------- header card ---------------- */}
-        <Card className="overflow-hidden">
-          <BrandCover>
-            <Link to="/settings" className="absolute right-3 top-3 z-10 rounded-full bg-white/10 p-1.5 text-white hover:bg-white/20" aria-label={t("nav.mySettings")}>
-              <SettingsIcon className="h-4 w-4" />
-            </Link>
-          </BrandCover>
-          <div className="px-5 pb-5 -mt-10">
+      <ProfileBackground />
+      <div className="relative z-10 max-w-2xl mx-auto space-y-4">
+        {/* ---------------- header (transparent — sits on the page wash) ---------------- */}
+        <div className="relative">
+          <Link to="/settings" className="absolute right-1 top-1 z-10 rounded-full bg-foreground/5 p-1.5 text-foreground/70 hover:bg-foreground/10" aria-label={t("nav.mySettings")}>
+            <SettingsIcon className="h-4 w-4" />
+          </Link>
+          <div className="px-5 pb-5 pt-8">
             {/* avatar + streak ring + level */}
             <div className="flex flex-col items-center">
               <button
@@ -326,7 +308,7 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
             </div>
 
             {/* 4 tappable stats (option C shortcuts) */}
-            <div className="mt-4 grid grid-cols-4 divide-x rounded-lg border">
+            <div className="mt-4 grid grid-cols-4 divide-x rounded-lg border bg-card/85 shadow-soft">
               {[
                 { v: stats?.modules_completed ?? 0, l: t("profile.statModules"), s: "progress" as const },
                 { v: `${stats?.current_streak ?? 0}🔥`, l: t("profile.statStreak"), s: "activity" as const, cls: "text-amber-500" },
@@ -363,7 +345,7 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
               </div>
             )}
           </div>
-        </Card>
+        </div>
 
         {/* ---------------- tabs ---------------- */}
         <div className="flex gap-1 border-b overflow-x-auto" role="tablist">
