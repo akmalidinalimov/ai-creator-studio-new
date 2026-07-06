@@ -1,13 +1,12 @@
 // Vercel Node serverless function — Soft Monoliths badge renderer.
 // satori (SVG) + @resvg/resvg-js (native → PNG). Node runtime = ample memory,
 // no wasm limits, no JSX. GET /api/badge?key=streak_7&name=Aziz[&m=1] → PNG.
-import satori from "satori";
-import { initWasm, Resvg } from "@resvg/resvg-wasm";
-
-let wasmP: Promise<void> | null = null;
-function initResvg() {
-  if (!wasmP) wasmP = initWasm(fetch("https://unpkg.com/@resvg/resvg-wasm@2.6.2/index_bg.wasm"));
-  return wasmP;
+// satori + resvg-wasm are imported dynamically inside the handler so any load
+// error surfaces as a readable JSON message (not Vercel's generic 500).
+const g = globalThis as any;
+function initResvg(initWasm: any) {
+  if (!g.__resvgP) g.__resvgP = initWasm(fetch("https://unpkg.com/@resvg/resvg-wasm@2.6.2/index_bg.wasm"));
+  return g.__resvgP;
 }
 
 const FOOTER = "AICREATOR.ACADEMY - ONLINE AI KURSI";
@@ -95,7 +94,9 @@ export default async function handler(req: any, res: any) {
       chip: p.chip,
       eyebrow: p.gold ? "AI CREATORS · OLTIN YUTUQ" : "AI CREATORS · YUTUQ",
     };
-    const [fonts] = await Promise.all([loadFonts(), initResvg()]);
+    const satori = (await import("satori")).default;
+    const { initWasm, Resvg } = await import("@resvg/resvg-wasm");
+    const [fonts] = await Promise.all([loadFonts(), initResvg(initWasm)]);
     const svg = await satori(tree(card) as any, { width: 1080, height: 1920, fonts, loadAdditionalAsset: async (code: string, seg: string) => code === "emoji" ? await loadEmoji(seg) : seg });
     const png = new Resvg(svg).render().asPng();
     res.setHeader("Content-Type", "image/png");
