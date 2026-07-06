@@ -283,11 +283,5 @@
   background-image: radial-gradient(hsl(285 40% 82% / 0.07) 1px, transparent 1.5px);
 }
 
-/* ===== Platform backdrop: light mint + premium dot grid (light theme only).
-   Dots sit on the page body behind all cards; dark theme stays clean. ===== */
-body {
-  background-image: radial-gradient(hsl(174 45% 32% / 0.07) 1px, transparent 1.4px);
-  background-size: 20px 20px;
-  background-attachment: fixed;
-}
-.dark body { background-image: none; }
+/* Platform backdrop is the logo's pixel-dissolve squares (option #2) —
+   rendered as a fixed canvas layer in PageShell; body stays plain mint. */

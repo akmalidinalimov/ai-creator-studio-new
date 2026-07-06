@@ -5,7 +5,11 @@ import { useEffect, useRef } from "react";
  * at an anchor point, scattering outward with a gentle twinkle. Honors
  * prefers-reduced-motion by drawing a single static frame (no rAF loop).
  */
-export function PixelDissolve({ className, density = 9000 }: { className?: string; density?: number }) {
+export function PixelDissolve({ className, density = 9000, alpha = 1 }: {
+  className?: string; density?: number;
+  /** Opacity multiplier — use ~0.3 for light backgrounds (daylight variant). */
+  alpha?: number;
+}) {
   const ref = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -44,7 +48,7 @@ export function PixelDissolve({ className, density = 9000 }: { className?: strin
     const frame = (twinkle: boolean) => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       for (const p of squares) {
-        const o = twinkle ? p.o * (0.6 + 0.4 * Math.sin(t + p.tw)) : p.o;
+        const o = (twinkle ? p.o * (0.6 + 0.4 * Math.sin(t + p.tw)) : p.o) * alpha;
         ctx.fillStyle = `rgba(47,179,155,${o.toFixed(3)})`;
         ctx.fillRect(p.x - p.s / 2, p.y - p.s / 2, p.s, p.s);
       }
@@ -72,7 +76,7 @@ export function PixelDissolve({ className, density = 9000 }: { className?: strin
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", onResize);
     };
-  }, [density]);
+  }, [density, alpha]);
 
   return <canvas ref={ref} className={className} aria-hidden="true" />;
 }

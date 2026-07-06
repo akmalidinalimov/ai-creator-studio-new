@@ -6,6 +6,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { LogOut, Settings, LayoutDashboard } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { PixelDissolve } from "@/components/landing/PixelDissolve";
 import { StudentBottomNav } from "@/components/StudentBottomNav";
 import { AdminSidebar, AdminMobileNav } from "@/components/admin/AdminSidebar";
 
@@ -108,16 +109,23 @@ export const PageShell = ({ children }: { children: React.ReactNode }) => {
 
   return (
     <div className="min-h-screen bg-background">
-      <TopNav />
-      {showSidebar ? (
-        <div className="flex">
-          <AdminSidebar />
-          <main className="flex-1 min-w-0 px-4 md:px-6 py-6 md:py-8 animate-fade-in">{children}</main>
-        </div>
-      ) : (
-        <main className={`container py-6 md:py-10 animate-fade-in ${isStudent ? "pb-24 md:pb-10" : ""}`}>{children}</main>
-      )}
-      {isStudent && <StudentBottomNav />}
+      {/* Brand backdrop: the logo's pixel-dissolve squares, daylight tone
+          (light theme only — dark keeps a clean surface). */}
+      <div className="fixed inset-0 z-0 pointer-events-none dark:hidden" aria-hidden>
+        <PixelDissolve className="w-full h-full" alpha={0.3} />
+      </div>
+      <div className="relative z-10">
+        <TopNav />
+        {showSidebar ? (
+          <div className="flex">
+            <AdminSidebar />
+            <main className="flex-1 min-w-0 px-4 md:px-6 py-6 md:py-8 animate-fade-in">{children}</main>
+          </div>
+        ) : (
+          <main className={`container py-6 md:py-10 animate-fade-in ${isStudent ? "pb-24 md:pb-10" : ""}`}>{children}</main>
+        )}
+        {isStudent && <StudentBottomNav />}
+      </div>
     </div>
   );
 };
