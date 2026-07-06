@@ -274,8 +274,10 @@ const T = {
     hwResubNo: "❌ Yo'q",
     hwResubCancelled: "OK 👍 Oldingi natija saqlanadi.",
     hwResubError: "❌ Qayta topshirishni boshlab bo'lmadi. Keyinroq urinib ko'ring.",
-    hwReceived: (mn: number, tn: number) =>
-      `✅ Vazifangiz qabul qilindi · Modul ${mn} · V${tn}\nUstoz baholaganidan keyin natija keladi.`,
+    hwReceived: (mn: number, tn: number, preview?: string, expect?: string) =>
+      `✅ <b>Vazifangiz qabul qilindi</b> · Modul ${mn} · V${tn}` +
+      (preview ? `\n📄 ${preview}` : "") +
+      `\n⏳ Ustozlar odatda ${expect || "1–2 kun"} ichida baholaydi — natija shu yerga keladi.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
       `🆕 <b>Yangi topshiriq</b>\n👤 ${csvEscapeHtml(name)}\n📚 Modul ${mn} · V${tn} — ${csvEscapeHtml(title)}`,
     hwTeacherBtnFile: "📂 Faylni ko'rish",
@@ -502,8 +504,10 @@ const T = {
     hwResubNo: "❌ Нет",
     hwResubCancelled: "OK 👍 Прежний результат сохранится.",
     hwResubError: "❌ Не удалось начать пересдачу. Попробуйте позже.",
-    hwReceived: (mn: number, tn: number) =>
-      `✅ Задание принято · Модуль ${mn} · З${tn}\nКак только преподаватель оценит — пришлю результат.`,
+    hwReceived: (mn: number, tn: number, preview?: string, expect?: string) =>
+      `✅ <b>Задание принято</b> · Модуль ${mn} · З${tn}` +
+      (preview ? `\n📄 ${preview}` : "") +
+      `\n⏳ Преподаватели обычно проверяют за ${expect || "1–2 дня"} — результат придёт сюда.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
       `🆕 <b>Новая сдача</b>\n👤 ${csvEscapeHtml(name)}\n📚 Модуль ${mn} · З${tn} — ${csvEscapeHtml(title)}`,
     hwTeacherBtnFile: "📂 Открыть файл",
@@ -730,8 +734,10 @@ const T = {
     hwResubNo: "❌ No",
     hwResubCancelled: "OK 👍 Your previous score is kept.",
     hwResubError: "❌ Could not start resubmission. Please try again later.",
-    hwReceived: (mn: number, tn: number) =>
-      `✅ Submission received · Module ${mn} · T${tn}\nYou'll get the result once your teacher grades it.`,
+    hwReceived: (mn: number, tn: number, preview?: string, expect?: string) =>
+      `✅ <b>Submission received</b> · Module ${mn} · T${tn}` +
+      (preview ? `\n📄 ${preview}` : "") +
+      `\n⏳ Teachers usually grade within ${expect || "1–2 days"} — the result will arrive here.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
       `🆕 <b>New submission</b>\n👤 ${csvEscapeHtml(name)}\n📚 Module ${mn} · T${tn} — ${csvEscapeHtml(title)}`,
     hwTeacherBtnFile: "📂 Open file",
@@ -3457,8 +3463,15 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
         const title = `${a?.title || ""}${tn}`;
         try {
           const url = await createMagicLink(admin, sub.user_id, "login", "/profile");
+          // S4: low scores get a one-tap resubmit right in the grade card —
+          // the existing hw:resub_yes flow handles confirmation + archiving.
+          const rows: any[][] = [];
+          if (score < max * 0.7 && tt.hwResubYes) {
+            rows.push([{ text: tt.hwResubYes, callback_data: `hw:resub_yes:${sub.assignment_id}` }]);
+          }
+          rows.push([{ text: tt.btnSiteOpen, url }]);
           await sendLongMessage(stu.telegram_id, tt.gradeStudentDM(csvEscapeHtml(title), score, max, csvEscapeHtml(feedback || "")), {
-            inline_keyboard: [[{ text: tt.btnSiteOpen, url }]],
+            inline_keyboard: rows,
           });
         } catch (e) {
           console.error("auto-DM student failed", e);
@@ -4397,7 +4410,26 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     // Private DM to student (confirmation). Log Telegram errors so failures are visible.
     if (profile.telegram_id) {
       try {
-        const resp = await sendMessage(profile.telegram_id, t.hwReceived(mn, tn));
+        // S1 receipt: echo what was submitted + honest expectation from the
+        // platform's real median grading turnaround (last 100 graded).
+        let expectStr: string | undefined;
+        try {
+          const { data: gr } = await admin.from("homework_submissions")
+            .select("submitted_at, scored_at").not("scored_at", "is", null)
+            .order("scored_at", { ascending: false }).limit(100);
+          const ds = ((gr || []) as any[])
+            .map((r) => (new Date(r.scored_at).getTime() - new Date(r.submitted_at).getTime()) / 86400_000)
+            .filter((d) => d >= 0).sort((a, b) => a - b);
+          if (ds.length >= 10) {
+            const med = ds[Math.floor(ds.length / 2)];
+            expectStr = med <= 1 ? { uz: "24 soat", ru: "24 часа", en: "24 hours" }[locale]
+              : `${Math.ceil(med)} ${{ uz: "kun", ru: "дн.", en: "days" }[locale]}`;
+          }
+        } catch (_e) { /* fall back to default phrasing */ }
+        const preview = submittedText
+          ? escHtml(submittedText.length > 80 ? submittedText.slice(0, 80) + "…" : submittedText)
+          : undefined;
+        const resp = await sendMessage(profile.telegram_id, t.hwReceived(mn, tn, preview, expectStr));
         if (!resp.ok) {
           const errTxt = await resp.text().catch(() => "");
           console.error("hw:group:student-dm-fail", JSON.stringify({ profile_id: profile.id, status: resp.status, err: errTxt.slice(0, 200) }));
