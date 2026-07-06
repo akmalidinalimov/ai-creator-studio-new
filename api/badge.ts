@@ -98,7 +98,7 @@ export default async function handler(req: any, res: any) {
     const { initWasm, Resvg } = await import("@resvg/resvg-wasm");
     const [fonts] = await Promise.all([loadFonts(), initResvg(initWasm)]);
     const svg = await satori(tree(card) as any, { width: 1080, height: 1920, fonts, loadAdditionalAsset: async (code: string, seg: string) => code === "emoji" ? await loadEmoji(seg) : seg });
-    const png = new Resvg(svg).render().asPng();
+    const png = new Resvg(svg, { fitTo: { mode: "width", value: 720 } }).render().asPng();
     res.setHeader("Content-Type", "image/png");
     res.setHeader("Cache-Control", "public, max-age=86400");
     res.status(200).send(Buffer.from(png));
