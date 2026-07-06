@@ -6,7 +6,26 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { LogOut, Settings, LayoutDashboard } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { PixelDissolve } from "@/components/landing/PixelDissolve";
+
+/** Static brand squares (from the logo's pixel motif) scattered in abstract
+ *  spots — top-right cluster + bottom-left accent. No animation; both themes. */
+const BRAND_SQUARES: Array<[string, string, number, number]> = [
+  // [top, left, size(px), opacity]
+  ["5%", "88%", 34, 0.13], ["11%", "81%", 16, 0.10], ["19%", "92%", 22, 0.11],
+  ["8%", "73%", 10, 0.08], ["25%", "85%", 12, 0.09], ["15%", "96%", 8, 0.07],
+  ["76%", "5%", 26, 0.10], ["85%", "11%", 14, 0.08], ["69%", "2%", 10, 0.07],
+  ["90%", "20%", 18, 0.09], ["81%", "26%", 8, 0.06],
+];
+
+const BrandSquares = () => (
+  <div className="fixed inset-0 z-0 pointer-events-none dark:opacity-70" aria-hidden>
+    {BRAND_SQUARES.map(([top, left, size, opacity], i) => (
+      <span key={i}
+        className="absolute rounded-[3px] bg-[#2FB39B] dark:bg-[#2DD4BF]"
+        style={{ top, left, width: size, height: size, opacity }} />
+    ))}
+  </div>
+);
 import { StudentBottomNav } from "@/components/StudentBottomNav";
 import { AdminSidebar, AdminMobileNav } from "@/components/admin/AdminSidebar";
 
@@ -109,11 +128,9 @@ export const PageShell = ({ children }: { children: React.ReactNode }) => {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Brand backdrop: the logo's pixel-dissolve squares, daylight tone
-          (light theme only — dark keeps a clean surface). */}
-      <div className="fixed inset-0 z-0 pointer-events-none dark:hidden" aria-hidden>
-        <PixelDissolve className="w-full h-full" alpha={0.3} />
-      </div>
+      {/* Brand backdrop: static logo squares scattered in both themes
+          (dot grid comes from body CSS — see index.css). */}
+      <BrandSquares />
       <div className="relative z-10">
         <TopNav />
         {showSidebar ? (

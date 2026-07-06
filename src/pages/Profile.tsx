@@ -242,9 +242,9 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
     <PageShell>
       <ProfileBackground />
       <div className="relative z-10 max-w-2xl mx-auto space-y-4">
-        {/* ---------------- header (transparent — sits on the page wash) ---------------- */}
-        <div className="relative">
-          <Link to="/settings" className="absolute right-1 top-1 z-10 rounded-full bg-foreground/5 p-1.5 text-foreground/70 hover:bg-foreground/10" aria-label={t("nav.mySettings")}>
+        {/* ---------------- header card (solid surface for readability) ---------------- */}
+        <Card className="relative overflow-hidden">
+          <Link to="/settings" className="absolute right-2 top-2 z-10 rounded-full bg-foreground/5 p-1.5 text-foreground/70 hover:bg-foreground/10" aria-label={t("nav.mySettings")}>
             <SettingsIcon className="h-4 w-4" />
           </Link>
           <div className="px-5 pb-5 pt-8">
@@ -308,7 +308,7 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
             </div>
 
             {/* 4 tappable stats (option C shortcuts) */}
-            <div className="mt-4 grid grid-cols-4 divide-x rounded-lg border bg-card/85 shadow-soft">
+            <div className="mt-4 grid grid-cols-4 divide-x rounded-lg border bg-muted/30">
               {[
                 { v: stats?.modules_completed ?? 0, l: t("profile.statModules"), s: "progress" as const },
                 { v: `${stats?.current_streak ?? 0}🔥`, l: t("profile.statStreak"), s: "activity" as const, cls: "text-amber-500" },
@@ -345,7 +345,7 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
               </div>
             )}
           </div>
-        </div>
+        </Card>
 
         {/* ---------------- tabs ---------------- */}
         <div className="flex gap-1 border-b overflow-x-auto" role="tablist">
