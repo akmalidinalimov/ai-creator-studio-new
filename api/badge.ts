@@ -2,7 +2,13 @@
 // satori (SVG) + @resvg/resvg-js (native → PNG). Node runtime = ample memory,
 // no wasm limits, no JSX. GET /api/badge?key=streak_7&name=Aziz[&m=1] → PNG.
 import satori from "satori";
-import { Resvg } from "@resvg/resvg-js";
+import { initWasm, Resvg } from "@resvg/resvg-wasm";
+
+let wasmP: Promise<void> | null = null;
+function initResvg() {
+  if (!wasmP) wasmP = initWasm(fetch("https://unpkg.com/@resvg/resvg-wasm@2.6.2/index_bg.wasm"));
+  return wasmP;
+}
 
 const FOOTER = "AICREATOR.ACADEMY - ONLINE AI KURSI";
 const MODULE_LINES: Record<number, string> = {
@@ -89,7 +95,7 @@ export default async function handler(req: any, res: any) {
       chip: p.chip,
       eyebrow: p.gold ? "AI CREATORS · OLTIN YUTUQ" : "AI CREATORS · YUTUQ",
     };
-    const fonts = await loadFonts();
+    const [fonts] = await Promise.all([loadFonts(), initResvg()]);
     const svg = await satori(tree(card) as any, { width: 1080, height: 1920, fonts, loadAdditionalAsset: async (code: string, seg: string) => code === "emoji" ? await loadEmoji(seg) : seg });
     const png = new Resvg(svg).render().asPng();
     res.setHeader("Content-Type", "image/png");
