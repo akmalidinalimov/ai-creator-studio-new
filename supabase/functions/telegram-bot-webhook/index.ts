@@ -1032,6 +1032,135 @@ async function buildTeacherProfileCard(
   return { text: lines.join("\n"), keyboard };
 }
 
+// ===== One-off migration broadcast (invoked via x-internal-secret, action=migration_broadcast) =====
+const BCAST_T = {
+  uz: {
+    body: [
+      "📢 <b>Muhim yangilik!</b>",
+      "",
+      "Platformamiz yangi manzilga ko'chdi: <b>aicreator.academy</b>",
+      "",
+      "Barcha darslaringiz, statistikangiz, vazifalaringiz va yutuqlaringiz <b>to'liq saqlangan</b> — hech narsa yo'qolmagan! ✅",
+      "",
+      "⚠️ Eski havolalar endi ishlamaydi. Quyidagi tugma orqali kiring va yangi 👤 Profil bo'limini ham ko'ring 👇",
+      "",
+      "<i>Agar pastdagi tugmalar yangilanmasa, /start ni bosing.</i>",
+    ].join("\n"),
+    cta: "Kirish va yangi profilingiz 👇",
+    btnSite: "🌐 Saytga kirish", btnProfile: "👤 Profilim",
+  },
+  ru: {
+    body: [
+      "📢 <b>Важная новость!</b>",
+      "",
+      "Платформа переехала на новый адрес: <b>aicreator.academy</b>",
+      "",
+      "Все ваши уроки, статистика, задания и достижения <b>полностью сохранены</b> — ничего не потеряно! ✅",
+      "",
+      "⚠️ Старые ссылки больше не работают. Войдите по кнопке ниже и загляните в новый раздел 👤 Профиль 👇",
+      "",
+      "<i>Если кнопки внизу не обновились — нажмите /start.</i>",
+    ].join("\n"),
+    cta: "Вход и ваш новый профиль 👇",
+    btnSite: "🌐 Открыть сайт", btnProfile: "👤 Мой профиль",
+  },
+  en: {
+    body: [
+      "📢 <b>Important update!</b>",
+      "",
+      "Our platform has moved to a new address: <b>aicreator.academy</b>",
+      "",
+      "All your lessons, statistics, homework and achievements are <b>fully preserved</b> — nothing is lost! ✅",
+      "",
+      "⚠️ Old links no longer work. Sign in with the button below and check out the new 👤 Profile 👇",
+      "",
+      "<i>If the buttons below didn't update, tap /start.</i>",
+    ].join("\n"),
+    cta: "Sign in & your new profile 👇",
+    btnSite: "🌐 Open the site", btnProfile: "👤 My profile",
+  },
+} as const;
+
+async function runMigrationBroadcast(admin: any, mode: "test" | "all") {
+  // Register slash commands once (discoverability of /profil in the "/" menu).
+  try {
+    await tgApi("setMyCommands", {
+      commands: [
+        { command: "start", description: "Boshlash / Menyu" },
+        { command: "profil", description: "👤 Profil va statistika" },
+        { command: "davom", description: "📚 Darsni davom ettirish" },
+        { command: "vazifalar", description: "📝 Uy vazifalarim" },
+        { command: "til", description: "🌐 Til / Язык / Language" },
+        { command: "yordam", description: "❓ Yordam" },
+      ],
+    });
+  } catch (e) { console.error("setMyCommands failed", e); }
+
+  // Targets: active, telegram-linked. Test mode → admins/superadmins only.
+  const { data: profs } = await admin
+    .from("profiles")
+    .select("id, telegram_id, preferred_locale, status, archived_at")
+    .not("telegram_id", "is", null)
+    .eq("status", "active")
+    .is("archived_at", null);
+  let targets = (profs || []) as any[];
+  if (mode === "test") {
+    const { data: adminRoles } = await admin
+      .from("user_roles").select("user_id").in("role", ["admin", "superadmin"]);
+    const adminIds = new Set(((adminRoles || []) as any[]).map((r) => r.user_id));
+    targets = targets.filter((p) => adminIds.has(p.id));
+  }
+
+  // Resumable: skip anyone already marked sent (dedup via notifications_log),
+  // and process at most BATCH per invocation so the gateway's 150s idle
+  // timeout can't kill a long run mid-flight. Caller re-invokes until remaining=0.
+  const { data: sentRows } = await admin
+    .from("notifications_log").select("user_id").eq("notification_type", "migration_broadcast");
+  const already = new Set(((sentRows || []) as any[]).map((r) => r.user_id));
+  const pending = targets.filter((p) => !already.has(p.id));
+  const BATCH = 100;
+  const batch = pending.slice(0, BATCH);
+
+  let ok = 0, fail = 0;
+  const failures: string[] = [];
+  for (const p of batch) {
+    try {
+      const locale: Locale = normLocale(p.preferred_locale);
+      const b = BCAST_T[locale];
+      const persona = await getPersona(admin, p.id);
+      // Msg 1: announcement carrying the NEW persistent keyboard (passive refresh).
+      const r1 = await sendMessage(Number(p.telegram_id), b.body, keyboardFor(locale, persona));
+      const j1 = await r1.json().catch(() => ({}));
+      if (!j1?.ok) throw new Error(j1?.description || `sendMessage failed`);
+      // Msg 2: personal login button + profile shortcut.
+      const url = await createMagicLink(admin, p.id, "login", "/dashboard");
+      await sendMessage(Number(p.telegram_id), b.cta, {
+        inline_keyboard: [[{ text: b.btnSite, url }], [{ text: b.btnProfile, callback_data: "prof:card" }]],
+      });
+      await admin.from("notifications_log").insert({
+        user_id: p.id, notification_type: "migration_broadcast",
+        payload: { mode }, sent_at: new Date().toISOString(),
+      });
+      ok++;
+    } catch (e) {
+      fail++;
+      if (failures.length < 8) failures.push(`${p.telegram_id}: ${e instanceof Error ? e.message : e}`);
+    }
+    await new Promise((r) => setTimeout(r, 40)); // ~25 msg-pairs/sec, under Telegram's cap
+  }
+
+  const report = {
+    mode, targets: targets.length, batch: batch.length, ok, fail,
+    remaining: Math.max(pending.length - batch.length, 0), failures, at: new Date().toISOString(),
+  };
+  try {
+    await admin.from("app_settings").upsert(
+      { key: `migration_broadcast_${mode}`, value: report }, { onConflict: "key" });
+  } catch (_e) { /* best-effort */ }
+  console.log("migration_broadcast", JSON.stringify(report));
+  return report;
+}
+
 function getMainKeyboard(locale: Locale) {
   const t = T[locale];
   const p = PROF_T[locale];
@@ -4495,7 +4624,10 @@ async function handleCallback(admin: any, cq: any) {
     const locale: Locale = normLocale(_clicker?.preferred_locale);
     const action = data.slice("prof:".length);
     await answerCallback(cq.id);
-    if (action === "stats") {
+    if (action === "card") {
+      const { text, keyboard } = await buildProfileCard(admin, _effId, locale);
+      await sendMessage(chatId, text, keyboard);
+    } else if (action === "stats") {
       const text = await buildStatsMessage(admin, _effId, locale);
       const url = await createMagicLink(admin, _effId, "login", "/profile");
       await sendMessage(chatId, text, { inline_keyboard: [[{ text: PROF_T[locale].btnProfOpen, url }]] });
@@ -5000,6 +5132,21 @@ Deno.serve(async (req) => {
   }
   if (req.method !== "POST") {
     return new Response("Method not allowed", { status: 405, headers: corsHeaders });
+  }
+
+  // Internal ops branch (not from Telegram): migration broadcast, guarded by
+  // INTERNAL_FN_SECRET — same pattern as the canary/cron functions.
+  const internalSecret = req.headers.get("x-internal-secret") || "";
+  const INTERNAL = Deno.env.get("INTERNAL_FN_SECRET") || "";
+  if (internalSecret && INTERNAL && internalSecret === INTERNAL) {
+    let body: any = {};
+    try { body = await req.json(); } catch { /* ignore */ }
+    if (body?.action === "migration_broadcast") {
+      const adminC = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      const report = await runMigrationBroadcast(adminC, body.mode === "all" ? "all" : "test");
+      return new Response(JSON.stringify(report), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ error: "unknown action" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
   // Verify Telegram secret
