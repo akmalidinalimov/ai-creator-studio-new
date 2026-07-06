@@ -47,13 +47,14 @@ function firstName(n: string | null): string {
 }
 
 // Cloudinary name overlay. Only the first name varies; y_1030 aligns with the
-// background's empty name slot; c_fit,w_880 keeps long names inside the canvas.
+// background's empty name slot; c_fit,w_840 keeps long names inside the IG-safe zone.
 function badgeImageUrl(code: string, name: string | null): string | null {
   const img = CODE_TO_IMG[code];
   if (!img) return null;
   const raw = firstName(name).slice(0, 24);
   const nm = encodeURIComponent(raw).replace(/'/g, "%27").replace(/\./g, "%2E");
-  return `https://res.cloudinary.com/${CLOUD}/image/upload/l_text:Arial_64_bold:${nm},co_rgb:F7F1E4,g_north,y_1030,c_fit,w_880/aicreators/${img}.png`;
+  // "_g3" = current baked-background revision (gold title + IG-safe margins).
+  return `https://res.cloudinary.com/${CLOUD}/image/upload/l_text:Arial_64_bold:${nm},co_rgb:F7F1E4,g_north,y_1030,c_fit,w_840/aicreators/${img}_g3.png`;
 }
 
 function randomToken(len = 32): string {
