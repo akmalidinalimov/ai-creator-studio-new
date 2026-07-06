@@ -1162,6 +1162,17 @@
     "tViewImage": "View image",
     "tFeedback": "Feedback",
     "tFeedbackPh": "Feedback for the student (optional)…",
-    "tSend": "Send"
+    "tSend": "Send",
+    "tUndo": "Undo",
+    "tUndone": "Grade undone — back in the queue",
+    "tNudge": "Nudge",
+    "tNudgeTitle": "Send a warm reminder via the bot (once a day)",
+    "tNudgeSent": "Reminder sent to {{name}} 👋",
+    "tNudgeFailed": "Couldn't send — try again",
+    "tNudgedAlready": "This student was already nudged today",
+    "tPendingHint": "Grade them!",
+    "tDigest": "Last 24 hours",
+    "tDigestNew": "new submissions",
+    "tDigestActive": "students active"
   }
 }

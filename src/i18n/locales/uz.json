@@ -1162,6 +1162,17 @@
     "tViewImage": "Rasmni ko'rish",
     "tFeedback": "Izoh",
     "tFeedbackPh": "Talabaga izoh (ixtiyoriy)…",
-    "tSend": "Yuborish"
+    "tSend": "Yuborish",
+    "tUndo": "Bekor qilish",
+    "tUndone": "Baho bekor qilindi — vazifa navbatga qaytdi",
+    "tNudge": "Chaqirish",
+    "tNudgeTitle": "Botda iliq eslatma yuborish (kuniga 1 marta)",
+    "tNudgeSent": "{{name}} ga eslatma yuborildi 👋",
+    "tNudgeFailed": "Yuborilmadi — qayta urinib ko'ring",
+    "tNudgedAlready": "Bu talabaga bugun allaqachon eslatma yuborilgan",
+    "tPendingHint": "Baholang!",
+    "tDigest": "Oxirgi 24 soat",
+    "tDigestNew": "yangi vazifa",
+    "tDigestActive": "talaba faol edi"
   }
 }

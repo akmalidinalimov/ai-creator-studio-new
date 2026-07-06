@@ -132,7 +132,7 @@ export default function TeacherProfile() {
     if (user) await supabase.from("profiles").update({ active_teacher_group_id: gid } as any).eq("id", user.id);
   };
 
-  /* One-tap grading. */
+  /* One-tap grading with a 6-second undo (safety net for fat fingers). */
   const grade = async (item: QueueItem, score: number, feedback?: string) => {
     const { error } = await supabase.from("homework_submissions")
       .update({
@@ -141,9 +141,38 @@ export default function TeacherProfile() {
       } as any)
       .eq("id", item.id);
     if (error) { toast.error(t("profile.tGradeFailed")); return; }
+    const bump = (delta: number) =>
+      setGroups((gs) => gs.map((g) => g.group_name === item.group_name ? { ...g, pending_homework: Math.max(g.pending_homework + delta, 0) } : g));
     setQueue((q) => q.filter((x) => x.id !== item.id));
-    setGroups((gs) => gs.map((g) => g.group_name === item.group_name ? { ...g, pending_homework: Math.max(g.pending_homework - 1, 0) } : g));
-    toast.success(`${item.student} — ${score}/${item.max_score} ✓`);
+    bump(-1);
+    toast.success(`${item.student} — ${score}/${item.max_score} ✓`, {
+      duration: 6000,
+      action: {
+        label: t("profile.tUndo"),
+        onClick: async () => {
+          const { error: uErr } = await supabase.from("homework_submissions")
+            .update({ score: null, score_feedback: null, scored_by: null, scored_at: null } as any)
+            .eq("id", item.id);
+          if (uErr) { toast.error(t("profile.tGradeFailed")); return; }
+          setQueue((q) => [item, ...q].sort((a, b) => a.submitted_at.localeCompare(b.submitted_at)));
+          bump(1);
+          toast.info(t("profile.tUndone"));
+        },
+      },
+    });
+  };
+
+  /* One-tap nudge for inactive students (rate-limited server-side to 1/day). */
+  const [nudged, setNudged] = useState<Set<string>>(new Set());
+  const nudge = async (studentId: string, name: string) => {
+    const { data, error } = await supabase.functions.invoke("teacher-nudge-student", { body: { student_id: studentId } });
+    const errMsg = (error as any)?.message || (data as any)?.error;
+    if (errMsg === "already_nudged_today" || (error && String((error as any).context?.status) === "429")) {
+      toast.info(t("profile.tNudgedAlready")); setNudged((s) => new Set(s).add(studentId)); return;
+    }
+    if (error || (data as any)?.error) { toast.error(t("profile.tNudgeFailed")); return; }
+    setNudged((s) => new Set(s).add(studentId));
+    toast.success(t("profile.tNudgeSent", { name }));
   };
 
   const sel = groups.find((g) => g.group_id === selected) || null;
@@ -190,6 +219,11 @@ export default function TeacherProfile() {
           <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide" role="tablist" aria-label={t("profile.tGroups")}>
             {groups.map((g) => {
               const attention = g.pending_homework > 0 || (g.total_students > 0 && g.active_7d / g.total_students < 0.3);
+              // Course identity on every chip: colored dot + short course label,
+              // so multi-course teachers always know which world a group is in.
+              const courseIdx = [...new Set(groups.map((x) => x.course_name))].indexOf(g.course_name);
+              const dotCls = courseIdx % 2 === 0 ? "bg-primary" : "bg-violet-500";
+              const shortCourse = (g.course_name || "").replace(/AI CREATORS\s*/i, "");
               return (
                 <button key={g.group_id} role="tab" aria-selected={selected === g.group_id}
                   onClick={() => pickGroup(g.group_id)}
@@ -197,8 +231,9 @@ export default function TeacherProfile() {
                     selected === g.group_id
                       ? "border-primary bg-primary/10 font-semibold text-foreground"
                       : "bg-card text-muted-foreground hover:text-foreground"}`}>
-                  <Users className="inline h-3.5 w-3.5 mr-1.5 -mt-0.5" />
+                  <span className={`inline-block h-2 w-2 rounded-full ${dotCls} mr-1.5 align-middle`} aria-hidden />
                   {g.group_name}
+                  {shortCourse && <span className="ml-1 text-[10px] text-muted-foreground align-middle">· {shortCourse}</span>}
                   {attention && <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500 ml-1.5 align-middle" aria-label="!" />}
                 </button>
               );
@@ -225,11 +260,17 @@ export default function TeacherProfile() {
         {/* ---------------- HOME: cockpit ---------------- */}
         {tab === "home" && sel && (
           <div className="space-y-4">
+            {/* daily digest: what happened in the last 24h (from loaded data) */}
+            <Card className="p-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">🕐 {t("profile.tDigest")}</span>
+              <span>📝 <b className="tabular-nums">{queue.filter((q) => (daysSince(q.submitted_at) ?? 9) < 1).length}</b> {t("profile.tDigestNew")}</span>
+              <span>✅ <b className="tabular-nums">{roster.filter((r) => (daysSince(r.last_activity_at) ?? 9) < 1).length}</b> {t("profile.tDigestActive")}</span>
+            </Card>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
                 { v: sel.total_students, l: t("profile.tMembers") },
                 { v: sel.active_7d, l: t("profile.tActive7d"), cls: "text-emerald-600" },
-                { v: sel.pending_homework, l: t("profile.tPending"), cls: sel.pending_homework > 0 ? "text-amber-600" : "" },
+                { v: sel.pending_homework, l: sel.pending_homework > 0 ? t("profile.tPendingHint") : t("profile.tPending"), cls: sel.pending_homework > 0 ? "text-amber-600" : "" },
                 { v: `${sel.avg_completion_pct}%`, l: t("profile.tCompletion"), cls: "text-primary" },
               ].map((it, i) => (
                 <Card key={i} className="p-3 text-center">
@@ -334,6 +375,12 @@ export default function TeacherProfile() {
                         </div>
                       </div>
                       {d != null && d >= 3 && <span className="text-[11px] rounded-md bg-amber-500/15 text-amber-600 px-1.5 py-0.5">😴 {d}{t("profile.days").slice(0, 1)}</span>}
+                      {d != null && d >= 3 && (
+                        <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={nudged.has(r.id)}
+                          onClick={() => nudge(r.id, r.name)} title={t("profile.tNudgeTitle")}>
+                          {nudged.has(r.id) ? "✓" : `👋 ${t("profile.tNudge")}`}
+                        </Button>
+                      )}
                       {r.telegram_username && (
                         <a href={`https://t.me/${r.telegram_username}`} target="_blank" rel="noreferrer"
                           className="text-xs text-primary hover:underline">💬</a>
