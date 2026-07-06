@@ -1723,7 +1723,10 @@ export default function AdminUsers() {
                 <div className="space-y-1.5">
                   <Label>{t("admin.users.role")}</Label>
                   <Select
-                    value={manageUser.is_admin ? "admin" : "student"}
+                    // Reflect the user's ACTUAL primary role (was hardcoded to
+                    // admin/student, so "teacher" could never display and a
+                    // successful change appeared to snap back to Student).
+                    value={manageUser.role_name || "student"}
                     onValueChange={async (newRole) => {
                       try {
                         const { data, error } = await supabase.functions.invoke("admin-change-role", {
@@ -1731,6 +1734,9 @@ export default function AdminUsers() {
                         });
                         if (error) throw error;
                         if ((data as any)?.error) throw new Error((data as any).error);
+                        // Update dialog state immediately so the select sticks and
+                        // the "Mas'ul guruhlar" section appears without reopening.
+                        setManageUser({ ...manageUser, role_name: newRole as RoleName, is_admin: newRole === "admin" || newRole === "superadmin" });
                         toast.success(t("admin.users.toasts.saved"));
                         reload();
                       } catch (e: any) {
