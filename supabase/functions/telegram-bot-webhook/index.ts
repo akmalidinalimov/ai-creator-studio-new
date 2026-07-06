@@ -175,7 +175,7 @@ const T = {
     tKbBroadcast: "📣 Guruhga xabar",
     tKbSettings: "⚙️ Sozlamalar",
     tKbSwitchGroup: "🔄 Guruhni almashtirish",
-    tKbHomework: "📝 Vazifalar",
+    tKbHomework: "📚 Vazifalar",
     tKbGrade: "📝 Baholash",
     tKbGraded: "👥 Talabalar",
     rosterTitle: "👥 <b>Talabalar</b>\nTalabani tanlang:",
@@ -413,7 +413,7 @@ const T = {
     tKbBroadcast: "📣 Сообщение группе",
     tKbSettings: "⚙️ Настройки",
     tKbSwitchGroup: "🔄 Сменить группу",
-    tKbHomework: "📝 Задания",
+    tKbHomework: "📚 Задания",
     tKbGrade: "📝 Оценить",
     tKbGraded: "👥 Студенты",
     rosterTitle: "👥 <b>Студенты</b>\nВыберите студента:",
@@ -643,7 +643,7 @@ const T = {
     tKbBroadcast: "📣 Broadcast",
     tKbSettings: "⚙️ Settings",
     tKbSwitchGroup: "🔄 Switch group",
-    tKbHomework: "📝 Homework",
+    tKbHomework: "📚 Homework",
     tKbGrade: "📝 Grade",
     tKbGraded: "👥 Students",
     rosterTitle: "👥 <b>Students</b>\nPick a student:",
@@ -1167,16 +1167,18 @@ function getAdminKeyboard(locale: Locale) {
   };
 }
 
-function getTeacherKeyboard(locale: Locale) {
+function getTeacherKeyboard(locale: Locale, pendingCount?: number) {
   const t = T[locale] as any;
-  // Mission Control redesign: 11 buttons -> 4. Reading (stats/roster/TOP/
-  // inactive/homework lists) lives in the 👤 Profil mini-app; the bot keeps
-  // only chat-native quick actions. Old cached buttons still route via
-  // buttonTextToCommand, so nothing breaks for un-refreshed keyboards.
+  // "Data-Six" layout — ranked by 2 months of real taps (Baholash 848 ≫
+  // Statistika 148 > Vazifalar 73 > Talabalarim 38 > Xabar 15). Occasional
+  // items (TOP, Faolsizlar, Sozlamalar, Til, group switching) live in 👤 Profil.
+  const grade = pendingCount && pendingCount > 0 ? `${t.tKbGrade} (${pendingCount})` : t.tKbGrade;
   return {
     keyboard: [
-      [{ text: PROF_T[locale].kbProfil }, { text: t.tKbGrade }],
-      [{ text: t.tKbBroadcast }, { text: t.kbLang }],
+      [{ text: grade }],
+      [{ text: t.tKbStats }, { text: t.tKbHomework }],
+      [{ text: t.tKbStudents }, { text: t.tKbBroadcast }],
+      [{ text: PROF_T[locale].kbProfil }],
     ],
     resize_keyboard: true,
     is_persistent: true,
@@ -1269,6 +1271,10 @@ function buttonTextToCommand(text: string): string | null {
     if (trimmed === t.adminKbNew) return "/yangilar";
     if (trimmed === t.adminKbStudentMode) return "/talaba";
     // Teacher keyboard buttons
+    // Data-Six: Baholash may carry a live "(N)" suffix; legacy 📝 Vazifalar
+    // labels from cached keyboards still route.
+    if (t.tKbGrade && trimmed.startsWith(t.tKbGrade)) return "/baholash";
+    if (trimmed === "📝 Vazifalar" || trimmed === "📝 Задания" || trimmed === "📝 Homework") return "/modulvazifalar";
     if (t.tKbStats && trimmed === t.tKbStats) return "/tstats";
     if (t.tKbStudents && trimmed === t.tKbStudents) return "/tstudents";
     if (t.tKbInactive && trimmed === t.tKbInactive) return "/tinactive";
@@ -5301,7 +5307,23 @@ Deno.serve(async (req) => {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag, persona);
         }
       } else if (text === "/start") {
-        await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag, persona);
+        // Teacher greeting: name + live pending count + where things are.
+        if (persona === "teacher" && profileForLocale) {
+          let pend = 0;
+          try {
+            const { data: pg } = await admin.rpc("teacher_groups", { uid: profileForLocale.id });
+            pend = ((pg || []) as any[]).reduce((s, g) => s + (g.pending_homework || 0), 0);
+          } catch (_e) { /* best-effort */ }
+          const nm = profileForLocale.name || "";
+          const greet = {
+            uz: `Salom, ${nm}! 🧑‍🏫\n${pend > 0 ? `📝 <b>${pend} ta vazifa</b> baholashni kutmoqda.` : "✅ Baholanmagan vazifalar yo'q."}\n\nTOP talabalar, faolsizlar, guruh almashtirish va sozlamalar — 👤 Profil ichida.`,
+            ru: `Салом, ${nm}! 🧑‍🏫\n${pend > 0 ? `📝 <b>${pend} заданий</b> ждут проверки.` : "✅ Непроверенных заданий нет."}\n\nТОП, неактивные, смена группы и настройки — внутри 👤 Профиль.`,
+            en: `Hi ${nm}! 🧑‍🏫\n${pend > 0 ? `📝 <b>${pend} submissions</b> are waiting.` : "✅ Nothing waiting to grade."}\n\nTOP students, inactive, group switching and settings live inside 👤 Profile.`,
+          }[locale];
+          await sendMessage(msg.chat.id, greet, getTeacherKeyboard(locale, pend));
+        } else {
+          await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag, persona);
+        }
       } else if (text.startsWith("/")) {
         // Grading session intercepts /skip and /cancel for the in-progress flow
         if ((persona === "teacher" || persona === "admin") && profileForLocale) {
