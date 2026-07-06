@@ -1121,6 +1121,26 @@
     "tCourse": "Курс",
     "tTopStudents": "ТОП студенты",
     "tNoStudents": "В группе нет студентов",
-    "tGradeHomework": "Проверить задания"
+    "tGradeHomework": "Проверить задания",
+    "kpiLessonsWatched": "уроков просмотрено",
+    "kpiModulesDone": "модулей завершено",
+    "kpiHwSubmitted": "домашних заданий сдано",
+    "courseDoneHint": "Вы прошли {{pct}}% курса — продолжайте! 🚀",
+    "xpTitle": "XP и уровень",
+    "kpiToNextLevel": "до уровня {{level}}",
+    "kpiWeekWatch": "просмотрено на этой неделе",
+    "kpiStreakRow": "дней подряд (рекорд: {{best}})",
+    "kpiAvgScore": "средний балл",
+    "hwPending": "на проверке",
+    "points": "баллов",
+    "minutes": "минут",
+    "levelNames": [
+      "Новичок",
+      "Ученик",
+      "Знаток",
+      "Мастер",
+      "Гуру"
+    ],
+    "groupDesc": "Ваше место среди одногруппников — считается по XP"
   }
 }

@@ -408,28 +408,40 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
         {/* 📊 Statistika */}
         {tab === "stats" && stats && (
           <div className="space-y-4">
-            {/* progress */}
-            <div ref={sectionRefs.progress} className="grid grid-cols-2 gap-3 scroll-mt-20">
-              <Card className="p-4 flex flex-col items-center">
-                <div className="text-[11px] uppercase tracking-wide text-muted-foreground self-start">{t("profile.courseProgress")}</div>
-                <Donut pct={stats.total_lessons > 0 ? stats.lessons_completed / stats.total_lessons : 0} />
-                <div className="text-xs text-muted-foreground tabular-nums">
-                  {stats.modules_completed}/{stats.total_modules} {t("profile.statModules").toLowerCase()} · {stats.lessons_completed}/{stats.total_lessons} {t("profile.lessons")}
+            {/* course progress — full-width, absolute KPI rows */}
+            <Card ref={sectionRefs.progress as any} className="p-4 scroll-mt-20">
+              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t("profile.courseProgress")}</div>
+              <div className="mt-3 flex items-center gap-5">
+                <Donut pct={stats.total_lessons > 0 ? stats.lessons_completed / stats.total_lessons : 0} size={104} />
+                <div className="flex-1 space-y-2.5">
+                  <KpiRow icon="📚" value={`${stats.lessons_completed}/${stats.total_lessons}`} label={t("profile.kpiLessonsWatched")} />
+                  <KpiRow icon="📦" value={`${stats.modules_completed}/${stats.total_modules}`} label={t("profile.kpiModulesDone")} />
+                  <KpiRow icon="📝" value={`${stats.homework_submitted}`} label={t("profile.kpiHwSubmitted")} />
                 </div>
-              </Card>
-              <Card className="p-4">
-                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">XP</div>
-                <div className="mt-1 text-2xl font-bold tabular-nums text-violet-500">{stats.total_xp}</div>
-                <div className="text-xs text-muted-foreground">{t("profile.levelWord")} {stats.level}</div>
-                <div className="mt-2 flex items-end gap-1 h-12" aria-label="XP trend">
-                  {xpWeeks.map((w, i) => {
-                    const max = Math.max(...xpWeeks.map((x) => x.xp), 1);
-                    return <div key={i} className="flex-1 rounded-t bg-gradient-to-t from-violet-500/40 to-violet-500" style={{ height: `${Math.max((w.xp / max) * 100, 4)}%` }} title={`${w.xp} XP`} />;
-                  })}
-                </div>
-                <div className="text-[10px] text-muted-foreground mt-1">{t("profile.last8Weeks")}</div>
-              </Card>
-            </div>
+              </div>
+              <p className="mt-3 text-xs text-muted-foreground">
+                {t("profile.courseDoneHint", { pct: stats.total_lessons > 0 ? Math.round((stats.lessons_completed / stats.total_lessons) * 100) : 0 })}
+              </p>
+            </Card>
+
+            {/* XP & level — full-width */}
+            <Card className="p-4">
+              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t("profile.xpTitle")}</div>
+              <div className="mt-3 space-y-2.5">
+                <KpiRow icon="⚡" value={`${stats.total_xp} XP`} label={`${t("profile.levelWord")} ${stats.level} · ${levelName(stats.level, t)}`} valueCls="text-violet-500" />
+                <KpiRow icon="🎯" value={`${Math.max(stats.xp_next_level - stats.total_xp, 0)} XP`} label={t("profile.kpiToNextLevel", { level: stats.level + 1 })} />
+              </div>
+              <div className="mt-3 h-2 rounded-full bg-muted overflow-hidden">
+                <div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-pink-500" style={{ width: `${Math.round(xpPct * 100)}%` }} />
+              </div>
+              <div className="mt-3 flex items-end gap-1 h-10" aria-label="XP trend">
+                {xpWeeks.map((w, i) => {
+                  const max = Math.max(...xpWeeks.map((x) => x.xp), 1);
+                  return <div key={i} className="flex-1 rounded-t bg-gradient-to-t from-violet-500/40 to-violet-500" style={{ height: `${Math.max((w.xp / max) * 100, 4)}%` }} title={`${w.xp} XP`} />;
+                })}
+              </div>
+              <p className="mt-1.5 text-xs text-muted-foreground">{t("profile.last8Weeks")} · {t("profile.xpNote")}</p>
+            </Card>
 
             {/* weekly activity */}
             <Card ref={sectionRefs.activity as any} className="p-4 scroll-mt-20">
@@ -450,28 +462,38 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
                   );
                 })}
               </div>
+              <div className="mt-3 space-y-2.5">
+                <KpiRow icon="⏱" value={`${week.reduce((s, d) => s + d.minutes, 0)} ${t("profile.minutes")}`} label={t("profile.kpiWeekWatch")} />
+                <KpiRow icon="🔥" value={`${stats.current_streak} ${t("profile.days")}`} label={t("profile.kpiStreakRow", { best: stats.longest_streak })} valueCls="text-amber-500" />
+              </div>
             </Card>
 
-            {/* homework scorecard */}
+            {/* homework scorecard — absolute scores, one row per assignment */}
             <Card ref={sectionRefs.homework as any} className="p-4 scroll-mt-20">
-              <div className="flex items-baseline justify-between">
-                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t("profile.homeworkScores")}</div>
-                <div className="text-xs tabular-nums text-muted-foreground">
-                  {t("profile.avg")}: <b className="text-foreground">{stats.homework_avg_score ?? "—"}</b>/10
-                </div>
+              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t("profile.homeworkScores")}</div>
+              <div className="mt-3 space-y-2.5">
+                <KpiRow icon="📝" value={`${stats.homework_submitted}`} label={t("profile.kpiHwSubmitted")} />
+                {stats.homework_avg_score != null && (
+                  <KpiRow icon="⭐" value={`${stats.homework_avg_score}/10`} label={t("profile.kpiAvgScore")} valueCls="text-emerald-500" />
+                )}
               </div>
               {homework.length === 0 ? (
                 <p className="mt-3 text-sm text-muted-foreground">{t("profile.noHomework")}</p>
               ) : (
-                <ul className="mt-3 space-y-2">
+                <ul className="mt-4 divide-y">
                   {homework.map((h, i) => (
-                    <li key={i} className="flex items-center gap-3 text-sm">
-                      <span className="w-16 shrink-0 text-muted-foreground tabular-nums">{h.module_pos + 1}-modul</span>
-                      <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
-                        <div className={`h-full rounded-full ${h.score == null ? "bg-muted-foreground/30" : h.score >= 9 ? "bg-emerald-500" : h.score >= 6 ? "bg-violet-500" : "bg-amber-500"}`}
-                          style={{ width: `${((h.score ?? 0) / Math.max(h.max_score, 1)) * 100}%` }} />
-                      </div>
-                      <span className="w-10 text-right tabular-nums">{h.score == null ? "⏳" : `${h.score}/${h.max_score}`}</span>
+                    <li key={i} className="flex items-center gap-3 py-2 text-sm">
+                      <span className="flex-1 truncate">
+                        <span className="text-muted-foreground tabular-nums">{h.module_pos + 1}-modul</span>
+                        {h.module_title ? <span className="text-muted-foreground"> · {h.module_title}</span> : null}
+                      </span>
+                      {h.score == null ? (
+                        <span className="text-xs text-muted-foreground">⏳ {t("profile.hwPending")}</span>
+                      ) : (
+                        <span className={`font-bold tabular-nums ${h.score >= 9 ? "text-emerald-500" : h.score >= 6 ? "text-violet-500" : "text-amber-500"}`}>
+                          {h.score}/{h.max_score} {t("profile.points")}
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -531,7 +553,26 @@ function GroupBoard({ group, xpToTop, t, compact }: { group: GroupRow[]; xpToTop
       {xpToTop > 0 && (
         <div className="mt-2 text-xs text-muted-foreground tabular-nums">{t("profile.toFirst", { xp: xpToTop })} ↑</div>
       )}
-      {!compact && <div className="mt-2 text-[11px] text-muted-foreground">{t("profile.xpNote")}</div>}
+      <div className="mt-2 text-[11px] text-muted-foreground">{t("profile.groupDesc")}</div>
     </Card>
   );
+}
+
+/* ------------------------------------------------------------- KPI row */
+
+function KpiRow({ icon, value, label, valueCls }: { icon: string; value: string; label: string; valueCls?: string }) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="text-base w-6 text-center" aria-hidden>{icon}</span>
+      <span className={`font-bold tabular-nums whitespace-nowrap ${valueCls || ""}`}>{value}</span>
+      <span className="text-sm text-muted-foreground truncate">{label}</span>
+    </div>
+  );
+}
+
+/** Named levels (status framing beats bare numbers). Clamps to the last name. */
+function levelName(level: number, t: any): string {
+  const names: string[] = t("profile.levelNames", { returnObjects: true }) as any;
+  if (!Array.isArray(names) || names.length === 0) return "";
+  return names[Math.min(Math.max(level - 1, 0), names.length - 1)];
 }

@@ -821,7 +821,8 @@ const PROF_T = {
     profHomework: "Vazifalar", profAvg: "o'rt.", profRank: "Guruhda",
     profNextLevel: (need: number, lvl: number) => `${lvl}-darajagacha ${need} XP qoldi`,
     btnProfStats: "📊 Statistika", btnProfBadges: "🏆 Yutuqlarim",
-    btnProfGroup: "👥 Guruh reytingi", btnProfOpen: "🌐 Profilni ochish",
+    btnProfGroup: "👥 Guruh reytingi", btnProfOpen: "👤 Profilni ochish",
+    profOpenHint: "Statistika, yutuqlar, guruh reytingi va vazifalaringiz — barchasi profilingizda 👇",
     profGroupTitle: (g: string) => `👥 <b>${g} reytingi</b>`,
     profYou: "Siz", profToFirst: (xp: number) => `Birinchi o'ringa ${xp} XP qoldi ↑`,
     profNoGroup: "Siz hali guruhga qo'shilmagansiz.",
@@ -840,7 +841,8 @@ const PROF_T = {
     profHomework: "Задания", profAvg: "ср.", profRank: "В группе",
     profNextLevel: (need: number, lvl: number) => `До уровня ${lvl}: ${need} XP`,
     btnProfStats: "📊 Статистика", btnProfBadges: "🏆 Достижения",
-    btnProfGroup: "👥 Рейтинг группы", btnProfOpen: "🌐 Открыть профиль",
+    btnProfGroup: "👥 Рейтинг группы", btnProfOpen: "👤 Открыть профиль",
+    profOpenHint: "Статистика, достижения, рейтинг группы и задания — всё в вашем профиле 👇",
     profGroupTitle: (g: string) => `👥 <b>Рейтинг ${g}</b>`,
     profYou: "Вы", profToFirst: (xp: number) => `До 1-го места ${xp} XP ↑`,
     profNoGroup: "Вы ещё не добавлены в группу.",
@@ -859,7 +861,8 @@ const PROF_T = {
     profHomework: "Homework", profAvg: "avg", profRank: "In group",
     profNextLevel: (need: number, lvl: number) => `${need} XP to level ${lvl}`,
     btnProfStats: "📊 Statistics", btnProfBadges: "🏆 Achievements",
-    btnProfGroup: "👥 Group rating", btnProfOpen: "🌐 Open profile",
+    btnProfGroup: "👥 Group rating", btnProfOpen: "👤 Open my profile",
+    profOpenHint: "Statistics, achievements, group rating and homework — all in your profile 👇",
     profGroupTitle: (g: string) => `👥 <b>${g} rating</b>`,
     profYou: "You", profToFirst: (xp: number) => `${xp} XP to reach #1 ↑`,
     profNoGroup: "You haven't been added to a group yet.",
@@ -877,60 +880,25 @@ function escHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-/** Student profile card (bot mirror of the web /profile header). */
+/** Student profile: compact greeting + ONE button that opens the web profile
+ *  directly (all stats/badges/ratings live there — no in-chat button maze). */
 async function buildProfileCard(admin: any, userId: string, locale: Locale): Promise<{ text: string; keyboard: any }> {
   const p = PROF_T[locale];
-  const [{ data: prof }, statsRes, badgesRes] = await Promise.all([
-    admin.from("profiles").select("name, last_name, bio, group_id").eq("id", userId).maybeSingle(),
+  const [{ data: prof }, statsRes] = await Promise.all([
+    admin.from("profiles").select("name, last_name").eq("id", userId).maybeSingle(),
     admin.rpc("profile_stats", { uid: userId }),
-    admin.from("user_badges").select("badges(icon, position)").eq("user_id", userId),
   ]);
   const s: any = Array.isArray(statsRes.data) ? statsRes.data[0] : statsRes.data;
-  const name = escHtml(`${prof?.name || ""} ${prof?.last_name || ""}`.trim() || "Talaba");
+  const name = escHtml(`${prof?.name || ""}`.trim() || "Talaba");
 
-  let groupName: string | null = null, teacherName: string | null = null;
-  if (prof?.group_id) {
-    const { data: g } = await admin.from("groups").select("name, teacher_id").eq("id", prof.group_id).maybeSingle();
-    groupName = g?.name || null;
-    if (g?.teacher_id) {
-      const { data: tp } = await admin.from("profiles").select("name").eq("id", g.teacher_id).maybeSingle();
-      teacherName = tp?.name || null;
-    }
-  }
+  const bits: string[] = [`L${s?.level ?? 1} ⚡${s?.total_xp ?? 0} XP`];
+  if ((s?.current_streak ?? 0) > 0) bits.push(`${s.current_streak}🔥`);
+  if (s?.group_rank && s?.group_size) bits.push(`🏆 #${s.group_rank}/${s.group_size}`);
 
-  const icons = ((badgesRes.data || []) as any[])
-    .map((r) => r.badges)
-    .filter(Boolean)
-    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-    .map((b) => b.icon || "🏅")
-    .slice(0, 8)
-    .join("");
-
-  const lines: string[] = [];
-  lines.push(`👤 <b>${name}</b> · L${s?.level ?? 1} ⚡${s?.total_xp ?? 0} XP`);
-  const chips: string[] = [];
-  if (groupName) chips.push(`${p.profGroup}: <b>${escHtml(groupName)}</b>`);
-  if (teacherName) chips.push(`${p.profTeacher}: <b>${escHtml(teacherName)}</b>`);
-  if (chips.length) lines.push(`📍 ${chips.join(" · ")}`);
-  if (prof?.bio) lines.push(`<i>${escHtml(String(prof.bio))}</i>`);
-  lines.push("");
-  const need = Math.max((s?.xp_next_level ?? 100) - (s?.total_xp ?? 0), 0);
-  lines.push(`🔥 ${p.profStreak}: <b>${s?.current_streak ?? 0}</b> (${p.profRecord}: ${s?.longest_streak ?? 0})`);
-  lines.push(`📚 ${p.profModules}: <b>${s?.modules_completed ?? 0}/${s?.total_modules ?? 0}</b> · ${p.profLessons}: <b>${s?.lessons_completed ?? 0}/${s?.total_lessons ?? 0}</b>`);
-  lines.push(`📝 ${p.profHomework}: <b>${s?.homework_submitted ?? 0}</b>${s?.homework_avg_score ? ` (${p.profAvg} ${s.homework_avg_score}/10)` : ""}`);
-  if (s?.group_rank && s?.group_size) lines.push(`🏆 ${p.profRank}: <b>#${s.group_rank}</b> / ${s.group_size}`);
-  lines.push(`⚡ ${p.profNextLevel(need, (s?.level ?? 1) + 1)}`);
-  if (icons) lines.push(`\n${icons}`);
-
+  const text = `👤 <b>${name}</b> · ${bits.join(" · ")}\n\n${p.profOpenHint}`;
   const url = await createMagicLink(admin, userId, "login", "/profile");
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: p.btnProfStats, callback_data: "prof:stats" }],
-      [{ text: p.btnProfBadges, callback_data: "prof:badges" }, { text: p.btnProfGroup, callback_data: "prof:group" }],
-      [{ text: p.btnProfOpen, url }],
-    ],
-  };
-  return { text: lines.join("\n"), keyboard };
+  const keyboard = { inline_keyboard: [[{ text: p.btnProfOpen, url }]] };
+  return { text, keyboard };
 }
 
 /** Badges list for the bot (earned + locked teaser). */
@@ -1164,12 +1132,14 @@ async function runMigrationBroadcast(admin: any, mode: "test" | "all") {
 function getMainKeyboard(locale: Locale) {
   const t = T[locale];
   const p = PROF_T[locale];
+  // 👤 Profil replaced 📊 Statistikam — all stats now live inside the profile
+  // web app. The old kbStreak button (cached keyboards) still routes to /galaba.
   return {
     keyboard: [
       [{ text: t.kbDavom }],
-      [{ text: t.kbStreak }, { text: t.kbHomework }],
-      [{ text: p.kbProfil }, { text: t.kbCert }],
-      [{ text: t.kbLang }, { text: t.kbHelp }],
+      [{ text: p.kbProfil }, { text: t.kbHomework }],
+      [{ text: t.kbCert }, { text: t.kbLang }],
+      [{ text: t.kbHelp }],
     ],
     resize_keyboard: true,
     is_persistent: true,

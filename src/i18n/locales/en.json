@@ -1121,6 +1121,26 @@
     "tCourse": "Course",
     "tTopStudents": "TOP students",
     "tNoStudents": "No students in this group",
-    "tGradeHomework": "Grade homework"
+    "tGradeHomework": "Grade homework",
+    "kpiLessonsWatched": "lessons watched",
+    "kpiModulesDone": "modules completed",
+    "kpiHwSubmitted": "homework submitted",
+    "courseDoneHint": "You've completed {{pct}}% of the course — keep going! 🚀",
+    "xpTitle": "XP & level",
+    "kpiToNextLevel": "to reach level {{level}}",
+    "kpiWeekWatch": "watched this week",
+    "kpiStreakRow": "days in a row (best: {{best}})",
+    "kpiAvgScore": "average score",
+    "hwPending": "being graded",
+    "points": "pts",
+    "minutes": "min",
+    "levelNames": [
+      "Beginner",
+      "Learner",
+      "Achiever",
+      "Expert",
+      "Master"
+    ],
+    "groupDesc": "Your place among your group-mates — ranked by XP"
   }
 }

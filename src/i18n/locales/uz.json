@@ -1121,6 +1121,26 @@
     "tCourse": "Kurs",
     "tTopStudents": "TOP talabalar",
     "tNoStudents": "Guruhda talabalar yo'q",
-    "tGradeHomework": "Vazifalarni baholash"
+    "tGradeHomework": "Vazifalarni baholash",
+    "kpiLessonsWatched": "dars ko'rildi",
+    "kpiModulesDone": "modul tugallandi",
+    "kpiHwSubmitted": "uy vazifasi topshirildi",
+    "courseDoneHint": "Kursning {{pct}}% qismini tugatdingiz — davom eting! 🚀",
+    "xpTitle": "XP va daraja",
+    "kpiToNextLevel": "{{level}}-darajaga yetish uchun kerak",
+    "kpiWeekWatch": "shu hafta tomosha qilindi",
+    "kpiStreakRow": "ketma-ket kunlar (rekord: {{best}})",
+    "kpiAvgScore": "o'rtacha ball",
+    "hwPending": "baholanmoqda",
+    "points": "ball",
+    "minutes": "daqiqa",
+    "levelNames": [
+      "Boshlovchi",
+      "O'quvchi",
+      "Bilimdon",
+      "Usta",
+      "Master"
+    ],
+    "groupDesc": "Guruhdoshlaringiz orasidagi o'rningiz — XP bo'yicha hisoblanadi"
   }
 }
