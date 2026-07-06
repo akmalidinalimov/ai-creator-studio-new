@@ -81,10 +81,11 @@ function tree(c: any) {
 
 export default async function handler(req: any, res: any) {
   try {
-    const q = req.query || {};
-    const key = String(q.key || "first_lesson");
-    const name = String(q.name || "Talaba");
-    const n = Number(q.m || "1");
+    // Parse query from req.url (robust across runtimes; avoids req.query dependency).
+    const url = new URL(req.url || "/", "http://localhost");
+    const key = url.searchParams.get("key") || String(req.query?.key || "first_lesson");
+    const name = url.searchParams.get("name") || String(req.query?.name || "Talaba");
+    const n = Number(url.searchParams.get("m") || req.query?.m || "1");
     const p = PRESETS[key] || PRESETS.first_lesson;
     const card = {
       gold: p.gold, glyph: p.glyph, name,
@@ -99,10 +100,15 @@ export default async function handler(req: any, res: any) {
     const [fonts] = await Promise.all([loadFonts(), initResvg(initWasm)]);
     const svg = await satori(tree(card) as any, { width: 1080, height: 1920, fonts, loadAdditionalAsset: async (code: string, seg: string) => code === "emoji" ? await loadEmoji(seg) : seg });
     const png = new Resvg(svg, { fitTo: { mode: "width", value: 720 } }).render().asPng();
+    // Raw Node response API — always present (Vercel's .status()/.send()/.json()
+    // helpers may be absent under ESM, which would make even the catch throw).
+    res.statusCode = 200;
     res.setHeader("Content-Type", "image/png");
     res.setHeader("Cache-Control", "public, max-age=86400");
-    res.status(200).send(Buffer.from(png));
+    res.end(Buffer.from(png));
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || String(e) });
+    res.statusCode = 500;
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ error: e?.message || String(e), stack: String(e?.stack || "").split("\n").slice(0, 5) }));
   }
 }
