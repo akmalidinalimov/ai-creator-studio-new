@@ -7,6 +7,7 @@ import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
 import { Camera, Pencil, Settings as SettingsIcon, Users } from "lucide-react";
 import { toast } from "sonner";
+import { AuroraCover } from "@/pages/Profile";
 
 interface TeacherStats { groups_count: number; students_total: number; graded_total: number; avg_score_given: number | null }
 interface TeacherGroup {
@@ -120,11 +121,12 @@ export default function TeacherProfile() {
       <div className="max-w-2xl mx-auto space-y-4">
         {/* header — gold mentor treatment */}
         <Card className="overflow-hidden">
-          <div className="h-20 bg-gradient-to-r from-amber-500 via-orange-500 to-pink-500 relative">
-            <Link to="/settings" className="absolute right-3 top-3 rounded-full bg-black/20 p-1.5 text-white hover:bg-black/30" aria-label={t("nav.mySettings")}>
+          {/* Mentor aurora — always gold hour */}
+          <AuroraCover level={7}>
+            <Link to="/settings" className="absolute right-3 top-3 z-10 rounded-full bg-black/20 p-1.5 text-white hover:bg-black/30" aria-label={t("nav.mySettings")}>
               <SettingsIcon className="h-4 w-4" />
             </Link>
-          </div>
+          </AuroraCover>
           <div className="px-5 pb-5 -mt-10">
             <div className="flex flex-col items-center">
               <button type="button" onClick={() => fileRef.current?.click()}

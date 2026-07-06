@@ -67,6 +67,45 @@
     --sidebar-ring: 174 78% 26%;
   }
 
+  /* Global dark theme — same Samarkand dark-teal palette as the lesson page,
+     applied app-wide via the `dark` class on <html> (toggle + system pref). */
+  .dark {
+    --background: 178 60% 5%;
+    --foreground: 174 16% 95%;
+    --card: 178 28% 8%;
+    --card-foreground: 174 16% 95%;
+    --popover: 178 28% 8%;
+    --popover-foreground: 174 16% 95%;
+    --primary: 172 66% 50%;
+    --primary-foreground: 178 60% 5%;
+    --secondary: 178 22% 10%;
+    --secondary-foreground: 174 16% 95%;
+    --muted: 178 22% 10%;
+    --muted-foreground: 174 9% 58%;
+    --accent: 174 41% 21%;
+    --accent-foreground: 172 66% 50%;
+    --destructive: 14 100% 64%;
+    --destructive-foreground: 178 60% 5%;
+    --success: 142 66% 46%;
+    --success-foreground: 178 60% 5%;
+    --warning: 43 92% 52%;
+    --warning-foreground: 178 60% 5%;
+    --border: 174 19% 15%;
+    --input: 174 19% 15%;
+    --ring: 172 66% 50%;
+    --gold: 43 92% 52%;
+    --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 12px rgb(0 0 0 / 0.3);
+    --shadow-elevated: 0 1px 2px rgb(0 0 0 / 0.5), 0 12px 32px rgb(0 0 0 / 0.4);
+    --sidebar-background: 178 28% 8%;
+    --sidebar-foreground: 174 16% 95%;
+    --sidebar-primary: 172 66% 50%;
+    --sidebar-primary-foreground: 178 60% 5%;
+    --sidebar-accent: 174 41% 21%;
+    --sidebar-accent-foreground: 172 66% 50%;
+    --sidebar-border: 174 19% 15%;
+    --sidebar-ring: 172 66% 50%;
+  }
+
   /* Dark teal scope — applied via .lesson-dark on the lesson page root */
   .lesson-dark {
     --background: 178 60% 5%;            /* #08100F */
@@ -214,3 +253,19 @@
   --shadow-elevated: 0 2px 6px hsl(0 0% 0% / 0.4), 0 24px 60px hsl(0 0% 0% / 0.5);
   --gradient-cream: linear-gradient(180deg, hsl(165 14% 5%) 0%, hsl(170 16% 8%) 100%);
 }
+
+/* ===== Level Aurora (profile cover) ===== */
+.aurora-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(26px);
+  pointer-events: none;
+  opacity: 0.38;
+}
+.dark .aurora-blob { opacity: 0.5; }
+.aurora-blob.b1 { width: 11rem; height: 11rem; left: -2.5rem; top: -3.5rem; animation: aurora-1 9s ease-in-out infinite; }
+.aurora-blob.b2 { width: 10rem; height: 10rem; right: -2rem; top: -1.5rem; animation: aurora-2 12s ease-in-out infinite; }
+.aurora-blob.b3 { width: 9rem; height: 9rem; left: 34%; top: -3rem; animation: aurora-1 14s ease-in-out infinite reverse; }
+@keyframes aurora-1 { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(16px, 9px) scale(1.12); } }
+@keyframes aurora-2 { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(-13px, 11px) scale(1.08); } }
+@media (prefers-reduced-motion: reduce) { .aurora-blob { animation: none !important; } }

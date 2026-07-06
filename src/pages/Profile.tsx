@@ -43,6 +43,30 @@ type Tab = "achievements" | "group" | "about" | "stats";
 
 const prevThreshold = (level: number) => 50 * Math.max(level - 1, 0) * level;
 
+/** Level Aurora: the cover's palette warms up with the student's level —
+ *  L1 cool blue-violet → L7+ gold hour. The background itself is a trophy. */
+export function auroraPalette(level: number): [string, string, string] {
+  if (level >= 7) return ["#F59E0B", "#EC4899", "#FBBF24"];      // gold hour
+  if (level >= 5) return ["#EC4899", "#F59E0B", "#8B5CF6"];      // pink-amber
+  if (level >= 3) return ["#8B5CF6", "#EC4899", "#A78BFA"];      // violet-pink
+  return ["#6D9EEB", "#8B5CF6", "#67E8F9"];                      // cool dawn
+}
+
+export function AuroraCover({ level, className = "h-20", children }: {
+  level: number; className?: string; children?: React.ReactNode;
+}) {
+  const [c1, c2, c3] = auroraPalette(level);
+  return (
+    <div className={`relative overflow-hidden ${className}`}
+      style={{ background: `linear-gradient(120deg, ${c1}33, ${c2}2e 55%, ${c3}26)` }}>
+      <span className="aurora-blob b1" style={{ background: c1 }} aria-hidden />
+      <span className="aurora-blob b2" style={{ background: c2 }} aria-hidden />
+      <span className="aurora-blob b3" style={{ background: c3 }} aria-hidden />
+      {children}
+    </div>
+  );
+}
+
 /** Conic streak ring: fills toward a full ring at a 30-day streak. */
 function ringStyle(streak: number) {
   const deg = Math.round(Math.min(Math.max(streak, 0) / 30, 1) * 360);
@@ -236,11 +260,11 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
       <div className="max-w-2xl mx-auto space-y-4">
         {/* ---------------- header card ---------------- */}
         <Card className="overflow-hidden">
-          <div className="h-20 bg-gradient-to-r from-violet-600 via-pink-500 to-amber-400 relative">
-            <Link to="/settings" className="absolute right-3 top-3 rounded-full bg-black/20 p-1.5 text-white hover:bg-black/30" aria-label={t("nav.mySettings")}>
+          <AuroraCover level={stats?.level ?? 1}>
+            <Link to="/settings" className="absolute right-3 top-3 z-10 rounded-full bg-black/20 p-1.5 text-white hover:bg-black/30" aria-label={t("nav.mySettings")}>
               <SettingsIcon className="h-4 w-4" />
             </Link>
-          </div>
+          </AuroraCover>
           <div className="px-5 pb-5 -mt-10">
             {/* avatar + streak ring + level */}
             <div className="flex flex-col items-center">

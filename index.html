@@ -7,6 +7,17 @@
     <meta name="description" content="A 14-hour curriculum for the new generation of AI-native creators. Foundations to image, video, content, and monetization — five modules, twenty lessons, designed to compound.">
     <meta name="author" content="AI Creators" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <script>
+      // Apply theme before first paint (no flash). 'light' | 'dark' | unset = system.
+      (function () {
+        try {
+          var t = localStorage.getItem("theme");
+          if (t === "dark" || (!t && window.matchMedia("(prefers-color-scheme: dark)").matches)) {
+            document.documentElement.classList.add("dark");
+          }
+        } catch (e) {}
+      })();
+    </script>
     <link rel="manifest" href="/manifest.json" />
     <!-- Brand type: Clash Display (display) + Hanken Grotesk (body) -->
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />

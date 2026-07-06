@@ -5,6 +5,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { LogOut, Settings, LayoutDashboard } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { StudentBottomNav } from "@/components/StudentBottomNav";
 import { AdminSidebar, AdminMobileNav } from "@/components/admin/AdminSidebar";
 
@@ -57,6 +58,7 @@ export const TopNav = () => {
           </nav>
         </div>
         <div className="flex items-center gap-1">
+          <ThemeToggle />
           <LanguageSwitcher />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
