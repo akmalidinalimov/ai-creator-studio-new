@@ -811,14 +811,236 @@ async function sendLongMessage(chatId: number, text: string, reply_markup?: unkn
   return last;
 }
 
+// ===== Profile cards (student + teacher) — spec v1.1 Phase 1 =====
+// Localized strings kept separate from T so the giant T literal stays untouched.
+const PROF_T = {
+  uz: {
+    kbProfil: "👤 Profil",
+    profGroup: "Guruh", profTeacher: "Ustoz",
+    profStreak: "Streak", profRecord: "rekord", profModules: "Modullar", profLessons: "Darslar",
+    profHomework: "Vazifalar", profAvg: "o'rt.", profRank: "Guruhda",
+    profNextLevel: (need: number, lvl: number) => `${lvl}-darajagacha ${need} XP qoldi`,
+    btnProfStats: "📊 Statistika", btnProfBadges: "🏆 Yutuqlarim",
+    btnProfGroup: "👥 Guruh reytingi", btnProfOpen: "🌐 Profilni ochish",
+    profGroupTitle: (g: string) => `👥 <b>${g} reytingi</b>`,
+    profYou: "Siz", profToFirst: (xp: number) => `Birinchi o'ringa ${xp} XP qoldi ↑`,
+    profNoGroup: "Siz hali guruhga qo'shilmagansiz.",
+    badgesTitle: "🏆 <b>Yutuqlarim</b>", badgesNone: "Hali nishonlar yo'q — birinchi darsni tugatib boshlang! 🚀",
+    badgesLocked: (n: number) => `🔒 Yana ${n} ta nishon sizni kutmoqda`,
+    tProfTitle: "🧑‍🏫 <b>Ustoz profili</b>",
+    tGroups: "Guruhlar", tStudents: "Talabalar", tGraded: "Baholangan", tAvg: "o'rt. baho",
+    tMembers: "A'zolar", tActive: "Faol (7 kun)", tCompletion: "Tugallanish", tPending: "Kutilmoqda",
+    tTop: "TOP talabalar", tNoStudents: "Guruhda talabalar yo'q", tNoGroups: "Sizga hali guruh biriktirilmagan.",
+    tSwitchHint: "Boshqa guruhga o'tish uchun tugmani bosing 👇",
+  },
+  ru: {
+    kbProfil: "👤 Профиль",
+    profGroup: "Группа", profTeacher: "Устоз",
+    profStreak: "Стрик", profRecord: "рекорд", profModules: "Модули", profLessons: "Уроки",
+    profHomework: "Задания", profAvg: "ср.", profRank: "В группе",
+    profNextLevel: (need: number, lvl: number) => `До уровня ${lvl}: ${need} XP`,
+    btnProfStats: "📊 Статистика", btnProfBadges: "🏆 Достижения",
+    btnProfGroup: "👥 Рейтинг группы", btnProfOpen: "🌐 Открыть профиль",
+    profGroupTitle: (g: string) => `👥 <b>Рейтинг ${g}</b>`,
+    profYou: "Вы", profToFirst: (xp: number) => `До 1-го места ${xp} XP ↑`,
+    profNoGroup: "Вы ещё не добавлены в группу.",
+    badgesTitle: "🏆 <b>Достижения</b>", badgesNone: "Пока нет значков — завершите первый урок! 🚀",
+    badgesLocked: (n: number) => `🔒 Ещё ${n} значков ждут вас`,
+    tProfTitle: "🧑‍🏫 <b>Профиль устоза</b>",
+    tGroups: "Группы", tStudents: "Студенты", tGraded: "Проверено", tAvg: "ср. балл",
+    tMembers: "Участники", tActive: "Активны (7 дн.)", tCompletion: "Завершение", tPending: "Ожидают",
+    tTop: "ТОП студенты", tNoStudents: "В группе нет студентов", tNoGroups: "Вам ещё не назначены группы.",
+    tSwitchHint: "Нажмите кнопку, чтобы переключить группу 👇",
+  },
+  en: {
+    kbProfil: "👤 Profile",
+    profGroup: "Group", profTeacher: "Teacher",
+    profStreak: "Streak", profRecord: "best", profModules: "Modules", profLessons: "Lessons",
+    profHomework: "Homework", profAvg: "avg", profRank: "In group",
+    profNextLevel: (need: number, lvl: number) => `${need} XP to level ${lvl}`,
+    btnProfStats: "📊 Statistics", btnProfBadges: "🏆 Achievements",
+    btnProfGroup: "👥 Group rating", btnProfOpen: "🌐 Open profile",
+    profGroupTitle: (g: string) => `👥 <b>${g} rating</b>`,
+    profYou: "You", profToFirst: (xp: number) => `${xp} XP to reach #1 ↑`,
+    profNoGroup: "You haven't been added to a group yet.",
+    badgesTitle: "🏆 <b>Achievements</b>", badgesNone: "No badges yet — finish your first lesson! 🚀",
+    badgesLocked: (n: number) => `🔒 ${n} more badges are waiting for you`,
+    tProfTitle: "🧑‍🏫 <b>Teacher profile</b>",
+    tGroups: "Groups", tStudents: "Students", tGraded: "Graded", tAvg: "avg score",
+    tMembers: "Members", tActive: "Active (7d)", tCompletion: "Completion", tPending: "Pending",
+    tTop: "TOP students", tNoStudents: "No students in this group", tNoGroups: "No groups assigned to you yet.",
+    tSwitchHint: "Tap a button to switch groups 👇",
+  },
+} as const;
+
+function escHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** Student profile card (bot mirror of the web /profile header). */
+async function buildProfileCard(admin: any, userId: string, locale: Locale): Promise<{ text: string; keyboard: any }> {
+  const p = PROF_T[locale];
+  const [{ data: prof }, statsRes, badgesRes] = await Promise.all([
+    admin.from("profiles").select("name, last_name, bio, group_id").eq("id", userId).maybeSingle(),
+    admin.rpc("profile_stats", { uid: userId }),
+    admin.from("user_badges").select("badges(icon, position)").eq("user_id", userId),
+  ]);
+  const s: any = Array.isArray(statsRes.data) ? statsRes.data[0] : statsRes.data;
+  const name = escHtml(`${prof?.name || ""} ${prof?.last_name || ""}`.trim() || "Talaba");
+
+  let groupName: string | null = null, teacherName: string | null = null;
+  if (prof?.group_id) {
+    const { data: g } = await admin.from("groups").select("name, teacher_id").eq("id", prof.group_id).maybeSingle();
+    groupName = g?.name || null;
+    if (g?.teacher_id) {
+      const { data: tp } = await admin.from("profiles").select("name").eq("id", g.teacher_id).maybeSingle();
+      teacherName = tp?.name || null;
+    }
+  }
+
+  const icons = ((badgesRes.data || []) as any[])
+    .map((r) => r.badges)
+    .filter(Boolean)
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+    .map((b) => b.icon || "🏅")
+    .slice(0, 8)
+    .join("");
+
+  const lines: string[] = [];
+  lines.push(`👤 <b>${name}</b> · L${s?.level ?? 1} ⚡${s?.total_xp ?? 0} XP`);
+  const chips: string[] = [];
+  if (groupName) chips.push(`${p.profGroup}: <b>${escHtml(groupName)}</b>`);
+  if (teacherName) chips.push(`${p.profTeacher}: <b>${escHtml(teacherName)}</b>`);
+  if (chips.length) lines.push(`📍 ${chips.join(" · ")}`);
+  if (prof?.bio) lines.push(`<i>${escHtml(String(prof.bio))}</i>`);
+  lines.push("");
+  const need = Math.max((s?.xp_next_level ?? 100) - (s?.total_xp ?? 0), 0);
+  lines.push(`🔥 ${p.profStreak}: <b>${s?.current_streak ?? 0}</b> (${p.profRecord}: ${s?.longest_streak ?? 0})`);
+  lines.push(`📚 ${p.profModules}: <b>${s?.modules_completed ?? 0}/${s?.total_modules ?? 0}</b> · ${p.profLessons}: <b>${s?.lessons_completed ?? 0}/${s?.total_lessons ?? 0}</b>`);
+  lines.push(`📝 ${p.profHomework}: <b>${s?.homework_submitted ?? 0}</b>${s?.homework_avg_score ? ` (${p.profAvg} ${s.homework_avg_score}/10)` : ""}`);
+  if (s?.group_rank && s?.group_size) lines.push(`🏆 ${p.profRank}: <b>#${s.group_rank}</b> / ${s.group_size}`);
+  lines.push(`⚡ ${p.profNextLevel(need, (s?.level ?? 1) + 1)}`);
+  if (icons) lines.push(`\n${icons}`);
+
+  const url = await createMagicLink(admin, userId, "login", "/profile");
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: p.btnProfStats, callback_data: "prof:stats" }],
+      [{ text: p.btnProfBadges, callback_data: "prof:badges" }, { text: p.btnProfGroup, callback_data: "prof:group" }],
+      [{ text: p.btnProfOpen, url }],
+    ],
+  };
+  return { text: lines.join("\n"), keyboard };
+}
+
+/** Badges list for the bot (earned + locked teaser). */
+async function buildBadgesMessage(admin: any, userId: string, locale: Locale): Promise<string> {
+  const p = PROF_T[locale];
+  const lang = locale === "ru" ? "name_ru" : locale === "en" ? "name_en" : "name_uz";
+  const [{ data: all }, { data: mine }] = await Promise.all([
+    admin.from("badges").select(`id, icon, position, ${lang}`).order("position"),
+    admin.from("user_badges").select("badge_id").eq("user_id", userId),
+  ]);
+  const earned = new Set(((mine || []) as any[]).map((r) => r.badge_id));
+  const rows = (all || []) as any[];
+  const got = rows.filter((b) => earned.has(b.id));
+  const lines = [p.badgesTitle, ""];
+  if (!got.length) {
+    lines.push(p.badgesNone);
+  } else {
+    for (const b of got) lines.push(`${b.icon || "🏅"} ${escHtml(b[lang] || "")}`);
+  }
+  const lockedCount = rows.length - got.length;
+  if (lockedCount > 0) lines.push("", p.badgesLocked(lockedCount));
+  return lines.join("\n");
+}
+
+/** Group XP leaderboard for the bot. */
+async function buildGroupBoardMessage(admin: any, userId: string, locale: Locale): Promise<string> {
+  const p = PROF_T[locale];
+  const { data: prof } = await admin.from("profiles").select("group_id").eq("id", userId).maybeSingle();
+  if (!prof?.group_id) return p.profNoGroup;
+  const [{ data: g }, boardRes] = await Promise.all([
+    admin.from("groups").select("name").eq("id", prof.group_id).maybeSingle(),
+    admin.rpc("group_leaderboard", { uid: userId, _limit: 10 }),
+  ]);
+  const rows = ((boardRes.data || []) as any[]);
+  if (!rows.length) return p.profNoGroup;
+  const lines = [p.profGroupTitle(escHtml(g?.name || "")), ""];
+  const medal = (r: number) => (r === 1 ? "🥇" : r === 2 ? "🥈" : r === 3 ? "🥉" : ` ${r}.`);
+  for (const r of rows) {
+    const nm = r.is_me ? `<b>${escHtml(r.first_name)} (${p.profYou})</b>` : escHtml(`${r.first_name} ${r.last_initial ? r.last_initial + "." : ""}`.trim());
+    lines.push(`${medal(r.rank)} ${nm} — ⚡${r.total_xp}${r.current_streak > 0 ? ` · ${r.current_streak}🔥` : ""}`);
+  }
+  const me = rows.find((r) => r.is_me);
+  const top = rows[0];
+  if (me && top && !top.is_me) lines.push("", p.profToFirst(Math.max(top.total_xp - me.total_xp, 0)));
+  return lines.join("\n");
+}
+
+/** Teacher profile card with per-group stats and one-tap group switching. */
+async function buildTeacherProfileCard(
+  admin: any, teacherId: string, locale: Locale, groupId?: string | null,
+): Promise<{ text: string; keyboard: any }> {
+  const p = PROF_T[locale];
+  const [{ data: prof }, statsRes, groupsRes] = await Promise.all([
+    admin.from("profiles").select("name, last_name, bio, active_teacher_group_id").eq("id", teacherId).maybeSingle(),
+    admin.rpc("teacher_profile_stats", { uid: teacherId }),
+    admin.rpc("teacher_groups", { uid: teacherId }),
+  ]);
+  const s: any = Array.isArray(statsRes.data) ? statsRes.data[0] : statsRes.data;
+  const groups = ((groupsRes.data || []) as any[]);
+  const name = escHtml(`${prof?.name || ""} ${prof?.last_name || ""}`.trim() || "Ustoz");
+
+  const lines: string[] = [];
+  lines.push(p.tProfTitle);
+  lines.push(`👤 <b>${name}</b>`);
+  if (prof?.bio) lines.push(`<i>${escHtml(String(prof.bio))}</i>`);
+  lines.push("");
+  lines.push(`👥 ${p.tGroups}: <b>${s?.groups_count ?? 0}</b> · ${p.tStudents}: <b>${s?.students_total ?? 0}</b>`);
+  lines.push(`✅ ${p.tGraded}: <b>${s?.graded_total ?? 0}</b>${s?.avg_score_given ? ` (${p.tAvg} ${s.avg_score_given}/10)` : ""}`);
+
+  if (!groups.length) {
+    lines.push("", p.tNoGroups);
+    return { text: lines.join("\n"), keyboard: undefined };
+  }
+
+  const sel = groups.find((g) => g.group_id === (groupId || prof?.active_teacher_group_id)) || groups[0];
+  lines.push("");
+  lines.push(`📍 <b>${escHtml(sel.group_name)}</b>${sel.course_name ? ` · ${escHtml(sel.course_name)}` : ""}`);
+  lines.push(`${p.tMembers}: <b>${sel.total_students}</b> · ${p.tActive}: <b>${sel.active_7d}</b>`);
+  lines.push(`${p.tCompletion}: <b>${sel.avg_completion_pct}%</b> · ${p.tPending}: <b>${sel.pending_homework}</b>`);
+
+  const { data: topData } = await admin.rpc("teacher_group_top", { uid: teacherId, _group_id: sel.group_id, _limit: 5 });
+  const top = ((topData || []) as any[]);
+  lines.push("", `🏆 ${p.tTop}:`);
+  if (!top.length) {
+    lines.push(p.tNoStudents);
+  } else {
+    const medal = (r: number) => (r === 1 ? "🥇" : r === 2 ? "🥈" : r === 3 ? "🥉" : ` ${r}.`);
+    for (const st of top) {
+      lines.push(`${medal(st.rank)} ${escHtml(`${st.first_name} ${st.last_initial ? st.last_initial + "." : ""}`.trim())} — ⚡${st.total_xp}${st.current_streak > 0 ? ` · ${st.current_streak}🔥` : ""}`);
+    }
+  }
+
+  // One-tap group switching: a button per OTHER group re-renders this card in place.
+  const others = groups.filter((g) => g.group_id !== sel.group_id);
+  const keyboard = others.length
+    ? { inline_keyboard: others.map((g) => [{ text: `👥 ${g.group_name}`, callback_data: `tprof:g:${g.group_id}` }]) }
+    : undefined;
+  if (others.length) lines.push("", p.tSwitchHint);
+  return { text: lines.join("\n"), keyboard };
+}
+
 function getMainKeyboard(locale: Locale) {
   const t = T[locale];
+  const p = PROF_T[locale];
   return {
     keyboard: [
       [{ text: t.kbDavom }],
       [{ text: t.kbStreak }, { text: t.kbHomework }],
-      [{ text: t.kbCert }, { text: t.kbLang }],
-      [{ text: t.kbHelp }],
+      [{ text: p.kbProfil }, { text: t.kbCert }],
+      [{ text: t.kbLang }, { text: t.kbHelp }],
     ],
     resize_keyboard: true,
     is_persistent: true,
@@ -848,7 +1070,7 @@ function getTeacherKeyboard(locale: Locale) {
       [{ text: t.tKbStats }, { text: t.tKbTop }],
       [{ text: t.tKbStudents }, { text: t.tKbInactive }],
       [{ text: t.tKbBroadcast }, { text: t.tKbSettings }],
-      [{ text: t.tKbSwitchGroup }],
+      [{ text: t.tKbSwitchGroup }, { text: PROF_T[locale].kbProfil }],
       [{ text: t.kbLang }],
     ],
     resize_keyboard: true,
@@ -926,6 +1148,7 @@ function buttonTextToCommand(text: string): string | null {
   for (const loc of ["uz", "ru", "en"] as Locale[]) {
     const t = T[loc] as any;
     if (trimmed === t.kbDavom) return "/davom";
+    if (trimmed === PROF_T[loc].kbProfil) return "/profil";
     if (trimmed === t.kbStreak) return "/galaba";
     if (t.kbStreakOld && trimmed === t.kbStreakOld) return "/galaba";
     if (t.kbHomework && trimmed === t.kbHomework) return "/vazifalar";
@@ -3378,6 +3601,22 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
     return;
   }
 
+  if (cmd === "/profil" || cmd === "/profile") {
+    console.time(`bot:profile:${profile.id}`);
+    // Teachers/admins get the mentor card with per-group stats + group switching;
+    // students (incl. student impersonation) get the student profile card.
+    const persona = effectivePersona || realPersona;
+    if (persona === "teacher" || persona === "admin") {
+      const { text, keyboard } = await buildTeacherProfileCard(admin, profile.id, locale);
+      await sendMessage(chatId, text, keyboard);
+    } else {
+      const { text, keyboard } = await buildProfileCard(admin, profile.id, locale);
+      await sendMessage(chatId, text, keyboard);
+    }
+    console.timeEnd(`bot:profile:${profile.id}`);
+    return;
+  }
+
   if (cmd === "/galaba" || cmd === "/streak") {
     console.time(`bot:stats:${profile.id}`);
     const cacheKey = `stats:${profile.id}:${locale}`;
@@ -4247,6 +4486,44 @@ async function handleCallback(admin: any, cq: any) {
   }
   if (_isImp && (/^grade_task:|^grade:open:|^gs:open:|^settings:|^setlang:/.test(data) || /^hw:(start|resub_yes):/.test(data))) {
     await answerCallback(cq.id, "👁 Faqat o'qish — /admin");
+    return;
+  }
+
+  // --- Profile card callbacks (student: prof:*, teacher group switch: tprof:g:*) ---
+  if (data.startsWith("prof:") && chatId) {
+    if (!_effId) { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(_clicker?.preferred_locale);
+    const action = data.slice("prof:".length);
+    await answerCallback(cq.id);
+    if (action === "stats") {
+      const text = await buildStatsMessage(admin, _effId, locale);
+      const url = await createMagicLink(admin, _effId, "login", "/profile");
+      await sendMessage(chatId, text, { inline_keyboard: [[{ text: PROF_T[locale].btnProfOpen, url }]] });
+    } else if (action === "badges") {
+      await sendMessage(chatId, await buildBadgesMessage(admin, _effId, locale));
+    } else if (action === "group") {
+      await sendMessage(chatId, await buildGroupBoardMessage(admin, _effId, locale));
+    }
+    return;
+  }
+
+  if (data.startsWith("tprof:g:") && chatId) {
+    // One-tap group switch: re-render the teacher profile card in place.
+    if (!_effId || (_effPersona !== "teacher" && _effPersona !== "admin")) { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(_clicker?.preferred_locale);
+    const gid = data.slice("tprof:g:".length);
+    // Persist as the active group so other teacher flows follow along.
+    if (!_isImp) await admin.from("profiles").update({ active_teacher_group_id: gid }).eq("id", _effId);
+    const { text, keyboard } = await buildTeacherProfileCard(admin, _effId, locale, gid);
+    await answerCallback(cq.id);
+    await tgApi("editMessageText", {
+      chat_id: chatId,
+      message_id: cq.message?.message_id,
+      text,
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      ...(keyboard ? { reply_markup: keyboard } : {}),
+    });
     return;
   }
 

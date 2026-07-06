@@ -11,7 +11,7 @@ export function StudentBottomNav() {
     { to: "/activity", label: "Statistika", icon: BarChart3, match: (p: string) => p.startsWith("/activity") },
     { to: "/badges", label: "Nishon", icon: Award, match: (p: string) => p.startsWith("/badges") },
     { to: "/leaderboard", label: "Reyting", icon: Trophy, match: (p: string) => p.startsWith("/leaderboard") },
-    { to: "/settings", label: "Profil", icon: User, match: (p: string) => p.startsWith("/settings") },
+    { to: "/profile", label: "Profil", icon: User, match: (p: string) => p.startsWith("/profile") || p.startsWith("/settings") },
   ];
 
   return (

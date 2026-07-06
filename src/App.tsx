@@ -39,6 +39,7 @@ const Settings = lazy(() => import("./pages/Settings"));
 const Leaderboard = lazy(() => import("./pages/Leaderboard"));
 const Badges = lazy(() => import("./pages/Badges"));
 const MyActivity = lazy(() => import("./pages/MyActivity"));
+const Profile = lazy(() => import("./pages/Profile"));
 
 
 // Lazy-load admin pages (code-split)
@@ -106,6 +107,7 @@ const App = () => (
             <Route path="/leaderboard" element={<RequireAuth><Leaderboard /></RequireAuth>} />
             <Route path="/badges" element={<RequireAuth><Badges /></RequireAuth>} />
             <Route path="/activity" element={<RequireAuth><MyActivity /></RequireAuth>} />
+            <Route path="/profile" element={<RequireAuth><Profile /></RequireAuth>} />
 
             <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
             <Route path="/teacher" element={<TeacherDashboardRedirect />} />
