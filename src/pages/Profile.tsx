@@ -43,10 +43,10 @@ type Tab = "achievements" | "group" | "about" | "stats";
 
 const prevThreshold = (level: number) => 50 * Math.max(level - 1, 0) * level;
 
-/** Full-viewport warm blush wash + dot grid behind the whole profile page —
- *  identical style in light and dark (see .profile-page-bg in index.css). */
+/** The profile inherits the platform backdrop (mint + pixel-dissolve from
+ *  PageShell). Kept as a no-op seam in case a page-specific layer returns. */
 export function ProfileBackground() {
-  return <div className="profile-page-bg fixed inset-0 z-0 pointer-events-none" aria-hidden />;
+  return null;
 }
 
 /** Conic streak ring: fills toward a full ring at a 30-day streak. */

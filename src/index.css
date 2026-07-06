@@ -254,34 +254,7 @@
   --gradient-cream: linear-gradient(180deg, hsl(165 14% 5%) 0%, hsl(170 16% 8%) 100%);
 }
 
-/* ===== Profile page background — warm blush wash + premium dot grid.
-   Full-viewport layer behind the profile (both themes, same style). ===== */
-.profile-page-bg {
-  background:
-    radial-gradient(60% 50% at 12% 8%, hsl(262 70% 86% / 0.55), transparent 62%),
-    radial-gradient(52% 46% at 88% 12%, hsl(330 78% 87% / 0.5), transparent 62%),
-    radial-gradient(56% 52% at 82% 88%, hsl(24 88% 88% / 0.45), transparent 62%),
-    radial-gradient(46% 42% at 12% 90%, hsl(300 62% 89% / 0.4), transparent 62%),
-    hsl(290 45% 95%);
-}
-.profile-page-bg::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background-image: radial-gradient(hsl(285 30% 38% / 0.10) 1px, transparent 1.5px);
-  background-size: 18px 18px;
-}
-.dark .profile-page-bg {
-  background:
-    radial-gradient(60% 50% at 12% 8%, hsl(262 55% 28% / 0.55), transparent 62%),
-    radial-gradient(52% 46% at 88% 12%, hsl(330 60% 30% / 0.5), transparent 62%),
-    radial-gradient(56% 52% at 82% 88%, hsl(24 60% 28% / 0.4), transparent 62%),
-    radial-gradient(46% 42% at 12% 90%, hsl(300 45% 26% / 0.35), transparent 62%),
-    hsl(285 35% 9%);
-}
-.dark .profile-page-bg::after {
-  background-image: radial-gradient(hsl(285 40% 82% / 0.07) 1px, transparent 1.5px);
-}
+
 
 /* Platform backdrop is the logo's pixel-dissolve squares (option #2) —
    rendered as a fixed canvas layer in PageShell; body stays plain mint. */
