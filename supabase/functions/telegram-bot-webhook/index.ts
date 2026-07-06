@@ -4252,7 +4252,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     // audio, poll, etc.) is ignored silently — casual chat in the topic must
     // never become a submission.
     let fileId: string | null = null;
-    let kind: "photo" | "video" | "document" | null = null;
+    let kind: "photo" | "video" | "document" | "link" | null = null;
     if (Array.isArray(msg.photo) && msg.photo.length) {
       fileId = msg.photo[msg.photo.length - 1].file_id;
       kind = "photo";
@@ -4262,6 +4262,13 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     } else if (msg.document) {
       fileId = msg.document.file_id;
       kind = "document";
+    }
+    // Links count as homework too (reels, GPT share links, published work):
+    // a plain-text message that contains a URL is treated as a 'link' item.
+    let linkUrl: string | null = null;
+    if (!kind && typeof msg.text === "string") {
+      const m = msg.text.match(/https?:\/\/\S{4,}/);
+      if (m) { linkUrl = m[0].slice(0, 500); kind = "link" as any; }
     }
     if (!kind) {
       console.log("hw:group:non-media-ignored", JSON.stringify({ chatId, threadId, messageId }));
@@ -4284,7 +4291,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     const nowIso = new Date().toISOString();
     const { data: intents, error: intentErr } = await admin
       .from("bot_homework_intents")
-      .select("id, user_id, assignment_id, module_id, group_id")
+      .select("id, user_id, assignment_id, module_id, group_id, submission_id")
       .eq("telegram_chat_id", chatId)
       .eq("telegram_thread_id", threadId)
       .eq("user_id", profile.id)
@@ -4338,6 +4345,36 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
 
     const messageUrl = buildMessageLink(chatId, threadId, messageId);
     const submittedText = (msg.caption || msg.text || "").slice(0, 4000);
+    const mediaItem = { kind, ...(linkUrl ? { url: linkUrl } : { file_id: fileId }), msg_url: messageUrl };
+
+    // APPEND MODE: the intent already produced a submission (album photos and
+    // follow-up files arrive as separate messages). Attach to it — up to 10
+    // items — without bumping attempt_number or re-notifying the teacher.
+    if (intent.submission_id) {
+      const { data: cur } = await admin.from("homework_submissions")
+        .select("id, media, submitted_text").eq("id", intent.submission_id).maybeSingle();
+      if (cur) {
+        const media = Array.isArray(cur.media) ? cur.media : [];
+        if (media.length >= 10) {
+          console.log("hw:group:media-cap-reached", JSON.stringify({ submission_id: cur.id }));
+          try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "🙈" }] }); } catch (_e) { /* best-effort */ }
+          return;
+        }
+        media.push(mediaItem);
+        const mergedText = cur.submitted_text && submittedText && !cur.submitted_text.includes(submittedText)
+          ? `${cur.submitted_text}\n${submittedText}`.slice(0, 4000)
+          : (cur.submitted_text || submittedText);
+        await admin.from("homework_submissions")
+          .update({ media, submitted_text: mergedText }).eq("id", cur.id);
+        // keep the window open a bit longer for slow uploads
+        await admin.from("bot_homework_intents")
+          .update({ expires_at: new Date(Date.now() + 5 * 60_000).toISOString() }).eq("id", intent.id);
+        try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "👍" }] }); } catch (_e) { /* best-effort */ }
+        console.log("hw:group:media-appended", JSON.stringify({ submission_id: cur.id, n: media.length, kind }));
+        return;
+      }
+      // Submission vanished (deleted?) — fall through and recreate below.
+    }
 
     // v3.14.39: bump attempt_number on every consumed-intent post so the
     // homework_submissions_guard trigger permits clearing a previously-set
@@ -4373,6 +4410,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
         telegram_message_url: messageUrl,
         telegram_file_id: fileId,
         telegram_file_kind: kind,
+        media: [mediaItem],
         source: "telegram_topic",
       }, { onConflict: "user_id,assignment_id" })
       .select("id")
@@ -4382,8 +4420,14 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       return;
     }
 
-    // Consume intent (only if it was persisted; synthesized intents have no row)
-    if (intent.id) {
+    // Keep the intent alive as an UPLOAD WINDOW (5 min, refreshed per file):
+    // album photos / extra files / links from this student append to this
+    // submission. Other students' posts never match (intent is per-user).
+    if (intent.id && upserted?.id) {
+      await admin.from("bot_homework_intents")
+        .update({ submission_id: upserted.id, expires_at: new Date(Date.now() + 5 * 60_000).toISOString() })
+        .eq("id", intent.id);
+    } else if (intent.id) {
       await admin.from("bot_homework_intents").delete().eq("id", intent.id);
     }
 
@@ -4429,7 +4473,10 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
         const preview = submittedText
           ? escHtml(submittedText.length > 80 ? submittedText.slice(0, 80) + "…" : submittedText)
           : undefined;
-        const resp = await sendMessage(profile.telegram_id, t.hwReceived(mn, tn, preview, expectStr));
+        const moreHint = { uz: "📎 Yana rasm/video/PDF yoki havola yuborsangiz — shu topshiriqqa qo'shiladi (jami 10 tagacha, 5 daqiqa ichida).",
+          ru: "📎 Ещё фото/видео/PDF или ссылка — добавятся к этой сдаче (до 10, в течение 5 минут).",
+          en: "📎 More photos/videos/PDFs or links will be attached to this submission (up to 10, within 5 minutes)." }[locale];
+        const resp = await sendMessage(profile.telegram_id, t.hwReceived(mn, tn, preview, expectStr) + "\n" + moreHint);
         if (!resp.ok) {
           const errTxt = await resp.text().catch(() => "");
           console.error("hw:group:student-dm-fail", JSON.stringify({ profile_id: profile.id, status: resp.status, err: errTxt.slice(0, 200) }));

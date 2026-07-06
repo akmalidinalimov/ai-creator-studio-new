@@ -21,6 +21,7 @@ interface QueueItem {
   id: string; user_id: string; submitted_text: string; submitted_image_url: string | null;
   submitted_at: string; max_score: number; module_pos: number; module_title: string;
   prompt: string; is_resub: boolean; prev_score: number | null;
+  media: Array<{ kind: string; url?: string; msg_url?: string }>; tg_url: string | null;
   student: string; group_name: string;
 }
 interface RosterRow {
@@ -83,7 +84,7 @@ export default function TeacherProfile() {
       const [subsRes, studentsRes] = await Promise.all([
         supabase.from("homework_submissions")
           // Pending = never scored OR resubmitted after grading (stale score).
-          .select("id, user_id, submitted_text, submitted_image_url, submitted_at, score, score_is_stale, previous_attempts, homework_assignments(max_score, title, description, modules(position, title))")
+          .select("id, user_id, submitted_text, submitted_image_url, submitted_at, score, score_is_stale, previous_attempts, media, telegram_message_url, homework_assignments(max_score, title, description, modules(position, title))")
           .or("score.is.null,score_is_stale.eq.true")
           .order("submitted_at", { ascending: true })
           .limit(100),
@@ -110,6 +111,8 @@ export default function TeacherProfile() {
             prompt: r.homework_assignments?.description || r.homework_assignments?.title || "",
             is_resub: !!r.score_is_stale || prev.length > 0,
             prev_score: prevScore ?? null,
+            media: Array.isArray(r.media) ? r.media : [],
+            tg_url: r.telegram_message_url || null,
             student: [st.name, st.last_name ? st.last_name[0] + "." : ""].filter(Boolean).join(" "),
             group_name: groupName(st.group_id),
           };
@@ -486,6 +489,21 @@ function QueueCard({ item, onGrade, t }: { item: QueueItem; onGrade: (i: QueueIt
 
       {item.submitted_text && (
         <p className="mt-2 text-sm text-muted-foreground whitespace-pre-wrap line-clamp-4">{item.submitted_text}</p>
+      )}
+      {/* Multi-media: one chip per attached item, opening the Telegram message */}
+      {item.media.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {item.media.map((m, i) => {
+            const icon = m.kind === "photo" ? "🖼" : m.kind === "video" ? "🎬" : m.kind === "link" ? "🔗" : "📄";
+            const href = m.kind === "link" ? m.url : (m.msg_url || item.tg_url || undefined);
+            return href ? (
+              <a key={i} href={href} target="_blank" rel="noreferrer"
+                className="text-[11px] rounded-md border px-2 py-0.5 text-muted-foreground hover:border-primary hover:text-foreground">
+                {icon} {m.kind}{item.media.length > 1 ? ` ${i + 1}` : ""}
+              </a>
+            ) : <span key={i} className="text-[11px] rounded-md border px-2 py-0.5 text-muted-foreground">{icon} {m.kind}</span>;
+          })}
+        </div>
       )}
       {/* T1: inline image with lightbox instead of a new tab */}
       {item.submitted_image_url && (
