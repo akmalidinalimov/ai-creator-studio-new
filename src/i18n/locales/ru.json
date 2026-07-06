@@ -1173,6 +1173,9 @@
     "tPendingHint": "Проверьте!",
     "tDigest": "Последние 24 часа",
     "tDigestNew": "новых заданий",
-    "tDigestActive": "студентов активны"
+    "tDigestActive": "студентов активны",
+    "tResub": "Повторная сдача",
+    "tPrevScore": "ранее",
+    "tShowPrompt": "Показать условие задания"
   }
 }

@@ -20,6 +20,7 @@ interface TeacherGroup {
 interface QueueItem {
   id: string; user_id: string; submitted_text: string; submitted_image_url: string | null;
   submitted_at: string; max_score: number; module_pos: number; module_title: string;
+  prompt: string; is_resub: boolean; prev_score: number | null;
   student: string; group_name: string;
 }
 interface RosterRow {
@@ -81,8 +82,9 @@ export default function TeacherProfile() {
     try {
       const [subsRes, studentsRes] = await Promise.all([
         supabase.from("homework_submissions")
-          .select("id, user_id, submitted_text, submitted_image_url, submitted_at, homework_assignments(max_score, modules(position, title))")
-          .is("score", null)
+          // Pending = never scored OR resubmitted after grading (stale score).
+          .select("id, user_id, submitted_text, submitted_image_url, submitted_at, score, score_is_stale, previous_attempts, homework_assignments(max_score, title, description, modules(position, title))")
+          .or("score.is.null,score_is_stale.eq.true")
           .order("submitted_at", { ascending: true })
           .limit(100),
         supabase.rpc("staff_list_students" as any),
@@ -93,6 +95,10 @@ export default function TeacherProfile() {
         .filter((r) => byId.has(r.user_id)) // only students visible to this teacher
         .map((r) => {
           const st = byId.get(r.user_id);
+          const prev = Array.isArray(r.previous_attempts) ? r.previous_attempts : [];
+          const prevScore = r.score_is_stale
+            ? (r.score ?? (prev.length ? prev[prev.length - 1]?.score : null))
+            : (prev.length ? prev[prev.length - 1]?.score : null);
           return {
             id: r.id, user_id: r.user_id,
             submitted_text: r.submitted_text || "",
@@ -101,6 +107,9 @@ export default function TeacherProfile() {
             max_score: r.homework_assignments?.max_score ?? 10,
             module_pos: r.homework_assignments?.modules?.position ?? 0,
             module_title: r.homework_assignments?.modules?.title ?? "",
+            prompt: r.homework_assignments?.description || r.homework_assignments?.title || "",
+            is_resub: !!r.score_is_stale || prev.length > 0,
+            prev_score: prevScore ?? null,
             student: [st.name, st.last_name ? st.last_name[0] + "." : ""].filter(Boolean).join(" "),
             group_name: groupName(st.group_id),
           };
@@ -428,29 +437,69 @@ export default function TeacherProfile() {
 
 /* ---------------- queue card: one-tap scores + optional feedback ---------------- */
 
+/* Teacher-editable feedback presets per score band (stored per browser). */
+const DEFAULT_PRESETS: Record<string, string[]> = {
+  hi: ["Zo'r ish! 🔥", "Ajoyib bajarilgan! 👏"],
+  mid: ["Yaxshi, lekin yana bir oz mehnat kerak.", "Yaxshi urinish — keyingi safar batafsilroq."],
+  lo: ["Vazifani qayta ko'rib chiqing — topshiriq shartiga e'tibor bering.", "Qaytadan urinib ko'ring, savollar bo'lsa yozing."],
+};
+function presetsFor(score: number, max: number): string[] {
+  let saved: Record<string, string[]> | null = null;
+  try { saved = JSON.parse(localStorage.getItem("fbPresets") || "null"); } catch { /* ignore */ }
+  const p = saved || DEFAULT_PRESETS;
+  const band = score >= max * 0.9 ? "hi" : score >= max * 0.6 ? "mid" : "lo";
+  return p[band] || [];
+}
+
 function QueueCard({ item, onGrade, t }: { item: QueueItem; onGrade: (i: QueueItem, s: number, f?: string) => void; t: any }) {
   const [feedback, setFeedback] = useState("");
   const [showFb, setShowFb] = useState(false);
+  const [showPrompt, setShowPrompt] = useState(false);
+  const [lightbox, setLightbox] = useState(false);
   const [pick, setPick] = useState<number | null>(null);
   const d = daysSince(item.submitted_at) ?? 0;
   const send = (score: number) => onGrade(item, score, feedback);
   return (
     <Card className="p-4">
-      <div className="flex items-center gap-2 text-sm">
+      <div className="flex items-center gap-2 text-sm flex-wrap">
         <b className="truncate">{item.student}</b>
         <span className="text-xs text-muted-foreground truncate">· {item.group_name} · {item.module_pos + 1}-modul</span>
+        {item.is_resub && (
+          <span className="text-[11px] rounded-md bg-violet-500/15 text-violet-600 px-1.5 py-0.5">
+            🔁 {t("profile.tResub")}{item.prev_score != null ? ` · ${t("profile.tPrevScore")}: ${item.prev_score}/${item.max_score}` : ""}
+          </span>
+        )}
         <span className={`ml-auto text-[11px] rounded-md px-1.5 py-0.5 tabular-nums ${d >= 3 ? "bg-amber-500/15 text-amber-600" : "bg-muted text-muted-foreground"}`}>
           {t("profile.tDaysAgo", { n: d })}
         </span>
       </div>
+
+      {/* T1: the assignment prompt, one tap away — judge without navigating */}
+      {item.prompt && (
+        <div className="mt-2">
+          <button onClick={() => setShowPrompt((v) => !v)} className="text-xs text-primary hover:underline">
+            {showPrompt ? "▾" : "▸"} {t("profile.tShowPrompt")}
+          </button>
+          {showPrompt && <p className="mt-1 text-xs text-muted-foreground whitespace-pre-wrap border-l-2 border-primary/30 pl-2">{item.prompt}</p>}
+        </div>
+      )}
+
       {item.submitted_text && (
         <p className="mt-2 text-sm text-muted-foreground whitespace-pre-wrap line-clamp-4">{item.submitted_text}</p>
       )}
+      {/* T1: inline image with lightbox instead of a new tab */}
       {item.submitted_image_url && (
-        <a href={item.submitted_image_url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-primary hover:underline">
-          🖼 {t("profile.tViewImage")}
-        </a>
+        <>
+          <img src={item.submitted_image_url} alt="" loading="lazy" onClick={() => setLightbox(true)}
+            className="mt-2 h-24 rounded-md border object-cover cursor-zoom-in" />
+          {lightbox && (
+            <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 cursor-zoom-out" onClick={() => setLightbox(false)}>
+              <img src={item.submitted_image_url} alt="" className="max-h-full max-w-full rounded-lg" />
+            </div>
+          )}
+        </>
       )}
+
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {[item.max_score, 8, 6, 4].filter((v, i, a) => a.indexOf(v) === i && v <= item.max_score).map((s) => (
           <Button key={s} size="sm" variant={pick === s ? "default" : "outline"}
@@ -462,11 +511,25 @@ function QueueCard({ item, onGrade, t }: { item: QueueItem; onGrade: (i: QueueIt
           ✍️ {t("profile.tFeedback")}
         </button>
       </div>
+
       {showFb && (
-        <div className="mt-2 flex gap-2">
-          <input value={feedback} onChange={(e) => setFeedback(e.target.value)} placeholder={t("profile.tFeedbackPh")}
-            className="flex-1 rounded-md border bg-background px-3 py-1.5 text-sm" maxLength={500} />
-          <Button size="sm" disabled={pick == null} onClick={() => pick != null && send(pick)}>{t("profile.tSend")}</Button>
+        <div className="mt-2 space-y-1.5">
+          {/* T2: one-tap feedback presets for the picked score band */}
+          {pick != null && (
+            <div className="flex flex-wrap gap-1.5">
+              {presetsFor(pick, item.max_score).map((p, i) => (
+                <button key={i} onClick={() => setFeedback(p)}
+                  className="text-[11px] rounded-full border px-2.5 py-1 text-muted-foreground hover:border-primary hover:text-foreground">
+                  {p.length > 42 ? p.slice(0, 42) + "…" : p}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <input value={feedback} onChange={(e) => setFeedback(e.target.value)} placeholder={t("profile.tFeedbackPh")}
+              className="flex-1 rounded-md border bg-background px-3 py-1.5 text-sm" maxLength={500} />
+            <Button size="sm" disabled={pick == null} onClick={() => pick != null && send(pick)}>{t("profile.tSend")}</Button>
+          </div>
         </div>
       )}
     </Card>

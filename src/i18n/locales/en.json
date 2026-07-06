@@ -1173,6 +1173,9 @@
     "tPendingHint": "Grade them!",
     "tDigest": "Last 24 hours",
     "tDigestNew": "new submissions",
-    "tDigestActive": "students active"
+    "tDigestActive": "students active",
+    "tResub": "Resubmission",
+    "tPrevScore": "previous",
+    "tShowPrompt": "Show the assignment prompt"
   }
 }

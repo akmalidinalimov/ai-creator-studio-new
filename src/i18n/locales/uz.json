@@ -1173,6 +1173,9 @@
     "tPendingHint": "Baholang!",
     "tDigest": "Oxirgi 24 soat",
     "tDigestNew": "yangi vazifa",
-    "tDigestActive": "talaba faol edi"
+    "tDigestActive": "talaba faol edi",
+    "tResub": "Qayta topshirilgan",
+    "tPrevScore": "avvalgi",
+    "tShowPrompt": "Topshiriq shartini ko'rish"
   }
 }
