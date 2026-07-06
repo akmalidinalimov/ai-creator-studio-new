@@ -190,11 +190,33 @@ export default function TeacherProfile() {
   const sel = groups.find((g) => g.group_id === selected) || null;
   const inactive3d = useMemo(() => roster.filter((r) => (daysSince(r.last_activity_at) ?? 99) >= 3), [roster]);
   const oldestDays = queue.length ? daysSince(queue[0].submitted_at) : null;
+  // Inactivity range filter: null = everyone, 3/7/14 = inactive >= N days.
+  const [inactFilter, setInactFilter] = useState<number | null>(null);
   const filteredRoster = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return roster;
-    return roster.filter((r) => `${r.name} ${r.last_name || ""} ${r.telegram_username || ""}`.toLowerCase().includes(q));
-  }, [roster, search]);
+    return roster.filter((r) => {
+      if (q && !`${r.name} ${r.last_name || ""} ${r.telegram_username || ""}`.toLowerCase().includes(q)) return false;
+      if (inactFilter != null && (daysSince(r.last_activity_at) ?? 999) < inactFilter) return false;
+      return true;
+    });
+  }, [roster, search, inactFilter]);
+
+  // Bulk reminder: nudge every student in the current filtered list.
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const bulkNudge = async () => {
+    setBulkBusy(true);
+    let ok = 0, skipped = 0;
+    for (const r of filteredRoster.slice(0, 60)) {
+      if (nudged.has(r.id)) { skipped++; continue; }
+      const { data, error } = await supabase.functions.invoke("teacher-nudge-student", { body: { student_id: r.id } });
+      const err = (error as any)?.message || (data as any)?.error;
+      if (!error && !(data as any)?.error) { ok++; setNudged((s) => new Set(s).add(r.id)); }
+      else { skipped++; if (err === "already_nudged_today") setNudged((s) => new Set(s).add(r.id)); }
+      await new Promise((res) => setTimeout(res, 150));
+    }
+    setBulkBusy(false);
+    toast.success(t("profile.tBulkDone", { ok, skipped }));
+  };
 
   if (loading) {
     return (
@@ -335,7 +357,7 @@ export default function TeacherProfile() {
                   <li className="flex items-center gap-2">
                     <span>😴</span>
                     <span className="flex-1">{t("profile.tInactiveCount", { n: inactive3d.length })}</span>
-                    <Button size="sm" variant="outline" onClick={() => { setTab("roster"); setSearch(""); }}>{t("common.more")}</Button>
+                    <Button size="sm" variant="outline" onClick={() => { setTab("roster"); setSearch(""); setInactFilter(3); }}>{t("common.more")}</Button>
                   </li>
                 )}
                 {queue.length === 0 && inactive3d.length === 0 && (
@@ -368,6 +390,22 @@ export default function TeacherProfile() {
               <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("common.search")}
                 className="flex-1 bg-transparent text-sm outline-none" />
               <span className="text-xs text-muted-foreground tabular-nums">{filteredRoster.length}</span>
+            </div>
+
+            {/* inactivity range filter + bulk reminder */}
+            <div className="flex flex-wrap items-center gap-2">
+              {([[null, t("profile.tAllStudents")], [3, "😴 3+ kun"], [7, "😴 7+ kun"], [14, "😴 14+ kun"]] as [number | null, string][]).map(([v, label]) => (
+                <button key={String(v)} onClick={() => setInactFilter(v)}
+                  className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                    inactFilter === v ? "border-primary bg-primary/10 font-semibold text-foreground" : "bg-card text-muted-foreground hover:text-foreground"}`}>
+                  {label}
+                </button>
+              ))}
+              {inactFilter != null && filteredRoster.length > 0 && (
+                <Button size="sm" className="ml-auto" disabled={bulkBusy} onClick={bulkNudge}>
+                  {bulkBusy ? "…" : `👋 ${t("profile.tBulkNudge", { n: filteredRoster.length })}`}
+                </Button>
+              )}
             </div>
             {rosterLoading ? (
               <Card className="h-40 animate-pulse bg-muted/40" />

@@ -1176,6 +1176,9 @@
     "tDigestActive": "talaba faol edi",
     "tResub": "Qayta topshirilgan",
     "tPrevScore": "avvalgi",
-    "tShowPrompt": "Topshiriq shartini ko'rish"
+    "tShowPrompt": "Topshiriq shartini ko'rish",
+    "tAllStudents": "Hammasi",
+    "tBulkNudge": "Barchasiga eslatma ({{n}})",
+    "tBulkDone": "Yuborildi: {{ok}} · o'tkazildi: {{skipped}} (bugun allaqachon yuborilgan yoki Telegram yo'q)"
   }
 }

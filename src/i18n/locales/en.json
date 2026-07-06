@@ -1176,6 +1176,9 @@
     "tDigestActive": "students active",
     "tResub": "Resubmission",
     "tPrevScore": "previous",
-    "tShowPrompt": "Show the assignment prompt"
+    "tShowPrompt": "Show the assignment prompt",
+    "tAllStudents": "All",
+    "tBulkNudge": "Remind all ({{n}})",
+    "tBulkDone": "Sent: {{ok}} · skipped: {{skipped}} (already today or no Telegram)"
   }
 }

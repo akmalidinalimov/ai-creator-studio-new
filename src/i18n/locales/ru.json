@@ -1176,6 +1176,9 @@
     "tDigestActive": "студентов активны",
     "tResub": "Повторная сдача",
     "tPrevScore": "ранее",
-    "tShowPrompt": "Показать условие задания"
+    "tShowPrompt": "Показать условие задания",
+    "tAllStudents": "Все",
+    "tBulkNudge": "Напомнить всем ({{n}})",
+    "tBulkDone": "Отправлено: {{ok}} · пропущено: {{skipped}} (уже сегодня или нет Telegram)"
   }
 }
