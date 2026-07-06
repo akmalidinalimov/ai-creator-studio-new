@@ -253,19 +253,3 @@
   --shadow-elevated: 0 2px 6px hsl(0 0% 0% / 0.4), 0 24px 60px hsl(0 0% 0% / 0.5);
   --gradient-cream: linear-gradient(180deg, hsl(165 14% 5%) 0%, hsl(170 16% 8%) 100%);
 }
-
-/* ===== Level Aurora (profile cover) ===== */
-.aurora-blob {
-  position: absolute;
-  border-radius: 9999px;
-  filter: blur(26px);
-  pointer-events: none;
-  opacity: 0.38;
-}
-.dark .aurora-blob { opacity: 0.5; }
-.aurora-blob.b1 { width: 11rem; height: 11rem; left: -2.5rem; top: -3.5rem; animation: aurora-1 9s ease-in-out infinite; }
-.aurora-blob.b2 { width: 10rem; height: 10rem; right: -2rem; top: -1.5rem; animation: aurora-2 12s ease-in-out infinite; }
-.aurora-blob.b3 { width: 9rem; height: 9rem; left: 34%; top: -3rem; animation: aurora-1 14s ease-in-out infinite reverse; }
-@keyframes aurora-1 { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(16px, 9px) scale(1.12); } }
-@keyframes aurora-2 { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(-13px, 11px) scale(1.08); } }
-@media (prefers-reduced-motion: reduce) { .aurora-blob { animation: none !important; } }

@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
  * at an anchor point, scattering outward with a gentle twinkle. Honors
  * prefers-reduced-motion by drawing a single static frame (no rAF loop).
  */
-export function PixelDissolve({ className }: { className?: string }) {
+export function PixelDissolve({ className, density = 9000 }: { className?: string; density?: number }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -25,7 +25,7 @@ export function PixelDissolve({ className }: { className?: string }) {
       const cy = h * 0.3;
       const reach = Math.min(w, h) * 0.62;
       squares = [];
-      const n = Math.min(150, Math.round((w * h) / 9000));
+      const n = Math.min(150, Math.round((w * h) / density));
       for (let i = 0; i < n; i++) {
         const a = Math.random() * Math.PI * 2;
         const r = Math.pow(Math.random(), 1.7) * reach;
@@ -72,7 +72,7 @@ export function PixelDissolve({ className }: { className?: string }) {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", onResize);
     };
-  }, []);
+  }, [density]);
 
   return <canvas ref={ref} className={className} aria-hidden="true" />;
 }

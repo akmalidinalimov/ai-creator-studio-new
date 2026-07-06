@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Camera, Pencil, Settings as SettingsIcon, Share2 } from "lucide-react";
 import { toast } from "sonner";
 import TeacherProfile from "@/components/profile/TeacherProfile";
+import { PixelDissolve } from "@/components/landing/PixelDissolve";
 
 /* ------------------------------------------------------------------ types */
 
@@ -43,25 +44,24 @@ type Tab = "achievements" | "group" | "about" | "stats";
 
 const prevThreshold = (level: number) => 50 * Math.max(level - 1, 0) * level;
 
-/** Level Aurora: the cover's palette warms up with the student's level —
- *  L1 cool blue-violet → L7+ gold hour. The background itself is a trophy. */
-export function auroraPalette(level: number): [string, string, string] {
-  if (level >= 7) return ["#F59E0B", "#EC4899", "#FBBF24"];      // gold hour
-  if (level >= 5) return ["#EC4899", "#F59E0B", "#8B5CF6"];      // pink-amber
-  if (level >= 3) return ["#8B5CF6", "#EC4899", "#A78BFA"];      // violet-pink
-  return ["#6D9EEB", "#8B5CF6", "#67E8F9"];                      // cool dawn
-}
-
-export function AuroraCover({ level, className = "h-20", children }: {
-  level: number; className?: string; children?: React.ReactNode;
+/** Static brand cover — the landing hero's look: deep teal-black, faint grid,
+ *  soft teal glow, and the logo's pixel-dissolve squares. Same for everyone. */
+export function BrandCover({ className = "h-24", children }: {
+  className?: string; children?: React.ReactNode;
 }) {
-  const [c1, c2, c3] = auroraPalette(level);
   return (
-    <div className={`relative overflow-hidden ${className}`}
-      style={{ background: `linear-gradient(120deg, ${c1}33, ${c2}2e 55%, ${c3}26)` }}>
-      <span className="aurora-blob b1" style={{ background: c1 }} aria-hidden />
-      <span className="aurora-blob b2" style={{ background: c2 }} aria-hidden />
-      <span className="aurora-blob b3" style={{ background: c3 }} aria-hidden />
+    <div className={`relative overflow-hidden bg-[#0A0D0C] ${className}`}>
+      <div aria-hidden className="pointer-events-none absolute -top-[40%] -right-[6%] w-[70%] h-[170%] blur-2xl"
+        style={{ background: "radial-gradient(closest-side, rgba(47,179,155,.22), transparent 70%)" }} />
+      <div aria-hidden className="pointer-events-none absolute inset-0 opacity-50"
+        style={{
+          backgroundImage:
+            "linear-gradient(rgba(120,180,168,.10) 1px,transparent 1px),linear-gradient(90deg,rgba(120,180,168,.10) 1px,transparent 1px)",
+          backgroundSize: "36px 36px",
+          maskImage: "radial-gradient(120% 100% at 20% 20%,#000,transparent 75%)",
+          WebkitMaskImage: "radial-gradient(120% 100% at 20% 20%,#000,transparent 75%)",
+        }} />
+      <PixelDissolve className="absolute inset-0 w-full h-full" density={1400} />
       {children}
     </div>
   );
@@ -260,11 +260,11 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
       <div className="max-w-2xl mx-auto space-y-4">
         {/* ---------------- header card ---------------- */}
         <Card className="overflow-hidden">
-          <AuroraCover level={stats?.level ?? 1}>
-            <Link to="/settings" className="absolute right-3 top-3 z-10 rounded-full bg-black/20 p-1.5 text-white hover:bg-black/30" aria-label={t("nav.mySettings")}>
+          <BrandCover>
+            <Link to="/settings" className="absolute right-3 top-3 z-10 rounded-full bg-white/10 p-1.5 text-white hover:bg-white/20" aria-label={t("nav.mySettings")}>
               <SettingsIcon className="h-4 w-4" />
             </Link>
-          </AuroraCover>
+          </BrandCover>
           <div className="px-5 pb-5 -mt-10">
             {/* avatar + streak ring + level */}
             <div className="flex flex-col items-center">
