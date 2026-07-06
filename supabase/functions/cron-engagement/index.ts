@@ -35,6 +35,7 @@ const FALLBACK: Record<string, { body: string; button_label?: string }> = {
   inactive_3: { body: "We miss you 👋 Want to continue the course?", button_label: "Continue →" },
   inactive_7: { body: "{{first_name}}, your course is waiting.", button_label: "Start →" },
   inactive_14: { body: "We have a special message for you 🎁", button_label: "Details →" },
+  inactive_30: { body: "{{first_name}}, it's been a month — your course and your group are still here for you 💚", button_label: "Come back →" },
 };
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
@@ -281,8 +282,9 @@ Deno.serve(async (req) => {
           await admin.from("profiles").update({ last_inactive_warning_day: null, last_inactive_warning_at: null }).eq("id", u.id);
           continue;
         }
-        let stage: 3 | 7 | 14 | null = null;
-        if (daysSinceActivity >= 14 && u.last_inactive_warning_day !== 14) stage = 14;
+        let stage: 3 | 7 | 14 | 30 | null = null;
+        if (daysSinceActivity >= 30 && u.last_inactive_warning_day !== 30) stage = 30;
+        else if (daysSinceActivity >= 14 && daysSinceActivity < 30 && u.last_inactive_warning_day !== 14) stage = 14;
         else if (daysSinceActivity >= 7 && daysSinceActivity < 14 && u.last_inactive_warning_day !== 7) stage = 7;
         else if (daysSinceActivity >= 3 && daysSinceActivity < 7 && u.last_inactive_warning_day !== 3) stage = 3;
         const lastInactiveYmd = u.last_inactive_warning_at ? ymdInTz(new Date(u.last_inactive_warning_at)) : null;
