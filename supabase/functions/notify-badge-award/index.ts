@@ -69,12 +69,6 @@ async function magicLink(admin: any, user_id: string, target_path: string): Prom
   return `${SITE_URL}/auth/magic?t=${token}`;
 }
 
-const SINGLE_INTROS = [
-  "🎉 Tabriklayman, {{name}}!",
-  "🥳 Zo'r yangilik, {{name}}!",
-  "✨ Ofarin, {{name}}!",
-];
-
 // Badge-specific celebratory tail by code.
 const BADGE_VARIANTS: Record<string, string> = {
   first_lesson: "Birinchi darsingizni tugatdingiz! Sayohat boshlandi 🚀",
@@ -91,24 +85,20 @@ const BADGE_VARIANTS: Record<string, string> = {
   course_complete: "Butun kursni tugatdingiz! Bu — katta yutuq 🏆",
 };
 
-function tail(badge: { code: string; description_uz: string | null }): string {
-  return BADGE_VARIANTS[badge.code] || badge.description_uz || "Yangi yutuq!";
-}
+// Editable captions live in public.badge_messages ("Batch texts" admin page).
+// These are only fallbacks if a row is missing. {{name}} → student first name.
+type Msgs = Record<string, string>;
+const DEFAULT_SHARE =
+  "📲 Endi navbat — bu g'alabani dunyoga ko'rsatishga!\n\n" +
+  "Ushbu rasmni Instagram Story'ngizga joylang va do'stlaringizni ilhomlantiring — siz kelajak kasbini, sun'iy intellektni o'rganyapsiz! 🌍🔥\n\n" +
+  "Story'da bizni belgilang 👉 @aicreators.students va @shahlo.alikhanova — biz sizni qayta ulashamiz! 💛";
 
-function singleCaption(name: string | null, badge: { code: string; name_uz: string; description_uz: string | null }): string {
-  const intro = SINGLE_INTROS[Math.floor(Math.random() * SINGLE_INTROS.length)].replace("{{name}}", firstName(name));
-  return `${intro}\n\n🏅 <b>${badge.name_uz}</b>\n${tail(badge)}\n\n📲 Rasmni Story'ngizga qo'ying — do'stlaringizni ham ilhomlantiring!`;
+function badgeBody(code: string, msgs: Msgs, name: string, badge: { description_uz: string | null }): string {
+  const raw = msgs[code] || BADGE_VARIANTS[code] || badge.description_uz || "Yangi yutuq! 🎉";
+  return raw.replace(/\{\{name\}\}/g, name);
 }
-
-// Fallback text (no image mapping / image path failed).
-function fallbackText(name: string | null, badges: { code: string; name_uz: string; description_uz: string | null; icon: string | null }[]): string {
-  if (badges.length === 1) {
-    const b = badges[0];
-    const intro = SINGLE_INTROS[Math.floor(Math.random() * SINGLE_INTROS.length)].replace("{{name}}", firstName(name));
-    return `${intro}\n\nSiz yangi nishonni qo'lga kiritdingiz: ${b.icon || "🏅"} <b>${b.name_uz}</b>\n\n${tail(b)}`;
-  }
-  const lines = badges.map((b) => `• ${b.icon || "🏅"} ${b.name_uz}`).join("\n");
-  return `🎉 Tabriklayman, ${firstName(name)}! Bugun <b>${badges.length} ta yangi nishon</b> qo'lga kiritdingiz!\n\n${lines}\n\nZo'r ish, davom eting! 🚀`;
+function shareBlock(msgs: Msgs, name: string): string {
+  return (msgs["__share__"] || DEFAULT_SHARE).replace(/\{\{name\}\}/g, name);
 }
 
 Deno.serve(async (req) => {
@@ -157,12 +147,15 @@ Deno.serve(async (req) => {
   const userIds = Array.from(byUser.keys());
   const badgeIds = Array.from(new Set(rows.map((r) => r.badge_id)));
 
-  const [{ data: profiles }, { data: badges }] = await Promise.all([
+  const [{ data: profiles }, { data: badges }, { data: msgRows }] = await Promise.all([
     admin.from("profiles").select("id, name, telegram_id, notifications_enabled").in("id", userIds),
     admin.from("badges").select("id, code, name_uz, description_uz, icon").in("id", badgeIds),
+    admin.from("badge_messages").select("code, body_uz"),
   ]);
   const profById = new Map<string, any>((profiles || []).map((p: any) => [p.id, p]));
   const badgeById = new Map<string, any>((badges || []).map((b: any) => [b.id, b]));
+  const msgs: Msgs = {};
+  (msgRows || []).forEach((m: any) => { if (m?.code) msgs[m.code] = m.body_uz || ""; });
 
   let processed = 0;
   let sent = 0;
@@ -193,6 +186,7 @@ Deno.serve(async (req) => {
     if (!enriched.length) { await markSent(); processed += items.length; continue; }
 
     const chatId = Number(prof.telegram_id);
+    const nm = firstName(prof.name);
     const url = await magicLink(admin, uid, `/profile?tab=badges`);
     const button = { inline_keyboard: [[{ text: "🏅 Barcha nishonlarim", url }]] };
 
@@ -202,39 +196,37 @@ Deno.serve(async (req) => {
 
     try {
       if (withImg.length === 1 && noImg.length === 0) {
+        // Single card: praise paragraph + shared "why share + tags" block.
+        const b = withImg[0];
         await tg("sendPhoto", {
           chat_id: chatId,
-          photo: badgeImageUrl(withImg[0].code, prof.name),
-          caption: singleCaption(prof.name, withImg[0]),
-          parse_mode: "HTML",
+          photo: badgeImageUrl(b.code, prof.name),
+          caption: `${badgeBody(b.code, msgs, nm, b)}\n\n${shareBlock(msgs, nm)}`,
           reply_markup: button,
         });
       } else if (withImg.length >= 1) {
-        // Album of badge cards (Telegram media groups: 2..10, no buttons) + a
-        // follow-up message carrying the button and any text-only fallbacks.
-        const media = withImg.slice(0, 10).map((b: any, i: number) => ({
+        // Album of badge cards (Telegram media groups: 2..10, no buttons); each
+        // card gets its own praise; the shared block + button follow once.
+        const media = withImg.slice(0, 10).map((b: any) => ({
           type: "photo",
           media: badgeImageUrl(b.code, prof.name),
-          caption: i === 0
-            ? `🎉 Tabriklayman, ${firstName(prof.name)}! Yangi nishonlar 🏅`
-            : `🏅 ${b.name_uz}`,
-          parse_mode: "HTML",
+          caption: badgeBody(b.code, msgs, nm, b),
         }));
         if (media.length === 1) {
-          await tg("sendPhoto", { chat_id: chatId, photo: media[0].media, caption: media[0].caption, parse_mode: "HTML" });
+          await tg("sendPhoto", { chat_id: chatId, photo: media[0].media, caption: media[0].caption });
         } else {
           await tg("sendMediaGroup", { chat_id: chatId, media });
         }
-        const extra = noImg.length ? `\n\n${noImg.map((b: any) => `• ${b.icon || "🏅"} ${b.name_uz}`).join("\n")}` : "";
+        const extra = noImg.length ? `\n\n${noImg.map((b: any) => `🏅 ${badgeBody(b.code, msgs, nm, b)}`).join("\n\n")}` : "";
         await tg("sendMessage", {
           chat_id: chatId,
-          text: `📲 Nishonlaringizni Story'ngizga qo'ying — do'stlaringizni ilhomlantiring!${extra}`,
-          parse_mode: "HTML",
+          text: `${shareBlock(msgs, nm)}${extra}`,
           reply_markup: button,
         });
       } else {
-        // No images at all — plain text (legacy path).
-        await tg("sendMessage", { chat_id: chatId, text: fallbackText(prof.name, enriched), parse_mode: "HTML", reply_markup: button });
+        // No images at all — plain text (legacy path): praise per badge + share.
+        const bodies = enriched.map((b: any) => `🏅 ${badgeBody(b.code, msgs, nm, b)}`).join("\n\n");
+        await tg("sendMessage", { chat_id: chatId, text: `${bodies}\n\n${shareBlock(msgs, nm)}`, reply_markup: button });
       }
       sent += enriched.length;
     } catch (e) {

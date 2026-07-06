@@ -50,6 +50,7 @@ const AdminUsers = lazy(() => import("./pages/admin/AdminUsers"));
 const AdminStudentDetail = lazy(() => import("./pages/admin/AdminStudentDetail"));
 const AdminUsersDuplicates = lazy(() => import("./pages/admin/AdminUsersDuplicates"));
 const AdminSettings = lazy(() => import("./pages/admin/AdminSettings"));
+const AdminBatchTexts = lazy(() => import("./pages/admin/AdminBatchTexts"));
 const AdminDeploy = lazy(() => import("./pages/admin/AdminDeploy"));
 const AdminAIAnalytics = lazy(() => import("./pages/admin/AdminAIAnalytics"));
 const AdminAudit = lazy(() => import("./pages/admin/AdminAudit"));
@@ -120,6 +121,7 @@ const App = () => (
             <Route path="/admin/users/duplicates" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminUsersDuplicates /></Suspense></RequireAuth>} />
             <Route path="/admin/users/:id" element={<RequireAuth staffOnly><Suspense fallback={<AdminFallback />}><AdminStudentDetail /></Suspense></RequireAuth>} />
             <Route path="/admin/settings" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminSettings /></Suspense></RequireAuth>} />
+            <Route path="/admin/batch-texts" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminBatchTexts /></Suspense></RequireAuth>} />
             <Route path="/admin/deploy" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminDeploy /></Suspense></RequireAuth>} />
             <Route path="/admin/ai-analytics" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminAIAnalytics /></Suspense></RequireAuth>} />
             <Route path="/admin/audit" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminAudit /></Suspense></RequireAuth>} />

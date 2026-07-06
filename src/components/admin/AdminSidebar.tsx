@@ -17,6 +17,7 @@ import {
   FileText,
   Rocket,
   GraduationCap,
+  Sparkles,
   PanelLeftClose,
   PanelLeft,
   Menu,
@@ -64,6 +65,7 @@ const SECTIONS: Section[] = [
     items: [
       { to: "/admin/analytics", label: "Chuqur tahlillar", icon: BarChart3, adminOnly: true, match: (p) => p.startsWith("/admin/analytics") },
       { to: "/leaderboard", label: "Reyting", icon: Trophy, match: (p) => p === "/leaderboard" },
+      { to: "/admin/batch-texts", label: "Batch matnlar", icon: Sparkles, adminOnly: true, match: (p) => p.startsWith("/admin/batch-texts") },
       { to: "/admin/settings", label: "Sozlamalar", icon: Settings, adminOnly: true, match: (p) => p.startsWith("/admin/settings") },
       { to: "/admin/audit", label: "Audit jurnali", icon: FileText, adminOnly: true, match: (p) => p.startsWith("/admin/audit") },
       { to: "/admin/deploy", label: "Deploy", icon: Rocket, adminOnly: true, match: (p) => p.startsWith("/admin/deploy") },
