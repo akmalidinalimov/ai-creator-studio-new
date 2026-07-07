@@ -46,15 +46,17 @@ function firstName(n: string | null): string {
   return (n || "").trim().split(/\s+/)[0] || "Talaba";
 }
 
-// Cloudinary name overlay. Only the first name varies; y_1030 aligns with the
-// background's empty name slot; c_fit,w_840 keeps long names inside the IG-safe zone.
+// Cloudinary name overlay on the 3x base (1620x2880). Only the first name
+// varies; y_1545 aligns with the empty name slot; c_fit,w_1260 keeps long names
+// in the IG-safe zone; e_shadow adds a soft drop-shadow so the name stays sharp
+// after Telegram's JPEG recompression. "_g4" = current baked-background revision.
+const IMG_REV = "_g4";
 function badgeImageUrl(code: string, name: string | null): string | null {
   const img = CODE_TO_IMG[code];
   if (!img) return null;
   const raw = firstName(name).slice(0, 24);
   const nm = encodeURIComponent(raw).replace(/'/g, "%27").replace(/\./g, "%2E");
-  // "_g3" = current baked-background revision (gold title + IG-safe margins).
-  return `https://res.cloudinary.com/${CLOUD}/image/upload/l_text:Arial_64_bold:${nm},co_rgb:F7F1E4,g_north,y_1030,c_fit,w_840/aicreators/${img}_g3.png`;
+  return `https://res.cloudinary.com/${CLOUD}/image/upload/l_text:Arial_96_bold:${nm},co_rgb:F7F1E4,c_fit,w_1260/e_shadow:60,x_3,y_5/fl_layer_apply,g_north,y_1545/aicreators/${img}${IMG_REV}.png`;
 }
 
 function randomToken(len = 32): string {
@@ -89,9 +91,8 @@ const BADGE_VARIANTS: Record<string, string> = {
 // These are only fallbacks if a row is missing. {{name}} → student first name.
 type Msgs = Record<string, string>;
 const DEFAULT_SHARE =
-  "📲 Endi navbat — bu g'alabani dunyoga ko'rsatishga!\n\n" +
-  "Ushbu rasmni Instagram Story'ngizga joylang va do'stlaringizni ilhomlantiring — siz kelajak kasbini, sun'iy intellektni o'rganyapsiz! 🌍🔥\n\n" +
-  "Story'da bizni belgilang 👉 @aicreators.students va @shahlo.alikhanova — biz sizni qayta ulashamiz! 💛";
+  "📲 Buni dunyoga ko'rsating! Rasmni Instagram Story'ga qo'ying — siz AI'ni o'rganyapsiz, faxrlaning! 🌍\n" +
+  "Bizni belgilang: @aicreators.students va @shahlo.alikhanova — sizni qayta ulashamiz! 💛";
 
 function badgeBody(code: string, msgs: Msgs, name: string, badge: { description_uz: string | null }): string {
   const raw = msgs[code] || BADGE_VARIANTS[code] || badge.description_uz || "Yangi yutuq! 🎉";
@@ -196,24 +197,25 @@ Deno.serve(async (req) => {
 
     try {
       if (withImg.length === 1 && noImg.length === 0) {
-        // Single card: praise paragraph + shared "why share + tags" block.
+        // Single card: sent as a DOCUMENT so Telegram doesn't recompress it —
+        // the student gets the full-quality PNG to save + post to their Story.
         const b = withImg[0];
-        await tg("sendPhoto", {
+        await tg("sendDocument", {
           chat_id: chatId,
-          photo: badgeImageUrl(b.code, prof.name),
+          document: badgeImageUrl(b.code, prof.name),
           caption: `${badgeBody(b.code, msgs, nm, b)}\n\n${shareBlock(msgs, nm)}`,
           reply_markup: button,
         });
       } else if (withImg.length >= 1) {
-        // Album of badge cards (Telegram media groups: 2..10, no buttons); each
-        // card gets its own praise; the shared block + button follow once.
+        // Album of full-quality badge documents (media groups: 2..10, no buttons);
+        // each card gets its own praise; the shared block + button follow once.
         const media = withImg.slice(0, 10).map((b: any) => ({
-          type: "photo",
+          type: "document",
           media: badgeImageUrl(b.code, prof.name),
           caption: badgeBody(b.code, msgs, nm, b),
         }));
         if (media.length === 1) {
-          await tg("sendPhoto", { chat_id: chatId, photo: media[0].media, caption: media[0].caption });
+          await tg("sendDocument", { chat_id: chatId, document: media[0].media, caption: media[0].caption });
         } else {
           await tg("sendMediaGroup", { chat_id: chatId, media });
         }
