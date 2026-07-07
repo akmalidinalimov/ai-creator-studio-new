@@ -4307,14 +4307,38 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     if (intentErr) console.error("hw:group:intent-query-err", intentErr);
     let intent = (intents && intents[0]) as any;
 
-    // STRICT INTENT GATE: A submission requires an active intent created via
-    // /vazifalar → 📤 Topshirish. Direct posts in the topic without going
-    // through the bot are ignored — no synthesis, no submission, no DM.
+    // v3.14.40 AUTO-SYNTHESIS (restored 2026-07-07): students post their work
+    // DIRECTLY in the homework topic — almost nobody presses 📤 Topshirish first
+    // (of ~280 intents ever, ~all submissions came from direct posts). A prior
+    // revert re-enabled a strict gate here and silently dropped every direct
+    // post. So when there's no explicit intent, resolve THIS identified sender's
+    // current assignment for the topic and synthesize an intent. Strict per-
+    // sender: profile is the confirmed poster (anon/bot/unknown already filtered
+    // above), so a post can never be attributed to anyone else.
     if (!intent) {
-      console.log("hw:group:no-active-intent-ignored", JSON.stringify({
-        profile_id: profile.id, chatId, threadId, messageId,
-      }));
-      return;
+      const { data: prof2 } = await admin.from("profiles").select("group_id").eq("id", profile.id).maybeSingle();
+      const groupId = prof2?.group_id ?? null;
+      const grp = groupId
+        ? (await admin.from("groups").select("id, course_id, homework_topic_id").eq("id", groupId).maybeSingle()).data
+        : null;
+      const resolved = grp ? await resolveAssignmentForTopic(admin, grp, threadId, profile.id) : null;
+      if (!resolved) {
+        console.log("hw:group:no-intent-unresolved-ignored", JSON.stringify({ profile_id: profile.id, groupId, chatId, threadId, messageId }));
+        return;
+      }
+      // Create a real intent row so album/follow-up files append to one submission.
+      const { data: synth } = await admin.from("bot_homework_intents").upsert({
+        user_id: profile.id,
+        assignment_id: resolved.assignment.id,
+        module_id: resolved.moduleId,
+        group_id: grp.id,
+        telegram_chat_id: chatId,
+        telegram_thread_id: threadId,
+        expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+        created_at: new Date().toISOString(),
+      }, { onConflict: "user_id,assignment_id" }).select("id, user_id, assignment_id, module_id, group_id, submission_id").maybeSingle();
+      intent = synth || { id: null, user_id: profile.id, assignment_id: resolved.assignment.id, module_id: resolved.moduleId, group_id: grp.id, submission_id: null };
+      console.log("hw:group:auto-synth", JSON.stringify({ profile_id: profile.id, assignment_id: resolved.assignment.id, via: resolved.resolvedVia }));
     }
     // Defensive — never attribute a message to a user other than the intent owner.
     if (intent.user_id !== profile.id) {
