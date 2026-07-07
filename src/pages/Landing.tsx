@@ -27,6 +27,12 @@ const MODULES: { n: string; title: string; body: string }[] = [
   { n: "08", title: "Shablon va tayyor workflowlar", body: "Bir marta workflow tuzasiz — u siz uchun doimo kreativ rasm va videolarni o'zi tayyorlab beradi." },
 ];
 
+// The two founders. photo: fill with a hosted image URL; empty → initials avatar.
+const FOUNDERS: { name: string; role: string; initials: string; photo: string }[] = [
+  { name: "Shahlo Alikhanova", role: "Marketing va AI mutaxassisi", initials: "SH", photo: "" },
+  { name: "Akmalidin Alimov", role: "Muhandis (Engineer) va AI mutaxassisi", initials: "A", photo: "" },
+];
+
 interface LandingCopy {
   headline?: string;
   sub?: string;
@@ -248,13 +254,40 @@ export default function Landing() {
 
       <section className="border-y border-border bg-secondary/40">
         <div className="container py-5 flex flex-wrap items-center justify-center gap-x-10 gap-y-2 text-sm">
-          <span className="text-muted-foreground"><span className="font-semibold text-foreground">1,247</span> {t("landing.trust.creators")}</span>
+          <span className="text-muted-foreground"><span className="font-semibold text-foreground">1 500+</span> {t("landing.trust.creators")}</span>
           <span className="hidden sm:block w-px h-4 bg-border" />
           <span className="text-muted-foreground"><span className="font-semibold text-foreground">4.9/5</span> {t("landing.trust.rating")}</span>
           <span className="hidden sm:block w-px h-4 bg-border" />
           <span className="text-muted-foreground"><span className="font-semibold text-foreground">30+</span> {t("landing.trust.countries")}</span>
           <span className="hidden sm:block w-px h-4 bg-border" />
           <span className="text-muted-foreground"><span className="font-semibold text-foreground">8</span> {t("landing.trust.modulesStat", "ta modul")}</span>
+        </div>
+      </section>
+
+      {/* Mission — the movement, not a course */}
+      <section className="py-20 md:py-28 bg-[#0A0D0C] text-[#F3F7F5] relative overflow-hidden">
+        <div aria-hidden className="pointer-events-none absolute -bottom-[20%] left-1/2 -translate-x-1/2 w-[80%] h-[70%] blur-3xl" style={{ background: "radial-gradient(closest-side, rgba(47,179,155,.14), transparent 70%)" }} />
+        <div className="container max-w-3xl relative z-10 text-center">
+          <span className="inline-flex items-center gap-2 text-[13px] font-semibold text-[#6FE6CE] border border-white/10 bg-[rgba(47,179,155,.06)] rounded-full px-4 py-2">Bizning maqsadimiz</span>
+          <h2 className="font-display font-semibold text-[clamp(34px,5vw,56px)] leading-[1.05] mt-6">100 000 hayotni o'zgartirish</h2>
+          <p className="text-[#6FE6CE] font-medium text-lg md:text-xl mt-4">Biz kurs sotmaymiz. Biz hayotlarni o'zgartiramiz.</p>
+          <div className="space-y-5 text-[#CBD9D4] leading-relaxed text-[16px] md:text-[17px] mt-8 text-left md:text-center">
+            <p>Men va turmush o'rtog'im bitta orzu bilan yashaymiz: O'zbekistonda <b className="text-white">100 000 insonga</b> AI orqali daromad topishni o'rgatish. Uyda, oila bag'rida o'tirib — yurtini, yaqinlarini tark etmasdan, kamroq ishlab, ko'proq topish.</p>
+            <p>Bu shunchaki kurs emas — bu <b className="text-white">harakat</b>. Bu yerda siz faqat rasm yoki video yaratishni emas, o'z hayotingizni o'zgartirishni, o'zingizni qaytadan kashf etishni va ichingizdagi kuchni uyg'otishni o'rganasiz.</p>
+          </div>
+          <div className="mt-12 max-w-xl mx-auto">
+            <div className="flex items-end justify-between text-sm text-[#9FB2AD] mb-2">
+              <span><b className="text-white text-base">1 500+</b> inson</span>
+              <span>100 000</span>
+            </div>
+            <div className="h-2.5 rounded-full bg-white/[.08] overflow-hidden">
+              <div className="h-full rounded-full" style={{ width: "1.5%", minWidth: "12px", background: "linear-gradient(90deg,#2FB39B,#6FE6CE)" }} />
+            </div>
+            <p className="text-[15px] text-[#9FB2AD] mt-4">Biz allaqachon <b className="text-white">1 500 dan ortiq</b> insonga yordam berdik — bu maqsadimizning atigi <b className="text-white">1.5%</b>i. Tizim ishlaydi: u 1 500 kishi uchun natija berdi — demak, siz uchun ham beradi.</p>
+          </div>
+          <Button asChild size="lg" className="mt-10 bg-gradient-to-b from-[#6FE6CE] to-[#2FB39B] text-[#052220] hover:-translate-y-0.5 transition-transform">
+            <Link to="/signup">Harakatga qo'shiling <ArrowRight className="h-4 w-4" /></Link>
+          </Button>
         </div>
       </section>
 
@@ -301,28 +334,28 @@ export default function Landing() {
       </section>
 
       <section id="instructor" className="py-20 md:py-28">
-        <div className="container grid md:grid-cols-[1fr_240px] gap-10 md:gap-16 items-center">
-          <div>
-            <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight mb-5">{t("landing.instructor.heading")}</h2>
-            <div className="space-y-4 text-muted-foreground leading-relaxed prose-tight max-w-2xl">
-              {(copy.instructorBio || t("landing.instructor.bioDefault")).split("\n\n").map((p, i) => <p key={i}>{p}</p>)}
-            </div>
-            <div className="mt-5 inline-flex items-center gap-2 text-sm text-primary font-medium">
-              <Star className="h-4 w-4 fill-current" />
-              {t("landing.instructor.credibility")}
-            </div>
-          </div>
-          <div className="md:order-last order-first">
-            <div className="w-60 h-60 mx-auto rounded-full overflow-hidden ring-8 ring-accent/40 shadow-elevated">
-              {copy.instructorPhotoUrl ? (
-                <img src={copy.instructorPhotoUrl} alt="Instructor" className="w-full h-full object-cover" />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center" style={{ background: "linear-gradient(150deg,#14211E,#0A0D0C)" }}>
-                  <span className="font-display text-6xl text-primary">A</span>
+        <div className="container max-w-3xl">
+          <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight text-center mb-3">Sizni Shvetsiyalik AI mutaxassislari o'qitadi</h2>
+          <p className="text-muted-foreground text-center max-w-2xl mx-auto mb-12 leading-relaxed">Biz Shvetsiyada o'z firmamizda AI loyihalari ustida ishlaymiz va bundan real daromad olamiz. Yevropadagi muhandislik va marketing tajribamiz — O'zbekistondagi ko'plab mutaxassislar tajribasidan ustun. Endi shu bilim va tajribani to'g'ridan-to'g'ri sizga olib kelmoqdamiz.</p>
+          <div className="grid sm:grid-cols-2 gap-5">
+            {FOUNDERS.map((f) => (
+              <div key={f.name} className="rounded-2xl border border-border bg-card p-6 flex items-center gap-5 shadow-soft">
+                <div className="w-20 h-20 rounded-2xl overflow-hidden ring-4 ring-accent/40 shrink-0">
+                  {f.photo ? (
+                    <img src={f.photo} alt={f.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center font-display text-2xl font-semibold text-[#052220]" style={{ background: "linear-gradient(150deg,#6FE6CE,#0F766E)" }}>{f.initials}</div>
+                  )}
                 </div>
-              )}
-            </div>
+                <div>
+                  <div className="font-display text-lg font-semibold leading-tight">{f.name}</div>
+                  <div className="text-primary text-sm font-medium mt-0.5">{f.role}</div>
+                  <div className="inline-flex items-center gap-1.5 text-xs text-muted-foreground mt-1.5"><Star className="h-3 w-3 fill-current text-primary" /> Shvetsiyadan</div>
+                </div>
+              </div>
+            ))}
           </div>
+          <p className="text-center text-sm text-muted-foreground max-w-2xl mx-auto mt-8">Bizning Yevropadagi solishtirib bo'lmas tajribamiz — bu sizning eng katta ustunligingiz.</p>
         </div>
       </section>
 

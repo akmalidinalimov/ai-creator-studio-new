@@ -286,11 +286,11 @@
     },
     "hero": {
       "headlineDefault": "AI bilan yarating, ishga tushiring va {pul ishlang}.",
-      "subDefault": "AI bilan ishlovchi yangi avlod ijodkorlari uchun professional kurs. Asoslardan tortib rasm, video, kontent va daromad olishgacha — amaliyot bilan. 8 ta modul, real natijaga yo'naltirilgan.",
+      "subDefault": "Biz kurs sotmaymiz — biz hayotlarni o'zgartiramiz. AI'ni o'rganing, uydan turib daromad toping va 100 000 kishilik harakatimizga qo'shiling.",
       "startLearning": "Bepul o'qishni boshlash",
       "viewCurriculum": "Kurs dasturi",
       "trust": "Bizga {{count}} ijodkor qo'shildi · 4.9/5 reyting",
-      "trustCountStrong": "1,247 ijodkor",
+      "trustCountStrong": "1 500+ inson",
       "sampleBadge": "Namuna dars · 8 daqiqa",
       "playLabel": "Namunani ijro etish"
     },

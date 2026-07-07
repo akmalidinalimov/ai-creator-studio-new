@@ -286,11 +286,11 @@
     },
     "hero": {
       "headlineDefault": "Build, ship, and monetize {with AI}.",
-      "subDefault": "A production-grade program for the new generation of AI-native creators. Foundations to image, video, content, and monetization — hands-on. 8 modules, built for real results.",
+      "subDefault": "We don't sell courses — we transform lives. Learn AI, earn from home, and join our movement of 100,000.",
       "startLearning": "Start learning free",
       "viewCurriculum": "View curriculum",
       "trust": "Joined by {{count}} · 4.9/5 rating",
-      "trustCountStrong": "1,247 creators",
+      "trustCountStrong": "1,500+ people",
       "sampleBadge": "Sample lesson · 8 min",
       "playLabel": "Play sample"
     },
