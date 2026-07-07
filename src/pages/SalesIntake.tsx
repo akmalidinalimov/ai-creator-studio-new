@@ -5,12 +5,21 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { UserPlus, CheckCircle2, Loader2 } from "lucide-react";
+import { UserPlus, CheckCircle2, Loader2, AlertTriangle, Info, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 type TierOpt = { id: string; name: string };
 type CourseOpt = { id: string; title: string; tiers: TierOpt[]; groups: string[] };
 type Recent = { name: string; status: string; cls: string };
+type ResultKind = "success" | "duplicate" | "exists" | "error";
+type Result = { kind: ResultKind; title: string; detail: string };
+
+const BANNER: Record<ResultKind, { cls: string; Icon: typeof CheckCircle2 }> = {
+  success:   { cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300", Icon: CheckCircle2 },
+  duplicate: { cls: "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300", Icon: AlertTriangle },
+  exists:    { cls: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300", Icon: Info },
+  error:     { cls: "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300", Icon: AlertTriangle },
+};
 
 // Staff-only sales-intake form (Phase 0 / M18). The route is wrapped in
 // RequireAuth staffOnly, so only a logged-in teacher/admin can reach it. Options are
@@ -31,6 +40,7 @@ export default function SalesIntake() {
   const [email, setEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [recent, setRecent] = useState<Recent[]>([]);
+  const [result, setResult] = useState<Result | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -67,32 +77,50 @@ export default function SalesIntake() {
     if (!selCourse) { toast.error("Kursni tanlang"); return; }
     const tier_id = tier === "Full" ? null : (selCourse.tiers.find((t) => t.name === tier)?.id ?? null);
     setSubmitting(true);
+    setResult(null);
+    // Capture the human-readable details now, before we clear the fields.
+    const who = `${first.trim()} ${last.trim()}`.trim();
+    const uname = username.trim().replace(/^@/, "");
+    const courseTitle = selCourse.title;
+    const groupName = group.trim();
+    const clearStudentFields = () => { setFirst(""); setLast(""); setUsername(""); setPhone(""); setEmail(""); };
     try {
       const { data, error } = await supabase.functions.invoke("staff-intake", {
         body: {
           name: first.trim(), last_name: last.trim(), telegram_username: username.trim(),
-          course_id: selCourse.id, tier_id, group_name: group.trim(),
+          course_id: selCourse.id, tier_id, group_name: groupName,
           phone: phone.trim(), email: email.trim(),
         },
       });
       if (error) throw error;
       const st = (data as any)?.status as string;
-      const who = `${first} ${last}`.trim();
+
       if (st === "created") {
-        toast.success(`✅ ${first} qo'shildi`);
+        setResult({ kind: "success", title: "✅ Muvaffaqiyatli qo'shildi!", detail: `${who} (@${uname}) — ${courseTitle}, "${groupName}" guruhiga qo'shildi.` });
+        toast.success(`✅ ${who || uname} qo'shildi`);
         setRecent((p) => [{ name: who, status: "✅ Qo'shildi", cls: "text-emerald-600" }, ...p].slice(0, 20));
-      } else if (st === "updated" || st === "matched" || st === "already_in_group") {
-        toast.message(`✔️ ${first} allaqachon platformada`);
-        setRecent((p) => [{ name: who, status: "✔️ Allaqachon bor", cls: "text-sky-600" }, ...p].slice(0, 20));
+        clearStudentFields();
+      } else if (st === "already_in_group") {
+        // True duplicate — the student is already in this exact group.
+        setResult({ kind: "duplicate", title: "⚠️ Dublikat! Bu talaba allaqachon mavjud", detail: `${who || uname} (@${uname}) allaqachon shu guruhda ro'yxatdan o'tgan. Qayta qo'shilmadi.` });
+        toast.error(`⚠️ Dublikat: @${uname} allaqachon shu guruhda`);
+        setRecent((p) => [{ name: who, status: "⚠️ Dublikat", cls: "text-rose-600" }, ...p].slice(0, 20));
+        // Keep the fields so the salesperson can review / fix.
+      } else if (st === "updated" || st === "matched") {
+        setResult({ kind: "exists", title: "ℹ️ Talaba allaqachon platformada bor edi", detail: `${who || uname} (@${uname}) tizimda mavjud edi va "${courseTitle}" kursiga biriktirildi.` });
+        toast.message(`ℹ️ @${uname} allaqachon bor edi — kursga qo'shildi`);
+        setRecent((p) => [{ name: who, status: "ℹ️ Allaqachon bor", cls: "text-amber-600" }, ...p].slice(0, 20));
+        clearStudentFields();
       } else {
-        const msg = (data as any)?.message || st || "xatolik";
+        const msg = (data as any)?.message || st || "Noma'lum xatolik";
+        setResult({ kind: "error", title: "⚠️ Xatolik", detail: String(msg) });
         toast.error(`⚠️ ${msg}`);
         setRecent((p) => [{ name: who, status: `⚠️ ${st || "xato"}`, cls: "text-amber-600" }, ...p].slice(0, 20));
       }
-      // Keep course/tier/group for the next student; clear the per-student fields.
-      setFirst(""); setLast(""); setUsername(""); setPhone(""); setEmail("");
     } catch (e: any) {
-      toast.error(e?.message || "Yuborishda xatolik");
+      const msg = e?.message || "Yuborishda xatolik";
+      setResult({ kind: "error", title: "⚠️ Xatolik", detail: String(msg) });
+      toast.error(msg);
     } finally {
       setSubmitting(false);
     }
@@ -113,6 +141,22 @@ export default function SalesIntake() {
           <UserPlus className="h-5 w-5 text-primary" />
           <h1 className="text-xl font-semibold">Talaba qo'shish</h1>
         </div>
+
+        {result && (() => {
+          const { cls, Icon } = BANNER[result.kind];
+          return (
+            <div className={`rounded-lg border p-3 flex items-start gap-2.5 ${cls}`} role="status" aria-live="polite">
+              <Icon className="h-5 w-5 shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <div className="font-semibold text-sm">{result.title}</div>
+                <div className="text-sm opacity-90 break-words">{result.detail}</div>
+              </div>
+              <button onClick={() => setResult(null)} className="ml-auto shrink-0 opacity-60 hover:opacity-100 transition-opacity" aria-label="Yopish">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          );
+        })()}
 
         <Card className="p-5 space-y-3">
           <div className="grid grid-cols-2 gap-2">
