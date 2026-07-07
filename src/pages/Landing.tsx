@@ -243,17 +243,17 @@ export default function Landing() {
               style={{ background: "linear-gradient(160deg,rgba(20,32,30,.9),rgba(10,16,15,.92))", backdropFilter: "blur(6px)" }}>
               <div className="flex items-center gap-3.5">
                 <div className="relative">
-                  <div className="w-16 h-16 rounded-full flex items-center justify-center font-display font-semibold text-[28px] text-[#052220]" style={{ background: "linear-gradient(150deg,#6FE6CE,#0F766E)" }}>A</div>
+                  <div className="w-16 h-16 rounded-full flex items-center justify-center font-display font-semibold text-[28px] text-[#052220]" style={{ background: "linear-gradient(150deg,#6FE6CE,#0F766E)" }}>D</div>
                   <span className="livepulse absolute bottom-0.5 right-0.5 w-3.5 h-3.5 rounded-full bg-[#6FE6CE] border-2 border-[#0E1413]" aria-hidden />
                 </div>
-                <div><div className="font-display font-semibold text-[19px] text-white">Akmal Alimov</div><div className="text-[13px] text-[#9FB2AD] mt-0.5">AI Creator · Level 4</div></div>
+                <div><div className="font-display font-semibold text-[19px] text-white">Dilnoza Karimova</div><div className="text-[13px] text-[#9FB2AD] mt-0.5">AI Kreator · 4-daraja</div></div>
               </div>
-              <div className="font-display font-bold text-[64px] leading-none mt-6 text-white">30<span className="text-[#6FE6CE] text-[26px]">-day</span></div>
-              <div className="text-sm text-[#9FB2AD] mt-1.5">streak · top 5% this month</div>
+              <div className="font-display font-bold text-[64px] leading-none mt-6 text-white">14<span className="text-[#6FE6CE] text-[26px]"> kun</span></div>
+              <div className="text-sm text-[#9FB2AD] mt-1.5">ketma-ket streak · oyning top 5%ida</div>
               <div className="h-2 rounded-md bg-white/[.06] mt-5 overflow-hidden"><div className="h-full w-[72%]" style={{ background: "linear-gradient(90deg,#2FB39B,#6FE6CE)" }} /></div>
-              <div className="flex justify-between mt-3.5 text-[12.5px] text-[#9FB2AD]"><span>Module 3 of 8</span><span>72% complete</span></div>
+              <div className="flex justify-between mt-3.5 text-[12.5px] text-[#9FB2AD]"><span>3 / 8-modul</span><span>72% bajarildi</span></div>
               <div className="flex gap-2 mt-5">
-                {[["#4", "Rank"], ["27", "Lessons"], ["8", "Badges"]].map(([n, l]) => (
+                {[["#4", "O'RIN"], ["12", "LOYIHA"], ["8", "NISHON"]].map(([n, l]) => (
                   <div key={l} className="flex-1 text-center border border-white/10 rounded-2xl py-3"><div className="font-display font-semibold text-[24px] text-[#6FE6CE]">{n}</div><div className="text-[11px] text-[#9FB2AD] mt-0.5 uppercase tracking-wider">{l}</div></div>
                 ))}
               </div>
