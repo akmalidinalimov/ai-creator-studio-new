@@ -70,7 +70,7 @@
     "showPassword": "Parolni ko'rsatish",
     "hidePassword": "Parolni yashirish",
     "tagline": "AI bilan yarating, ishga tushiring va daromad oling — boshidan oxirigacha.",
-    "taglineSub": "AI bilan ishlovchi yangi avlod ijodkorlari uchun professional kurs. 5 modul. 20 ta dars. O'sish uchun yaratilgan.",
+    "taglineSub": "AI bilan ishlovchi yangi avlod ijodkorlari uchun professional kurs. 8 ta modul. O'sish uchun yaratilgan.",
     "statLessons": "darslar",
     "statHours": "o'quv dasturi",
     "statTutor": "AI ustoz",
@@ -286,7 +286,7 @@
     },
     "hero": {
       "headlineDefault": "AI bilan yarating, ishga tushiring va {pul ishlang}.",
-      "subDefault": "AI bilan ishlovchi yangi avlod ijodkorlari uchun 14 soatlik kurs. Asoslardan tortib rasm, video, kontent va daromad olishgacha — keraksizlarsiz. Beshta modul, yigirma dars, o'sish uchun yaratilgan.",
+      "subDefault": "AI bilan ishlovchi yangi avlod ijodkorlari uchun professional kurs. Asoslardan tortib rasm, video, kontent va daromad olishgacha — amaliyot bilan. 8 ta modul, real natijaga yo'naltirilgan.",
       "startLearning": "Bepul o'qishni boshlash",
       "viewCurriculum": "Kurs dasturi",
       "trust": "Bizga {{count}} ijodkor qo'shildi · 4.9/5 reyting",
@@ -372,11 +372,11 @@
       "items": [
         {
           "q": "Boshlash uchun AI tajribasi kerakmi?",
-          "a": "Yo'q. Birinchi modul nol bilim bilan boshlanadi — 3-darsda siz allaqachon rasmlar yaratishni boshlaysiz."
+          "a": "Yo'q. Birinchi modul nol bilim bilan boshlanadi — juda tez orada siz rasmlar yaratishni boshlaysiz."
         },
         {
           "q": "Haftasiga qancha vaqt kerak?",
-          "a": "3–5 soat. To'liq kurs ~14 soat; ko'pchilik talabalar 4–6 hafta ichida tugatadi."
+          "a": "Haftasiga 3–5 soat. Premium tarifi — 5 hafta, VIP tarifi — 8 hafta davom etadi."
         },
         {
           "q": "Telefonda kuzatib borish mumkinmi?",
@@ -410,7 +410,7 @@
       "button": "Bepul o'qishni boshlash"
     },
     "footer": {
-      "tagline": "AI bilan ishlovchi ijodkorlar uchun 14 soatlik kurs. Toshkentda yaratilgan, hamma joyda o'qitiladi.",
+      "tagline": "AI bilan ishlovchi ijodkorlar uchun professional kurs. Toshkentda yaratilgan, hamma joyda o'qitiladi.",
       "course": "Kurs",
       "company": "Kompaniya",
       "contact": "Aloqa",

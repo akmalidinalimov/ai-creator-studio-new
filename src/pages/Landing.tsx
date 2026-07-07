@@ -13,12 +13,19 @@ import {
   UserPlus, BookOpen, Rocket, Star, Menu, X, ChevronDown,
 } from "lucide-react";
 
-interface Module {
-  id: string;
-  title: string;
-  position: number;
-  lessons: { id: string; title: string; duration_seconds: number | null; published: boolean; position: number }[];
-}
+// Public marketing curriculum — descriptive only. Deliberately does NOT expose
+// per-lesson titles or durations (that's confidential competitive info). Hardcoded
+// so the homepage never queries lessons.
+const MODULES: { n: string; title: string; body: string }[] = [
+  { n: "01", title: "AI bilan tanishuv va kreativ fikrlash", body: "Sun'iy intellekt dunyosiga ilk qadam. Kreativ fikrlashni rivojlantirib, cheksiz g'oyalar topishni o'rganasiz." },
+  { n: "02", title: "Brendlar to'laydigan professional rasmlar", body: "AI yordamida brendlar pul to'laydigan darajadagi professional rasmlarni atigi 7 qadamda yaratasiz." },
+  { n: "03", title: "Kreativ reklama videolari", body: "Ijtimoiy tarmoqlarda e'tiborni tortadigan kreativ reklama videolarini AI bilan tayyorlash sirlarini egallaysiz." },
+  { n: "04", title: "AI bilan multfilm yaratish", body: "G'oyadan tayyor multfilmgacha — ssenariy yozib, AI yordamida o'z multfilmingizni yaratasiz." },
+  { n: "05", title: "Birinchi mijoz va daromad", body: "AI orqali birinchi mijozlaringizni topasiz, xizmatga to'g'ri narx qo'yasiz va mijoz bilan professional ishlashni o'rganasiz." },
+  { n: "06", title: "Yuzsiz blog va shaxsiy AI avatar", body: "Kamera oldiga chiqmasdan, shaxsiy AI avataringiz bilan blog yuritish va kuchli shaxsiy brend qurasiz." },
+  { n: "07", title: "Telegram bot va avtomatlashtirish", body: "AI yordamida shaxsiy Telegram bot va assistent yaratib, ishingizni to'liq avtomatlashtirasiz." },
+  { n: "08", title: "Shablon va tayyor workflowlar", body: "Bir marta workflow tuzasiz — u siz uchun doimo kreativ rasm va videolarni o'zi tayyorlab beradi." },
+];
 
 interface LandingCopy {
   headline?: string;
@@ -47,7 +54,6 @@ export default function Landing() {
   const { user, role, loading: authLoading } = useAuth();
   const nav = useNavigate();
   const [scrolled, setScrolled] = useState(false);
-  const [modules, setModules] = useState<Module[]>([]);
   const [courseTitle, setCourseTitle] = useState("AI Creators");
   const [copy, setCopy] = useState<LandingCopy>({});
   const [menuOpen, setMenuOpen] = useState(false);
@@ -76,16 +82,6 @@ export default function Landing() {
         .maybeSingle();
       if (!course) return;
       setCourseTitle(course.title);
-      const { data: mods } = await supabase
-        .from("modules")
-        .select("id, title, position, lessons(id, title, duration_seconds, published, position)")
-        .eq("course_id", course.id)
-        .order("position", { ascending: true });
-      const cleaned = (mods || []).map((m: any) => ({
-        ...m,
-        lessons: (m.lessons || []).filter((l: any) => l.published).sort((a: any, b: any) => a.position - b.position),
-      }));
-      setModules(cleaned);
     })();
 
     (async () => {
@@ -104,7 +100,6 @@ export default function Landing() {
 
   const outcomes = useMemo(() => (t("landing.outcomes.items", { returnObjects: true }) as { title: string; body: string }[]) || [], [t]);
   const howSteps = useMemo(() => (t("landing.howItWorks.steps", { returnObjects: true }) as { title: string; body: string }[]) || [], [t]);
-  const pricingFeatures = useMemo(() => (t("landing.pricing.features", { returnObjects: true }) as string[]) || [], [t]);
   const faqDefault = useMemo(() => (t("landing.faq.items", { returnObjects: true }) as { q: string; a: string }[]) || [], [t]);
   const faq = copy.faq && copy.faq.length > 0 ? copy.faq : faqDefault;
 
@@ -195,7 +190,7 @@ export default function Landing() {
         <div className="container relative z-[3] grid lg:grid-cols-[1.15fr_.85fr] gap-10 items-center min-h-screen pt-28 pb-16">
           <div className="max-w-2xl">
             <span className="hero-rise inline-flex items-center gap-2.5 text-[13.5px] font-semibold text-[#6FE6CE] border border-white/10 bg-[rgba(47,179,155,.06)] rounded-full px-4 py-2" style={{ animationDelay: "0s" }}>
-              <span className="w-[7px] h-[7px] rounded-full bg-[#6FE6CE] shadow-[0_0_12px_#6FE6CE]" /> {t("landing.hero.badge", "14-hour curriculum · Telegram-first")}
+              <span className="w-[7px] h-[7px] rounded-full bg-[#6FE6CE] shadow-[0_0_12px_#6FE6CE]" /> {t("landing.hero.badge", "8 ta amaliy modul · Telegram-first")}
             </span>
             <h1 className="hero-rise font-display font-semibold text-[clamp(44px,6.4vw,88px)] leading-[.98] mt-6 text-balance" style={{ animationDelay: ".06s" }}>
               {renderHeadlineDark(headline)} <span className="text-[#2FB39B] text-[.7em] align-[.06em]">✦</span>
@@ -236,7 +231,7 @@ export default function Landing() {
               <div className="font-display font-bold text-[64px] leading-none mt-6 text-white">30<span className="text-[#6FE6CE] text-[26px]">-day</span></div>
               <div className="text-sm text-[#9FB2AD] mt-1.5">streak · top 5% this month</div>
               <div className="h-2 rounded-md bg-white/[.06] mt-5 overflow-hidden"><div className="h-full w-[72%]" style={{ background: "linear-gradient(90deg,#2FB39B,#6FE6CE)" }} /></div>
-              <div className="flex justify-between mt-3.5 text-[12.5px] text-[#9FB2AD]"><span>Module 3 of 5</span><span>72% complete</span></div>
+              <div className="flex justify-between mt-3.5 text-[12.5px] text-[#9FB2AD]"><span>Module 3 of 8</span><span>72% complete</span></div>
               <div className="flex gap-2 mt-5">
                 {[["#4", "Rank"], ["27", "Lessons"], ["8", "Badges"]].map(([n, l]) => (
                   <div key={l} className="flex-1 text-center border border-white/10 rounded-2xl py-3"><div className="font-display font-semibold text-[24px] text-[#6FE6CE]">{n}</div><div className="text-[11px] text-[#9FB2AD] mt-0.5 uppercase tracking-wider">{l}</div></div>
@@ -259,7 +254,7 @@ export default function Landing() {
           <span className="hidden sm:block w-px h-4 bg-border" />
           <span className="text-muted-foreground"><span className="font-semibold text-foreground">30+</span> {t("landing.trust.countries")}</span>
           <span className="hidden sm:block w-px h-4 bg-border" />
-          <span className="text-muted-foreground"><span className="font-semibold text-foreground">14h</span> {t("landing.trust.ofCurriculum")}</span>
+          <span className="text-muted-foreground"><span className="font-semibold text-foreground">8</span> {t("landing.trust.modulesStat", "ta modul")}</span>
         </div>
       </section>
 
@@ -286,46 +281,22 @@ export default function Landing() {
 
       <section id="curriculum" className="py-20 md:py-28 bg-secondary/30">
         <div className="container">
-          <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight mb-3">{t("landing.curriculum.heading")}</h2>
-          <p className="text-muted-foreground mb-10 max-w-2xl">{t("landing.curriculum.sub")}</p>
-
-          {modules.length === 0 ? (
-            <div className="rounded-xl border border-border bg-card p-10 text-center text-muted-foreground">
-              {t("landing.curriculum.comingSoon")}
-            </div>
-          ) : (
-            <Accordion type="single" collapsible defaultValue={modules[0]?.id} className="space-y-3">
-              {modules.map((m, i) => {
-                const totalSec = m.lessons.reduce((s, l) => s + (l.duration_seconds || 0), 0);
-                const totalMin = Math.round(totalSec / 60);
-                return (
-                  <AccordionItem key={m.id} value={m.id} className="border border-border rounded-xl bg-card px-5 shadow-soft">
-                    <AccordionTrigger className="hover:no-underline py-5">
-                      <div className="flex items-center gap-4 text-left">
-                        <span className="font-display text-2xl text-primary tabular-nums">0{i + 1}</span>
-                        <div>
-                          <div className="font-semibold text-base">{m.title}</div>
-                          <div className="text-xs text-muted-foreground mt-0.5">{t("landing.curriculum.lessonsCount", { n: m.lessons.length, min: totalMin })}</div>
-                        </div>
-                      </div>
-                    </AccordionTrigger>
-                    <AccordionContent className="pb-5">
-                      <ul className="space-y-2 pl-12">
-                        {m.lessons.map((l) => (
-                          <li key={l.id} className="flex items-center justify-between text-sm border-b border-border/50 pb-2 last:border-b-0 last:pb-0">
-                            <span className="text-foreground/80">{l.title}</span>
-                            {l.duration_seconds && (
-                              <span className="text-xs text-muted-foreground tabular-nums">{Math.round(l.duration_seconds / 60)} {t("landing.curriculum.minSuffix")}</span>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    </AccordionContent>
-                  </AccordionItem>
-                );
-              })}
-            </Accordion>
-          )}
+          <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
+            <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight">Kurs dasturi — 8 ta modul</h2>
+            <span className="text-sm font-semibold text-primary">Premium — 5 hafta · VIP — 8 hafta</span>
+          </div>
+          <p className="text-muted-foreground mb-10 max-w-2xl">Noldan professional AI kreatorgacha. Har bir modul — real daromadga olib boradigan amaliy bosqich.</p>
+          <div className="grid md:grid-cols-2 gap-5">
+            {MODULES.map((m) => (
+              <div key={m.n} className="p-6 md:p-7 rounded-2xl bg-card border border-border shadow-soft flex gap-5 hover:border-primary/40 transition-colors">
+                <span className="font-display text-3xl md:text-4xl text-primary tabular-nums shrink-0 leading-none">{m.n}</span>
+                <div>
+                  <h3 className="font-semibold text-lg mb-1.5">{m.title}</h3>
+                  <p className="text-muted-foreground leading-relaxed text-[15px]">{m.body}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -401,25 +372,64 @@ export default function Landing() {
       )}
 
       <section id="pricing" className="py-20 md:py-28 bg-secondary/30">
-        <div className="container max-w-xl">
-          <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight text-center mb-12">{t("landing.pricing.heading")}</h2>
-          <div className="rounded-2xl border-2 border-primary/20 bg-card p-8 shadow-elevated">
-            <div className="text-xs uppercase tracking-wider text-primary font-semibold mb-2">{t("landing.pricing.label")}</div>
-            <div className="flex items-baseline gap-2 mb-6">
-              <span className="font-display text-5xl font-semibold">{t("landing.pricing.price")}</span>
-              <span className="text-muted-foreground text-sm">{t("landing.pricing.priceSuffix")}</span>
+        <div className="container max-w-4xl">
+          <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight text-center mb-2">Tarifni tanlang</h2>
+          <p className="text-muted-foreground text-center mb-12 max-w-2xl mx-auto">Har ikkala tarif ham to'liq 8 modul va 3 ta bonus kursni o'z ichiga oladi.</p>
+
+          <div className="grid md:grid-cols-2 gap-6 items-stretch">
+            {/* Premium */}
+            <div className="rounded-2xl border-2 border-border bg-card p-8 shadow-soft flex flex-col">
+              <div className="text-xs uppercase tracking-wider text-primary font-semibold mb-1">Premium</div>
+              <div className="font-display text-4xl font-semibold mb-1">5 hafta</div>
+              <p className="text-muted-foreground text-sm mb-6">To'liq kurs dasturi va barcha bonuslar bilan.</p>
+              <ul className="space-y-3 mb-8 flex-1">
+                {["Barcha 8 ta modul — to'liq kurs dasturi", "3 ta bonus kurs: SMM, Mobilografiya, YouTube", "Amaliy vazifalar va ustozdan shaxsiy fikr-mulohaza", "Yopiq jamoa va qo'llab-quvvatlash", "Bitirish sertifikati"].map((f, i) => (
+                  <li key={i} className="flex items-start gap-2 text-sm"><CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" /><span>{f}</span></li>
+                ))}
+              </ul>
+              <Button asChild size="lg" variant="outline" className="w-full"><Link to="/signup">Ro'yxatdan o'tish <ArrowRight className="h-4 w-4" /></Link></Button>
             </div>
-            <ul className="space-y-3 mb-8">
-              {pricingFeatures.map((f, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm">
-                  <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                  <span>{f}</span>
-                </li>
-              ))}
-            </ul>
-            <Button asChild size="lg" className="w-full"><Link to="/signup">{t("landing.pricing.cta")} <ArrowRight className="h-4 w-4" /></Link></Button>
+
+            {/* VIP */}
+            <div className="relative rounded-2xl border-2 border-primary/40 bg-card p-8 shadow-elevated flex flex-col">
+              <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground text-[11px] font-semibold uppercase tracking-wider px-3 py-1 rounded-full whitespace-nowrap">Eng yaxshi tanlov</span>
+              <div className="text-xs uppercase tracking-wider text-primary font-semibold mb-1">VIP</div>
+              <div className="font-display text-4xl font-semibold mb-1">8 hafta</div>
+              <p className="text-muted-foreground text-sm mb-6">Premium'dagi hamma narsa + eksklyuziv imkoniyatlar.</p>
+              <ul className="space-y-3 mb-8 flex-1">
+                {["Premium tarifidagi barcha imkoniyatlar", "8 haftalik kengaytirilgan qo'llab-quvvatlash", "☕ Shvetsiyalik AI ekspertlari bilan nonushta — ular O'zbekistonga tashrif buyurganda", "Shaxsiy e'tibor va ustuvor yordam"].map((f, i) => (
+                  <li key={i} className="flex items-start gap-2 text-sm"><CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" /><span>{f}</span></li>
+                ))}
+              </ul>
+              <Button asChild size="lg" className="w-full"><Link to="/signup">VIP'ga yozilish <ArrowRight className="h-4 w-4" /></Link></Button>
+            </div>
           </div>
-          <p className="text-xs text-center text-muted-foreground mt-4">{t("landing.pricing.footnote")}</p>
+
+          {/* Bonus courses */}
+          <div className="mt-14">
+            <h3 className="font-display text-2xl md:text-3xl font-semibold text-center mb-2">🎁 Sovg'a — 3 ta bonus kurs</h3>
+            <p className="text-muted-foreground text-center text-sm mb-7">Asosiy kurs bilan birga quyidagi kurslarni ham BEPUL olasiz</p>
+            <div className="grid sm:grid-cols-3 gap-4">
+              {[["SMM kursi", "Ijtimoiy tarmoqlarni professional boshqarish"], ["Mobilografiya kursi", "Telefon bilan sifatli suratga olish va montaj"], ["YouTube kursi", "YouTube kanal ochish va rivojlantirish"]].map(([name, desc]) => (
+                <div key={name} className="rounded-2xl border border-border bg-card p-5 text-center shadow-soft">
+                  <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-primary mb-2"><Star className="h-3.5 w-3.5 fill-current" /> Bonus</div>
+                  <div className="font-semibold">{name}</div>
+                  <div className="text-xs text-muted-foreground mt-1">{desc}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Refund incentive */}
+          <div className="mt-12 rounded-2xl border border-primary/30 bg-primary/[0.05] p-7 md:p-9 text-center">
+            <div className="text-3xl mb-2">💸</div>
+            <h3 className="font-display text-2xl md:text-3xl font-semibold mb-2">Mehnatingiz qaytariladi</h3>
+            <p className="text-muted-foreground max-w-2xl mx-auto leading-relaxed">Kursni muvaffaqiyatli yakunlagan va yuqori natija ko'rsatgan talabalar orasidan <b className="text-foreground">5 nafari to'lovni to'liq qaytarib oladi</b> — tirishqoqligingiz uchun bizning minnatdorchiligimiz.</p>
+          </div>
+
+          <div className="mt-10 text-center">
+            <Button asChild size="lg"><Link to="/signup">Hoziroq boshlash <ArrowRight className="h-4 w-4" /></Link></Button>
+          </div>
         </div>
       </section>
 

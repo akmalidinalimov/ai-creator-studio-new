@@ -70,7 +70,7 @@
     "showPassword": "Show password",
     "hidePassword": "Hide password",
     "tagline": "Build, ship, and monetize with AI — end to end.",
-    "taglineSub": "A production-grade curriculum for the new generation of AI-native creators. 5 modules. 20 lessons. Built to compound.",
+    "taglineSub": "A production-grade curriculum for the new generation of AI-native creators. 8 modules. Built to compound.",
     "statLessons": "lessons",
     "statHours": "of curriculum",
     "statTutor": "AI tutor",
@@ -286,7 +286,7 @@
     },
     "hero": {
       "headlineDefault": "Build, ship, and monetize {with AI}.",
-      "subDefault": "A 14-hour curriculum for the new generation of AI-native creators. Foundations to image, video, content, and monetization — without the fluff. Five modules, twenty lessons, designed to compound.",
+      "subDefault": "A production-grade program for the new generation of AI-native creators. Foundations to image, video, content, and monetization — hands-on. 8 modules, built for real results.",
       "startLearning": "Start learning free",
       "viewCurriculum": "View curriculum",
       "trust": "Joined by {{count}} · 4.9/5 rating",
@@ -372,11 +372,11 @@
       "items": [
         {
           "q": "Do I need any AI experience to start?",
-          "a": "No. The first module assumes zero background — you'll be generating images by lesson 3."
+          "a": "No. The first module assumes zero background — you'll be generating images very soon."
         },
         {
           "q": "How much time per week?",
-          "a": "3–5 hours. The full curriculum is ~14 hours; most students finish in 4–6 weeks."
+          "a": "3–5 hours a week. Premium runs 5 weeks, VIP runs 8 weeks."
         },
         {
           "q": "Can I follow on my phone?",
@@ -410,7 +410,7 @@
       "button": "Start learning free"
     },
     "footer": {
-      "tagline": "A 14-hour curriculum for AI-native creators. Built in Tashkent, taught everywhere.",
+      "tagline": "A production-grade curriculum for AI-native creators. Built in Tashkent, taught everywhere.",
       "course": "Course",
       "company": "Company",
       "contact": "Contact",
