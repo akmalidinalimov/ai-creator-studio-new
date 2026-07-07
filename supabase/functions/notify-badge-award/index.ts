@@ -93,7 +93,7 @@ const BADGE_VARIANTS: Record<string, string> = {
 // These are only fallbacks if a row is missing. {{name}} → student first name.
 type Msgs = Record<string, string>;
 const DEFAULT_SHARE =
-  "📲 Buni dunyoga ko'rsating! Rasmni Instagram Story'ga qo'ying — siz AI'ni o'rganyapsiz, faxrlaning! 🌍\n" +
+  "📲 Bu yutug'ingizni dunyo bilan bo'lishing! Rasmni Instagram Story'ga qo'ying — siz AI'ni o'rganyapsiz, faxrlaning! 🌍\n" +
   "Bizni belgilang: @aicreators.students va @shahlo.alikhanova — sizni qayta ulashamiz! 💛";
 
 function badgeBody(code: string, msgs: Msgs, name: string, badge: { description_uz: string | null }): string {
