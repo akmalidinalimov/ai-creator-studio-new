@@ -41,6 +41,8 @@ export default function SalesIntake() {
   const [submitting, setSubmitting] = useState(false);
   const [recent, setRecent] = useState<Recent[]>([]);
   const [result, setResult] = useState<Result | null>(null);
+  const [movePrompt, setMovePrompt] = useState<{ userId: string; currentGroup: string | null } | null>(null);
+  const [moveTargetGroup, setMoveTargetGroup] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -69,11 +71,7 @@ export default function SalesIntake() {
   const selCourse = useMemo(() => courses.find((c) => c.title === course), [courses, course]);
   const tierOpts = selCourse ? [...selCourse.tiers.map((t) => t.name), "Full"] : ["Full"];
 
-  const submit = async () => {
-    if (!first.trim() || !username.trim() || !course || !tier || !group.trim()) {
-      toast.error("Majburiy maydonlarni to'ldiring: ism, @username, kurs, tarif, guruh");
-      return;
-    }
+  const runIntake = async (opts: { confirmMove: boolean; groupName: string }) => {
     if (!selCourse) { toast.error("Kursni tanlang"); return; }
     const tier_id = tier === "Full" ? null : (selCourse.tiers.find((t) => t.name === tier)?.id ?? null);
     setSubmitting(true);
@@ -82,18 +80,27 @@ export default function SalesIntake() {
     const who = `${first.trim()} ${last.trim()}`.trim();
     const uname = username.trim().replace(/^@/, "");
     const courseTitle = selCourse.title;
-    const groupName = group.trim();
+    const groupName = opts.groupName.trim();
     const clearStudentFields = () => { setFirst(""); setLast(""); setUsername(""); setPhone(""); setEmail(""); };
     try {
       const { data, error } = await supabase.functions.invoke("staff-intake", {
         body: {
           name: first.trim(), last_name: last.trim(), telegram_username: username.trim(),
           course_id: selCourse.id, tier_id, group_name: groupName,
-          phone: phone.trim(), email: email.trim(),
+          phone: phone.trim(), email: email.trim(), confirm_move: opts.confirmMove,
         },
       });
       if (error) throw error;
       const st = (data as any)?.status as string;
+
+      if (st === "exists_in_other_group") {
+        // Existing student in a DIFFERENT group — ask before moving. Keep fields.
+        setMovePrompt({ userId: (data as any)?.userId, currentGroup: (data as any)?.current_group ?? null });
+        setMoveTargetGroup(groupName);
+        setSubmitting(false);
+        return;
+      }
+      setMovePrompt(null);
 
       if (st === "created") {
         setResult({ kind: "success", title: "✅ Muvaffaqiyatli qo'shildi!", detail: `${who} (@${uname}) — ${courseTitle}, "${groupName}" guruhiga qo'shildi.` });
@@ -101,15 +108,19 @@ export default function SalesIntake() {
         setRecent((p) => [{ name: who, status: "✅ Qo'shildi", cls: "text-emerald-600" }, ...p].slice(0, 20));
         clearStudentFields();
       } else if (st === "already_in_group") {
-        // True duplicate — the student is already in this exact group.
         setResult({ kind: "duplicate", title: "⚠️ Dublikat! Bu talaba allaqachon mavjud", detail: `${who || uname} (@${uname}) allaqachon shu guruhda ro'yxatdan o'tgan. Qayta qo'shilmadi.` });
         toast.error(`⚠️ Dublikat: @${uname} allaqachon shu guruhda`);
         setRecent((p) => [{ name: who, status: "⚠️ Dublikat", cls: "text-rose-600" }, ...p].slice(0, 20));
-        // Keep the fields so the salesperson can review / fix.
       } else if (st === "updated" || st === "matched") {
-        setResult({ kind: "exists", title: "ℹ️ Talaba allaqachon platformada bor edi", detail: `${who || uname} (@${uname}) tizimda mavjud edi va "${courseTitle}" kursiga biriktirildi.` });
-        toast.message(`ℹ️ @${uname} allaqachon bor edi — kursga qo'shildi`);
-        setRecent((p) => [{ name: who, status: "ℹ️ Allaqachon bor", cls: "text-amber-600" }, ...p].slice(0, 20));
+        if (opts.confirmMove) {
+          setResult({ kind: "success", title: "✅ Guruh o'zgartirildi!", detail: `${who || uname} (@${uname}) endi "${groupName}" guruhida.` });
+          toast.success(`✅ Guruh o'zgartirildi: @${uname} → ${groupName}`);
+          setRecent((p) => [{ name: who, status: "✅ Guruh o'zgartirildi", cls: "text-emerald-600" }, ...p].slice(0, 20));
+        } else {
+          setResult({ kind: "exists", title: "ℹ️ Talaba allaqachon platformada bor edi", detail: `${who || uname} (@${uname}) tizimda mavjud edi va "${courseTitle}" kursiga biriktirildi.` });
+          toast.message(`ℹ️ @${uname} allaqachon bor edi — kursga qo'shildi`);
+          setRecent((p) => [{ name: who, status: "ℹ️ Allaqachon bor", cls: "text-amber-600" }, ...p].slice(0, 20));
+        }
         clearStudentFields();
       } else {
         const msg = (data as any)?.message || st || "Noma'lum xatolik";
@@ -124,6 +135,20 @@ export default function SalesIntake() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const submit = () => {
+    if (!first.trim() || !username.trim() || !course || !tier || !group.trim()) {
+      toast.error("Majburiy maydonlarni to'ldiring: ism, @username, kurs, tarif, guruh");
+      return;
+    }
+    setMovePrompt(null);
+    void runIntake({ confirmMove: false, groupName: group });
+  };
+
+  const confirmGroupMove = () => {
+    if (!moveTargetGroup.trim()) { toast.error("Yangi guruhni tanlang"); return; }
+    void runIntake({ confirmMove: true, groupName: moveTargetGroup });
   };
 
   if (loadingOpts) {
@@ -157,6 +182,34 @@ export default function SalesIntake() {
             </div>
           );
         })()}
+
+        {movePrompt && (
+          <Card className="p-4 space-y-3 border-amber-500/40 bg-amber-500/[0.06]">
+            <div className="flex items-start gap-2.5 text-amber-800 dark:text-amber-200">
+              <Info className="h-5 w-5 shrink-0 mt-0.5" />
+              <div className="text-sm">
+                <div className="font-semibold">Bu talaba boshqa guruhda</div>
+                <div className="opacity-90">
+                  @{username.trim().replace(/^@/, "")} allaqachon <b>"{movePrompt.currentGroup || "—"}"</b> guruhida.
+                  Uni yangi guruhga o'tkazasizmi?
+                </div>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Yangi guruh</Label>
+              <Input value={moveTargetGroup} onChange={(e) => setMoveTargetGroup(e.target.value)} list="move-grp-list" placeholder="Yangi guruh nomi" />
+              <datalist id="move-grp-list">
+                {(selCourse?.groups || []).map((g) => <option key={g} value={g} />)}
+              </datalist>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={confirmGroupMove} disabled={submitting}>
+                {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guruhni o'zgartirish"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setMovePrompt(null)} disabled={submitting}>Bekor qilish</Button>
+            </div>
+          </Card>
+        )}
 
         <Card className="p-5 space-y-3">
           <div className="grid grid-cols-2 gap-2">

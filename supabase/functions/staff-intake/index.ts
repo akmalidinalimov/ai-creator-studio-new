@@ -48,6 +48,7 @@ Deno.serve(async (req) => {
     const group_name = norm(body?.group_name);
     const phone = norm(body?.phone);
     const email = norm(body?.email);
+    const confirmMove = body?.confirm_move === true;
 
     if (!name || !username || !course_id || !group_name) {
       return json({ error: "missing_field", message: "name, telegram_username, course_id and group_name are required" }, 400);
@@ -60,6 +61,28 @@ Deno.serve(async (req) => {
     if (tier_id) {
       const { data: tier } = await admin.from("course_tiers").select("id").eq("id", tier_id).eq("course_id", course_id).maybeSingle();
       if (!tier) return json({ error: "unknown_tier" }, 400);
+    }
+
+    // Move guard: if this student already exists in a DIFFERENT group, don't move
+    // them silently — return "exists_in_other_group" so the salesperson can confirm.
+    // Skipped when confirm_move=true (they've chosen the target group).
+    if (!confirmMove) {
+      const unameNorm = username.replace(/^@/, "").toLowerCase();
+      const { data: cands } = await admin
+        .from("profiles").select("id, group_id, telegram_username")
+        .ilike("telegram_username", `%${unameNorm}%`).limit(10);
+      const existing = (cands || []).find(
+        (p: any) => String(p.telegram_username ?? "").replace(/^@/, "").toLowerCase() === unameNorm,
+      );
+      if (existing?.group_id) {
+        const { data: tgrp } = await admin
+          .from("groups").select("id").eq("course_id", course_id).ilike("name", group_name).limit(1);
+        const targetGroupId = (tgrp || [])[0]?.id ?? null;
+        if (existing.group_id !== targetGroupId) {
+          const { data: curg } = await admin.from("groups").select("name").eq("id", existing.group_id).maybeSingle();
+          return json({ status: "exists_in_other_group", userId: existing.id, current_group: curg?.name ?? null });
+        }
+      }
     }
 
     // Internal secret for the server-to-server call into admin-create-students.
