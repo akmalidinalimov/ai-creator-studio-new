@@ -28,6 +28,13 @@ interface RosterRow {
   id: string; name: string; last_name: string | null; telegram_username: string | null;
   last_activity_at: string | null; completed_lessons: number; avg_score: number | null;
 }
+interface TeacherWeek {
+  graded: number; grading_med_min: number | null; on_time_pct: number | null;
+  ungraded_backlog: number; oldest_pending_hours: number | null;
+  feedback_rate: number | null; avg_score_pct: number | null;
+  questions: number; answered: number; answer_rate: number | null; median_wait_min: number | null;
+  active_days: number; days_window: number; week_messages: number; last_active: string | null;
+}
 type Tab = "home" | "queue" | "roster" | "stats";
 
 const daysSince = (iso: string | null) =>
@@ -38,6 +45,8 @@ export default function TeacherProfile() {
   const { t } = useTranslation();
   const [profileName, setProfileName] = useState("");
   const [stats, setStats] = useState<TeacherStats | null>(null);
+  const [week, setWeek] = useState<TeacherWeek | null>(null);
+  const [xp, setXp] = useState<{ total_xp: number; level: number; xp_next_level: number } | null>(null);
   const [groups, setGroups] = useState<TeacherGroup[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("home");
@@ -55,16 +64,22 @@ export default function TeacherProfile() {
     let cancelled = false;
     (async () => {
       try {
-        const [pRes, sRes, gRes] = await Promise.all([
+        const [pRes, sRes, gRes, wRes, xRes] = await Promise.all([
           supabase.from("profiles").select("name, last_name, active_teacher_group_id").eq("id", user.id).maybeSingle(),
           supabase.rpc("teacher_profile_stats" as any, { uid: user.id }),
           supabase.rpc("teacher_groups" as any, { uid: user.id }),
+          supabase.rpc("teacher_weekly_self" as any, { uid: user.id, p_days: 7 }),
+          supabase.rpc("teacher_xp" as any, { uid: user.id }),
         ]);
         if (cancelled) return;
         const p: any = pRes.data;
         setProfileName([p?.name, p?.last_name].filter(Boolean).join(" ") || t("profile.teacher"));
         const sRow: any = Array.isArray(sRes.data) ? sRes.data[0] : sRes.data;
         setStats(sRow || null);
+        const wRow: any = Array.isArray(wRes.data) ? wRes.data[0] : wRes.data;
+        setWeek(wRow || null);
+        const xRow: any = Array.isArray(xRes.data) ? xRes.data[0] : xRes.data;
+        setXp(xRow || null);
         const gs = ((gRes.data as any) || []) as TeacherGroup[];
         setGroups(gs);
         const active = gs.find((g) => g.group_id === p?.active_teacher_group_id)?.group_id || gs[0]?.group_id || null;
@@ -188,6 +203,18 @@ export default function TeacherProfile() {
   };
 
   const sel = groups.find((g) => g.group_id === selected) || null;
+  // Median durations arrive in minutes; show minutes under an hour, else hours (1dp under 10h).
+  const fmtDur = (min: number | null | undefined) => {
+    if (min == null) return "—";
+    if (min < 60) return t("profile.twMin", { n: Math.round(min) });
+    return t("profile.twHours", { n: (min / 60).toFixed(min < 600 ? 1 : 0) });
+  };
+  // Teacher level → localized name + emoji ladder (🌱→🏆). Reuses the generic XP curve.
+  const LVL_EMOJI = ["🌱", "📗", "🎓", "🏅", "🏆"];
+  const lvlNames = t("profile.tLevelNames", { returnObjects: true }) as unknown as string[];
+  const lvl = xp?.level ?? 1;
+  const lvlName = (Array.isArray(lvlNames) && lvlNames[Math.min(lvl, lvlNames.length) - 1]) || `Lv ${lvl}`;
+  const lvlEmoji = LVL_EMOJI[Math.min(lvl, LVL_EMOJI.length) - 1] || "🎓";
   const inactive3d = useMemo(() => roster.filter((r) => (daysSince(r.last_activity_at) ?? 99) >= 3), [roster]);
   const oldestDays = queue.length ? daysSince(queue[0].submitted_at) : null;
   // Inactivity range filter: null = everyone, 3/7/14 = inactive >= N days.
@@ -242,6 +269,12 @@ export default function TeacherProfile() {
             <div className="text-xs text-muted-foreground">
               {role === "admin" ? "Admin" : t("profile.teacherBadge")} · {stats?.groups_count ?? 0} {t("profile.tGroups").toLowerCase()} · {stats?.students_total ?? 0} {t("profile.tStudents").toLowerCase()}
             </div>
+            {xp && (
+              <div className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                <span>{lvlEmoji}</span><span>{lvlName}</span>
+                <span className="text-muted-foreground tabular-nums">· {xp.total_xp} XP</span>
+              </div>
+            )}
           </div>
           <Link to="/settings" className="ml-auto rounded-full p-2 text-muted-foreground hover:bg-muted" aria-label={t("nav.mySettings")}>
             <SettingsIcon className="h-4 w-4" />
@@ -444,32 +477,93 @@ export default function TeacherProfile() {
           </div>
         )}
 
-        {/* ---------------- STATS: top students of selected group ---------------- */}
-        {tab === "stats" && sel && (
-          <Card className="p-4">
-            <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">
-              🏆 {t("profile.tTopStudents")} · {sel.group_name}
-            </div>
-            {top.length === 0 ? (
-              <p className="text-sm text-muted-foreground">{t("profile.tNoStudents")}</p>
-            ) : (
-              <ul className="space-y-1">
-                {top.map((s: any) => (
-                  <li key={s.rank} className="flex items-center gap-3 rounded-lg px-2 py-1.5 text-sm">
-                    <span className="w-6 text-muted-foreground tabular-nums">{s.rank}</span>
-                    <span className="flex-1 truncate">{s.first_name} {s.last_initial ? s.last_initial + "." : ""}</span>
-                    <span className="text-xs text-muted-foreground tabular-nums">{s.completed_lessons} {t("profile.lessons")}</span>
-                    <span className="text-xs text-amber-600 tabular-nums">{s.current_streak > 0 ? `${s.current_streak}🔥` : ""}</span>
-                    <span className="w-14 text-right text-primary tabular-nums font-semibold">{s.total_xp}</span>
-                  </li>
-                ))}
-              </ul>
+        {/* ---------------- STATS: your week (self KPIs) + top students ---------------- */}
+        {tab === "stats" && (
+          <div className="space-y-4">
+            {/* Level & XP — progression/mastery framing (feeds competence, not ranking) */}
+            {xp && (
+              <Card className="p-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-medium">{lvlEmoji} {lvlName}</span>
+                  <span className="text-xs text-muted-foreground tabular-nums">{xp.total_xp} XP</span>
+                </div>
+                {(() => {
+                  const prevT = 50 * (lvl - 1) * lvl; // XP threshold to reach the current level
+                  const span = Math.max(xp.xp_next_level - prevT, 1);
+                  const pct = Math.min(100, Math.max(0, Math.round(((xp.total_xp - prevT) / span) * 100)));
+                  return (
+                    <>
+                      <div className="mt-2 h-2 rounded-full bg-muted overflow-hidden">
+                        <div className="h-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+                      </div>
+                      <div className="mt-1 text-[11px] text-muted-foreground">
+                        {t("profile.tToNext", { xp: Math.max(xp.xp_next_level - xp.total_xp, 0) })}
+                      </div>
+                    </>
+                  );
+                })()}
+              </Card>
             )}
-            <div className="mt-3 flex gap-3 text-xs">
-              <Link to="/teacher/homework" className="text-primary hover:underline">{t("profile.tGradeHomework")} →</Link>
-              <Link to="/admin/dashboard" className="text-muted-foreground hover:underline">{t("nav.adminDashboard")} →</Link>
+            {/* Your week — the teacher's OWN scorecard, framed as impact/competence, not surveillance */}
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">📈 {t("profile.twTitle")}</div>
+              <div className="text-xs text-muted-foreground mb-2">{t("profile.twSubtitle", { days: week?.days_window ?? 7 })}</div>
+              {week && (week.graded > 0 || week.questions > 0 || week.active_days > 0) ? (
+                <>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {[
+                      { v: week.graded, l: t("profile.twGraded") },
+                      { v: week.on_time_pct != null ? `${week.on_time_pct}%` : "—", l: t("profile.twOnTime"), cls: "text-emerald-600" },
+                      { v: week.answer_rate != null ? `${week.answer_rate}%` : "—", l: t("profile.twAnswerRate"), cls: "text-primary" },
+                      { v: week.active_days, l: t("profile.twActiveDays") },
+                    ].map((it, i) => (
+                      <Card key={i} className="p-3 text-center">
+                        <div className={`text-xl font-bold tabular-nums ${it.cls || ""}`}>{it.v}</div>
+                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{it.l}</div>
+                      </Card>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                    <span>⏱️ {t("profile.twMedGrading")}: <b className="text-foreground tabular-nums">{fmtDur(week.grading_med_min)}</b></span>
+                    <span>💬 {t("profile.twMedWait")}: <b className="text-foreground tabular-nums">{fmtDur(week.median_wait_min)}</b></span>
+                    {week.ungraded_backlog > 0 && (
+                      <span>📥 {t("profile.twBacklog")}: <b className="text-amber-600 tabular-nums">{week.ungraded_backlog}</b></span>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <Card className="p-4 text-sm text-muted-foreground">{t("profile.twEmpty")}</Card>
+              )}
             </div>
-          </Card>
+
+            {/* Top students of the selected group */}
+            {sel && (
+              <Card className="p-4">
+                <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">
+                  🏆 {t("profile.tTopStudents")} · {sel.group_name}
+                </div>
+                {top.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">{t("profile.tNoStudents")}</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {top.map((s: any) => (
+                      <li key={s.rank} className="flex items-center gap-3 rounded-lg px-2 py-1.5 text-sm">
+                        <span className="w-6 text-muted-foreground tabular-nums">{s.rank}</span>
+                        <span className="flex-1 truncate">{s.first_name} {s.last_initial ? s.last_initial + "." : ""}</span>
+                        <span className="text-xs text-muted-foreground tabular-nums">{s.completed_lessons} {t("profile.lessons")}</span>
+                        <span className="text-xs text-amber-600 tabular-nums">{s.current_streak > 0 ? `${s.current_streak}🔥` : ""}</span>
+                        <span className="w-14 text-right text-primary tabular-nums font-semibold">{s.total_xp}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="mt-3 flex gap-3 text-xs">
+                  <Link to="/teacher/homework" className="text-primary hover:underline">{t("profile.tGradeHomework")} →</Link>
+                  <Link to="/admin/dashboard" className="text-muted-foreground hover:underline">{t("nav.adminDashboard")} →</Link>
+                </div>
+              </Card>
+            )}
+          </div>
         )}
       </div>
     </PageShell>
