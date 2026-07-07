@@ -27,11 +27,25 @@ const MODULES: { n: string; title: string; body: string }[] = [
   { n: "08", title: "Shablon va tayyor workflowlar", body: "Bir marta workflow tuzasiz — u siz uchun doimo kreativ rasm va videolarni o'zi tayyorlab beradi." },
 ];
 
-// The two founders. photo: fill with a hosted image URL; empty → initials avatar.
+// The two founders. photo: hosted image URL; empty/broken → initials avatar.
 const FOUNDERS: { name: string; role: string; initials: string; photo: string }[] = [
-  { name: "Shahlo Alikhanova", role: "Marketing va AI mutaxassisi", initials: "SH", photo: "" },
-  { name: "Akmalidin Alimov", role: "Muhandis (Engineer) va AI mutaxassisi", initials: "A", photo: "" },
+  { name: "Shahlo Alikhanova", role: "Marketing va AI mutaxassisi", initials: "SH", photo: "https://res.cloudinary.com/lnx5igsj/image/upload/c_thumb,g_face,z_0.7,w_400,h_400/aicreators/founder_shahlo.png" },
+  { name: "Akmalidin Alimov", role: "Muhandis (Engineer) va AI mutaxassisi", initials: "A", photo: "https://res.cloudinary.com/lnx5igsj/image/upload/c_thumb,g_face,z_0.7,w_400,h_400/aicreators/founder_akmalidin.png" },
 ];
+
+// Circular founder avatar; falls back to initials if there's no photo or it fails.
+function FounderAvatar({ f }: { f: { name: string; initials: string; photo: string } }) {
+  const [err, setErr] = useState(false);
+  return (
+    <div className="w-20 h-20 rounded-full overflow-hidden ring-4 ring-accent/40 shrink-0 bg-secondary">
+      {f.photo && !err ? (
+        <img src={f.photo} alt={f.name} loading="lazy" onError={() => setErr(true)} className="w-full h-full object-cover object-top" />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center font-display text-2xl font-semibold text-[#052220]" style={{ background: "linear-gradient(150deg,#6FE6CE,#0F766E)" }}>{f.initials}</div>
+      )}
+    </div>
+  );
+}
 
 interface LandingCopy {
   headline?: string;
@@ -340,13 +354,7 @@ export default function Landing() {
           <div className="grid sm:grid-cols-2 gap-5">
             {FOUNDERS.map((f) => (
               <div key={f.name} className="rounded-2xl border border-border bg-card p-6 flex items-center gap-5 shadow-soft">
-                <div className="w-20 h-20 rounded-2xl overflow-hidden ring-4 ring-accent/40 shrink-0">
-                  {f.photo ? (
-                    <img src={f.photo} alt={f.name} className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center font-display text-2xl font-semibold text-[#052220]" style={{ background: "linear-gradient(150deg,#6FE6CE,#0F766E)" }}>{f.initials}</div>
-                  )}
-                </div>
+                <FounderAvatar f={f} />
                 <div>
                   <div className="font-display text-lg font-semibold leading-tight">{f.name}</div>
                   <div className="text-primary text-sm font-medium mt-0.5">{f.role}</div>
