@@ -56,7 +56,9 @@ function badgeImageUrl(code: string, name: string | null): string | null {
   if (!img) return null;
   const raw = firstName(name).slice(0, 24);
   const nm = encodeURIComponent(raw).replace(/'/g, "%27").replace(/\./g, "%2E");
-  return `https://res.cloudinary.com/${CLOUD}/image/upload/l_text:Arial_96_bold:${nm},co_rgb:F7F1E4,c_fit,w_1260/e_shadow:60,x_3,y_5/fl_layer_apply,g_north,y_1545/aicreators/${img}${IMG_REV}.png`;
+  // fl_attachment sets the download filename so the Telegram document arrives
+  // as "AI-Creators-Yutuq.png" (not the raw public_id).
+  return `https://res.cloudinary.com/${CLOUD}/image/upload/l_text:Arial_96_bold:${nm},co_rgb:F7F1E4,c_fit,w_1260/e_shadow:60,x_3,y_5/fl_layer_apply,g_north,y_1545/fl_attachment:AI-Creators-Yutuq/aicreators/${img}${IMG_REV}.png`;
 }
 
 function randomToken(len = 32): string {
