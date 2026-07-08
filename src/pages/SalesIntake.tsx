@@ -92,14 +92,26 @@ export default function SalesIntake() {
     const groupName = opts.groupName.trim();
     const clearStudentFields = () => { setFirst(""); setLast(""); setUsername(""); setPhone(""); setEmail(""); };
     try {
-      const { data, error } = await supabase.functions.invoke("staff-intake", {
-        headers: { "x-intake-code": code },
-        body: {
-          name: first.trim(), last_name: last.trim(), telegram_username: username.trim(),
-          course_id: selCourse.id, tier_id, group_name: groupName,
-          phone: phone.trim(), email: email.trim(), confirm_move: opts.confirmMove,
-        },
-      });
+      const payload = {
+        name: first.trim(), last_name: last.trim(), telegram_username: username.trim(),
+        course_id: selCourse.id, tier_id, group_name: groupName,
+        phone: phone.trim(), email: email.trim(), confirm_move: opts.confirmMove,
+      };
+      // A transient network blip (common on mobile / Telegram's in-app browser) surfaces
+      // as a FunctionsFetchError with no response — retry once after a short pause before
+      // giving up. The server dedups by username+group, so a retry can never double-add.
+      let data: any = null, error: any = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        ({ data, error } = await supabase.functions.invoke("staff-intake", {
+          headers: { "x-intake-code": code },
+          body: payload,
+        }));
+        if (error && error.name === "FunctionsFetchError" && attempt === 0) {
+          await new Promise((r) => setTimeout(r, 900));
+          continue;
+        }
+        break;
+      }
       if (error) throw error;
       const st = (data as any)?.status as string;
 
@@ -139,8 +151,11 @@ export default function SalesIntake() {
         setRecent((p) => [{ name: who, status: `⚠️ ${st || "xato"}`, cls: "text-amber-600" }, ...p].slice(0, 20));
       }
     } catch (e: any) {
-      const msg = e?.message || "Yuborishda xatolik";
-      setResult({ kind: "error", title: "⚠️ Xatolik", detail: String(msg) });
+      const isNet = e?.name === "FunctionsFetchError" || /Failed to send a request/i.test(e?.message || "");
+      const msg = isNet
+        ? "Internet bilan aloqa uzildi. Iltimos, qayta urinib ko'ring."
+        : (e?.message || "Yuborishda xatolik");
+      setResult({ kind: "error", title: isNet ? "📶 Aloqa xatosi" : "⚠️ Xatolik", detail: String(msg) });
       toast.error(msg);
     } finally {
       setSubmitting(false);
