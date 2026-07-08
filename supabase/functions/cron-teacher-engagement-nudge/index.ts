@@ -104,10 +104,15 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ ok: false, error: "bot not configured" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   const admin = __admin;
+  // Test controls: {dry_run:true} computes + returns what WOULD send (no sends, bypasses quiet
+  // hours); {only_teacher_id:"..."} restricts to one teacher (self-test to your own account).
+  const body = await req.json().catch(() => ({} as any));
+  const dryRun = (body as any)?.dry_run === true;
+  const onlyTeacher = (body as any)?.only_teacher_id || null;
 
-  // Quiet hours: no teacher pings 22:00–08:00 Tashkent.
+  // Quiet hours: no teacher pings 22:00–08:00 Tashkent (bypassed for dry-run testing).
   const hr = tashkentHour();
-  if (hr < 8 || hr >= 22) {
+  if (!dryRun && (hr < 8 || hr >= 22)) {
     return new Response(JSON.stringify({ ok: true, skipped: "quiet_hours", hour: hr }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
@@ -115,7 +120,8 @@ Deno.serve(async (req) => {
   if (error) {
     return new Response(JSON.stringify({ ok: false, error: error.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
-  const signals = ((rows || []) as any[]).filter((r) => r.telegram_id && r.notifications_enabled !== false);
+  let signals = ((rows || []) as any[]).filter((r) => r.telegram_id && r.notifications_enabled !== false);
+  if (onlyTeacher) signals = signals.filter((s) => s.teacher_id === onlyTeacher);
   if (!signals.length) {
     return new Response(JSON.stringify({ ok: true, processed: 0 }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
@@ -140,6 +146,7 @@ Deno.serve(async (req) => {
   };
 
   let sentWaiting = 0, sentOffline = 0, skipped = 0;
+  const preview: any[] = [];
 
   for (const s of signals) {
     try {
@@ -153,6 +160,17 @@ Deno.serve(async (req) => {
         type = "offline";
       }
       if (!type) { skipped++; continue; }
+
+      if (dryRun) {
+        preview.push({
+          teacher_id: s.teacher_id, type,
+          waiting_questions: s.waiting_questions, offline_hours: s.offline_hours, pending: s.pending_homework,
+          text: type === "waiting"
+            ? COPY.waiting[loc](s.waiting_questions, s.oldest_wait_hours)
+            : COPY.offline[loc](Math.round(s.offline_hours / 24), s.pending_homework),
+        });
+        continue;
+      }
 
       // Personal magic link into Mission Control (queue for waiting, profile for offline).
       const token = randomToken(32);
@@ -186,7 +204,9 @@ Deno.serve(async (req) => {
     }
   }
 
-  return new Response(JSON.stringify({ ok: true, processed: signals.length, sentWaiting, sentOffline, skipped }), {
+  return new Response(JSON.stringify(dryRun
+    ? { ok: true, dry_run: true, processed: signals.length, would_send: preview.length, preview }
+    : { ok: true, processed: signals.length, sentWaiting, sentOffline, skipped }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 });
