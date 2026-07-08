@@ -54,6 +54,22 @@ async function getEnrollmentSettings(admin: any, locale: Locale): Promise<{ mess
   }
 }
 
+// Homework capture mode (flip via platform_settings key 'homework_capture' → {"mode": "..."}):
+//   "auto" (DEFAULT) — auto-synthesize a submission from any qualifying media post in the homework
+//                      topic. Frictionless; catches direct posts. Today's behavior.
+//   "require_intent" — ENFORCE the bot flow: only posts made AFTER the student taps /vazifalar →
+//                      📤 Topshirish count. Un-initiated posts get a one-time hint and are NOT
+//                      captured (no submission, no teacher ping). Kills question/chat false-positives.
+// Missing/malformed row ⇒ "auto", so deploying this code changes nothing until the flag is flipped.
+async function getHomeworkCaptureMode(admin: any): Promise<"auto" | "require_intent"> {
+  try {
+    const { data } = await admin.from("platform_settings").select("value").eq("key", "homework_capture").maybeSingle();
+    return ((data?.value as any)?.mode === "require_intent") ? "require_intent" : "auto";
+  } catch (_e) {
+    return "auto";
+  }
+}
+
 const T = {
   uz: {
     expired: "Kirish havolasining muddati tugagan. Saytga qaytib qaytadan urinib ko'ring.",
@@ -268,6 +284,7 @@ const T = {
     hwIntentNoGroup: "Sizga guruh biriktirilmagan. Ustozingiz bilan bog'laning.",
     hwIntentBtnGoTopic: "📌 Topikga o'tish",
     hwIntentAlreadyScored: "Bu vazifa allaqachon baholangan ✅",
+    hwRequireIntentHint: "📤 Vazifani topshirish uchun avval botda /vazifalar bo'limiga kiring va kerakli vazifa uchun \"📤 Topshirish\" tugmasini bosing — so'ngra rasm/video/hujjatingizni shu topikka yuboring. Aks holda ish avtomatik qabul qilinmaydi.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Sizning oldingi natijangiz: <b>${sc}/${mx}</b>${fb ? `\nIzoh: "${csvEscapeHtml(fb)}"` : ""}\n\nQayta topshirmoqchimisiz?`,
     hwResubYes: "✅ Ha, qayta topshiraman",
@@ -498,6 +515,7 @@ const T = {
     hwIntentNoGroup: "Вам не назначена группа. Свяжитесь с преподавателем.",
     hwIntentBtnGoTopic: "📌 Перейти в топик",
     hwIntentAlreadyScored: "Это задание уже оценено ✅",
+    hwRequireIntentHint: "📤 Чтобы сдать работу, сначала откройте в боте /vazifalar и нажмите \"📤 Сдать\" для нужного задания — затем отправьте фото/видео/документ в этот топик. Иначе работа не будет принята автоматически.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Ваш предыдущий результат: <b>${sc}/${mx}</b>${fb ? `\nКомментарий: "${csvEscapeHtml(fb)}"` : ""}\n\nХотите отправить заново?`,
     hwResubYes: "✅ Да, отправить заново",
@@ -728,6 +746,7 @@ const T = {
     hwIntentNoGroup: "You are not assigned to a group. Please contact your teacher.",
     hwIntentBtnGoTopic: "📌 Open topic",
     hwIntentAlreadyScored: "This task has already been graded ✅",
+    hwRequireIntentHint: "📤 To submit, first open /vazifalar in the bot and tap \"📤 Submit\" for the task — then post your photo/video/document in this topic. Otherwise it won't be captured automatically.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Your previous result: <b>${sc}/${mx}</b>${fb ? `\nFeedback: "${csvEscapeHtml(fb)}"` : ""}\n\nDo you want to resubmit?`,
     hwResubYes: "✅ Yes, resubmit",
@@ -4361,6 +4380,30 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     // sender: profile is the confirmed poster (anon/bot/unknown already filtered
     // above), so a post can never be attributed to anyone else.
     if (!intent) {
+      // ENFORCE-BOT-FLOW gate: when capture mode is "require_intent", a post that was NOT initiated
+      // via /vazifalar → 📤 Topshirish is not homework. Send a one-time hint (rate-limited to ~1 per
+      // 15 min per student) and stop — no submission, no teacher notification. Default "auto" mode
+      // skips this and auto-synthesizes below (today's behavior).
+      const captureMode = await getHomeworkCaptureMode(admin);
+      if (captureMode === "require_intent") {
+        try {
+          if (profile.telegram_id) {
+            const since = new Date(Date.now() - 15 * 60_000).toISOString();
+            const { data: recentHint } = await admin.from("notifications_log")
+              .select("id").eq("user_id", profile.id).eq("notification_type", "hw_require_intent_hint")
+              .gte("sent_at", since).limit(1);
+            if (!recentHint || !recentHint.length) {
+              const loc: Locale = normLocale(profile.preferred_locale);
+              await sendMessage(profile.telegram_id, (T[loc] as any).hwRequireIntentHint);
+              await admin.from("notifications_log").insert({
+                user_id: profile.id, notification_type: "hw_require_intent_hint", sent_at: new Date().toISOString(),
+              });
+            }
+          }
+        } catch (_e) { /* hint is best-effort */ }
+        console.log("hw:group:require-intent-uninitiated-ignored", JSON.stringify({ profile_id: profile.id, chatId, threadId, messageId }));
+        return;
+      }
       const { data: prof2 } = await admin.from("profiles").select("group_id").eq("id", profile.id).maybeSingle();
       const groupId = prof2?.group_id ?? null;
       const grp = groupId
