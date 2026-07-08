@@ -83,7 +83,9 @@ verify_jwt = false
 [functions.log-auth-event]
 verify_jwt = true
 
-# staff-intake (Phase 0 / M18): authenticated in-app sales intake; the function
-# re-checks the caller is staff. verify_jwt=true so the gateway requires a session.
+# staff-intake: passwordless sales-intake form. Gated by a shared access code
+# (x-intake-code, validated against INTAKE_ACCESS_CODE) exactly like sheet-sync's
+# x-sheet-secret — NOT a user session. verify_jwt=false so sales staff can use the
+# /intake?code=... link with no login.
 [functions.staff-intake]
-verify_jwt = true
+verify_jwt = false
