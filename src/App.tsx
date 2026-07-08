@@ -98,8 +98,8 @@ const App = () => (
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/auth/magic" element={<AuthMagicLink />} />
-            {/* Staff-only sales intake form (Phase 0 / M18): requires a logged-in teacher/admin. */}
-            <Route path="/intake" element={<RequireAuth staffOnly><SalesIntake /></RequireAuth>} />
+            {/* Passwordless sales intake form: no login — gated by the ?code= in the link. */}
+            <Route path="/intake" element={<SalesIntake />} />
 
             <Route path="/dashboard" element={<RequireAuth><StudentOrStaffRedirect><Dashboard /></StudentOrStaffRedirect></RequireAuth>} />
             <Route path="/course/:courseId" element={<RequireAuth><CoursePage /></RequireAuth>} />

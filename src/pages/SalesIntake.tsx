@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { UserPlus, CheckCircle2, Loader2, AlertTriangle, Info, X } from "lucide-react";
+import { UserPlus, CheckCircle2, Loader2, AlertTriangle, Info, X, Lock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 type TierOpt = { id: string; name: string };
@@ -21,13 +22,16 @@ const BANNER: Record<ResultKind, { cls: string; Icon: typeof CheckCircle2 }> = {
   error:     { cls: "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300", Icon: AlertTriangle },
 };
 
-// Staff-only sales-intake form (Phase 0 / M18). The route is wrapped in
-// RequireAuth staffOnly, so only a logged-in teacher/admin can reach it. Options are
-// read via the authenticated Supabase client and submissions go through the
-// staff-intake edge function using the staff member's own session — there is NO
-// shared secret in the browser anymore.
+// Passwordless sales-intake form. No login: the ?code= in the link is the gate.
+// Both the dropdown options and the submission go through the staff-intake edge
+// function, which validates the code (x-intake-code) server-side — same model as
+// sheet-sync. Sales staff just open the link and fill the form.
 export default function SalesIntake() {
+  const [searchParams] = useSearchParams();
+  const code = (searchParams.get("code") || "").trim();
+
   const [loadingOpts, setLoadingOpts] = useState(true);
+  const [accessDenied, setAccessDenied] = useState(false);
   const [courses, setCourses] = useState<CourseOpt[]>([]);
 
   const [first, setFirst] = useState("");
@@ -47,26 +51,31 @@ export default function SalesIntake() {
   useEffect(() => {
     (async () => {
       setLoadingOpts(true);
+      setAccessDenied(false);
+      if (!code) { setAccessDenied(true); setLoadingOpts(false); return; }
       try {
-        const [{ data: oc }, { data: ot }, { data: og }] = await Promise.all([
-          supabase.from("courses").select("id, title").order("title"),
-          supabase.from("course_tiers").select("id, course_id, name, position").order("position"),
-          supabase.from("groups").select("course_id, name").order("name"),
-        ]);
-        const built: CourseOpt[] = ((oc || []) as any[]).map((c) => ({
+        const { data, error } = await supabase.functions.invoke("staff-intake", {
+          body: { action: "options" },
+          headers: { "x-intake-code": code },
+        });
+        if (error || !data) { setAccessDenied(true); return; }
+        const oc = (data as any).courses || [];
+        const ot = (data as any).tiers || [];
+        const og = (data as any).groups || [];
+        const built: CourseOpt[] = (oc as any[]).map((c) => ({
           id: c.id,
           title: c.title,
-          tiers: ((ot || []) as any[]).filter((t) => t.course_id === c.id).map((t) => ({ id: t.id, name: t.name })),
-          groups: ((og || []) as any[]).filter((g) => g.course_id === c.id).map((g) => g.name),
+          tiers: (ot as any[]).filter((t) => t.course_id === c.id).map((t) => ({ id: t.id, name: t.name })),
+          groups: (og as any[]).filter((g) => g.course_id === c.id).map((g) => g.name),
         }));
         setCourses(built);
       } catch {
-        toast.error("Ulanishda xatolik");
+        setAccessDenied(true);
       } finally {
         setLoadingOpts(false);
       }
     })();
-  }, []);
+  }, [code]);
 
   const selCourse = useMemo(() => courses.find((c) => c.title === course), [courses, course]);
   const tierOpts = selCourse ? [...selCourse.tiers.map((t) => t.name), "Full"] : ["Full"];
@@ -84,6 +93,7 @@ export default function SalesIntake() {
     const clearStudentFields = () => { setFirst(""); setLast(""); setUsername(""); setPhone(""); setEmail(""); };
     try {
       const { data, error } = await supabase.functions.invoke("staff-intake", {
+        headers: { "x-intake-code": code },
         body: {
           name: first.trim(), last_name: last.trim(), telegram_username: username.trim(),
           course_id: selCourse.id, tier_id, group_name: groupName,
@@ -155,6 +165,20 @@ export default function SalesIntake() {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-muted/30">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (accessDenied) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 bg-muted/30">
+        <Card className="max-w-sm w-full p-6 text-center space-y-2">
+          <Lock className="h-8 w-8 mx-auto text-muted-foreground" />
+          <h1 className="text-lg font-semibold">Havola yaroqsiz</h1>
+          <p className="text-sm text-muted-foreground">
+            Bu havola noto'g'ri yoki eskirgan. To'g'ri kirish havolasidan foydalaning.
+          </p>
+        </Card>
       </div>
     );
   }

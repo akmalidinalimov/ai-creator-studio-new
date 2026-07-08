@@ -1,21 +1,30 @@
-// staff-intake: the authenticated (staff JWT) sibling of sheet-sync. Lets a logged-in
-// teacher / admin add ONE student (course + tier + group) from the in-app /intake form
-// WITHOUT any shared secret in the browser (Phase 0 / M18). It reuses the proven
-// admin-create-students engine (system path) for creation/dedup, then sets the tier +
-// phone and audit-logs with the REAL staff actor.
+// staff-intake: passwordless sales-intake form (the /intake?code=... link handed to
+// sales staff). Gated by a shared access code (x-intake-code, checked against
+// INTAKE_ACCESS_CODE with a constant-time compare) exactly like sheet-sync's
+// x-sheet-secret — NO user session. Serves the course/tier/group dropdowns
+// (action:"options") and adds ONE student (course + tier + group) via the proven
+// admin-create-students engine, then sets tier + phone and audit-logs (no staff actor).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+    "authorization, x-client-info, apikey, content-type, x-intake-code, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
 const USERNAME_RE = /^@?[A-Za-z0-9_]{4,32}$/;
 const norm = (s: unknown) => String(s ?? "").trim();
+
+// Constant-time string compare (avoid leaking the code via timing).
+const ctEq = (a: string, b: string) => {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+};
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -24,22 +33,26 @@ Deno.serve(async (req) => {
   try {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
-    // Auth: a logged-in staff member (teacher / admin / superadmin) — no shared secret.
-    const authHeader = req.headers.get("Authorization") || "";
-    if (!authHeader.startsWith("Bearer ")) return json({ error: "unauthorized" }, 401);
-    const userClient = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } });
-    const { data: who } = await userClient.auth.getUser(authHeader.replace("Bearer ", ""));
-    if (!who?.user) return json({ error: "unauthorized" }, 401);
-    const { data: staffRoles } = await admin
-      .from("user_roles").select("role").eq("user_id", who.user.id)
-      .in("role", ["teacher", "admin", "superadmin"]);
-    if (!staffRoles || staffRoles.length === 0) return json({ error: "forbidden" }, 403);
-    const actorId = who.user.id;
+    // Auth: the shared access code from the /intake link. Defaults to the legacy
+    // code so existing links keep working; set INTAKE_ACCESS_CODE to rotate.
+    const CODE = Deno.env.get("INTAKE_ACCESS_CODE") || "aicreators2026";
+    const provided = req.headers.get("x-intake-code") || "";
+    if (!provided || !ctEq(provided, CODE)) return json({ error: "forbidden" }, 403);
 
     const body = await req.json().catch(() => null);
+
+    // Dropdown options for the form (no login → served here, code-gated).
+    if (body?.action === "options") {
+      const [{ data: courses }, { data: tiers }, { data: groups }] = await Promise.all([
+        admin.from("courses").select("id, title").order("title"),
+        admin.from("course_tiers").select("id, course_id, name, position").order("position"),
+        admin.from("groups").select("course_id, name").order("name"),
+      ]);
+      return json({ courses: courses || [], tiers: tiers || [], groups: groups || [] });
+    }
+    const actorId: string | null = null; // passwordless link — no staff actor
     const name = norm(body?.name);
     const last_name = norm(body?.last_name);
     const username = norm(body?.telegram_username);
