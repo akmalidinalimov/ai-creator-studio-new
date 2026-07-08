@@ -36,19 +36,25 @@ begin
     return new;
   end if;
 
-  -- base: graded a submission (idempotent per submission id)
-  perform public.award_xp(_grader, 10, 'teacher_grade', 'tgrade:' || new.id);
+  -- SAFETY: XP is bookkeeping — it must NEVER be able to roll back the grade itself.
+  -- Any failure in here is swallowed with a warning so the grading write always succeeds.
+  begin
+    -- base: graded a submission (idempotent per submission id)
+    perform public.award_xp(_grader, 10, 'teacher_grade', 'tgrade:' || new.id);
 
-  -- on-time bonus: within 24h AND with real feedback — never reward speed alone.
-  if new.scored_at is not null and new.submitted_at is not null
-     and (new.scored_at - new.submitted_at) <= interval '24 hours'
-     and char_length(btrim(coalesce(new.score_feedback, ''))) >= 10 then
-    perform public.award_xp(_grader, 15, 'teacher_grade_ontime', 'tgradeontime:' || new.id);
-  end if;
+    -- on-time bonus: within 24h AND with real feedback — never reward speed alone.
+    if new.scored_at is not null and new.submitted_at is not null
+       and (new.scored_at - new.submitted_at) <= interval '24 hours'
+       and char_length(btrim(coalesce(new.score_feedback, ''))) >= 10 then
+      perform public.award_xp(_grader, 15, 'teacher_grade_ontime', 'tgradeontime:' || new.id);
+    end if;
 
-  -- first grade of the day => active teaching day (idempotent per grader + Tashkent day)
-  _day := ((now() at time zone 'Asia/Tashkent')::date)::text;
-  perform public.award_xp(_grader, 5, 'teacher_active_day', 'tday:' || _grader::text || ':' || _day);
+    -- first grade of the day => active teaching day (idempotent per grader + Tashkent day)
+    _day := ((now() at time zone 'Asia/Tashkent')::date)::text;
+    perform public.award_xp(_grader, 5, 'teacher_active_day', 'tday:' || _grader::text || ':' || _day);
+  exception when others then
+    raise warning 'xp_on_teacher_grade skipped for submission %: %', new.id, sqlerrm;
+  end;
 
   return new;
 end;
