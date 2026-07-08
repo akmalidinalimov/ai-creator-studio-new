@@ -54,19 +54,23 @@ async function getEnrollmentSettings(admin: any, locale: Locale): Promise<{ mess
   }
 }
 
-// Homework capture mode (flip via platform_settings key 'homework_capture' → {"mode": "..."}):
-//   "auto" (DEFAULT) — auto-synthesize a submission from any qualifying media post in the homework
-//                      topic. Frictionless; catches direct posts. Today's behavior.
-//   "require_intent" — ENFORCE the bot flow: only posts made AFTER the student taps /vazifalar →
-//                      📤 Topshirish count. Un-initiated posts get a one-time hint and are NOT
-//                      captured (no submission, no teacher ping). Kills question/chat false-positives.
-// Missing/malformed row ⇒ "auto", so deploying this code changes nothing until the flag is flipped.
-async function getHomeworkCaptureMode(admin: any): Promise<"auto" | "require_intent"> {
+// Homework capture config (platform_settings key 'homework_capture'):
+//   {"mode":"auto"}  (DEFAULT) — auto-synthesize a submission from any qualifying media post in the
+//     homework topic. Frictionless; catches direct posts. Today's behavior.
+//   {"mode":"require_intent","course_ids":[...]} — ENFORCE the bot flow for students in the listed
+//     courses (empty/omitted list = ALL courses): only posts made AFTER /vazifalar → 📤 Topshirish
+//     count; un-initiated posts get a one-time hint and are NOT captured (no submission, no teacher
+//     ping). Kills question/chat false-positives. Scoped so e.g. only 5.0 is affected, not finished 4.0.
+// Missing/malformed row ⇒ auto, so deploying this code changes nothing until the flag is flipped.
+async function getHomeworkCaptureConfig(admin: any): Promise<{ mode: "auto" | "require_intent"; courseIds: string[] }> {
   try {
     const { data } = await admin.from("platform_settings").select("value").eq("key", "homework_capture").maybeSingle();
-    return ((data?.value as any)?.mode === "require_intent") ? "require_intent" : "auto";
+    const v = (data?.value as any) || {};
+    const mode = v.mode === "require_intent" ? "require_intent" : "auto";
+    const courseIds = Array.isArray(v.course_ids) ? v.course_ids.filter((x: any) => typeof x === "string") : [];
+    return { mode, courseIds };
   } catch (_e) {
-    return "auto";
+    return { mode: "auto", courseIds: [] };
   }
 }
 
@@ -4380,12 +4384,20 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     // sender: profile is the confirmed poster (anon/bot/unknown already filtered
     // above), so a post can never be attributed to anyone else.
     if (!intent) {
-      // ENFORCE-BOT-FLOW gate: when capture mode is "require_intent", a post that was NOT initiated
-      // via /vazifalar → 📤 Topshirish is not homework. Send a one-time hint (rate-limited to ~1 per
-      // 15 min per student) and stop — no submission, no teacher notification. Default "auto" mode
-      // skips this and auto-synthesizes below (today's behavior).
-      const captureMode = await getHomeworkCaptureMode(admin);
-      if (captureMode === "require_intent") {
+      const { data: prof2 } = await admin.from("profiles").select("group_id").eq("id", profile.id).maybeSingle();
+      const groupId = prof2?.group_id ?? null;
+      const grp = groupId
+        ? (await admin.from("groups").select("id, course_id, homework_topic_id").eq("id", groupId).maybeSingle()).data
+        : null;
+
+      // ENFORCE-BOT-FLOW gate (course-scoped): if this student's course is configured for
+      // "require_intent", a post NOT initiated via /vazifalar → 📤 Topshirish is not homework.
+      // Send a one-time hint (rate-limited ~1/15 min) and stop — no submission, no teacher ping.
+      // Courses out of scope (e.g. finished 4.0) fall through to auto-synthesis (today's behavior).
+      const cfg = await getHomeworkCaptureConfig(admin);
+      const enforce = cfg.mode === "require_intent" && !!grp?.course_id
+        && (cfg.courseIds.length === 0 || cfg.courseIds.includes(grp.course_id));
+      if (enforce) {
         try {
           if (profile.telegram_id) {
             const since = new Date(Date.now() - 15 * 60_000).toISOString();
@@ -4401,14 +4413,10 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
             }
           }
         } catch (_e) { /* hint is best-effort */ }
-        console.log("hw:group:require-intent-uninitiated-ignored", JSON.stringify({ profile_id: profile.id, chatId, threadId, messageId }));
+        console.log("hw:group:require-intent-uninitiated-ignored", JSON.stringify({ profile_id: profile.id, course_id: grp?.course_id, chatId, threadId, messageId }));
         return;
       }
-      const { data: prof2 } = await admin.from("profiles").select("group_id").eq("id", profile.id).maybeSingle();
-      const groupId = prof2?.group_id ?? null;
-      const grp = groupId
-        ? (await admin.from("groups").select("id, course_id, homework_topic_id").eq("id", groupId).maybeSingle()).data
-        : null;
+
       const resolved = grp ? await resolveAssignmentForTopic(admin, grp, threadId, profile.id) : null;
       if (!resolved) {
         console.log("hw:group:no-intent-unresolved-ignored", JSON.stringify({ profile_id: profile.id, groupId, chatId, threadId, messageId }));
