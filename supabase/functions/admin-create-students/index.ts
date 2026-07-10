@@ -377,6 +377,16 @@ Deno.serve(async (req) => {
 
         const alreadyInTargetGroup = !!resolvedGroupId && existingGroupId === resolvedGroupId && incomingRole === "student";
         if (alreadyInTargetGroup) {
+          // Group unchanged — but STILL honor an explicit account-type change, so re-submitting a
+          // student as 'paid' (or 'provisional') upgrades/downgrades them without needing a group move.
+          if (acctType) {
+            const { error: acctErr } = await admin.from("profiles").update({ account_type: acctType }).eq("id", existingId);
+            if (!acctErr) {
+              results.push({ email, status: "updated", userId: existingId, row_index, identifier_used });
+              auditLog(row_index, identifier_used, "account_type_updated_same_group");
+              continue;
+            }
+          }
           const err = "Bu foydalanuvchi allaqachon shu guruhda.";
           results.push({ email, status: "already_in_group", error: err, userId: existingId, row_index, identifier_used });
           auditLog(row_index, identifier_used, "already_in_group");
