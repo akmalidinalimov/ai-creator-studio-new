@@ -61,6 +61,9 @@ Deno.serve(async (req) => {
     const group_name = norm(body?.group_name);
     const phone = norm(body?.phone);
     const email = norm(body?.email);
+    // Account type: 'paid' (full access) or 'provisional' (trial — homework/points/stats but
+    // NO lessons). Defaults to 'paid' so an unset/legacy request never accidentally locks a payer.
+    const account_type = norm(body?.account_type) === "provisional" ? "provisional" : "paid";
     const confirmMove = body?.confirm_move === true;
 
     if (!name || !username || !course_id || !group_name) {
@@ -124,15 +127,20 @@ Deno.serve(async (req) => {
     const userId = res0.userId as string | undefined;
     if (!userId) return json({ status, message: res0.error || `HTTP ${resp.status}` }, resp.ok ? 200 : 502);
 
-    // Tier + optional phone (idempotent) + audit with the real staff actor.
+    // Tier + account type + optional phone (idempotent) + audit with the real staff actor.
     await admin.rpc("set_enrollment_tier_system", { _user_id: userId, _course_id: course_id, _tier_id: tier_id });
-    if (phone) await admin.from("profiles").update({ phone }).eq("id", userId);
+    // Set account_type explicitly from the salesperson's choice: a partial-payer lands
+    // 'provisional' (VIP/group + tier still assigned, so upgrading later just flips this flag and
+    // lessons unlock). Re-submitting the same person as 'paid' after full payment upgrades them.
+    const profileUpdate: Record<string, unknown> = { account_type };
+    if (phone) profileUpdate.phone = phone;
+    await admin.from("profiles").update(profileUpdate).eq("id", userId);
     await admin.from("admin_actions").insert({
       actor_user_id: actorId, action: "staff_intake", target_user_id: userId,
-      details: { course_id, tier_id, status },
+      details: { course_id, tier_id, account_type, status },
     });
 
-    return json({ status, userId });
+    return json({ status, userId, account_type });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : String(e) }, 500);
   }

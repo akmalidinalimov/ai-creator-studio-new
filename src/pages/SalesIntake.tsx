@@ -42,6 +42,7 @@ export default function SalesIntake() {
   const [group, setGroup] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
+  const [accountType, setAccountType] = useState<"paid" | "provisional">("paid");
   const [submitting, setSubmitting] = useState(false);
   const [recent, setRecent] = useState<Recent[]>([]);
   const [result, setResult] = useState<Result | null>(null);
@@ -90,12 +91,14 @@ export default function SalesIntake() {
     const uname = username.trim().replace(/^@/, "");
     const courseTitle = selCourse.title;
     const groupName = opts.groupName.trim();
+    const acctSuffix = accountType === "provisional" ? " 🔒 Sinov hisob (qisman to'lov — darsliksiz)." : "";
     const clearStudentFields = () => { setFirst(""); setLast(""); setUsername(""); setPhone(""); setEmail(""); };
     try {
       const payload = {
         name: first.trim(), last_name: last.trim(), telegram_username: username.trim(),
         course_id: selCourse.id, tier_id, group_name: groupName,
         phone: phone.trim(), email: email.trim(), confirm_move: opts.confirmMove,
+        account_type: accountType,
       };
       // A transient network blip (common on mobile / Telegram's in-app browser) surfaces
       // as a FunctionsFetchError with no response — retry once after a short pause before
@@ -125,7 +128,7 @@ export default function SalesIntake() {
       setMovePrompt(null);
 
       if (st === "created") {
-        setResult({ kind: "success", title: "✅ Muvaffaqiyatli qo'shildi!", detail: `${who} (@${uname}) — ${courseTitle}, "${groupName}" guruhiga qo'shildi.` });
+        setResult({ kind: "success", title: "✅ Muvaffaqiyatli qo'shildi!", detail: `${who} (@${uname}) — ${courseTitle}, "${groupName}" guruhiga qo'shildi.${acctSuffix}` });
         toast.success(`✅ ${who || uname} qo'shildi`);
         setRecent((p) => [{ name: who, status: "✅ Qo'shildi", cls: "text-emerald-600" }, ...p].slice(0, 20));
         clearStudentFields();
@@ -135,11 +138,11 @@ export default function SalesIntake() {
         setRecent((p) => [{ name: who, status: "⚠️ Dublikat", cls: "text-rose-600" }, ...p].slice(0, 20));
       } else if (st === "updated" || st === "matched") {
         if (opts.confirmMove) {
-          setResult({ kind: "success", title: "✅ Guruh o'zgartirildi!", detail: `${who || uname} (@${uname}) endi "${groupName}" guruhida.` });
+          setResult({ kind: "success", title: "✅ Guruh o'zgartirildi!", detail: `${who || uname} (@${uname}) endi "${groupName}" guruhida.${acctSuffix}` });
           toast.success(`✅ Guruh o'zgartirildi: @${uname} → ${groupName}`);
           setRecent((p) => [{ name: who, status: "✅ Guruh o'zgartirildi", cls: "text-emerald-600" }, ...p].slice(0, 20));
         } else {
-          setResult({ kind: "exists", title: "ℹ️ Talaba allaqachon platformada bor edi", detail: `${who || uname} (@${uname}) tizimda mavjud edi va "${courseTitle}" kursiga biriktirildi.` });
+          setResult({ kind: "exists", title: "ℹ️ Talaba allaqachon platformada bor edi", detail: `${who || uname} (@${uname}) tizimda mavjud edi va "${courseTitle}" kursiga biriktirildi.${acctSuffix}` });
           toast.message(`ℹ️ @${uname} allaqachon bor edi — kursga qo'shildi`);
           setRecent((p) => [{ name: who, status: "ℹ️ Allaqachon bor", cls: "text-amber-600" }, ...p].slice(0, 20));
         }
@@ -294,6 +297,22 @@ export default function SalesIntake() {
                 {(selCourse?.groups || []).map((g) => <option key={g} value={g} />)}
               </datalist>
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>To'lov holati <span className="text-rose-500">*</span></Label>
+            <Select value={accountType} onValueChange={(v) => setAccountType(v as "paid" | "provisional")}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="paid">✅ To'liq to'lagan — to'liq kirish</SelectItem>
+                <SelectItem value="provisional">🔒 Sinov (qisman to'lov) — darsliksiz</SelectItem>
+              </SelectContent>
+            </Select>
+            {accountType === "provisional" && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 leading-snug">
+                Talaba tanlangan guruh/tarifga qo'shiladi, lekin darsliklar yopiq bo'ladi. Uy vazifa, ball va statistika ishlaydi. To'liq to'lovdan keyin admin panelida yoki shu formani "To'liq to'lagan" bilan qayta yuborib ochiladi.
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-2">

@@ -131,6 +131,7 @@ export default function AdminUsers() {
   const [newCourses, setNewCourses] = useState<Set<string>>(new Set());
   const [newTierId, setNewTierId] = useState<string>("full");
   const [newGroupId, setNewGroupId] = useState<string>("none");
+  const [newAccountType, setNewAccountType] = useState<"paid" | "provisional">("paid");
   const [newTeacherGroupIds, setNewTeacherGroupIds] = useState<Set<string>>(new Set());
   const [editTeacherGroupIds, setEditTeacherGroupIds] = useState<Set<string> | null>(null);
   const [savingTeacherGroups, setSavingTeacherGroups] = useState(false);
@@ -495,6 +496,7 @@ export default function AdminUsers() {
       telegram_username: tgUserRaw || undefined,
       telegram_user_id: tgId,
       role: newRole,
+      account_type: newRole === "student" ? newAccountType : undefined,
     }], {
       ...(newGroupId && newGroupId !== "none" ? { target_group_id: newGroupId } : {}),
       ...(newCourses.size === 1 ? { target_course_id: Array.from(newCourses)[0] } : {}),
@@ -533,7 +535,7 @@ export default function AdminUsers() {
       }
       setOpenAdd(false);
       setNewName(""); setNewLastName(""); setNewEmail(""); setNewPassword(randPassword());
-      setNewTg(""); setNewTgId(""); setNewRole("student"); setNewCourses(new Set()); setNewGroupId("none"); setNewTierId("full");
+      setNewTg(""); setNewTgId(""); setNewRole("student"); setNewCourses(new Set()); setNewGroupId("none"); setNewTierId("full"); setNewAccountType("paid");
       setNewTeacherGroupIds(new Set());
       reload();
     } else {
@@ -1361,6 +1363,21 @@ export default function AdminUsers() {
                 </Select>
                 {newCourses.size === 0 && (
                   <p className="text-xs text-muted-foreground">Pick a course below to see its groups.</p>
+                )}
+              </div>
+            )}
+            {newRole === "student" && (
+              <div className="space-y-1.5">
+                <Label>To'lov holati</Label>
+                <Select value={newAccountType} onValueChange={(v) => setNewAccountType(v as "paid" | "provisional")}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="paid">✅ To'liq to'lagan — to'liq kirish</SelectItem>
+                    <SelectItem value="provisional">🔒 Sinov (qisman to'lov) — darsliksiz</SelectItem>
+                  </SelectContent>
+                </Select>
+                {newAccountType === "provisional" && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 leading-snug">Darsliklar yopiq bo'ladi; uy vazifa, ball va statistika ishlaydi. To'liq to'lovdan keyin "To'liq"ga o'tkaziladi.</p>
                 )}
               </div>
             )}
