@@ -401,7 +401,11 @@ Deno.serve(async (req) => {
             auditLog(row_index, identifier_used, "role_conflict_db", rErr.message);
             continue;
           }
-          if (resolvedGroupId) await admin.from("groups").update({ teacher_id: existingId }).eq("id", resolvedGroupId);
+          // Only claim a group that has NO teacher yet — never clobber a teacher already assigned
+          // on the platform. .is("teacher_id", null) makes this a no-op when a teacher is set, so a
+          // sheet import can never revert a manual teacher change. To reassign, change it on the
+          // platform (the admin UI) — that sticks. Applies to all 3 teacher-assign paths below.
+          if (resolvedGroupId) await admin.from("groups").update({ teacher_id: existingId }).eq("id", resolvedGroupId).is("teacher_id", null);
         } else if (incomingRole === "admin") {
           await admin.from("user_roles").upsert({ user_id: existingId, role: "admin" } as any, { onConflict: "user_id,role" });
         }
@@ -437,7 +441,7 @@ Deno.serve(async (req) => {
             await admin.from("profiles").update(profilePatch).eq("id", foundId);
             if (s.role === "teacher") {
               await admin.from("user_roles").upsert({ user_id: foundId, role: "teacher" } as any, { onConflict: "user_id,role" });
-              if (resolvedGroupId) await admin.from("groups").update({ teacher_id: foundId }).eq("id", resolvedGroupId);
+              if (resolvedGroupId) await admin.from("groups").update({ teacher_id: foundId }).eq("id", resolvedGroupId).is("teacher_id", null); // never clobber an existing teacher
             } else if (s.role === "admin") {
               await admin.from("user_roles").upsert({ user_id: foundId, role: "admin" } as any, { onConflict: "user_id,role" });
             }
@@ -486,7 +490,7 @@ Deno.serve(async (req) => {
       } else if (s.role === "teacher") {
         await admin.from("user_roles").insert({ user_id: userId, role: "teacher" });
         if (resolvedGroupId) {
-          await admin.from("groups").update({ teacher_id: userId }).eq("id", resolvedGroupId);
+          await admin.from("groups").update({ teacher_id: userId }).eq("id", resolvedGroupId).is("teacher_id", null); // never clobber an existing teacher
         }
       }
 

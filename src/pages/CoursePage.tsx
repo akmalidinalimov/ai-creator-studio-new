@@ -18,6 +18,7 @@ export default function CoursePage() {
   const [modules, setModules] = useState<any[]>([]);
   const [completed, setCompleted] = useState<Set<string>>(new Set());
   const [moduleLimit, setModuleLimit] = useState<number | null>(null);
+  const [accountType, setAccountType] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -44,6 +45,10 @@ export default function CoursePage() {
       const { data: lim } = await supabase.rpc("my_module_limit" as any, { _course_id: courseId });
       if (cancelled) return;
       setModuleLimit(typeof lim === "number" ? lim : null);
+      // Provisional (trial) accounts see homework/points/stats but NO lessons. Default 'paid'.
+      const { data: prof } = await supabase.from("profiles").select("account_type").eq("id", user.id).maybeSingle();
+      if (cancelled) return;
+      setAccountType(((prof as any)?.account_type as string) ?? "paid");
       const allLessonIds = (ms || []).flatMap((m: any) => m.lessons.map((l: any) => l.id));
       if (allLessonIds.length) {
         const { data: prog } = await supabase
@@ -91,6 +96,14 @@ export default function CoursePage() {
             <p className="mt-4 text-sm leading-relaxed max-w-2xl break-words">{course.description}</p>
           </div>
 
+          {accountType === "provisional" ? (
+            <Card className="p-8 text-center shadow-soft">
+              <div className="text-4xl mb-3">🔒</div>
+              <h2 className="text-xl font-semibold">{t("coursePage.trialTitle", "Sinov (trial) hisobi")}</h2>
+              <p className="text-muted-foreground mt-2 max-w-md mx-auto leading-relaxed">{t("coursePage.trialBody", "Darsliklar to'liq to'lovdan so'ng ochiladi. Uy vazifalaringiz, ballaringiz va statistikangiz saqlanib qoladi — to'lovdan keyin hammasi shu yerda bo'ladi.")}</p>
+              <p className="text-sm text-muted-foreground mt-4">{t("coursePage.trialContact", "To'lov uchun administrator bilan bog'laning.")}</p>
+            </Card>
+          ) : (
           <div className="space-y-6">
             {modules.map((m, i) => {
               const locked = isModuleLocked(i);
@@ -132,6 +145,7 @@ export default function CoursePage() {
               );
             })}
           </div>
+          )}
         </div>
 
         <aside className="lg:sticky lg:top-20 h-fit space-y-5 min-w-0">
@@ -146,7 +160,7 @@ export default function CoursePage() {
               <Stat n={totalLessons} l={t("coursePage.stats.lessons")} />
               <Stat n={`${course.duration_hours}h`} l={t("coursePage.stats.total")} />
             </div>
-            {nextLesson && (
+            {accountType !== "provisional" && nextLesson && (
               <Button asChild className="w-full mt-5"><Link to={`/lesson/${courseId}/${nextLesson.id}`}><PlayCircle className="h-4 w-4" />{t("coursePage.continue")}</Link></Button>
             )}
             

@@ -38,6 +38,7 @@ interface UserRow {
   role_name?: RoleName;
   group_id?: string | null;
   archived_at?: string | null;
+  account_type?: "provisional" | "paid";
 }
 
 interface CsvRow {
@@ -112,6 +113,7 @@ export default function AdminUsers() {
   })();
   const [engagementFilter, setEngagementFilter] = useState<string>(initialEngagement);
   const [groupFilter, setGroupFilter] = useState<string>("all");
+  const [accountTypeFilter, setAccountTypeFilter] = useState<string>("all");
   const [orphansOnly, setOrphansOnly] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState<{ ids: string[]; mode: "archive" | "unarchive" } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -213,6 +215,7 @@ export default function AdminUsers() {
       const lnMap: Record<string, string | null> = {};
       const grpMap: Record<string, string | null> = {};
       const grpNameMap: Record<string, string | null> = {};
+      const atMap: Record<string, string | null> = {};
       const rolesMap: Record<string, string[]> = {};
       const PAGE = 300;
       const profPromises: Promise<any>[] = [];
@@ -220,7 +223,7 @@ export default function AdminUsers() {
       for (let i = 0; i < ids.length; i += PAGE) {
         const slice = ids.slice(i, i + PAGE);
         profPromises.push(
-          Promise.resolve(supabase.from("profiles").select("id, last_name, group_id, groups:group_id(name)").in("id", slice))
+          Promise.resolve(supabase.from("profiles").select("id, last_name, group_id, account_type, groups:group_id(name)").in("id", slice))
         );
         rolePromises.push(
           Promise.resolve(supabase.from("user_roles").select("user_id, role").in("user_id", slice))
@@ -233,6 +236,7 @@ export default function AdminUsers() {
           lnMap[p.id] = p.last_name;
           grpMap[p.id] = p.group_id;
           grpNameMap[p.id] = p?.groups?.name || null;
+          atMap[p.id] = p.account_type || null;
         });
       });
       roleResults.forEach(({ data }) => {
@@ -243,6 +247,7 @@ export default function AdminUsers() {
         u.last_name = lnMap[u.id] || null;
         u.group_id = grpMap[u.id] || null;
         (u as any).group_name = grpNameMap[u.id] || null;
+        u.account_type = (atMap[u.id] as any) || "paid";
         const list = rolesMap[u.id] || [];
         const top = list.sort((a, b) => (rank[a] || 99) - (rank[b] || 99))[0] as RoleName | undefined;
         u.role_name = (top || "student") as RoleName;
@@ -374,6 +379,7 @@ export default function AdminUsers() {
           return false;
         }
       }
+      if (accountTypeFilter !== "all" && (u.account_type || "paid") !== accountTypeFilter) return false;
       if (orphansOnly) {
         if (u.group_id && activeGroupIds.has(u.group_id)) return false;
       }
@@ -396,7 +402,7 @@ export default function AdminUsers() {
       }
       return true;
     });
-  }, [users, search, statusFilter, roleFilter, groupFilter, orphansOnly, engagementFilter, activeGroupIds]);
+  }, [users, search, statusFilter, roleFilter, groupFilter, accountTypeFilter, orphansOnly, engagementFilter, activeGroupIds]);
 
   const counts = useMemo(() => {
     let active = 0, archived = 0, teachers = 0;
@@ -809,6 +815,14 @@ export default function AdminUsers() {
     toast.success(t("admin.users.tierUpdated"));
   };
 
+  const setAccountType = async (user: UserRow, type: "paid" | "provisional") => {
+    const { error } = await supabase.rpc("admin_set_account_type" as any, { _user: user.id, _type: type });
+    if (error) return toast.error(error.message);
+    setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, account_type: type } : u)));
+    setManageUser((mu) => (mu && mu.id === user.id ? { ...mu, account_type: type } : mu));
+    toast.success(t("admin.users.accountTypeUpdated", { defaultValue: "Account type updated" }));
+  };
+
   const setRole = async (user: UserRow, promote: boolean) => {
     if (promote) {
       const { error } = await supabase.from("user_roles").insert({ user_id: user.id, role: "admin" });
@@ -1113,6 +1127,14 @@ export default function AdminUsers() {
               ))}
             </SelectContent>
           </Select>
+          <Select value={accountTypeFilter} onValueChange={setAccountTypeFilter}>
+            <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("admin.users.allAccountTypes", { defaultValue: "All accounts" })}</SelectItem>
+              <SelectItem value="paid">{t("admin.users.paid", { defaultValue: "Paid" })}</SelectItem>
+              <SelectItem value="provisional">{t("admin.users.provisional", { defaultValue: "Provisional (trial)" })}</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         {isStaffAdmin && (
@@ -1223,6 +1245,9 @@ export default function AdminUsers() {
                     <td className="p-3">
                       <div className="flex flex-col items-start gap-1">
                         {roleBadge(u.role_name)}
+                        {u.account_type === "provisional" && (
+                          <span className="text-[10px] rounded bg-amber-500/15 text-amber-600 px-1.5 py-0.5 font-medium whitespace-nowrap">🔒 Trial</span>
+                        )}
                         {isAdmin && (
                           <Select
                             value={u.role_name || "student"}
@@ -1819,6 +1844,17 @@ export default function AdminUsers() {
                       <SelectItem value="inactive">{t("admin.users.inactive")}</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>{t("admin.users.accountType", { defaultValue: "Account type" })}</Label>
+                  <Select value={manageUser.account_type || "paid"} onValueChange={(v) => setAccountType(manageUser, v as any)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="paid">{t("admin.users.paidFull", { defaultValue: "Paid — full access" })}</SelectItem>
+                      <SelectItem value="provisional">{t("admin.users.provisionalTrial", { defaultValue: "Provisional (trial) — no lessons" })}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground">{t("admin.users.accountTypeHint", { defaultValue: "Provisional = homework + points, no lessons. Switch to Paid after payment to unlock lessons." })}</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t("admin.users.courseAccess")}</Label>

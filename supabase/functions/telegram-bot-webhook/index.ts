@@ -54,6 +54,26 @@ async function getEnrollmentSettings(admin: any, locale: Locale): Promise<{ mess
   }
 }
 
+// Homework capture config (platform_settings key 'homework_capture'):
+//   {"mode":"auto"}  (DEFAULT) — auto-synthesize a submission from any qualifying media post in the
+//     homework topic. Frictionless; catches direct posts. Today's behavior.
+//   {"mode":"require_intent","course_ids":[...]} — ENFORCE the bot flow for students in the listed
+//     courses (empty/omitted list = ALL courses): only posts made AFTER /vazifalar → 📤 Topshirish
+//     count; un-initiated posts get a one-time hint and are NOT captured (no submission, no teacher
+//     ping). Kills question/chat false-positives. Scoped so e.g. only 5.0 is affected, not finished 4.0.
+// Missing/malformed row ⇒ auto, so deploying this code changes nothing until the flag is flipped.
+async function getHomeworkCaptureConfig(admin: any): Promise<{ mode: "auto" | "require_intent"; courseIds: string[] }> {
+  try {
+    const { data } = await admin.from("platform_settings").select("value").eq("key", "homework_capture").maybeSingle();
+    const v = (data?.value as any) || {};
+    const mode = v.mode === "require_intent" ? "require_intent" : "auto";
+    const courseIds = Array.isArray(v.course_ids) ? v.course_ids.filter((x: any) => typeof x === "string") : [];
+    return { mode, courseIds };
+  } catch (_e) {
+    return { mode: "auto", courseIds: [] };
+  }
+}
+
 const T = {
   uz: {
     expired: "Kirish havolasining muddati tugagan. Saytga qaytib qaytadan urinib ko'ring.",
@@ -268,6 +288,7 @@ const T = {
     hwIntentNoGroup: "Sizga guruh biriktirilmagan. Ustozingiz bilan bog'laning.",
     hwIntentBtnGoTopic: "📌 Topikga o'tish",
     hwIntentAlreadyScored: "Bu vazifa allaqachon baholangan ✅",
+    hwRequireIntentHint: "📤 Vazifani topshirish uchun avval botda /vazifalar bo'limiga kiring va kerakli vazifa uchun \"📤 Topshirish\" tugmasini bosing — so'ngra rasm/video/hujjatingizni shu topikka yuboring. Aks holda ish avtomatik qabul qilinmaydi.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Sizning oldingi natijangiz: <b>${sc}/${mx}</b>${fb ? `\nIzoh: "${csvEscapeHtml(fb)}"` : ""}\n\nQayta topshirmoqchimisiz?`,
     hwResubYes: "✅ Ha, qayta topshiraman",
@@ -498,6 +519,7 @@ const T = {
     hwIntentNoGroup: "Вам не назначена группа. Свяжитесь с преподавателем.",
     hwIntentBtnGoTopic: "📌 Перейти в топик",
     hwIntentAlreadyScored: "Это задание уже оценено ✅",
+    hwRequireIntentHint: "📤 Чтобы сдать работу, сначала откройте в боте /vazifalar и нажмите \"📤 Сдать\" для нужного задания — затем отправьте фото/видео/документ в этот топик. Иначе работа не будет принята автоматически.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Ваш предыдущий результат: <b>${sc}/${mx}</b>${fb ? `\nКомментарий: "${csvEscapeHtml(fb)}"` : ""}\n\nХотите отправить заново?`,
     hwResubYes: "✅ Да, отправить заново",
@@ -728,6 +750,7 @@ const T = {
     hwIntentNoGroup: "You are not assigned to a group. Please contact your teacher.",
     hwIntentBtnGoTopic: "📌 Open topic",
     hwIntentAlreadyScored: "This task has already been graded ✅",
+    hwRequireIntentHint: "📤 To submit, first open /vazifalar in the bot and tap \"📤 Submit\" for the task — then post your photo/video/document in this topic. Otherwise it won't be captured automatically.",
     hwResubAsk: (sc: number, mx: number, fb: string) =>
       `📊 Your previous result: <b>${sc}/${mx}</b>${fb ? `\nFeedback: "${csvEscapeHtml(fb)}"` : ""}\n\nDo you want to resubmit?`,
     hwResubYes: "✅ Yes, resubmit",
@@ -839,6 +862,10 @@ const PROF_T = {
     tMembers: "A'zolar", tActive: "Faol (7 kun)", tCompletion: "Tugallanish", tPending: "Kutilmoqda",
     tTop: "TOP talabalar", tNoStudents: "Guruhda talabalar yo'q", tNoGroups: "Sizga hali guruh biriktirilmagan.",
     tSwitchHint: "Boshqa guruhga o'tish uchun tugmani bosing 👇",
+    tLevelNames: ["Yangi ustoz", "Ustoz", "Katta ustoz", "Tajribali ustoz", "Top ustoz"],
+    tBoardTitle: "🏆 Ustozlar reytingi (hafta)", tTeam: "Jamoa",
+    tWeekLine: (g: number, ot: number | null, ar: number | null) =>
+      `📈 Bu hafta: <b>${g}</b> baholandi${ot != null ? ` · ${ot}% vaqtida` : ""}${ar != null ? ` · ${ar}% javob` : ""}`,
   },
   ru: {
     kbProfil: "👤 Профиль",
@@ -859,6 +886,10 @@ const PROF_T = {
     tMembers: "Участники", tActive: "Активны (7 дн.)", tCompletion: "Завершение", tPending: "Ожидают",
     tTop: "ТОП студенты", tNoStudents: "В группе нет студентов", tNoGroups: "Вам ещё не назначены группы.",
     tSwitchHint: "Нажмите кнопку, чтобы переключить группу 👇",
+    tLevelNames: ["Молодой педагог", "Педагог", "Старший педагог", "Опытный педагог", "Топ-педагог"],
+    tBoardTitle: "🏆 Рейтинг устозов (неделя)", tTeam: "Команда",
+    tWeekLine: (g: number, ot: number | null, ar: number | null) =>
+      `📈 За неделю: <b>${g}</b> проверено${ot != null ? ` · ${ot}% вовремя` : ""}${ar != null ? ` · ${ar}% ответ` : ""}`,
   },
   en: {
     kbProfil: "👤 Profile",
@@ -879,6 +910,10 @@ const PROF_T = {
     tMembers: "Members", tActive: "Active (7d)", tCompletion: "Completion", tPending: "Pending",
     tTop: "TOP students", tNoStudents: "No students in this group", tNoGroups: "No groups assigned to you yet.",
     tSwitchHint: "Tap a button to switch groups 👇",
+    tLevelNames: ["Rising teacher", "Teacher", "Senior teacher", "Expert teacher", "Top teacher"],
+    tBoardTitle: "🏆 Teacher rating (week)", tTeam: "Team",
+    tWeekLine: (g: number, ot: number | null, ar: number | null) =>
+      `📈 This week: <b>${g}</b> graded${ot != null ? ` · ${ot}% on time` : ""}${ar != null ? ` · ${ar}% answered` : ""}`,
   },
 } as const;
 
@@ -957,22 +992,42 @@ async function buildTeacherProfileCard(
   admin: any, teacherId: string, locale: Locale, groupId?: string | null,
 ): Promise<{ text: string; keyboard: any }> {
   const p = PROF_T[locale];
-  const [{ data: prof }, statsRes, groupsRes] = await Promise.all([
+  const [{ data: prof }, statsRes, groupsRes, xpRes, weekRes, lbRes] = await Promise.all([
     admin.from("profiles").select("name, last_name, bio, active_teacher_group_id").eq("id", teacherId).maybeSingle(),
     admin.rpc("teacher_profile_stats", { uid: teacherId }),
     admin.rpc("teacher_groups", { uid: teacherId }),
+    admin.rpc("teacher_xp", { uid: teacherId }),
+    admin.rpc("teacher_weekly_self", { uid: teacherId, p_days: 7 }),
+    admin.rpc("teacher_leaderboard", { uid: teacherId, _limit: 30 }),
   ]);
   const s: any = Array.isArray(statsRes.data) ? statsRes.data[0] : statsRes.data;
   const groups = ((groupsRes.data || []) as any[]);
+  const xp: any = Array.isArray(xpRes.data) ? xpRes.data[0] : xpRes.data;
+  const week: any = Array.isArray(weekRes.data) ? weekRes.data[0] : weekRes.data;
+  const board = ((lbRes.data || []) as any[]);
   const name = escHtml(`${prof?.name || ""} ${prof?.last_name || ""}`.trim() || "Ustoz");
 
   const lines: string[] = [];
   lines.push(p.tProfTitle);
   lines.push(`👤 <b>${name}</b>`);
+  // Level + XP badge (recognition/mastery), reusing the generic XP curve; ladder tops at "Top ustoz".
+  const LVL_EMOJI = ["🌱", "📗", "🎓", "🏅", "🏆"];
+  const tLvl = xp?.level ?? 1;
+  const tLvlName = p.tLevelNames[Math.min(tLvl, p.tLevelNames.length) - 1] || `L${tLvl}`;
+  const tLvlEmoji = LVL_EMOJI[Math.min(tLvl, LVL_EMOJI.length) - 1] || "🎓";
+  lines.push(`${tLvlEmoji} <b>${tLvlName}</b> · ⚡${xp?.total_xp ?? 0} XP`);
   if (prof?.bio) lines.push(`<i>${escHtml(String(prof.bio))}</i>`);
   lines.push("");
   lines.push(`👥 ${p.tGroups}: <b>${s?.groups_count ?? 0}</b> · ${p.tStudents}: <b>${s?.students_total ?? 0}</b>`);
   lines.push(`✅ ${p.tGraded}: <b>${s?.graded_total ?? 0}</b>${s?.avg_score_given ? ` (${p.tAvg} ${s.avg_score_given}/10)` : ""}`);
+  // Your week — throughput + responsiveness, framed as impact (only when there's something to show).
+  if (week && (Number(week.graded) > 0 || Number(week.questions) > 0)) {
+    lines.push(p.tWeekLine(
+      Number(week.graded) || 0,
+      week.on_time_pct == null ? null : Number(week.on_time_pct),
+      week.answer_rate == null ? null : Number(week.answer_rate),
+    ));
+  }
 
   if (!groups.length) {
     lines.push("", p.tNoGroups);
@@ -995,6 +1050,19 @@ async function buildTeacherProfileCard(
     for (const st of top) {
       lines.push(`${medal(st.rank)} ${escHtml(`${st.first_name} ${st.last_initial ? st.last_initial + "." : ""}`.trim())} — ⚡${st.total_xp}${st.current_streak > 0 ? ` · ${st.current_streak}🔥` : ""}`);
     }
+  }
+
+  // Weekly teacher leaderboard (friendly competition): top 3 + you + team total, with movement.
+  if (board.length && board.some((b) => (b.week_xp || 0) > 0)) {
+    const teamXp = board.reduce((sum, b) => sum + (b.week_xp || 0), 0);
+    const bmedal = (r: number) => (r === 1 ? "🥇" : r === 2 ? "🥈" : r === 3 ? "🥉" : ` ${r}.`);
+    const move = (b: any) => (b.prev_rank && b.rank < b.prev_rank ? " ↑" : b.prev_rank && b.rank > b.prev_rank ? " ↓" : "");
+    lines.push("", p.tBoardTitle);
+    for (const b of board.filter((x) => x.rank <= 3 || x.is_me)) {
+      const nm = b.is_me ? `<b>${p.profYou}</b>` : escHtml(`${b.first_name} ${b.last_initial ? b.last_initial + "." : ""}`.trim());
+      lines.push(`${bmedal(b.rank)} ${nm} — ⚡${b.week_xp}${move(b)}`);
+    }
+    lines.push(`👥 ${p.tTeam}: <b>${teamXp}</b> XP`);
   }
 
   // One-tap group switching: a button per OTHER group re-renders this card in place.
@@ -1347,10 +1415,17 @@ function cacheInvalidateUser(userId: string) {
   for (const k of REPLY_CACHE.keys()) if (k.includes(`:${userId}:`)) REPLY_CACHE.delete(k);
 }
 
+// Provisional (trial) accounts: homework/points/stats yes, lessons no. Shown when they try /dars//davom.
+const TRIAL_LOCKED: Record<string, string> = {
+  uz: "🔒 Darsliklar sinov (trial) hisobida ochiq emas. To'liq to'lovdan so'ng ochiladi — uy vazifalaringiz va ballaringiz saqlanib qoladi. To'lov uchun administrator bilan bog'laning.",
+  ru: "🔒 Уроки недоступны на пробном аккаунте. Откроются после полной оплаты — ваши домашние задания и баллы сохранятся. По оплате свяжитесь с администратором.",
+  en: "🔒 Lessons aren't available on a trial account. They unlock after full payment — your homework and points are kept. Contact the admin to pay.",
+};
+
 async function findProfileByTelegramId(admin: any, tgId: number) {
   const { data } = await admin
     .from("profiles")
-    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id, status")
+    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id, status, account_type")
     .eq("telegram_id", tgId)
     .maybeSingle();
   return data;
@@ -1362,7 +1437,7 @@ async function findProfileByUsername(admin: any, username: string) {
   if (!cleaned) return null;
   const { data } = await admin
     .from("profiles")
-    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id, status")
+    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id, status, account_type")
     .is("telegram_id", null)
     .ilike("telegram_username", cleaned)
     .order("updated_at", { ascending: false })
@@ -3681,6 +3756,7 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
 
 
   if (cmd === "/davom") {
+    if ((profile as any).account_type === "provisional") { await sendWithKeyboard(chatId, TRIAL_LOCKED[locale] || TRIAL_LOCKED.uz, locale); return; }
     const courseId = await getPrimaryCourseIdForUser(admin, profile.id);
     if (!courseId) {
       await sendWithKeyboard(chatId, t.noCourse, locale);
@@ -3697,6 +3773,7 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   }
 
   if (cmd === "/dars") {
+    if ((profile as any).account_type === "provisional") { await sendWithKeyboard(chatId, TRIAL_LOCKED[locale] || TRIAL_LOCKED.uz, locale); return; }
     const courseIds = await getCourseIdsForUser(admin, profile.id);
     if (!courseIds.length) {
       await sendWithKeyboard(chatId, t.noCourse, locale);
@@ -4321,6 +4398,34 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       const grp = groupId
         ? (await admin.from("groups").select("id, course_id, homework_topic_id").eq("id", groupId).maybeSingle()).data
         : null;
+
+      // ENFORCE-BOT-FLOW gate (course-scoped): if this student's course is configured for
+      // "require_intent", a post NOT initiated via /vazifalar → 📤 Topshirish is not homework.
+      // Send a one-time hint (rate-limited ~1/15 min) and stop — no submission, no teacher ping.
+      // Courses out of scope (e.g. finished 4.0) fall through to auto-synthesis (today's behavior).
+      const cfg = await getHomeworkCaptureConfig(admin);
+      const enforce = cfg.mode === "require_intent" && !!grp?.course_id
+        && (cfg.courseIds.length === 0 || cfg.courseIds.includes(grp.course_id));
+      if (enforce) {
+        try {
+          if (profile.telegram_id) {
+            const since = new Date(Date.now() - 15 * 60_000).toISOString();
+            const { data: recentHint } = await admin.from("notifications_log")
+              .select("id").eq("user_id", profile.id).eq("notification_type", "hw_require_intent_hint")
+              .gte("sent_at", since).limit(1);
+            if (!recentHint || !recentHint.length) {
+              const loc: Locale = normLocale(profile.preferred_locale);
+              await sendMessage(profile.telegram_id, (T[loc] as any).hwRequireIntentHint);
+              await admin.from("notifications_log").insert({
+                user_id: profile.id, notification_type: "hw_require_intent_hint", sent_at: new Date().toISOString(),
+              });
+            }
+          }
+        } catch (_e) { /* hint is best-effort */ }
+        console.log("hw:group:require-intent-uninitiated-ignored", JSON.stringify({ profile_id: profile.id, course_id: grp?.course_id, chatId, threadId, messageId }));
+        return;
+      }
+
       const resolved = grp ? await resolveAssignmentForTopic(admin, grp, threadId, profile.id) : null;
       if (!resolved) {
         console.log("hw:group:no-intent-unresolved-ignored", JSON.stringify({ profile_id: profile.id, groupId, chatId, threadId, messageId }));

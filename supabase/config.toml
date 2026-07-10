@@ -67,6 +67,10 @@ verify_jwt = false
 [functions.cron-ungraded-homework-reminder]
 verify_jwt = false
 
+# Teacher engagement nudges (student-waiting + offline). Cron-invoked; self-checks x-internal-secret.
+[functions.cron-teacher-engagement-nudge]
+verify_jwt = false
+
 # --- Phase 0 (2026-06-22, M11): make pre-auth vs post-auth gateway settings explicit.
 # telegram-auth & login-guard run BEFORE the user has a session -> must stay public.
 # log-auth-event runs AFTER sign-in with the user's JWT -> require auth.

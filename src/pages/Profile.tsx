@@ -103,6 +103,7 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
   const [loading, setLoading] = useState(true);
   const [savingBio, setSavingBio] = useState(false);
   const [bioDraft, setBioDraft] = useState<string | null>(null);
+  const [avatarBroken, setAvatarBroken] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const sectionRefs = {
     progress: useRef<HTMLDivElement>(null),
@@ -127,7 +128,7 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
           supabase.from("user_badges").select("badge_id").eq("user_id", userId),
           supabase.from("module_celebrations").select("module_id, image_url, caption").eq("user_id", userId).order("created_at", { ascending: false }),
           supabase.from("daily_watch_summary").select("watch_date, total_seconds").eq("user_id", userId).gte("watch_date", weekStart),
-          supabase.from("xp_events").select("amount, created_at").eq("user_id", userId).gte("created_at", since),
+          supabase.from("xp_events" as any).select("amount, created_at").eq("user_id", userId).gte("created_at", since),
           supabase.from("homework_submissions")
             .select("score, homework_assignments(max_score, modules(position, title))")
             .eq("user_id", userId),
@@ -197,16 +198,41 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
 
   const uploadAvatar = async (file: File) => {
     if (!userId) return;
-    if (file.size > 4 * 1024 * 1024) { toast.error(t("profile.avatarTooBig")); return; }
-    const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-    const path = `${userId}/avatar-${Date.now()}.${ext}`;
-    const { error: upErr } = await supabase.storage.from("avatars").upload(path, file, { upsert: true, contentType: file.type });
-    if (upErr) { toast.error(t("profile.avatarFailed")); return; }
-    const { data: pubUrl } = supabase.storage.from("avatars").getPublicUrl(path);
-    const { error: updErr } = await supabase.from("profiles").update({ avatar_url: pubUrl.publicUrl } as any).eq("id", userId);
-    if (updErr) { toast.error(t("profile.avatarFailed")); return; }
-    setProfile((p) => (p ? { ...p, avatar_url: pubUrl.publicUrl } : p));
-    toast.success(t("profile.avatarSaved"));
+    try {
+      // Resize/compress to a small square BEFORE upload. Works for any input size (no more 4MB
+      // rejection) and keeps stored avatars tiny (~tens of KB) — faster + far less VPS storage.
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        const img = new Image();
+        const objUrl = URL.createObjectURL(file);
+        img.onload = () => {
+          URL.revokeObjectURL(objUrl);
+          const MAX = 512;
+          const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const canvas = document.createElement("canvas");
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) { reject(new Error("canvas unavailable")); return; }
+          ctx.drawImage(img, 0, 0, w, h);
+          canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("encode failed"))), "image/jpeg", 0.85);
+        };
+        img.onerror = () => { URL.revokeObjectURL(objUrl); reject(new Error("could not read image")); };
+        img.src = objUrl;
+      });
+      const path = `${userId}/avatar-${Date.now()}.jpg`;
+      const { error: upErr } = await supabase.storage.from("avatars").upload(path, blob, { upsert: true, contentType: "image/jpeg" });
+      if (upErr) { toast.error(t("profile.avatarFailed")); return; }
+      const { data: pubUrl } = supabase.storage.from("avatars").getPublicUrl(path);
+      const url = pubUrl.publicUrl;
+      const { error: updErr } = await supabase.from("profiles").update({ avatar_url: url } as any).eq("id", userId);
+      if (updErr) { toast.error(t("profile.avatarFailed")); return; }
+      setAvatarBroken(false);
+      setProfile((p) => (p ? { ...p, avatar_url: url } : p));
+      toast.success(t("profile.avatarSaved"));
+    } catch (_e) {
+      toast.error(t("profile.avatarFailed"));
+    }
   };
 
   const saveBio = async () => {
@@ -257,8 +283,9 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
                 style={ringStyle(stats?.current_streak ?? 0)}
                 aria-label={t("profile.changeAvatar")}
               >
-                {profile?.avatar_url ? (
-                  <img src={profile.avatar_url} alt="" className="h-20 w-20 rounded-full object-cover border-[3px] border-background" />
+                {profile?.avatar_url && !avatarBroken ? (
+                  <img src={profile.avatar_url} alt="" className="h-20 w-20 rounded-full object-cover border-[3px] border-background"
+                    onError={() => setAvatarBroken(true)} />
                 ) : (
                   <div className="h-20 w-20 rounded-full border-[3px] border-background bg-muted flex items-center justify-center text-2xl">
                     {(profile?.name || "?").slice(0, 1).toUpperCase()}
