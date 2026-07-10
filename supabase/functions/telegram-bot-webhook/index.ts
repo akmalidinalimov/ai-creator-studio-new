@@ -1415,10 +1415,17 @@ function cacheInvalidateUser(userId: string) {
   for (const k of REPLY_CACHE.keys()) if (k.includes(`:${userId}:`)) REPLY_CACHE.delete(k);
 }
 
+// Provisional (trial) accounts: homework/points/stats yes, lessons no. Shown when they try /dars//davom.
+const TRIAL_LOCKED: Record<string, string> = {
+  uz: "🔒 Darsliklar sinov (trial) hisobida ochiq emas. To'liq to'lovdan so'ng ochiladi — uy vazifalaringiz va ballaringiz saqlanib qoladi. To'lov uchun administrator bilan bog'laning.",
+  ru: "🔒 Уроки недоступны на пробном аккаунте. Откроются после полной оплаты — ваши домашние задания и баллы сохранятся. По оплате свяжитесь с администратором.",
+  en: "🔒 Lessons aren't available on a trial account. They unlock after full payment — your homework and points are kept. Contact the admin to pay.",
+};
+
 async function findProfileByTelegramId(admin: any, tgId: number) {
   const { data } = await admin
     .from("profiles")
-    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id, status")
+    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id, status, account_type")
     .eq("telegram_id", tgId)
     .maybeSingle();
   return data;
@@ -1430,7 +1437,7 @@ async function findProfileByUsername(admin: any, username: string) {
   if (!cleaned) return null;
   const { data } = await admin
     .from("profiles")
-    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id, status")
+    .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id, status, account_type")
     .is("telegram_id", null)
     .ilike("telegram_username", cleaned)
     .order("updated_at", { ascending: false })
@@ -3749,6 +3756,7 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
 
 
   if (cmd === "/davom") {
+    if ((profile as any).account_type === "provisional") { await sendWithKeyboard(chatId, TRIAL_LOCKED[locale] || TRIAL_LOCKED.uz, locale); return; }
     const courseId = await getPrimaryCourseIdForUser(admin, profile.id);
     if (!courseId) {
       await sendWithKeyboard(chatId, t.noCourse, locale);
@@ -3765,6 +3773,7 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   }
 
   if (cmd === "/dars") {
+    if ((profile as any).account_type === "provisional") { await sendWithKeyboard(chatId, TRIAL_LOCKED[locale] || TRIAL_LOCKED.uz, locale); return; }
     const courseIds = await getCourseIdsForUser(admin, profile.id);
     if (!courseIds.length) {
       await sendWithKeyboard(chatId, t.noCourse, locale);

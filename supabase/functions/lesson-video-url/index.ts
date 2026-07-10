@@ -47,6 +47,12 @@ Deno.serve(async (req) => {
     const isAdmin = !!roleRow;
 
     if (!isAdmin) {
+      // Provisional (trial) accounts get homework/XP/profile but NO lessons — the real content gate.
+      // Paid accounts (default) pass through. Admins/teachers already bypassed above.
+      const { data: prof } = await admin.from("profiles").select("account_type").eq("id", userId).maybeSingle();
+      if ((prof as any)?.account_type === "provisional") {
+        return new Response(JSON.stringify({ error: "provisional_locked" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
       if (!lesson.published) {
         return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
