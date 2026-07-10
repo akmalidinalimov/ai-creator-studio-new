@@ -128,7 +128,7 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
           supabase.from("user_badges").select("badge_id").eq("user_id", userId),
           supabase.from("module_celebrations").select("module_id, image_url, caption").eq("user_id", userId).order("created_at", { ascending: false }),
           supabase.from("daily_watch_summary").select("watch_date, total_seconds").eq("user_id", userId).gte("watch_date", weekStart),
-          supabase.from("xp_events").select("amount, created_at").eq("user_id", userId).gte("created_at", since),
+          supabase.from("xp_events" as any).select("amount, created_at").eq("user_id", userId).gte("created_at", since),
           supabase.from("homework_submissions")
             .select("score, homework_assignments(max_score, modules(position, title))")
             .eq("user_id", userId),
