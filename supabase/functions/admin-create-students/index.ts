@@ -17,6 +17,7 @@ type Student = {
   telegram_user_id?: number | string;
   role?: "student" | "teacher" | "admin";
   group_name?: string;
+  account_type?: "provisional" | "paid";
 };
 
 function genPassword(): string {
@@ -257,6 +258,11 @@ Deno.serve(async (req) => {
       // Normalize telegram_username early so we can use it as a placeholder identifier
       const tgUserNorm = (s.telegram_username || "").trim().replace(/^@/, "").toLowerCase();
       const tgUserSafe = sanitizeForEmailLocal(tgUserNorm);
+      // Account type: apply ONLY when explicitly provided (paid|provisional). Left undefined for
+      // CSV/sheet imports (which never send it), so an import can never silently change — or downgrade —
+      // an existing student's access. New users without it fall back to the column default ('paid').
+      const acctType: "provisional" | "paid" | undefined =
+        s.account_type === "provisional" || s.account_type === "paid" ? s.account_type : undefined;
       let synthesizedEmail = "";
       // Synthesize a deterministic placeholder in priority order: telegram_id → telegram_username → hashed name.
       // Never use the raw name in the email because names are not unique and collide in Auth.
@@ -379,6 +385,7 @@ Deno.serve(async (req) => {
 
         const isStaff = incomingRole === "teacher" || incomingRole === "admin";
         const patch: Record<string, any> = {};
+        if (acctType) patch.account_type = acctType; // explicit admin/sales choice; upgrades or sets trial
         if (resolvedGroupId && !isStaff) patch.group_id = resolvedGroupId;
         if (csvTgUsernameRaw) {
           const dbNorm = (existingTgUsername || "").trim().replace(/^@/, "").toLowerCase();
@@ -434,6 +441,7 @@ Deno.serve(async (req) => {
           }
           if (foundId) {
             const profilePatch: Record<string, any> = { name: displayName || null };
+            if (acctType) profilePatch.account_type = acctType;
             if (csvLastName !== undefined) profilePatch.last_name = csvLastName || null;
             if (csvTgUsernameRaw) profilePatch.telegram_username = csvTgUsernameRaw;
             if (tgIdNum !== undefined) profilePatch.telegram_id = tgIdNum;
@@ -462,6 +470,7 @@ Deno.serve(async (req) => {
       }
       const userId = created.user!.id;
       const profilePatch: Record<string, any> = { name: displayName || null };
+      if (acctType) profilePatch.account_type = acctType; // new user: else column default 'paid'
       if (csvLastName !== undefined) profilePatch.last_name = csvLastName || null;
       if (csvTgUsernameRaw) profilePatch.telegram_username = csvTgUsernameRaw;
       if (tgIdNum !== undefined) {

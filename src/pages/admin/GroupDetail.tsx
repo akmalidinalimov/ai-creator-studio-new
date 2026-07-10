@@ -99,11 +99,15 @@ export default function GroupDetail() {
   const [openAdd, setOpenAdd] = useState(false);
   const [addQuery, setAddQuery] = useState("");
   const [addBusy, setAddBusy] = useState(false);
+  // "" = keep current (this dialog usually MOVES an existing student, so we must not flip their type).
+  const [addAccountType, setAddAccountType] = useState<"" | "paid" | "provisional">("");
 
   // CSV upload
   const [openCsv, setOpenCsv] = useState(false);
   const [csvText, setCsvText] = useState("");
   const [csvRows, setCsvRows] = useState<any[]>([]);
+  // Batch account type for CSV import. "" = keep (don't send → new users default 'paid', existing untouched).
+  const [csvAccountType, setCsvAccountType] = useState<"" | "paid" | "provisional">("");
   const [existing, setExisting] = useState<{
     emails: Set<string>; tgIds: Set<number>; tgUsers: Set<string>;
     inGroup: Set<string>; // profile ids already in this group
@@ -251,6 +255,7 @@ export default function GroupDetail() {
             telegram_user_id: tgId,
             telegram_username: tgUser,
             role: "student" as const,
+            account_type: addAccountType || undefined,
           }],
           target_group_id: id,
           target_course_id: overview?.course_id ?? undefined,
@@ -264,6 +269,7 @@ export default function GroupDetail() {
       if (row.status === "error" || row.status === "invalid_email") { toast.error(row.error || "Xato"); return; }
       toast.success("Talaba guruhga qo'shildi");
       setAddQuery("");
+      setAddAccountType("");
       setOpenAdd(false);
       reload();
     } finally {
@@ -369,6 +375,7 @@ export default function GroupDetail() {
       telegram_user_id: r.telegram_user_id,
       telegram_username: r.telegram_username,
       role: "student" as const,
+      account_type: csvAccountType || undefined,
     }));
     if (!toSend.length) return;
     setImporting(true);
@@ -755,6 +762,18 @@ export default function GroupDetail() {
               onChange={(e) => setAddQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") handleAddByLookup(); }}
             />
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium">To'lov holati</p>
+              <Select value={addAccountType || "keep"} onValueChange={(v) => setAddAccountType(v === "keep" ? "" : (v as "paid" | "provisional"))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="keep">Hozirgidek qoldirish (o'zgartirmaslik)</SelectItem>
+                  <SelectItem value="paid">✅ To'liq to'lagan qilib belgilash</SelectItem>
+                  <SelectItem value="provisional">🔒 Sinov (provisional) qilib belgilash</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">Mavjud talabani ko'chirganda hisob turi o'zgarmasligi uchun "Hozirgidek qoldirish"ni tanlang.</p>
+            </div>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setOpenAdd(false)}>Cancel</Button>
               <Button onClick={handleAddByLookup} disabled={addBusy || !addQuery.trim()}>Qo'shish</Button>
@@ -837,6 +856,17 @@ export default function GroupDetail() {
                   </div>
                 </>
               )}
+              <div className="space-y-1.5 pt-2 border-t">
+                <p className="text-xs font-medium">To'lov holati (butun import uchun)</p>
+                <Select value={csvAccountType || "keep"} onValueChange={(v) => setCsvAccountType(v === "keep" ? "" : (v as "paid" | "provisional"))}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="keep">Standart (yangi — To'liq, mavjud — o'zgarmaydi)</SelectItem>
+                    <SelectItem value="paid">✅ Hammasini To'liq to'lagan</SelectItem>
+                    <SelectItem value="provisional">🔒 Hammasini Sinov (provisional)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setOpenCsv(false)}>Cancel</Button>

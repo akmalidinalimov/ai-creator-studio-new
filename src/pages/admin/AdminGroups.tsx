@@ -480,6 +480,8 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [importReport, setImportReport] = useState<{ created: number; moved: number; alreadyInGroup: number; errors: string[] } | null>(null);
+  // Batch account type for CSV import. "" = keep (new users default 'paid', existing untouched).
+  const [csvAcctType, setCsvAcctType] = useState<"" | "paid" | "provisional">("");
   const [openAdd, setOpenAdd] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -575,7 +577,8 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
 
       let created = 0, moved = 0, alreadyInGroup = 0;
       const errors: string[] = [];
-      const toCreate: { email?: string; telegram_username?: string; telegram_user_id?: number }[] = [];
+      const toCreate: { email?: string; telegram_username?: string; telegram_user_id?: number; account_type?: "paid" | "provisional" }[] = [];
+      const acct = csvAcctType || undefined; // only override when admin explicitly picked one
 
       for (const ident of identifiers) {
         const v = ident.replace(/^@+/, "");
@@ -585,13 +588,15 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
           // Check if already in this group
           const { data: prof } = await supabase.from("profiles").select("group_id").eq("id", existingId).maybeSingle();
           if ((prof as any)?.group_id === group.id) { alreadyInGroup++; continue; }
-          const { error } = await supabase.from("profiles").update({ group_id: group.id }).eq("id", existingId);
+          const patch: Record<string, any> = { group_id: group.id };
+          if (acct) patch.account_type = acct; // batch choice also applies to moved existing students
+          const { error } = await supabase.from("profiles").update(patch as any).eq("id", existingId);
           if (error) errors.push(`${ident}: ${error.message}`); else moved++;
         } else {
           // Queue for creation
-          if (/^\d+$/.test(v)) toCreate.push({ telegram_user_id: Number(v) });
-          else if (v.includes("@")) toCreate.push({ email: v.toLowerCase() });
-          else toCreate.push({ telegram_username: v });
+          if (/^\d+$/.test(v)) toCreate.push({ telegram_user_id: Number(v), account_type: acct });
+          else if (v.includes("@")) toCreate.push({ email: v.toLowerCase(), account_type: acct });
+          else toCreate.push({ telegram_username: v, account_type: acct });
         }
       }
 
@@ -675,6 +680,14 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
             className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) handleCsv(f); }}
           />
+          <Select value={csvAcctType || "keep"} onValueChange={(v) => setCsvAcctType(v === "keep" ? "" : (v as "paid" | "provisional"))}>
+            <SelectTrigger className="h-8 w-auto text-xs gap-1"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="keep">To'lov: standart</SelectItem>
+              <SelectItem value="paid">✅ Hammasi To'liq</SelectItem>
+              <SelectItem value="provisional">🔒 Hammasi Sinov</SelectItem>
+            </SelectContent>
+          </Select>
           <Button variant="outline" size="sm" disabled={importing} onClick={() => fileRef.current?.click()}>
             <Upload className="mr-1 h-4 w-4" />{importing ? "Yuklanmoqda…" : "CSV yuklash"}
           </Button>
@@ -751,6 +764,7 @@ function AddStudentToGroupDialog({ group, onClose, onCreated, initialRole }: { g
   const [tgId, setTgId] = useState("");
   const [tgUser, setTgUser] = useState("");
   const [role, setRole] = useState<"student" | "teacher" | "admin">(initialRole || "student");
+  const [accountType, setAccountType] = useState<"paid" | "provisional">("paid");
   const [sendInvite, setSendInvite] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -787,6 +801,7 @@ function AddStudentToGroupDialog({ group, onClose, onCreated, initialRole }: { g
             telegram_username: tgUserRaw || undefined,
             telegram_user_id: tgIdNum,
             role,
+            account_type: role === "student" ? accountType : undefined,
           }],
           send_invite: sendInvite,
           redirectTo: `${getSiteUrl()}/reset-password`,
@@ -854,6 +869,21 @@ function AddStudentToGroupDialog({ group, onClose, onCreated, initialRole }: { g
               <Input value={group.name} disabled readOnly />
               {role === "teacher" && (
                 <p className="text-xs text-muted-foreground">Yangi guruhga biriktirish eski guruhni o'zgartirmaydi</p>
+              )}
+            </div>
+          )}
+          {role === "student" && (
+            <div className="space-y-1.5">
+              <Label>To'lov holati</Label>
+              <Select value={accountType} onValueChange={(v) => setAccountType(v as "paid" | "provisional")}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="paid">✅ To'liq to'lagan — to'liq kirish</SelectItem>
+                  <SelectItem value="provisional">🔒 Sinov (qisman to'lov) — darsliksiz</SelectItem>
+                </SelectContent>
+              </Select>
+              {accountType === "provisional" && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 leading-snug">Darsliklar yopiq bo'ladi; uy vazifa, ball va statistika ishlaydi. To'liq to'lovdan keyin "To'liq"ga o'tkaziladi.</p>
               )}
             </div>
           )}
