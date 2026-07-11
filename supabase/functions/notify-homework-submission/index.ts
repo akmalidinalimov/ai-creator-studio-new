@@ -49,6 +49,17 @@ Deno.serve(async (req) => {
   }
   const admin = __admin;
 
+  // Minute tick for the picker sweep: guarantees the ~10-min auto-fallback fires even when the
+  // group chat is silent (the in-webhook sweep runs only on organic traffic — quiet nights
+  // starved it). Best-effort, never blocks DM delivery.
+  try {
+    await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/telegram-bot-webhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-internal-secret": __s },
+      body: JSON.stringify({ action: "sweep_pending" }),
+    });
+  } catch (_e) { /* best-effort */ }
+
   const { data: pending, error } = await admin
     .from("homework_teacher_dm_queue")
     .select("*")

@@ -37,6 +37,8 @@ jobs:
           errors=$(jq -r '.errors_24h' <<<"$HEALTH_JSON")
           fallback=$(jq -r '.fallback_24h' <<<"$HEALTH_JSON")
           resurrected=$(jq -r '.resurrected_24h' <<<"$HEALTH_JSON")
+          uncaptured=$(jq -r '.uncaptured_24h // 0' <<<"$HEALTH_JSON")
+          stalest=$(jq -r '.stalest_capture_days // 0' <<<"$HEALTH_JSON")
 
           fail=0
           if [ "$unsent" != "0" ]; then
@@ -53,5 +55,15 @@ jobs:
           fi
           if [ "$resurrected" != "0" ]; then
             echo "::warning::reconciler resurrected ${resurrected} missing queue row(s) in the last 24h"
+          fi
+          # Small counts can be benign (deleted test accounts, already-graded reposts) — warn.
+          # A burst means real capture loss — fail loudly.
+          if [ "$uncaptured" -gt 3 ]; then
+            echo "::error::${uncaptured} homework media post(s) in the last 24h produced NO pipeline activity — likely capture loss (see webhook_inbox)"; fail=1
+          elif [ "$uncaptured" != "0" ]; then
+            echo "::warning::${uncaptured} homework media post(s) with no pipeline activity in 24h — check webhook_inbox if unexpected"
+          fi
+          if [ "$stalest" -gt 4 ]; then
+            echo "::warning::a group's homework capture has been silent for ${stalest} days — check the bot is still admin in every group chat"
           fi
           exit $fail

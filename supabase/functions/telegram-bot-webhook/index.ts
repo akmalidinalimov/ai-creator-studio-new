@@ -264,6 +264,7 @@ const T = {
     gradePickStudent: "📝 <b>Talabani tanlang:</b>",
     gradePickGroup: "📝 <b>Qaysi guruhni baholaysiz?</b>",
     gradeAllGroupsBtn: (n: number) => `🌐 Hammasi (${n})`,
+    gradePendingPickers: (n: number) => `⏳ ${n} ta talaba vazifa tanlamoqda — birozdan so'ng avtomatik qo'shiladi.`,
     retagBtn: "✏️ Vazifani o'zgartirish",
     retagPickModule: "✏️ Qaysi modulga o'tkazamiz?",
     retagPickTask: (m: string) => `✏️ ${m} — qaysi vazifa?`,
@@ -532,6 +533,7 @@ const T = {
     gradePickStudent: "📝 <b>Выберите студента:</b>",
     gradePickGroup: "📝 <b>Какую группу оцениваем?</b>",
     gradeAllGroupsBtn: (n: number) => `🌐 Все группы (${n})`,
+    gradePendingPickers: (n: number) => `⏳ ${n} студент(ов) выбирают задание — скоро добавятся автоматически.`,
     retagBtn: "✏️ Изменить задание",
     retagPickModule: "✏️ В какой модуль перенести?",
     retagPickTask: (m: string) => `✏️ ${m} — какое задание?`,
@@ -792,6 +794,7 @@ const T = {
     gradePickStudent: "📝 <b>Pick a student:</b>",
     gradePickGroup: "📝 <b>Which group are you grading?</b>",
     gradeAllGroupsBtn: (n: number) => `🌐 All groups (${n})`,
+    gradePendingPickers: (n: number) => `⏳ ${n} student(s) are choosing a task — they'll be filed automatically shortly.`,
     retagBtn: "✏️ Change task",
     retagPickModule: "✏️ Move to which module?",
     retagPickTask: (m: string) => `✏️ ${m} — which task?`,
@@ -3021,8 +3024,19 @@ async function renderStudentPicker(admin: any, chatId: number, graderId: string,
   const { data: subs } = await q;
   const counts = new Map<string, number>();
   for (const s of (subs || []) as any[]) counts.set(s.user_id, (counts.get(s.user_id) || 0) + 1);
+  // Pending-window visibility: a just-posted homework lives in hw_pending_posts for up to ~10 min
+  // (picker open) before becoming a submission. Show that state so "just submitted" work is never
+  // mistaken for missing (owner-reported confusion).
+  let pendingPickers = 0;
+  try {
+    let pq2 = admin.from("hw_pending_posts").select("id", { count: "exact", head: true }).eq("state", "pending");
+    if (ids) pq2 = pq2.in("user_id", ids);
+    const { count: pc } = await pq2;
+    pendingPickers = pc || 0;
+  } catch (_e) { /* cosmetic */ }
+  const pendingLine = pendingPickers > 0 ? `\n\n${t.gradePendingPickers(pendingPickers)}` : "";
   if (counts.size === 0) {
-    await sendWithKeyboard(chatId, `${t.gradePending}\n\n${t.gradeNoneP}`, locale, isAdmin, isAdmin ? "admin" : "teacher");
+    await sendWithKeyboard(chatId, `${t.gradePending}\n\n${t.gradeNoneP}${pendingLine}`, locale, isAdmin, isAdmin ? "admin" : "teacher");
     return;
   }
   const userIds = Array.from(counts.keys());
@@ -3060,7 +3074,7 @@ async function renderStudentPicker(admin: any, chatId: number, graderId: string,
   if (pageIdx < totalPages - 1) nav.push({ text: t.gradeNextPage, callback_data: `gs:list:${pageIdx + 1}:${scopeTok}` });
   if (nav.length) buttons.push(nav);
 
-  await sendMessage(chatId, t.gradePickStudent, { inline_keyboard: buttons });
+  await sendMessage(chatId, `${t.gradePickStudent}${pendingLine}`, { inline_keyboard: buttons });
   await sendKeyboardHint(chatId, locale, isAdmin, isAdmin ? "admin" : "teacher");
 }
 
@@ -3073,7 +3087,11 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
   }
   const [{ data: prof }, { data: subs }] = await Promise.all([
     admin.from("profiles").select("name, last_name, group_id").eq("id", studentId).maybeSingle(),
-    admin.from("homework_submissions").select("id, assignment_id, submitted_at, telegram_message_url").eq("user_id", studentId).is("score", null).order("submitted_at", { ascending: true }),
+    // Pending = ungraded OR re-opened (stale) — the SAME rule as the student picker that counted
+    // them. The old score-null-only filter made resubmissions-awaiting-regrade count as "(1)" in
+    // the list but show "vazifa yo'q" on tap (owner-reported; Gulmira waited since 07-09).
+    admin.from("homework_submissions").select("id, assignment_id, submitted_at, telegram_message_url, score, score_is_stale")
+      .eq("user_id", studentId).or("score.is.null,score_is_stale.is.true").order("submitted_at", { ascending: true }),
   ]);
   const list = (subs || []) as any[];
   const name = [prof?.name, prof?.last_name].filter(Boolean).join(" ") || "—";
@@ -3120,8 +3138,12 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
     let anyPostUrl = false;
     for (const it of m.items) {
       const tn = it.a.task_number || 1;
-      lines.push(`   ⏳ V${tn}: ${csvEscapeHtml(it.a.title || "")}`);
-      buttons.push([{ text: `M${m.mPos + 1}·V${tn} — ${it.a.title || ""}`.slice(0, 60), callback_data: `gs:open:${it.sub.id}` }]);
+      // 🔄 = resubmission awaiting REGRADE (old score shown); ⏳ = first-time ungraded.
+      const isResub = it.sub.score != null && it.sub.score_is_stale;
+      lines.push(isResub
+        ? `   🔄 V${tn}: ${csvEscapeHtml(it.a.title || "")} (oldingi: ${it.sub.score}/${it.a.max_score || 10})`
+        : `   ⏳ V${tn}: ${csvEscapeHtml(it.a.title || "")}`);
+      buttons.push([{ text: `${isResub ? "🔄 " : ""}M${m.mPos + 1}·V${tn} — ${it.a.title || ""}`.slice(0, 60), callback_data: `gs:open:${it.sub.id}` }]);
       const postUrl = it.sub.telegram_message_url;
       if (postUrl) {
         anyPostUrl = true;
@@ -3549,7 +3571,7 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
   const t = T[locale] as any;
   const { data: sub } = await admin
     .from("homework_submissions")
-    .select("id, assignment_id, user_id, submitted_text, submitted_image_url, submitted_at, is_late, score, previous_score, telegram_message_url, telegram_file_kind")
+    .select("id, assignment_id, user_id, submitted_text, submitted_image_url, submitted_at, is_late, score, score_is_stale, previous_score, telegram_message_url, telegram_file_kind")
     .eq("id", submissionId)
     .maybeSingle();
   if (!sub) {
@@ -3574,9 +3596,13 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
   const tn = a?.task_number ? ` #${a.task_number}` : "";
   const header = `<b>${csvEscapeHtml(name)}</b> — ${csvEscapeHtml(a?.title || "")}${tn}`;
   const body = sub.submitted_text ? csvEscapeHtml(sub.submitted_text) : "<i>(no text)</i>";
-  // Regrade context: a resubmission carries the grade it's trying to improve.
+  // Regrade context: a resubmission carries the grade it's trying to improve — either the
+  // previous_score stamp (picker-path resubmits, score reset to null) or, for STALE rows
+  // (legacy/web resubmits that keep the old score with score_is_stale=true), the score itself.
   const prevLine = (sub as any).previous_score != null && sub.score == null
-    ? `\n${(t as any).pkPrevGrade((sub as any).previous_score, a?.max_score || 10)}` : "";
+    ? `\n${(t as any).pkPrevGrade((sub as any).previous_score, a?.max_score || 10)}`
+    : (sub.score != null && (sub as any).score_is_stale
+      ? `\n🔄 ${(t as any).pkPrevGrade(sub.score, a?.max_score || 10)}` : "");
   await sendMessage(chatId, `${header}\n\n${body}${prevLine}`);
   // Telegram-source submission: surface the original message link
   if (sub.telegram_message_url) {
@@ -4185,7 +4211,10 @@ async function startHomeworkIntent(
   if (!parsed) { await sendMessage(chatId, t.hwIntentNoTopic); return; }
 
 
-  // 4. Upsert intent (10 min TTL)
+  // 4. Upsert intent (10 min TTL). submission_id is EXPLICITLY reset: a revived intent used to
+  // inherit the previous post's submission_id, so a 🔁-resubmission post silently APPENDED to the
+  // stale-scored row — no attempt bump, no score reset, no teacher DM (adversarial-review HIGH-2).
+  // An explicit Topshirish must always start a fresh attempt.
   const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
   await admin.from("bot_homework_intents").upsert({
     user_id: profile.id,
@@ -4194,6 +4223,7 @@ async function startHomeworkIntent(
     group_id: profile.group_id,
     telegram_chat_id: parsed.chatId,
     telegram_thread_id: parsed.threadId,
+    submission_id: null,
     expires_at: expiresAt,
     created_at: new Date().toISOString(),
   }, { onConflict: "user_id,assignment_id" });
@@ -4587,6 +4617,26 @@ async function finalizePendingPost(
       return "tier_locked";
     }
 
+    // ATOMIC CLAIM (adversarial-review MED-1): the sweep and a late tap both read state='pending'
+    // and could double-file one post under two assignments (two submissions, two teacher DMs).
+    // First writer wins; the loser aborts here. Downstream failures revert to 'pending' so the
+    // sweep retries. (All read-only guards above return WITHOUT consuming, so claiming here is
+    // exactly the commit point.)
+    const { data: _claimed } = await admin.from("hw_pending_posts")
+      .update({ state: "done", expires_at: new Date(Date.now() + 90_000).toISOString() })
+      .eq("id", pending.id).eq("state", "pending").select("id");
+    if (!_claimed || !_claimed.length) {
+      console.log("pk:finalize-claim-lost", JSON.stringify({ pending_id: pending.id }));
+      return "error";
+    }
+    const revertClaim = async () => {
+      try {
+        await admin.from("hw_pending_posts")
+          .update({ state: "pending", expires_at: new Date(Date.now() + 60_000).toISOString() })
+          .eq("id", pending.id);
+      } catch (_e) { /* sweep's done-pass will still clean the picker */ }
+    };
+
     // APPEND: the task already has an UNGRADED submission and the student chose ➕ (or this is
     // the auto-fallback / an unscreened path — a guess must never wipe already-submitted files).
     // Adds the new files to the existing submission: no attempt bump, no score change, no new
@@ -4601,7 +4651,7 @@ async function finalizePendingPost(
         ? `${priorText}\n${addText}`.slice(0, 4000) : (priorText || addText);
       const { error: mergeErr } = await admin.from("homework_submissions")
         .update({ media: mergedMedia, submitted_text: mergedText }).eq("id", (prior as any).id);
-      if (mergeErr) { console.error("pk:append-err", mergeErr); return "error"; }
+      if (mergeErr) { console.error("pk:append-err", mergeErr); await revertClaim(); return "error"; }
       const { data: a0 } = await admin.from("homework_assignments")
         .select("task_number, modules:module_id(position)").eq("id", assignmentId).maybeSingle();
       const lbl0 = `M${(((a0 as any)?.modules?.position ?? 0) as number) + 1} · V${(a0 as any)?.task_number ?? ""}`;
@@ -4639,7 +4689,7 @@ async function finalizePendingPost(
       media,
       source: "telegram_topic",
     }, { onConflict: "user_id,assignment_id" }).select("id").maybeSingle();
-    if (upErr || !upserted?.id) { console.error("pk:finalize-upsert-err", upErr); return "error"; }
+    if (upErr || !upserted?.id) { console.error("pk:finalize-upsert-err", upErr); await revertClaim(); return "error"; }
 
     // NOTE: no post-finalize intent window anymore. It made the NEXT image silently append to
     // this submission (owner-reported). Now every new post opens its own picker; adding files to
@@ -4694,7 +4744,9 @@ async function sweepExpiredPendingPosts(admin: any) {
   __pkLastSweep = Date.now();
   try {
     const { data: rows } = await admin.from("hw_pending_posts")
-      .select("*").eq("state", "pending").lt("expires_at", new Date().toISOString()).limit(5);
+      .select("*").eq("state", "pending").lt("expires_at", new Date().toISOString())
+      .order("expires_at", { ascending: true }) // oldest first — a bursty backlog drains fairly
+      .limit(5);
     for (const p of (rows || []) as any[]) {
       try {
         const { data: grp } = await admin.from("groups")
@@ -4879,14 +4931,19 @@ async function handlePickerPost(
   if (insErr || !created?.id) {
     // unique-violation race (album): retry as append
     const { data: live2 } = await admin.from("hw_pending_posts")
-      .select("id, media").eq("user_id", profile.id).eq("telegram_chat_id", chatId)
+      .select("id, media, submitted_text").eq("user_id", profile.id).eq("telegram_chat_id", chatId)
       .eq("telegram_thread_id", threadId).eq("state", "pending").maybeSingle();
     if (live2) {
       const media = Array.isArray(live2.media) ? live2.media : [];
       if (media.length < 10) {
         media.push(item);
-        await admin.from("hw_pending_posts").update({ media }).eq("id", live2.id);
+        // Same caption-merge as the primary append path (was dropped here — review LOW-1).
+        const mergedText2 = live2.submitted_text && caption && !live2.submitted_text.includes(caption)
+          ? `${live2.submitted_text}\n${caption}`.slice(0, 4000) : (live2.submitted_text || caption);
+        await admin.from("hw_pending_posts").update({ media, submitted_text: mergedText2 }).eq("id", live2.id);
         try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "👍" }] }); } catch (_e) { /* ignore */ }
+      } else {
+        try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "🙈" }] }); } catch (_e) { /* ignore */ }
       }
     } else {
       console.error("pk:insert-err", insErr);
@@ -5140,8 +5197,12 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     // items — without bumping attempt_number or re-notifying the teacher.
     if (intent.submission_id) {
       const { data: cur } = await admin.from("homework_submissions")
-        .select("id, media, submitted_text").eq("id", intent.submission_id).maybeSingle();
-      if (cur) {
+        .select("id, media, submitted_text, score, score_is_stale").eq("id", intent.submission_id).maybeSingle();
+      // Defense-in-depth for HIGH-2: never append onto a STALE-SCORED row — that's a resubmission
+      // awaiting regrade; it must fall through to the fresh upsert (attempt bump + teacher DM).
+      if (cur && (cur as any).score != null && (cur as any).score_is_stale) {
+        console.log("hw:group:append-diverted-stale", JSON.stringify({ submission_id: cur.id }));
+      } else if (cur) {
         const media = Array.isArray(cur.media) ? cur.media : [];
         if (media.length >= 10) {
           console.log("hw:group:media-cap-reached", JSON.stringify({ submission_id: cur.id }));
@@ -6276,13 +6337,32 @@ Deno.serve(async (req) => {
   // INTERNAL_FN_SECRET — same pattern as the canary/cron functions.
   const internalSecret = req.headers.get("x-internal-secret") || "";
   const INTERNAL = Deno.env.get("INTERNAL_FN_SECRET") || "";
-  if (internalSecret && INTERNAL && internalSecret === INTERNAL) {
+  if (internalSecret) {
+    // Accept the env secret OR the DB-side internal_fn_secret() (callers like the minute
+    // drainer only have the DB one).
+    let okInternal = !!INTERNAL && internalSecret === INTERNAL;
+    if (!okInternal) {
+      try {
+        const adminX = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+        const { data: s } = await adminX.rpc("internal_fn_secret");
+        okInternal = !!s && internalSecret === String(s);
+      } catch (_e) { /* fall through to 403 */ }
+    }
+    if (!okInternal) return new Response("Forbidden", { status: 403, headers: corsHeaders });
     let body: any = {};
     try { body = await req.json(); } catch { /* ignore */ }
     if (body?.action === "migration_broadcast") {
       const adminC = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
       const report = await runMigrationBroadcast(adminC, body.mode === "all" ? "all" : "test");
       return new Response(JSON.stringify(report), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    if (body?.action === "sweep_pending") {
+      // Cron tick from the minute drainer: guarantees picker auto-fallback even when the group
+      // is silent (the sweep used to run only on organic group traffic — quiet nights starved it).
+      const adminC = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      __pkLastSweep = 0; // bypass the per-instance throttle for explicit ticks
+      await sweepExpiredPendingPosts(adminC);
+      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
     return new Response(JSON.stringify({ error: "unknown action" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
