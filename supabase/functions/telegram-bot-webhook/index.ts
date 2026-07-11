@@ -275,6 +275,8 @@ const T = {
     pkGradedAlready: "Bu vazifa allaqachon baholangan. Boshqasini tanlang.",
     pkTierLocked: "Bu modul sizning tarifingizda yopiq.",
     pkWrongTopic: (url: string) => `⚠️ Bu boshqa guruh topigi. Vazifangizni o'z guruhingiz topigiga yuboring: ${url}`,
+    pkResubAsk: (lbl: string, sc: number, mx: number) => `⚠️ ${lbl} allaqachon baholangan: <b>${sc}/${mx}</b>.\nQayta topshirsangiz, eski baho bekor qilinadi va o'qituvchi qaytadan baholaydi.`,
+    pkResubYes: "🔄 Ha, qayta topshirish",
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ hammasi" : `${n} vazifa baholanmagan`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Modul ${n} topikga o'tish`,
@@ -532,6 +534,8 @@ const T = {
     pkGradedAlready: "Это задание уже оценено. Выберите другое.",
     pkTierLocked: "Этот модуль закрыт в вашем тарифе.",
     pkWrongTopic: (url: string) => `⚠️ Это топик другой группы. Отправьте работу в топик своей группы: ${url}`,
+    pkResubAsk: (lbl: string, sc: number, mx: number) => `⚠️ ${lbl} уже оценено: <b>${sc}/${mx}</b>.\nПри повторной сдаче старая оценка сбросится, и учитель оценит заново.`,
+    pkResubYes: "🔄 Да, пересдать",
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ всё" : `${n} не оценено`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Перейти в топик модуля ${n}`,
@@ -781,6 +785,8 @@ const T = {
     pkGradedAlready: "That task is already graded. Pick another.",
     pkTierLocked: "That module is locked on your plan.",
     pkWrongTopic: (url: string) => `⚠️ This is another group's topic. Post your homework in your own group's topic: ${url}`,
+    pkResubAsk: (lbl: string, sc: number, mx: number) => `⚠️ ${lbl} is already graded: <b>${sc}/${mx}</b>.\nResubmitting resets the old score and your teacher will regrade it.`,
+    pkResubYes: "🔄 Yes, resubmit",
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ all done" : `${n} ungraded`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Open module ${n} topic`,
@@ -4432,6 +4438,7 @@ async function finalizePendingPost(
   assignmentId: string,
   moduleId: string,
   guessed: boolean,
+  allowResubmit = false, // true ONLY after the student explicitly confirmed regrading
 ): Promise<"created" | "already_graded" | "tier_locked" | "error"> {
   try {
     const chatId = Number(pending.telegram_chat_id);
@@ -4454,7 +4461,7 @@ async function finalizePendingPost(
     // here (v1 bug, caught in owner testing) silently lost the post while showing a ✅ reaction.
     const { data: prior } = await admin.from("homework_submissions")
       .select("id, score, score_is_stale").eq("user_id", pending.user_id).eq("assignment_id", assignmentId).maybeSingle();
-    if (prior && prior.score != null && !prior.score_is_stale) {
+    if (prior && prior.score != null && !prior.score_is_stale && !allowResubmit) {
       if (!guessed) return "already_graded"; // picker stays open; nothing consumed
       // Sweep fallback: mirror the legacy auto path (acknowledge, inform, consume).
       await admin.from("hw_pending_posts").update({ state: "done" }).eq("id", pending.id);
@@ -5620,23 +5627,34 @@ async function handleCallback(admin: any, cq: any) {
       return;
     }
 
-    if (parts[2] === "t") {
+    if (parts[2] === "t" || parts[2] === "r") {
+      const isConfirmedResub = parts[2] === "r"; // "r" only exists on the explicit confirm button
       const mod = ordered[Number(parts[3])];
       if (!mod) { await answerCallback(cq.id); return; }
       const { data: asgs } = await admin.from("homework_assignments")
-        .select("id, title, task_number, sap_number, parent_id, is_active, created_at")
+        .select("id, title, task_number, sap_number, parent_id, is_active, created_at, max_score")
         .eq("module_id", mod.id).eq("is_active", true);
       const leaves = computeLeaves(((asgs || []) as any)) as any[];
       const leaf = leaves[Number(parts[4])];
       if (!leaf) { await answerCallback(cq.id); return; }
+      const lbl = `M${(mod.position ?? 0) + 1} · V${leaf.task_number ?? leaf.sap_number ?? ""}`;
       // Refresh the pending row (media may have grown since the callback row was loaded).
       const { data: freshPending } = await admin.from("hw_pending_posts").select("*").eq("id", pid).maybeSingle();
       if (!freshPending || freshPending.state !== "pending") { await answerCallback(cq.id, t.pkExpired); return; }
-      const result = await finalizePendingPost(admin, freshPending, leaf.id, mod.id, false);
+      const result = await finalizePendingPost(admin, freshPending, leaf.id, mod.id, false, isConfirmedResub);
       if (result === "created") {
-        await answerCallback(cq.id, t.pkDone(`M${(mod.position ?? 0) + 1} · V${leaf.task_number ?? leaf.sap_number ?? ""}`));
+        await answerCallback(cq.id, t.pkDone(lbl));
       } else if (result === "already_graded") {
-        await answerCallback(cq.id, t.pkGradedAlready);
+        // Resubmission-to-improve: show the current score and ask for explicit confirmation —
+        // an accidental tap must never wipe a real grade. Confirm → new attempt, score reset,
+        // teacher regrades (standard resubmission semantics, same as the /vazifalar flow).
+        const { data: prior } = await admin.from("homework_submissions")
+          .select("score").eq("user_id", freshPending.user_id).eq("assignment_id", leaf.id).maybeSingle();
+        await answerCallback(cq.id);
+        await editPicker(t.pkResubAsk(lbl, (prior?.score ?? 0) as number, (leaf.max_score ?? 10) as number), [
+          [{ text: t.pkResubYes, callback_data: `hwpk:${pid}:r:${parts[3]}:${parts[4]}` }],
+          [{ text: t.pkBack, callback_data: `hwpk:${pid}:m:${parts[3]}` }],
+        ]);
       } else if (result === "tier_locked") {
         await answerCallback(cq.id, t.pkTierLocked);
       } else {
