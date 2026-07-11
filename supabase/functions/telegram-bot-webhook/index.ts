@@ -277,6 +277,7 @@ const T = {
     pkWrongTopic: (url: string) => `⚠️ Bu boshqa guruh topigi. Vazifangizni o'z guruhingiz topigiga yuboring: ${url}`,
     pkResubAsk: (lbl: string, sc: number, mx: number) => `⚠️ ${lbl} allaqachon baholangan: <b>${sc}/${mx}</b>.\nQayta topshirsangiz, eski baho bekor qilinadi va o'qituvchi qaytadan baholaydi.`,
     pkResubYes: "🔄 Ha, qayta topshirish",
+    pkDoneMsg: (lbl: string) => `✅ <b>${lbl}</b> qabul qilindi — o'qituvchi tekshiradi.`,
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ hammasi" : `${n} vazifa baholanmagan`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Modul ${n} topikga o'tish`,
@@ -536,6 +537,7 @@ const T = {
     pkWrongTopic: (url: string) => `⚠️ Это топик другой группы. Отправьте работу в топик своей группы: ${url}`,
     pkResubAsk: (lbl: string, sc: number, mx: number) => `⚠️ ${lbl} уже оценено: <b>${sc}/${mx}</b>.\nПри повторной сдаче старая оценка сбросится, и учитель оценит заново.`,
     pkResubYes: "🔄 Да, пересдать",
+    pkDoneMsg: (lbl: string) => `✅ <b>${lbl}</b> принято — учитель проверит.`,
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ всё" : `${n} не оценено`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Перейти в топик модуля ${n}`,
@@ -787,6 +789,7 @@ const T = {
     pkWrongTopic: (url: string) => `⚠️ This is another group's topic. Post your homework in your own group's topic: ${url}`,
     pkResubAsk: (lbl: string, sc: number, mx: number) => `⚠️ ${lbl} is already graded: <b>${sc}/${mx}</b>.\nResubmitting resets the old score and your teacher will regrade it.`,
     pkResubYes: "🔄 Yes, resubmit",
+    pkDoneMsg: (lbl: string) => `✅ <b>${lbl}</b> accepted — your teacher will review it.`,
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ all done" : `${n} ungraded`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Open module ${n} topic`,
@@ -4516,11 +4519,9 @@ async function finalizePendingPost(
       created_at: new Date().toISOString(),
     }, { onConflict: "user_id,assignment_id" });
 
-    await admin.from("hw_pending_posts").update({ state: "done" }).eq("id", pending.id);
-    await deletePicker();
     try { await setMessageReaction(chatId, firstMsgId, "✅"); } catch (_e) { /* ignore */ }
 
-    // Assignment meta for the notifications.
+    // Assignment meta for the notifications + the visible receipt.
     const { data: a } = await admin.from("homework_assignments")
       .select("title, task_number, sap_number, parent_id, module_id, modules(position)")
       .eq("id", assignmentId).maybeSingle();
@@ -4532,6 +4533,31 @@ async function finalizePendingPost(
       aTitle = `V${par?.task_number ?? "?"}.S${a?.sap_number ?? "?"} — ${a?.title || ""}`;
     }
     if (guessed) aTitle = `${aTitle} (taxminiy)`; // teacher sees the tag was auto-guessed → ✏️ if wrong
+
+    // VISIBLE RECEIPT (owner feedback: the toast alone is too easy to miss): morph the picker
+    // message into a short confirmation everyone can see, then self-delete after ~30s.
+    // waitUntil gives the precise 30s; the sweep's done-row pass is the backstop if the
+    // instance dies first (expires_at doubles as the deletion deadline once state='done').
+    await admin.from("hw_pending_posts")
+      .update({ state: "done", expires_at: new Date(Date.now() + 90_000).toISOString() })
+      .eq("id", pending.id);
+    if (pending.picker_message_id) {
+      const pickerMsgId = Number(pending.picker_message_id);
+      const confLbl = `M${mn} · V${tn}${guessed ? " (avto)" : ""}`;
+      try {
+        await tgApi("editMessageText", {
+          chat_id: chatId, message_id: pickerMsgId,
+          text: t.pkDoneMsg(confLbl), parse_mode: "HTML",
+        });
+        const delayedDelete = (async () => {
+          await new Promise((r) => setTimeout(r, 30_000));
+          try { await tgApi("deleteMessage", { chat_id: chatId, message_id: pickerMsgId }); } catch (_e) { /* sweep backstop */ }
+          try { await admin.from("hw_pending_posts").update({ picker_message_id: null }).eq("id", pending.id); } catch (_e) { /* ignore */ }
+        })();
+        const er: any = (globalThis as any).EdgeRuntime;
+        if (er?.waitUntil) er.waitUntil(delayedDelete); else delayedDelete.catch(() => {});
+      } catch (_e) { /* receipt is best-effort; ✅ reaction + DM still stand */ }
+    }
 
     if (profile?.telegram_id) {
       try { await sendMessage(Number(profile.telegram_id), t.hwReceived(mn, tn, undefined, undefined)); } catch (_e) { /* ~70% can't be DMed — the ✅ reaction is the receipt */ }
@@ -4569,6 +4595,16 @@ async function sweepExpiredPendingPosts(admin: any) {
         }
         await finalizePendingPost(admin, p, resolved.assignment.id, resolved.moduleId, true);
       } catch (e) { console.error("pk:sweep-row-err", String(e)); }
+    }
+    // Backstop pass: receipts whose timed self-delete didn't run (instance died) —
+    // done rows past their deletion deadline that still hold a picker/receipt message.
+    const { data: doneRows } = await admin.from("hw_pending_posts")
+      .select("id, telegram_chat_id, picker_message_id")
+      .eq("state", "done").not("picker_message_id", "is", null)
+      .lt("expires_at", new Date().toISOString()).limit(10);
+    for (const d of (doneRows || []) as any[]) {
+      try { await tgApi("deleteMessage", { chat_id: Number(d.telegram_chat_id), message_id: Number(d.picker_message_id) }); } catch (_e) { /* may already be gone */ }
+      await admin.from("hw_pending_posts").update({ picker_message_id: null }).eq("id", d.id);
     }
   } catch (e) { console.error("pk:sweep-err", String(e)); }
 }
