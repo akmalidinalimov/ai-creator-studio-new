@@ -3624,7 +3624,9 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
   await admin.from("bot_conversation_state").upsert({
     telegram_id: graderTgId,
     state: "grade_score",
-    context: { submission_id: submissionId, max_score: a?.max_score || 10, grader_id: graderId, is_admin: isAdmin },
+    // opened_sub_at: detect a resubmission landing WHILE the teacher grades (U8) — the commit
+    // compares and warns instead of silently grading work that was just replaced.
+    context: { submission_id: submissionId, max_score: a?.max_score || 10, grader_id: graderId, is_admin: isAdmin, opened_sub_at: sub.submitted_at },
     updated_at: new Date().toISOString(),
     expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
   });
@@ -3698,12 +3700,25 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
     const feedback = text === "/skip" ? null : text;
     const score = Number(ctx.score);
 
+    // U8: detect a resubmission that landed WHILE the teacher was grading — warn instead of
+    // silently scoring work the student just replaced.
+    let racedResubmit = false;
+    if (ctx.opened_sub_at && sub?.submitted_at
+        && new Date(sub.submitted_at).getTime() > new Date(ctx.opened_sub_at).getTime()) {
+      racedResubmit = true;
+    }
+
     const { error: upErr } = await admin.from("homework_submissions").update({
       score, score_feedback: feedback, scored_by: profileId, scored_at: new Date().toISOString(), score_is_stale: false,
     }).eq("id", submissionId);
     if (upErr) {
       await sendMessage(msg.chat.id, `❌ ${upErr.message}`);
       return true;
+    }
+    if (racedResubmit) {
+      try {
+        await sendMessage(msg.chat.id, "⚠️ Diqqat: siz baholayotgan paytda talaba YANGI variant yuborgan bo'lishi mumkin — topshiriqni yana bir ko'rib chiqing (📝 Baholash).");
+      } catch (_e) { /* best-effort */ }
     }
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
     if (sub) {
@@ -4719,9 +4734,18 @@ async function finalizePendingPost(
       .update({ state: "done", expires_at: new Date(Date.now() + 90_000).toISOString() })
       .eq("id", pending.id);
     // Resubmission receipt carries the grade being improved — the student sees what they had.
+    // U2: if the files span 2+ distinct Telegram albums (or an album plus extra singles), the
+    // student may have bundled DIFFERENT homeworks into one submission — say so in the receipt.
+    const mgids = new Set<string>();
+    let singles = 0;
+    for (const it of media as any[]) { if (it?.mgid) mgids.add(String(it.mgid)); else singles++; }
+    const multiAlbum = mgids.size >= 2 || (mgids.size >= 1 && singles > 0);
+    const albumWarn = multiAlbum
+      ? `\n⚠️ Bir nechta yuklama aniqlandi — agar bular BOSHQA vazifalar bo'lsa, ularni alohida yuborib, to'g'ri vazifani tanlang.` : "";
     const confLbl = `M${mn} · V${tn}${guessed ? " (avto)" : ""}`;
     await morphReceipt(t.pkDoneMsg(confLbl)
-      + (prevScore != null ? `\n${t.pkPrevGrade(prevScore, (a?.max_score ?? 10) as number)}` : ""));
+      + (prevScore != null ? `\n${t.pkPrevGrade(prevScore, (a?.max_score ?? 10) as number)}` : "")
+      + albumWarn);
 
     if (profile?.telegram_id) {
       try { await sendMessage(Number(profile.telegram_id), t.hwReceived(mn, tn, undefined, undefined)); } catch (_e) { /* ~70% can't be DMed — the ✅ reaction is the receipt */ }
@@ -4735,6 +4759,9 @@ async function finalizePendingPost(
     return "error";
   }
 }
+
+// U5: throttle map for the anonymous-poster hint (one per topic per 15 min).
+const __anonHintAt = new Map<string, number>();
 
 // Expiry sweep: unanswered pickers fall back to the smart auto-tag guess. Runs opportunistically
 // on group traffic (throttled) — a quiet night just delays the fallback, which is harmless
@@ -4825,6 +4852,18 @@ async function autoRegisterProvisionalPoster(
       return null;
     }
 
+    // U4: never auto-register the CHAT'S ADMINS as students — unregistered staff posting an
+    // example image in the homework topic must not become a provisional student + submission.
+    try {
+      const cmResp = await tgApi("getChatMember", { chat_id: chatId, user_id: from.id });
+      const cm: any = await cmResp.json().catch(() => null);
+      const st = cm?.result?.status;
+      if (st === "administrator" || st === "creator") {
+        console.log("hw:autoreg:skip", JSON.stringify({ reason: "chat_admin", tg: from.id }));
+        return null;
+      }
+    } catch (_e) { /* best-effort — proceed */ }
+
     // Server-to-server into the proven creation engine (same pattern as staff-intake).
     const { data: sec } = await admin.rpc("internal_fn_secret");
     if (!sec) return null;
@@ -4904,16 +4943,18 @@ async function handlePickerPost(
     .eq("user_id", profile.id).eq("telegram_chat_id", chatId).eq("telegram_thread_id", threadId)
     .eq("state", "pending").gt("expires_at", nowIso).maybeSingle();
   if (live) {
-    const media = Array.isArray(live.media) ? live.media : [];
-    if (media.length >= 10) {
+    // U14: atomic SQL append — concurrent album siblings can no longer lose items to
+    // read-modify-write races.
+    const { data: n } = await admin.rpc("append_pending_media", { _id: live.id, _item: item, _caption: caption || "" });
+    if (typeof n === "number" && n >= 0) {
+      try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "👍" }] }); } catch (_e) { /* ignore */ }
+    } else if (n === -1) {
       try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "🙈" }] }); } catch (_e) { /* ignore */ }
-      return;
+    } else {
+      // -2: the pending finalized between our select and the append (album tail) — the file
+      // remains visible in the topic thread; log only.
+      console.log("pk:append-after-finalize-ignored", JSON.stringify({ pending_id: live.id, messageId }));
     }
-    media.push(item);
-    const mergedText = live.submitted_text && caption && !live.submitted_text.includes(caption)
-      ? `${live.submitted_text}\n${caption}`.slice(0, 4000) : (live.submitted_text || caption);
-    await admin.from("hw_pending_posts").update({ media, submitted_text: mergedText }).eq("id", live.id);
-    try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "👍" }] }); } catch (_e) { /* ignore */ }
     return;
   }
   // Create the pending row. A racing album sibling may win the unique index — append instead.
@@ -4932,19 +4973,13 @@ async function handlePickerPost(
   if (insErr || !created?.id) {
     // unique-violation race (album): retry as append
     const { data: live2 } = await admin.from("hw_pending_posts")
-      .select("id, media, submitted_text").eq("user_id", profile.id).eq("telegram_chat_id", chatId)
+      .select("id").eq("user_id", profile.id).eq("telegram_chat_id", chatId)
       .eq("telegram_thread_id", threadId).eq("state", "pending").maybeSingle();
     if (live2) {
-      const media = Array.isArray(live2.media) ? live2.media : [];
-      if (media.length < 10) {
-        media.push(item);
-        // Same caption-merge as the primary append path (was dropped here — review LOW-1).
-        const mergedText2 = live2.submitted_text && caption && !live2.submitted_text.includes(caption)
-          ? `${live2.submitted_text}\n${caption}`.slice(0, 4000) : (live2.submitted_text || caption);
-        await admin.from("hw_pending_posts").update({ media, submitted_text: mergedText2 }).eq("id", live2.id);
-        try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "👍" }] }); } catch (_e) { /* ignore */ }
-      } else {
-        try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "🙈" }] }); } catch (_e) { /* ignore */ }
+      const { data: n2 } = await admin.rpc("append_pending_media", { _id: live2.id, _item: item, _caption: caption || "" });
+      const emoji = (typeof n2 === "number" && n2 >= 0) ? "👍" : (n2 === -1 ? "🙈" : null);
+      if (emoji) {
+        try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji }] }); } catch (_e) { /* ignore */ }
       }
     } else {
       console.error("pk:insert-err", insErr);
@@ -5025,6 +5060,33 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     let profile: any = null;
     if (fromId && !isAnon) {
       profile = await findProfileByTelegramId(admin, fromId);
+    }
+
+    // U5: ANONYMOUS posts (send-as-group / send-as-channel) can't be attributed to a student —
+    // they used to vanish with zero feedback. Hint ONLY for fresh non-reply posts in a REGISTERED
+    // homework topic (teachers commonly answer anonymously WITH media as replies — never hint at
+    // those), throttled to one per topic per 15 min.
+    if (isAnon || msg.sender_chat) {
+      if (!msg.reply_to_message) {
+        const stripped0 = String(chatId).replace(/^-100/, "");
+        const { data: hwg } = await admin.from("groups").select("id")
+          .eq("homework_topic_id", threadId)
+          .ilike("homework_topic_url", `%/c/${stripped0}/%`).limit(1);
+        if (hwg && hwg.length) {
+          const k = `${chatId}:${threadId}`;
+          if ((Date.now() - (__anonHintAt.get(k) || 0)) > 15 * 60_000) {
+            __anonHintAt.set(k, Date.now());
+            try {
+              await tgApi("sendMessage", {
+                chat_id: chatId, message_thread_id: threadId, reply_to_message_id: messageId,
+                text: "⚠️ Anonim rejimda yuborilgan vazifa qabul qilinmaydi. Iltimos, anonim rejimni o'chirib, o'z nomingizdan qaytadan yuboring.",
+              });
+            } catch (_e) { /* best-effort */ }
+          }
+          console.log("hw:group:anon-poster-hinted", JSON.stringify({ chatId, threadId, messageId }));
+        }
+      }
+      return;
     }
 
     // Strict per-student attribution — but an unknown group member posting real homework in a
@@ -5132,7 +5194,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
           return;
         }
         const messageUrl0 = buildMessageLink(chatId, threadId, messageId);
-        const item0 = { kind, ...(linkUrl ? { url: linkUrl } : { file_id: fileId }), msg_url: messageUrl0 };
+        const item0 = { kind, ...(linkUrl ? { url: linkUrl } : { file_id: fileId }), msg_url: messageUrl0, ...(msg.media_group_id ? { mgid: String(msg.media_group_id) } : {}) };
         await handlePickerPost(admin, profile, grp, chatId, threadId, messageId, item0, (msg.caption || msg.text || "").slice(0, 4000));
         return;
       }
@@ -5191,7 +5253,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
 
     const messageUrl = buildMessageLink(chatId, threadId, messageId);
     const submittedText = (msg.caption || msg.text || "").slice(0, 4000);
-    const mediaItem = { kind, ...(linkUrl ? { url: linkUrl } : { file_id: fileId }), msg_url: messageUrl };
+    const mediaItem = { kind, ...(linkUrl ? { url: linkUrl } : { file_id: fileId }), msg_url: messageUrl, ...(msg.media_group_id ? { mgid: String(msg.media_group_id) } : {}) };
 
     // APPEND MODE: the intent already produced a submission (album photos and
     // follow-up files arrive as separate messages). Attach to it — up to 10
@@ -5204,24 +5266,24 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       if (cur && (cur as any).score != null && (cur as any).score_is_stale) {
         console.log("hw:group:append-diverted-stale", JSON.stringify({ submission_id: cur.id }));
       } else if (cur) {
-        const media = Array.isArray(cur.media) ? cur.media : [];
-        if (media.length >= 10) {
+        // U14: atomic SQL append (concurrent album siblings can't lose items anymore).
+        const { data: nApp } = await admin.rpc("append_submission_media",
+          { _id: cur.id, _item: mediaItem, _caption: submittedText || "" });
+        if (typeof nApp === "number" && nApp >= 0) {
+          // keep the window open a bit longer for slow uploads
+          await admin.from("bot_homework_intents")
+            .update({ expires_at: new Date(Date.now() + 5 * 60_000).toISOString() }).eq("id", intent.id);
+          try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "👍" }] }); } catch (_e) { /* best-effort */ }
+          console.log("hw:group:media-appended", JSON.stringify({ submission_id: cur.id, n: nApp, kind }));
+          return;
+        }
+        if (nApp === -1) {
           console.log("hw:group:media-cap-reached", JSON.stringify({ submission_id: cur.id }));
           try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "🙈" }] }); } catch (_e) { /* best-effort */ }
           return;
         }
-        media.push(mediaItem);
-        const mergedText = cur.submitted_text && submittedText && !cur.submitted_text.includes(submittedText)
-          ? `${cur.submitted_text}\n${submittedText}`.slice(0, 4000)
-          : (cur.submitted_text || submittedText);
-        await admin.from("homework_submissions")
-          .update({ media, submitted_text: mergedText }).eq("id", cur.id);
-        // keep the window open a bit longer for slow uploads
-        await admin.from("bot_homework_intents")
-          .update({ expires_at: new Date(Date.now() + 5 * 60_000).toISOString() }).eq("id", intent.id);
-        try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "👍" }] }); } catch (_e) { /* best-effort */ }
-        console.log("hw:group:media-appended", JSON.stringify({ submission_id: cur.id, n: media.length, kind }));
-        return;
+        // -2: row became graded/vanished between the read and the append — fall through to the
+        // fresh path (attempt bump + teacher DM), which is the correct semantics for a new post.
       }
       // Submission vanished (deleted?) — fall through and recreate below.
     }
@@ -6411,6 +6473,53 @@ Deno.serve(async (req) => {
   const inboxId = await logWebhookInbox(admin, update);
 
   try {
+    // U7: a student EDITING their homework post (e.g. replacing the photo) used to be ignored —
+    // the submission kept the original file. Update the stored file_id + matching media item.
+    if (update.edited_message) {
+      const em = update.edited_message;
+      const emChatType = em.chat?.type;
+      if ((emChatType === "supergroup" || emChatType === "group") && em.from?.id && !em.from.is_bot) {
+        try {
+          let newFileId: string | null = null; let newKind: string | null = null;
+          if (Array.isArray(em.photo) && em.photo.length) { newFileId = em.photo[em.photo.length - 1].file_id; newKind = "photo"; }
+          else if (em.video) { newFileId = em.video.file_id; newKind = "video"; }
+          else if (em.document) { newFileId = em.document.file_id; newKind = "document"; }
+          if (newFileId) {
+            const emProfile = await findProfileByTelegramId(admin, em.from.id);
+            if (emProfile) {
+              // Update the submission that anchors on this exact message…
+              const { data: hit } = await admin.from("homework_submissions")
+                .select("id, media").eq("user_id", emProfile.id)
+                .eq("telegram_chat_id", em.chat.id).eq("telegram_message_id", em.message_id).maybeSingle();
+              if (hit) {
+                const media2 = (Array.isArray(hit.media) ? hit.media : []).map((it: any) =>
+                  (it?.msg_url && String(it.msg_url).endsWith(`/${em.message_id}`)) ? { ...it, file_id: newFileId, kind: newKind } : it);
+                await admin.from("homework_submissions")
+                  .update({ telegram_file_id: newFileId, telegram_file_kind: newKind, media: media2 }).eq("id", hit.id);
+                console.log("hw:edit:updated-submission", JSON.stringify({ submission_id: hit.id, msg: em.message_id }));
+              } else {
+                // …or a media item appended under a different anchor (album member). Scan the
+                // student's recent submissions in JS (jsonb text-matching isn't PostgREST-filterable).
+                const { data: subs2 } = await admin.from("homework_submissions")
+                  .select("id, media").eq("user_id", emProfile.id)
+                  .order("submitted_at", { ascending: false }).limit(10);
+                for (const s2 of (subs2 || []) as any[]) {
+                  const arr = Array.isArray(s2.media) ? s2.media : [];
+                  if (!arr.some((it: any) => it?.msg_url && String(it.msg_url).endsWith(`/${em.message_id}`))) continue;
+                  const media3 = arr.map((it: any) =>
+                    (it?.msg_url && String(it.msg_url).endsWith(`/${em.message_id}`)) ? { ...it, file_id: newFileId, kind: newKind } : it);
+                  await admin.from("homework_submissions").update({ media: media3 }).eq("id", s2.id);
+                  console.log("hw:edit:updated-media-item", JSON.stringify({ submission_id: s2.id, msg: em.message_id }));
+                  break;
+                }
+              }
+            }
+          }
+        } catch (e) { console.error("hw:edit:err", String(e)); }
+      }
+      return new Response("ok", { status: 200, headers: corsHeaders });
+    }
+
     // Treat both message and channel_post as inbound for group topics (forum supergroups can deliver either)
     const inbound = update.message || update.channel_post;
     if (inbound) {
@@ -6462,6 +6571,37 @@ Deno.serve(async (req) => {
 
       const persona: Persona = profileForLocale ? await getPersona(admin, profileForLocale.id) : "student";
       const adminFlag = persona === "admin";
+
+      // U1: students WILL try DMing homework media to the bot. Point them to their group's
+      // homework topic instead of ignoring them (rate-limited 15 min).
+      if (isPrivateChat && persona === "student" && profileForLocale
+          && (msg.photo || msg.video || msg.document)) {
+        try {
+          const since = new Date(Date.now() - 15 * 60_000).toISOString();
+          const { data: rh } = await admin.from("notifications_log")
+            .select("id").eq("user_id", profileForLocale.id)
+            .eq("notification_type", "hw_dm_media_hint").gte("sent_at", since).limit(1);
+          if (!rh || !rh.length) {
+            let topicUrl: string | null = null;
+            if (profileForLocale.group_id) {
+              const { data: g0 } = await admin.from("groups")
+                .select("homework_topic_url").eq("id", profileForLocale.group_id).maybeSingle();
+              topicUrl = g0?.homework_topic_url ?? null;
+            }
+            const hint = {
+              uz: "📌 Vazifalar botga emas, guruhingizdagi <b>UYGA VAZIFA</b> topigiga yuboriladi. O'sha yerga yuborsangiz, modul va vazifani tugmalar bilan tanlaysiz.",
+              ru: "📌 Задания отправляются не боту, а в топик <b>UYGA VAZIFA</b> вашей группы. Там вы выберете модуль и задание кнопками.",
+              en: "📌 Homework goes to your group's <b>UYGA VAZIFA</b> topic, not to the bot. Post it there and pick the module/task with the buttons.",
+            }[locale];
+            await sendMessage(msg.chat.id, hint,
+              topicUrl ? { inline_keyboard: [[{ text: "📥 Vazifa topigiga o'tish", url: topicUrl }]] } : undefined);
+            await admin.from("notifications_log").insert({
+              user_id: profileForLocale.id, notification_type: "hw_dm_media_hint", sent_at: new Date().toISOString(),
+            });
+          }
+        } catch (_e) { /* hint is best-effort */ }
+        return new Response("ok", { status: 200, headers: corsHeaders });
+      }
 
       if (text.startsWith("/start ")) {
         const arg = text.slice(7).trim();
