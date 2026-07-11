@@ -1,0 +1,57 @@
+# Out-of-band morning verifier for the teacher homework-DM pipeline.
+#
+# All in-Supabase reliability legs (minute drainer, retries, queue reconciler, SQL fallback,
+# watchdog) share pg_cron + pg_net — if that infra dies, they die silently TOGETHER. This
+# workflow runs on GitHub's servers, so it survives anything that happens to Supabase, and
+# asserts every morning (08:25 Tashkent, right after the quiet-hours flush + fallback window)
+# that the flush actually happened. Any failed assertion — or the endpoint being unreachable
+# at all — fails the run, and GitHub emails the repo owner about failed scheduled workflows.
+name: HW teacher-DM morning health check
+
+on:
+  schedule:
+    - cron: "25 3 * * *" # 03:25 UTC = 08:25 Asia/Tashkent (no DST)
+  workflow_dispatch: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch pipeline health
+        env:
+          HW_HEALTH_SECRET: ${{ secrets.HW_HEALTH_SECRET }}
+        run: |
+          set -euo pipefail
+          resp=$(curl -sS --fail --max-time 30 \
+            -H "x-health-secret: ${HW_HEALTH_SECRET}" \
+            "https://cdyidatkegxwhtuoqxly.supabase.co/functions/v1/hw-dm-health")
+          echo "health: ${resp}"
+          echo "HEALTH_JSON=${resp}" >> "$GITHUB_ENV"
+
+      - name: Assert the morning flush completed
+        run: |
+          set -euo pipefail
+          unsent=$(jq -r '.unsent_overdue' <<<"$HEALTH_JSON")
+          drainer_age=$(jq -r '.drainer_age_sec' <<<"$HEALTH_JSON")
+          errors=$(jq -r '.errors_24h' <<<"$HEALTH_JSON")
+          fallback=$(jq -r '.fallback_24h' <<<"$HEALTH_JSON")
+          resurrected=$(jq -r '.resurrected_24h' <<<"$HEALTH_JSON")
+
+          fail=0
+          if [ "$unsent" != "0" ]; then
+            echo "::error::${unsent} teacher DM(s) still unsent >15 min past due — the flush did NOT complete"; fail=1
+          fi
+          if [ "$drainer_age" -gt 300 ]; then
+            echo "::error::drainer cron has not succeeded for ${drainer_age}s (>5 min) — pg_cron/pg_net may be down"; fail=1
+          fi
+          if [ "$errors" != "0" ]; then
+            echo "::warning::${errors} real delivery error(s) in the last 24h — check homework_teacher_dm_queue.error"
+          fi
+          if [ "$fallback" != "0" ]; then
+            echo "::warning::SQL fallback delivered ${fallback} DM(s) in the last 24h — the primary drainer needed help"
+          fi
+          if [ "$resurrected" != "0" ]; then
+            echo "::warning::reconciler resurrected ${resurrected} missing queue row(s) in the last 24h"
+          fi
+          exit $fail

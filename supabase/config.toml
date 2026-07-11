@@ -89,3 +89,8 @@ verify_jwt = true
 # /intake?code=... link with no login.
 [functions.staff-intake]
 verify_jwt = false
+
+# hw-dm-health: read-only health endpoint for the out-of-band GitHub Actions morning
+# verifier. Gated by x-health-secret (HW_HEALTH_SECRET env) — NOT a user session.
+[functions.hw-dm-health]
+verify_jwt = false
