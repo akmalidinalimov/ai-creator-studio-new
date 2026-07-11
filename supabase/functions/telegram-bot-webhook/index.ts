@@ -3628,8 +3628,9 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
     updated_at: new Date().toISOString(),
     expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
   });
-  // Ungraded only: one-tap re-tag if the auto-guessed task is wrong (M1·V1 mis-tag fix).
-  const scoreKb = sub.score == null
+  // Re-tag offered while gradeable: ungraded OR reopened-for-regrade (stale) — mis-tag
+  // remediation requires moving reopened rows too.
+  const scoreKb = (sub.score == null || (sub as any).score_is_stale)
     ? { inline_keyboard: [[{ text: t.retagBtn, callback_data: `hwmv:${submissionId}` }]] }
     : undefined;
   await sendMessage(chatId, t.gradeAskScore(a?.max_score || 10), scoreKb);
@@ -5802,14 +5803,15 @@ async function handleCallback(admin: any, cq: any) {
     const parts = data.split(":"); // hwmv, subId[, mIdx[, lIdx]]
     const subId = parts[1];
     const { data: sub } = await admin.from("homework_submissions")
-      .select("id, user_id, assignment_id, score").eq("id", subId).maybeSingle();
+      .select("id, user_id, assignment_id, score, score_is_stale").eq("id", subId).maybeSingle();
     if (!sub) { await answerCallback(cq.id, t.gradeNotFound); return; }
     // C2 scope: a teacher may only re-tag their own groups' students (admins pass).
     if (persona !== "admin") {
       const scope = await gradingScopeIds(admin, _clicker.id, false);
       if (!scope || !scope.includes(sub.user_id)) { await answerCallback(cq.id, "⛔"); return; }
     }
-    if (sub.score != null) { await answerCallback(cq.id, t.retagGraded); return; }
+    // Movable while gradeable: ungraded OR reopened (stale). Firm grades stay immutable.
+    if (sub.score != null && !(sub as any).score_is_stale) { await answerCallback(cq.id, t.retagGraded); return; }
     const { data: curA } = await admin.from("homework_assignments")
       .select("module_id, modules:module_id(course_id)").eq("id", sub.assignment_id).maybeSingle();
     const courseId = (curA as any)?.modules?.course_id;
