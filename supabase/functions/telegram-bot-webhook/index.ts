@@ -3073,7 +3073,11 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
   }
   const [{ data: prof }, { data: subs }] = await Promise.all([
     admin.from("profiles").select("name, last_name, group_id").eq("id", studentId).maybeSingle(),
-    admin.from("homework_submissions").select("id, assignment_id, submitted_at, telegram_message_url").eq("user_id", studentId).is("score", null).order("submitted_at", { ascending: true }),
+    // Pending = ungraded OR re-opened (stale) — the SAME rule as the student picker that counted
+    // them. The old score-null-only filter made resubmissions-awaiting-regrade count as "(1)" in
+    // the list but show "vazifa yo'q" on tap (owner-reported; Gulmira waited since 07-09).
+    admin.from("homework_submissions").select("id, assignment_id, submitted_at, telegram_message_url, score, score_is_stale")
+      .eq("user_id", studentId).or("score.is.null,score_is_stale.is.true").order("submitted_at", { ascending: true }),
   ]);
   const list = (subs || []) as any[];
   const name = [prof?.name, prof?.last_name].filter(Boolean).join(" ") || "—";
@@ -3120,8 +3124,12 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
     let anyPostUrl = false;
     for (const it of m.items) {
       const tn = it.a.task_number || 1;
-      lines.push(`   ⏳ V${tn}: ${csvEscapeHtml(it.a.title || "")}`);
-      buttons.push([{ text: `M${m.mPos + 1}·V${tn} — ${it.a.title || ""}`.slice(0, 60), callback_data: `gs:open:${it.sub.id}` }]);
+      // 🔄 = resubmission awaiting REGRADE (old score shown); ⏳ = first-time ungraded.
+      const isResub = it.sub.score != null && it.sub.score_is_stale;
+      lines.push(isResub
+        ? `   🔄 V${tn}: ${csvEscapeHtml(it.a.title || "")} (oldingi: ${it.sub.score}/${it.a.max_score || 10})`
+        : `   ⏳ V${tn}: ${csvEscapeHtml(it.a.title || "")}`);
+      buttons.push([{ text: `${isResub ? "🔄 " : ""}M${m.mPos + 1}·V${tn} — ${it.a.title || ""}`.slice(0, 60), callback_data: `gs:open:${it.sub.id}` }]);
       const postUrl = it.sub.telegram_message_url;
       if (postUrl) {
         anyPostUrl = true;
@@ -3549,7 +3557,7 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
   const t = T[locale] as any;
   const { data: sub } = await admin
     .from("homework_submissions")
-    .select("id, assignment_id, user_id, submitted_text, submitted_image_url, submitted_at, is_late, score, previous_score, telegram_message_url, telegram_file_kind")
+    .select("id, assignment_id, user_id, submitted_text, submitted_image_url, submitted_at, is_late, score, score_is_stale, previous_score, telegram_message_url, telegram_file_kind")
     .eq("id", submissionId)
     .maybeSingle();
   if (!sub) {
@@ -3574,9 +3582,13 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
   const tn = a?.task_number ? ` #${a.task_number}` : "";
   const header = `<b>${csvEscapeHtml(name)}</b> — ${csvEscapeHtml(a?.title || "")}${tn}`;
   const body = sub.submitted_text ? csvEscapeHtml(sub.submitted_text) : "<i>(no text)</i>";
-  // Regrade context: a resubmission carries the grade it's trying to improve.
+  // Regrade context: a resubmission carries the grade it's trying to improve — either the
+  // previous_score stamp (picker-path resubmits, score reset to null) or, for STALE rows
+  // (legacy/web resubmits that keep the old score with score_is_stale=true), the score itself.
   const prevLine = (sub as any).previous_score != null && sub.score == null
-    ? `\n${(t as any).pkPrevGrade((sub as any).previous_score, a?.max_score || 10)}` : "";
+    ? `\n${(t as any).pkPrevGrade((sub as any).previous_score, a?.max_score || 10)}`
+    : (sub.score != null && (sub as any).score_is_stale
+      ? `\n🔄 ${(t as any).pkPrevGrade(sub.score, a?.max_score || 10)}` : "");
   await sendMessage(chatId, `${header}\n\n${body}${prevLine}`);
   // Telegram-source submission: surface the original message link
   if (sub.telegram_message_url) {
