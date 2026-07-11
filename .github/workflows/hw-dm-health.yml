@@ -66,4 +66,8 @@ jobs:
           if [ "$stalest" -gt 4 ]; then
             echo "::warning::a group's homework capture has been silent for ${stalest} days — check the bot is still admin in every group chat"
           fi
+          misconfig=$(jq -r '.misconfigured_groups // 0' <<<"$HEALTH_JSON")
+          if [ "$misconfig" != "0" ]; then
+            echo "::warning::${misconfig} active-course group(s) with students but NO homework topic configured — capture is degraded there"
+          fi
           exit $fail
