@@ -279,6 +279,9 @@ const T = {
     pkResubYes: "🔄 Ha, qayta topshirish",
     pkDoneMsg: (lbl: string) => `✅ <b>${lbl}</b> qabul qilindi — o'qituvchi tekshiradi.`,
     pkPrevGrade: (sc: number, mx: number) => `📊 Oldingi baho: <b>${sc}/${mx}</b>`,
+    pkExistingAsk: (lbl: string, n: number, gradeLine: string) => `📎 <b>${lbl}</b> — bu vazifaga allaqachon topshirilgan (${n} ta fayl).${gradeLine}\nNima qilamiz?`,
+    pkAddFiles: "➕ Fayl qo'shish (avvalgisiga)",
+    pkAppended: (lbl: string, n: number) => `✅ <b>${lbl}</b> — fayl qo'shildi (jami ${n} ta).`,
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ hammasi" : `${n} vazifa baholanmagan`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Modul ${n} topikga o'tish`,
@@ -540,6 +543,9 @@ const T = {
     pkResubYes: "🔄 Да, пересдать",
     pkDoneMsg: (lbl: string) => `✅ <b>${lbl}</b> принято — учитель проверит.`,
     pkPrevGrade: (sc: number, mx: number) => `📊 Прежняя оценка: <b>${sc}/${mx}</b>`,
+    pkExistingAsk: (lbl: string, n: number, gradeLine: string) => `📎 <b>${lbl}</b> — по этому заданию уже сдано (${n} файл(ов)).${gradeLine}\nЧто делаем?`,
+    pkAddFiles: "➕ Добавить файл (к прежней сдаче)",
+    pkAppended: (lbl: string, n: number) => `✅ <b>${lbl}</b> — файл добавлен (всего ${n}).`,
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ всё" : `${n} не оценено`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Перейти в топик модуля ${n}`,
@@ -793,6 +799,9 @@ const T = {
     pkResubYes: "🔄 Yes, resubmit",
     pkDoneMsg: (lbl: string) => `✅ <b>${lbl}</b> accepted — your teacher will review it.`,
     pkPrevGrade: (sc: number, mx: number) => `📊 Previous grade: <b>${sc}/${mx}</b>`,
+    pkExistingAsk: (lbl: string, n: number, gradeLine: string) => `📎 <b>${lbl}</b> — you already submitted this task (${n} file(s)).${gradeLine}\nWhat shall we do?`,
+    pkAddFiles: "➕ Add file (to the existing one)",
+    pkAppended: (lbl: string, n: number) => `✅ <b>${lbl}</b> — file added (${n} total).`,
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ all done" : `${n} ungraded`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Open module ${n} topic`,
@@ -4447,8 +4456,12 @@ async function finalizePendingPost(
   assignmentId: string,
   moduleId: string,
   guessed: boolean,
-  allowResubmit = false, // true ONLY after the student explicitly confirmed regrading
-): Promise<"created" | "already_graded" | "tier_locked" | "error"> {
+  // "fresh": no prior work expected. "append": add these files to the existing ungraded
+  // submission. "replace": full resubmission (attempt bump, score reset) — ONLY after the
+  // student explicitly confirmed. Back-to-back different-homework posts each get their own
+  // picker (the old 5-min post-finalize append window is gone — it hijacked the next post).
+  action: "fresh" | "append" | "replace" = "fresh",
+): Promise<"created" | "appended" | "already_graded" | "tier_locked" | "error"> {
   try {
     const chatId = Number(pending.telegram_chat_id);
     const threadId = Number(pending.telegram_thread_id);
@@ -4457,6 +4470,21 @@ async function finalizePendingPost(
       if (pending.picker_message_id) {
         try { await tgApi("deleteMessage", { chat_id: chatId, message_id: Number(pending.picker_message_id) }); } catch (_e) { /* best-effort */ }
       }
+    };
+    // Morph the picker into a visible receipt, then self-delete (~30s; sweep is the backstop).
+    const morphReceipt = async (text: string) => {
+      if (!pending.picker_message_id) return;
+      const pickerMsgId = Number(pending.picker_message_id);
+      try {
+        await tgApi("editMessageText", { chat_id: chatId, message_id: pickerMsgId, text, parse_mode: "HTML" });
+        const delayedDelete = (async () => {
+          await new Promise((r) => setTimeout(r, 30_000));
+          try { await tgApi("deleteMessage", { chat_id: chatId, message_id: pickerMsgId }); } catch (_e) { /* sweep backstop */ }
+          try { await admin.from("hw_pending_posts").update({ picker_message_id: null }).eq("id", pending.id); } catch (_e) { /* ignore */ }
+        })();
+        const er: any = (globalThis as any).EdgeRuntime;
+        if (er?.waitUntil) er.waitUntil(delayedDelete); else delayedDelete.catch(() => {});
+      } catch (_e) { /* receipt is best-effort; ✅ reaction + DM still stand */ }
     };
     const { data: profile } = await admin.from("profiles")
       .select("id, name, last_name, telegram_id, telegram_username, preferred_locale")
@@ -4469,11 +4497,11 @@ async function finalizePendingPost(
     // "pick another" — so the picker must stay alive and the post must stay pending. Consuming it
     // here (v1 bug, caught in owner testing) silently lost the post while showing a ✅ reaction.
     const { data: prior } = await admin.from("homework_submissions")
-      .select("id, score, score_is_stale, previous_score").eq("user_id", pending.user_id).eq("assignment_id", assignmentId).maybeSingle();
+      .select("id, score, score_is_stale, previous_score, media, submitted_text").eq("user_id", pending.user_id).eq("assignment_id", assignmentId).maybeSingle();
     // Carry the grade memory: a graded prior stamps its score; an ungraded prior (pending regrade)
     // keeps whatever previous_score it already carried. Fresh submissions carry null.
     const prevScore: number | null = prior && prior.score != null ? prior.score : ((prior as any)?.previous_score ?? null);
-    if (prior && prior.score != null && !prior.score_is_stale && !allowResubmit) {
+    if (prior && prior.score != null && !prior.score_is_stale && action !== "replace") {
       if (!guessed) return "already_graded"; // picker stays open; nothing consumed
       // Sweep fallback: mirror the legacy auto path (acknowledge, inform, consume).
       await admin.from("hw_pending_posts").update({ state: "done" }).eq("id", pending.id);
@@ -4488,6 +4516,34 @@ async function finalizePendingPost(
       await admin.from("hw_pending_posts").update({ state: "expired" }).eq("id", pending.id);
       await deletePicker();
       return "tier_locked";
+    }
+
+    // APPEND: the task already has an UNGRADED submission and the student chose ➕ (or this is
+    // the auto-fallback / an unscreened path — a guess must never wipe already-submitted files).
+    // Adds the new files to the existing submission: no attempt bump, no score change, no new
+    // teacher DM (the teacher was already notified for the original submission).
+    if (prior && prior.score == null && action !== "replace") {
+      const priorMedia = Array.isArray((prior as any).media) ? (prior as any).media : [];
+      const addMedia = Array.isArray(pending.media) ? pending.media : [];
+      const mergedMedia = priorMedia.concat(addMedia).slice(0, 10);
+      const addText = (pending.submitted_text || "").slice(0, 4000);
+      const priorText = ((prior as any).submitted_text || "") as string;
+      const mergedText = priorText && addText && !priorText.includes(addText)
+        ? `${priorText}\n${addText}`.slice(0, 4000) : (priorText || addText);
+      const { error: mergeErr } = await admin.from("homework_submissions")
+        .update({ media: mergedMedia, submitted_text: mergedText }).eq("id", (prior as any).id);
+      if (mergeErr) { console.error("pk:append-err", mergeErr); return "error"; }
+      const { data: a0 } = await admin.from("homework_assignments")
+        .select("task_number, modules:module_id(position)").eq("id", assignmentId).maybeSingle();
+      const lbl0 = `M${(((a0 as any)?.modules?.position ?? 0) as number) + 1} · V${(a0 as any)?.task_number ?? ""}`;
+      await admin.from("hw_pending_posts")
+        .update({ state: "done", expires_at: new Date(Date.now() + 90_000).toISOString() })
+        .eq("id", pending.id);
+      try { await setMessageReaction(chatId, firstMsgId, "✅"); } catch (_e) { /* ignore */ }
+      await morphReceipt(t.pkAppended(lbl0, mergedMedia.length));
+      cacheInvalidateUser(pending.user_id);
+      console.log("pk:appended", JSON.stringify({ pending_id: pending.id, submission_id: (prior as any).id, n: mergedMedia.length, guessed }));
+      return "appended";
     }
 
     const media = Array.isArray(pending.media) ? pending.media.slice(0, 10) : [];
@@ -4516,18 +4572,9 @@ async function finalizePendingPost(
     }, { onConflict: "user_id,assignment_id" }).select("id").maybeSingle();
     if (upErr || !upserted?.id) { console.error("pk:finalize-upsert-err", upErr); return "error"; }
 
-    // Open the follow-up window so extra files posted after the pick append via the intent path.
-    await admin.from("bot_homework_intents").upsert({
-      user_id: pending.user_id,
-      assignment_id: assignmentId,
-      module_id: moduleId,
-      group_id: pending.group_id,
-      telegram_chat_id: chatId,
-      telegram_thread_id: threadId,
-      submission_id: upserted.id,
-      expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
-      created_at: new Date().toISOString(),
-    }, { onConflict: "user_id,assignment_id" });
+    // NOTE: no post-finalize intent window anymore. It made the NEXT image silently append to
+    // this submission (owner-reported). Now every new post opens its own picker; adding files to
+    // this task = pick the same task again → ➕ "Fayl qo'shish".
 
     try { await setMessageReaction(chatId, firstMsgId, "✅"); } catch (_e) { /* ignore */ }
 
@@ -4551,26 +4598,10 @@ async function finalizePendingPost(
     await admin.from("hw_pending_posts")
       .update({ state: "done", expires_at: new Date(Date.now() + 90_000).toISOString() })
       .eq("id", pending.id);
-    if (pending.picker_message_id) {
-      const pickerMsgId = Number(pending.picker_message_id);
-      const confLbl = `M${mn} · V${tn}${guessed ? " (avto)" : ""}`;
-      // Resubmission receipt carries the grade being improved — the student sees what they had.
-      const receipt = t.pkDoneMsg(confLbl)
-        + (prevScore != null ? `\n${t.pkPrevGrade(prevScore, (a?.max_score ?? 10) as number)}` : "");
-      try {
-        await tgApi("editMessageText", {
-          chat_id: chatId, message_id: pickerMsgId,
-          text: receipt, parse_mode: "HTML",
-        });
-        const delayedDelete = (async () => {
-          await new Promise((r) => setTimeout(r, 30_000));
-          try { await tgApi("deleteMessage", { chat_id: chatId, message_id: pickerMsgId }); } catch (_e) { /* sweep backstop */ }
-          try { await admin.from("hw_pending_posts").update({ picker_message_id: null }).eq("id", pending.id); } catch (_e) { /* ignore */ }
-        })();
-        const er: any = (globalThis as any).EdgeRuntime;
-        if (er?.waitUntil) er.waitUntil(delayedDelete); else delayedDelete.catch(() => {});
-      } catch (_e) { /* receipt is best-effort; ✅ reaction + DM still stand */ }
-    }
+    // Resubmission receipt carries the grade being improved — the student sees what they had.
+    const confLbl = `M${mn} · V${tn}${guessed ? " (avto)" : ""}`;
+    await morphReceipt(t.pkDoneMsg(confLbl)
+      + (prevScore != null ? `\n${t.pkPrevGrade(prevScore, (a?.max_score ?? 10) as number)}` : ""));
 
     if (profile?.telegram_id) {
       try { await sendMessage(Number(profile.telegram_id), t.hwReceived(mn, tn, undefined, undefined)); } catch (_e) { /* ~70% can't be DMed — the ✅ reaction is the receipt */ }
@@ -5685,8 +5716,10 @@ async function handleCallback(admin: any, cq: any) {
       return;
     }
 
-    if (parts[2] === "t" || parts[2] === "r") {
-      const isConfirmedResub = parts[2] === "r"; // "r" only exists on the explicit confirm button
+    if (parts[2] === "t" || parts[2] === "r" || parts[2] === "a") {
+      // "t" = first tap on a task; "a"/"r" only exist on the explicit choice buttons.
+      const action: "fresh" | "append" | "replace" =
+        parts[2] === "r" ? "replace" : (parts[2] === "a" ? "append" : "fresh");
       const mod = ordered[Number(parts[3])];
       if (!mod) { await answerCallback(cq.id); return; }
       const { data: asgs } = await admin.from("homework_assignments")
@@ -5699,20 +5732,43 @@ async function handleCallback(admin: any, cq: any) {
       // Refresh the pending row (media may have grown since the callback row was loaded).
       const { data: freshPending } = await admin.from("hw_pending_posts").select("*").eq("id", pid).maybeSingle();
       if (!freshPending || freshPending.state !== "pending") { await answerCallback(cq.id, t.pkExpired); return; }
-      const result = await finalizePendingPost(admin, freshPending, leaf.id, mod.id, false, isConfirmedResub);
-      if (result === "created") {
+
+      // First tap on a task that already has work → screen the choice BEFORE filing anything.
+      if (parts[2] === "t") {
+        const { data: prior } = await admin.from("homework_submissions")
+          .select("id, score, score_is_stale, previous_score, media")
+          .eq("user_id", freshPending.user_id).eq("assignment_id", leaf.id).maybeSingle();
+        if (prior && prior.score != null && !prior.score_is_stale) {
+          // Graded → resubmit-to-improve confirmation (shows the grade being improved).
+          await answerCallback(cq.id);
+          await editPicker(t.pkResubAsk(lbl, (prior.score ?? 0) as number, (leaf.max_score ?? 10) as number), [
+            [{ text: t.pkResubYes, callback_data: `hwpk:${pid}:r:${parts[3]}:${parts[4]}` }],
+            [{ text: t.pkBack, callback_data: `hwpk:${pid}:m:${parts[3]}` }],
+          ]);
+          return;
+        }
+        if (prior && prior.score == null) {
+          // Ungraded prior work (e.g. forgot a file, or improving before grading) →
+          // add files to it, or replace it entirely — the student decides.
+          const n = Array.isArray((prior as any).media) ? (prior as any).media.length : 0;
+          const gradeLine = (prior as any).previous_score != null
+            ? `\n${t.pkPrevGrade((prior as any).previous_score, (leaf.max_score ?? 10) as number)}` : "";
+          await answerCallback(cq.id);
+          await editPicker(t.pkExistingAsk(lbl, n, gradeLine), [
+            [{ text: t.pkAddFiles, callback_data: `hwpk:${pid}:a:${parts[3]}:${parts[4]}` }],
+            [{ text: t.pkResubYes, callback_data: `hwpk:${pid}:r:${parts[3]}:${parts[4]}` }],
+            [{ text: t.pkBack, callback_data: `hwpk:${pid}:m:${parts[3]}` }],
+          ]);
+          return;
+        }
+        // No prior work → file it fresh below.
+      }
+
+      const result = await finalizePendingPost(admin, freshPending, leaf.id, mod.id, false, action);
+      if (result === "created" || result === "appended") {
         await answerCallback(cq.id, t.pkDone(lbl));
       } else if (result === "already_graded") {
-        // Resubmission-to-improve: show the current score and ask for explicit confirmation —
-        // an accidental tap must never wipe a real grade. Confirm → new attempt, score reset,
-        // teacher regrades (standard resubmission semantics, same as the /vazifalar flow).
-        const { data: prior } = await admin.from("homework_submissions")
-          .select("score").eq("user_id", freshPending.user_id).eq("assignment_id", leaf.id).maybeSingle();
-        await answerCallback(cq.id);
-        await editPicker(t.pkResubAsk(lbl, (prior?.score ?? 0) as number, (leaf.max_score ?? 10) as number), [
-          [{ text: t.pkResubYes, callback_data: `hwpk:${pid}:r:${parts[3]}:${parts[4]}` }],
-          [{ text: t.pkBack, callback_data: `hwpk:${pid}:m:${parts[3]}` }],
-        ]);
+        await answerCallback(cq.id, t.pkGradedAlready); // race: graded between screen and confirm
       } else if (result === "tier_locked") {
         await answerCallback(cq.id, t.pkTierLocked);
       } else {
