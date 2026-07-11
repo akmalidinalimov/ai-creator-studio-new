@@ -66,16 +66,21 @@ async function getEnrollmentSettings(admin: any, locale: Locale): Promise<{ mess
 //     submission is created for the chosen task; if the student ignores it (~10 min) the smart
 //     auto-tag fallback files it anyway — work is never lost. Explicit /vazifalar intents bypass
 //     the picker entirely (the student already chose).
+//   "auto_register": true — an UNKNOWN Telegram member posting valid homework media in a
+//     registered homework topic is auto-registered as a PROVISIONAL student (name/username/id
+//     taken from their Telegram profile — no form to fill) and their work is accepted normally.
+//     Existing platform students matched by username just gain their telegram_id — their
+//     account type is NEVER touched.
 // Missing/malformed row ⇒ auto, so deploying this code changes nothing until the flag is flipped.
-async function getHomeworkCaptureConfig(admin: any): Promise<{ mode: "auto" | "require_intent" | "picker"; courseIds: string[] }> {
+async function getHomeworkCaptureConfig(admin: any): Promise<{ mode: "auto" | "require_intent" | "picker"; courseIds: string[]; autoRegister: boolean }> {
   try {
     const { data } = await admin.from("platform_settings").select("value").eq("key", "homework_capture").maybeSingle();
     const v = (data?.value as any) || {};
     const mode = v.mode === "require_intent" ? "require_intent" : (v.mode === "picker" ? "picker" : "auto");
     const courseIds = Array.isArray(v.course_ids) ? v.course_ids.filter((x: any) => typeof x === "string") : [];
-    return { mode, courseIds };
+    return { mode, courseIds, autoRegister: v.auto_register === true };
   } catch (_e) {
-    return { mode: "auto", courseIds: [] };
+    return { mode: "auto", courseIds: [], autoRegister: false };
   }
 }
 
@@ -257,6 +262,8 @@ const T = {
     gradeCancelled: "Bekor qilindi.",
     gradeNotFound: "Vazifa topilmadi.",
     gradePickStudent: "📝 <b>Talabani tanlang:</b>",
+    gradePickGroup: "📝 <b>Qaysi guruhni baholaysiz?</b>",
+    gradeAllGroupsBtn: (n: number) => `🌐 Hammasi (${n})`,
     retagBtn: "✏️ Vazifani o'zgartirish",
     retagPickModule: "✏️ Qaysi modulga o'tkazamiz?",
     retagPickTask: (m: string) => `✏️ ${m} — qaysi vazifa?`,
@@ -282,6 +289,8 @@ const T = {
     pkExistingAsk: (lbl: string, n: number, gradeLine: string) => `📎 <b>${lbl}</b> — bu vazifaga allaqachon topshirilgan (${n} ta fayl).${gradeLine}\nNima qilamiz?`,
     pkAddFiles: "➕ Fayl qo'shish (avvalgisiga)",
     pkAppended: (lbl: string, n: number) => `✅ <b>${lbl}</b> — fayl qo'shildi (jami ${n} ta).`,
+    pkWelcome: (name: string) => `👋 <b>${name}</b>, siz AI Creators platformasiga qo'shildingiz (sinov hisobi). Vazifalaringiz qabul qilinadi, ball va statistika yuritiladi. Darsliklar to'liq to'lovdan so'ng ochiladi — administrator bilan bog'laning.`,
+    pkWelcomeBtn: "🤖 Botga ulanish",
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ hammasi" : `${n} vazifa baholanmagan`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Modul ${n} topikga o'tish`,
@@ -521,6 +530,8 @@ const T = {
     gradeCancelled: "Отменено.",
     gradeNotFound: "Работа не найдена.",
     gradePickStudent: "📝 <b>Выберите студента:</b>",
+    gradePickGroup: "📝 <b>Какую группу оцениваем?</b>",
+    gradeAllGroupsBtn: (n: number) => `🌐 Все группы (${n})`,
     retagBtn: "✏️ Изменить задание",
     retagPickModule: "✏️ В какой модуль перенести?",
     retagPickTask: (m: string) => `✏️ ${m} — какое задание?`,
@@ -546,6 +557,8 @@ const T = {
     pkExistingAsk: (lbl: string, n: number, gradeLine: string) => `📎 <b>${lbl}</b> — по этому заданию уже сдано (${n} файл(ов)).${gradeLine}\nЧто делаем?`,
     pkAddFiles: "➕ Добавить файл (к прежней сдаче)",
     pkAppended: (lbl: string, n: number) => `✅ <b>${lbl}</b> — файл добавлен (всего ${n}).`,
+    pkWelcome: (name: string) => `👋 <b>${name}</b>, вы добавлены на платформу AI Creators (пробный аккаунт). Ваши работы принимаются, баллы и статистика ведутся. Уроки откроются после полной оплаты — свяжитесь с администратором.`,
+    pkWelcomeBtn: "🤖 Подключить бота",
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ всё" : `${n} не оценено`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Перейти в топик модуля ${n}`,
@@ -777,6 +790,8 @@ const T = {
     gradeCancelled: "Cancelled.",
     gradeNotFound: "Submission not found.",
     gradePickStudent: "📝 <b>Pick a student:</b>",
+    gradePickGroup: "📝 <b>Which group are you grading?</b>",
+    gradeAllGroupsBtn: (n: number) => `🌐 All groups (${n})`,
     retagBtn: "✏️ Change task",
     retagPickModule: "✏️ Move to which module?",
     retagPickTask: (m: string) => `✏️ ${m} — which task?`,
@@ -802,6 +817,8 @@ const T = {
     pkExistingAsk: (lbl: string, n: number, gradeLine: string) => `📎 <b>${lbl}</b> — you already submitted this task (${n} file(s)).${gradeLine}\nWhat shall we do?`,
     pkAddFiles: "➕ Add file (to the existing one)",
     pkAppended: (lbl: string, n: number) => `✅ <b>${lbl}</b> — file added (${n} total).`,
+    pkWelcome: (name: string) => `👋 <b>${name}</b>, you've been added to the AI Creators platform (trial account). Your homework is accepted and your points/statistics are tracked. Lessons unlock after full payment — contact the administrator.`,
+    pkWelcomeBtn: "🤖 Connect the bot",
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ all done" : `${n} ungraded`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Open module ${n} topic`,
@@ -2753,9 +2770,11 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
           const tag = `M${(m.module_position ?? 0) + 1}`;
           const title = (m.module_title || "").slice(0, 30);
           lines.push(`<code>${tag}</code> ${csvEscapeHtml(title)} — <b>${m.submitted_count}/${m.total_students}</b> (${pctStr})`);
+          // Module POSITION, not uuid: groupId+moduleId uuids = 81 bytes > Telegram's 64-byte
+          // callback cap → the whole /thomework message was rejected (audit BUG-3). ~48 bytes now.
           buttons.push([
-            { text: `${tag} ✅ Topshirgan`, callback_data: `thw:sub:${g.id}:${m.module_id}` },
-            { text: `${tag} ❌ Topshirmagan`, callback_data: `thw:not:${g.id}:${m.module_id}` },
+            { text: `${tag} ✅ Topshirgan`, callback_data: `thw:sub:${g.id}:${m.module_position ?? 0}` },
+            { text: `${tag} ❌ Topshirmagan`, callback_data: `thw:not:${g.id}:${m.module_position ?? 0}` },
           ]);
         }
       }
@@ -2933,7 +2952,39 @@ async function handleGradingCommand(
   const t = T[locale] as any;
 
   if (cmd === "/baholash" || cmd === "/grade") {
-    await renderStudentPicker(admin, chatId, graderId, locale, isAdmin, 0, groupId);
+    // GRADING NEVER HIDES WORK (2026-07-11): active-group scoping buried 10 fresh 5.0 submissions
+    // while teacher DMs kept announcing them. Multi-group teachers now get an explicit GROUP
+    // CHOOSER with per-group pending counts on the buttons (nothing can hide behind a count) +
+    // an all-groups view; single-group teachers go straight to their list. Owner-requested UX
+    // for teachers spanning courses. Stats/roster/broadcast keep the active-group concept.
+    if (!isAdmin) {
+      const tGroups = await teacherGroups(admin, graderId);
+      if (tGroups.length > 1) {
+        const gIds = tGroups.map((g: any) => g.id);
+        const { data: studs } = await admin.from("profiles").select("id, group_id").in("group_id", gIds);
+        const uidToGroup = new Map(((studs || []) as any[]).map((s: any) => [s.id, s.group_id]));
+        const uids = Array.from(uidToGroup.keys());
+        let pend: any[] = [];
+        if (uids.length) {
+          const { data: subs } = await admin.from("homework_submissions")
+            .select("user_id").or("score.is.null,score_is_stale.is.true").in("user_id", uids);
+          pend = (subs || []) as any[];
+        }
+        const byGroup = new Map<string, number>();
+        for (const s of pend) {
+          const gid = uidToGroup.get(s.user_id);
+          if (gid) byGroup.set(gid, (byGroup.get(gid) || 0) + 1);
+        }
+        const btns: any[][] = tGroups.map((g: any) => [{
+          text: `${g.name} (${byGroup.get(g.id) || 0})`.slice(0, 60),
+          callback_data: `gs:grp:${g.id}`,
+        }]);
+        btns.push([{ text: t.gradeAllGroupsBtn(pend.length), callback_data: "gs:grp:all" }]);
+        await sendMessage(chatId, t.gradePickGroup, { inline_keyboard: btns });
+        return true;
+      }
+    }
+    await renderStudentPicker(admin, chatId, graderId, locale, isAdmin, 0, null);
     return true;
   }
 
@@ -2957,7 +3008,9 @@ const PICKER_PAGE_SIZE = 10;
 async function renderStudentPicker(admin: any, chatId: number, graderId: string, locale: Locale, isAdmin: boolean, page: number, groupId?: string | null) {
   const t = T[locale] as any;
   const ids = await gradingScopeIds(admin, graderId, isAdmin, groupId);
-  let q = admin.from("homework_submissions").select("user_id").is("score", null);
+  // Pending = ungraded OR re-opened (stale) — same rule as loadGradingSubmissions, so
+  // resubmissions awaiting regrade are counted here too.
+  let q = admin.from("homework_submissions").select("user_id").or("score.is.null,score_is_stale.is.true");
   if (ids) {
     if (ids.length === 0) {
       await sendWithKeyboard(chatId, `${t.gradePending}\n\n${t.gradeNoneP}`, locale, isAdmin, isAdmin ? "admin" : "teacher");
@@ -2973,12 +3026,23 @@ async function renderStudentPicker(admin: any, chatId: number, graderId: string,
     return;
   }
   const userIds = Array.from(counts.keys());
-  const { data: profs } = await admin.from("profiles").select("id, name, last_name").in("id", userIds);
-  const rows = ((profs || []) as any[]).map((p: any) => ({
-    id: p.id,
-    name: [p.name, p.last_name].filter(Boolean).join(" ") || "—",
-    n: counts.get(p.id) || 0,
-  })).sort((a: any, b: any) => b.n - a.n);
+  const { data: profs } = await admin.from("profiles").select("id, name, last_name, group_id").in("id", userIds);
+  // Multi-group teachers see every group's pending work in one list — tag each student with
+  // their group so e.g. "PRE 5.0" vs "6-GURUH" is obvious at a glance.
+  const grpIds = Array.from(new Set(((profs || []) as any[]).map((p: any) => p.group_id).filter(Boolean)));
+  const grpNames = new Map<string, string>();
+  if (!isAdmin && grpIds.length > 1) {
+    const { data: grps } = await admin.from("groups").select("id, name").in("id", grpIds);
+    for (const g of (grps || []) as any[]) grpNames.set(g.id, g.name);
+  }
+  const rows = ((profs || []) as any[]).map((p: any) => {
+    const tag = grpNames.get(p.group_id);
+    return {
+      id: p.id,
+      name: ([p.name, p.last_name].filter(Boolean).join(" ") || "—") + (tag ? ` · ${tag}` : ""),
+      n: counts.get(p.id) || 0,
+    };
+  }).sort((a: any, b: any) => b.n - a.n);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / PICKER_PAGE_SIZE));
   const pageIdx = Math.min(Math.max(0, page), totalPages - 1);
@@ -2988,9 +3052,12 @@ async function renderStudentPicker(admin: any, chatId: number, graderId: string,
     text: `${r.name} (${r.n})`.slice(0, 60),
     callback_data: `gs:pick:${r.id}`,
   }]);
+  // Pagination carries the chosen scope so page 2 shows the same group as page 1
+  // (previously it silently fell back to the active group — a different list).
+  const scopeTok = groupId || "all";
   const nav: any[] = [];
-  if (pageIdx > 0) nav.push({ text: t.gradePrevPage, callback_data: `gs:list:${pageIdx - 1}` });
-  if (pageIdx < totalPages - 1) nav.push({ text: t.gradeNextPage, callback_data: `gs:list:${pageIdx + 1}` });
+  if (pageIdx > 0) nav.push({ text: t.gradePrevPage, callback_data: `gs:list:${pageIdx - 1}:${scopeTok}` });
+  if (pageIdx < totalPages - 1) nav.push({ text: t.gradeNextPage, callback_data: `gs:list:${pageIdx + 1}:${scopeTok}` });
   if (nav.length) buttons.push(nav);
 
   await sendMessage(chatId, t.gradePickStudent, { inline_keyboard: buttons });
@@ -3012,7 +3079,7 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
   const name = [prof?.name, prof?.last_name].filter(Boolean).join(" ") || "—";
   if (!list.length) {
     await sendMessage(chatId, `${t.gradeStudentBreakdown(name)}\n\n${t.gradeNoneP}`, {
-      inline_keyboard: [[{ text: t.gradeBackList, callback_data: "gs:list:0" }]],
+      inline_keyboard: [[{ text: t.gradeBackList, callback_data: "gs:list:0:all" }]],
     });
     return;
   }
@@ -3065,7 +3132,7 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
     if (url && !anyPostUrl) buttons.push([{ text: t.gradeOpenTopicBtn(m.mPos + 1), url }]);
     lines.push("");
   }
-  buttons.push([{ text: t.gradeBackList, callback_data: "gs:list:0" }]);
+  buttons.push([{ text: t.gradeBackList, callback_data: "gs:list:0:all" }]);
   await sendMessage(chatId, lines.join("\n"), { inline_keyboard: buttons });
 }
 
@@ -3176,7 +3243,9 @@ async function renderStudentModules(
     lines.push(`📦 <b>${m.mPos + 1}-MODUL</b> — ${m.items.length} ta · ${csvEscapeHtml(scoresStr)}${dateStr ? ` · 📅 ${dateStr}` : ""}`);
     return [{
       text: `${m.mPos + 1}-MODUL · ${m.items.length} ta · ${scoresStr}${dateStr ? ` · ${dateStr}` : ""}`.slice(0, 60),
-      callback_data: `tr:mod:${studentId}:${m.mid}`,
+      // Module POSITION, not uuid: two uuids = 80 bytes > Telegram's 64-byte callback cap, which
+      // made Telegram reject this whole message (BUTTON_DATA_INVALID) — audit BUG-2. ~46 bytes now.
+      callback_data: `tr:mod:${studentId}:${m.mPos}`,
     }];
   });
   buttons.push([{ text: t.backToRoster, callback_data: "tr:list:0" }]);
@@ -4653,6 +4722,118 @@ async function sweepExpiredPendingPosts(admin: any) {
   } catch (e) { console.error("pk:sweep-err", String(e)); }
 }
 
+// AUTO-REGISTER (flag "auto_register"): an unknown Telegram member posting valid homework media
+// in a registered homework topic becomes a PROVISIONAL student on the spot — name/username/id
+// come from their Telegram profile (no form), the group comes from the chat they posted in.
+// Routed through the admin-create-students engine so all dedupe/role rules apply. CRITICAL:
+// account_type is NOT passed to the engine — an existing platform student matched by username
+// must never be downgraded; provisional is set only when the engine reports status='created'.
+async function autoRegisterProvisionalPoster(
+  admin: any,
+  msg: any,
+  chatId: number,
+  threadId: number,
+): Promise<any | null> {
+  try {
+    const from = msg.from;
+    if (!from?.id || from.is_bot) return null;
+    const cfg = await getHomeworkCaptureConfig(admin);
+    if (!cfg.autoRegister) { console.log("hw:autoreg:skip", JSON.stringify({ reason: "flag_off" })); return null; }
+    // COURSE-AWARE chat→group resolution. One Telegram chat can host TWO platform groups (real
+    // case: 9-GURUH 4.0 and 1-GURUH PRE 5.0 share t.me/c/3718576417 — the chat was reused for the
+    // new cohort). resolveGroupFromChatId's limit(1) picked the finished-4.0 group and the course
+    // scope silently bailed (caught in owner testing). Fetch ALL candidates whose homework topic
+    // is THIS thread and prefer the in-scope (active-course) one — new members of a reused chat
+    // belong to the current cohort.
+    const stripped = String(chatId).replace(/^-100/, "");
+    const needle = `%/c/${stripped}/%`;
+    const { data: cands } = await admin.from("groups")
+      .select("id, course_id, homework_topic_id, courses:course_id(published)")
+      .or(`homework_topic_url.ilike.${needle},telegram_group_url.ilike.${needle}`);
+    const all = (cands || []) as any[];
+    const withTopic: any[] = [];
+    for (const g of all) {
+      if (!g.course_id) continue;
+      let ok = g.homework_topic_id != null && Number(g.homework_topic_id) === Number(threadId);
+      if (!ok) {
+        const { data: gmt } = await admin.from("group_module_topics")
+          .select("module_id").eq("group_id", g.id).eq("telegram_topic_id", threadId).maybeSingle();
+        ok = !!gmt?.module_id;
+      }
+      if (ok) withTopic.push(g);
+    }
+    const grp = withTopic.find((g: any) => cfg.courseIds.length === 0 || cfg.courseIds.includes(g.course_id))
+      ?? null;
+    if (!grp) {
+      console.log("hw:autoreg:skip", JSON.stringify({
+        reason: "no_in_scope_group_for_topic", chatId, threadId,
+        candidates: all.map((g: any) => ({ id: g.id, course: g.course_id })),
+      }));
+      return null;
+    }
+
+    // Server-to-server into the proven creation engine (same pattern as staff-intake).
+    const { data: sec } = await admin.rpc("internal_fn_secret");
+    if (!sec) return null;
+    const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/admin-create-students`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-internal-secret": String(sec),
+        "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      },
+      body: JSON.stringify({
+        students: [{
+          name: (from.first_name || "").slice(0, 60) || (from.username || `tg-${from.id}`),
+          last_name: (from.last_name || "").slice(0, 60) || undefined,
+          telegram_user_id: from.id,
+          telegram_username: from.username || undefined,
+          role: "student",
+        }],
+        target_group_id: grp.id,
+        target_course_id: grp.course_id,
+      }),
+    });
+    const out = await resp.json().catch(() => ({}));
+    const r0 = (out?.results || [])[0] || {};
+    if (!r0.userId) {
+      console.log("hw:autoreg:engine-refused", JSON.stringify({ tg: from.id, status: r0.status, err: r0.error }));
+      return null;
+    }
+    if (r0.status === "created") {
+      // New account → trial. (Existing matched accounts keep their type untouched.)
+      await admin.from("profiles").update({ account_type: "provisional" }).eq("id", r0.userId);
+      try {
+        await admin.from("admin_actions").insert({
+          actor_user_id: null, action: "auto_registered_provisional", target_user_id: r0.userId,
+          target_resource_type: "profile", target_resource_id: r0.userId,
+          details: { telegram_id: from.id, telegram_username: from.username || null, group_id: grp.id, source: "homework_topic_post" },
+        });
+      } catch (_e) { /* audit best-effort */ }
+      // Welcome them in-thread (they can't be DMed — they never started the bot).
+      try {
+        const t = T.uz as any;
+        const botU = Deno.env.get("TELEGRAM_BOT_USERNAME") || "";
+        const kb = botU ? { inline_keyboard: [[{ text: t.pkWelcomeBtn, url: `https://t.me/${botU}` }]] } : undefined;
+        await tgApi("sendMessage", {
+          chat_id: chatId, message_thread_id: threadId, reply_to_message_id: msg.message_id,
+          text: t.pkWelcome((from.first_name || from.username || "do'st").slice(0, 40)),
+          parse_mode: "HTML", disable_web_page_preview: true,
+          ...(kb ? { reply_markup: kb } : {}),
+        });
+      } catch (_e) { /* welcome is best-effort */ }
+      console.log("hw:autoreg:created", JSON.stringify({ user_id: r0.userId, tg: from.id, group_id: grp.id }));
+    } else {
+      console.log("hw:autoreg:matched-existing", JSON.stringify({ user_id: r0.userId, tg: from.id, status: r0.status }));
+    }
+    return await findProfileByTelegramId(admin, from.id);
+  } catch (e) {
+    console.error("hw:autoreg:err", String(e));
+    return null;
+  }
+}
+
 // A media post under picker mode: append to the live pending post (albums) or create one + ask.
 async function handlePickerPost(
   admin: any,
@@ -4788,11 +4969,15 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       profile = await findProfileByTelegramId(admin, fromId);
     }
 
-    // Strict per-student attribution. Submissions are only created by the
-    // identified student who opened an intent via /vazifalar → 📤 Topshirish.
+    // Strict per-student attribution — but an unknown group member posting real homework in a
+    // registered homework topic can now SELF-REGISTER as a provisional student (flag-gated;
+    // name/username/id come from Telegram, group from the chat — no form, no bot-start needed).
     if (!profile) {
-      console.log("hw:group:unknown-sender-ignored", JSON.stringify({ fromId, isAnon, chatId, threadId, messageId }));
-      return;
+      profile = await autoRegisterProvisionalPoster(admin, msg, chatId, threadId);
+      if (!profile) {
+        console.log("hw:group:unknown-sender-ignored", JSON.stringify({ fromId, isAnon, chatId, threadId, messageId }));
+        return;
+      }
     }
 
     const nowIso = new Date().toISOString();
@@ -5222,8 +5407,11 @@ async function notifyTeachersOfSubmission(
         const { data: grp } = await admin.from("groups").select("name").eq("id", groupId).maybeSingle();
         const moduleName = `Modul ${mn}`;
         const body = hwTeacherBody(studentName, grp?.name || "—", moduleName, aTitle || "");
+        // grade:open:<submissionId> = 47 bytes. The previous grade_task:<assignmentId>:<studentId>
+        // was 84 bytes — over Telegram's 64-byte callback_data cap — so EVERY immediate DM failed
+        // with BUTTON_DATA_INVALID and silently rode the 1-minute cron retry (found in logs).
         const inlineKb = [
-          [{ text: "🎯 Baholash", callback_data: `grade_task:${assignmentId}:${studentProfile.id}` }],
+          [{ text: "🎯 Baholash", callback_data: `grade:open:${submissionId}` }],
           [{ text: "📌 Topikga o'tish", url: messageUrl }],
         ];
         try {
@@ -5787,13 +5975,25 @@ async function handleCallback(admin: any, cq: any) {
     const sep = rest.indexOf(":");
     if (sep <= 0) { await answerCallback(cq.id); return; }
     const groupId = rest.slice(0, sep);
-    const moduleId = rest.slice(sep + 1);
+    const modRef = rest.slice(sep + 1);
     // Validate teacher owns group (admins ok)
     if (_effPersona === "teacher") {
       const groups = await teacherGroups(admin, _effId);
       if (!groups.find((x) => x.id === groupId)) { await answerCallback(cq.id, "⛔"); return; }
     }
     await answerCallback(cq.id);
+    // Payload carries the module POSITION (uuid pairs blow the 64-byte cap — audit BUG-3).
+    // Resolve via the group's course; accept a 36-char uuid defensively.
+    let moduleId = modRef.length === 36 ? modRef : "";
+    if (!moduleId) {
+      const { data: gRow } = await admin.from("groups").select("course_id").eq("id", groupId).maybeSingle();
+      if (gRow?.course_id) {
+        const { data: mRow } = await admin.from("modules").select("id")
+          .eq("course_id", gRow.course_id).eq("position", parseInt(modRef, 10) || 0).maybeSingle();
+        moduleId = mRow?.id ?? "";
+      }
+    }
+    if (!moduleId) { return; }
     // Load group, module, students, submissions
     const [{ data: grp }, { data: mod }, { data: profs }, { data: asgs }] = await Promise.all([
       admin.from("groups").select("id,name").eq("id", groupId).maybeSingle(),
@@ -5886,7 +6086,7 @@ async function handleCallback(admin: any, cq: any) {
     }
     return;
   }
-  if ((data.startsWith("gs:list:") || data.startsWith("gs:pick:") || data.startsWith("gs:open:") || data.startsWith("tr:") || data.startsWith("thm:")) && chatId) {
+  if ((data.startsWith("gs:list:") || data.startsWith("gs:pick:") || data.startsWith("gs:open:") || data.startsWith("gs:grp:") || data.startsWith("tr:") || data.startsWith("thm:")) && chatId) {
     if (!_clicker) { await answerCallback(cq.id); return; }
     if (_effPersona !== "admin" && _effPersona !== "teacher") { await answerCallback(cq.id); return; }
     const locale: Locale = normLocale(_clicker.preferred_locale);
@@ -5897,9 +6097,34 @@ async function handleCallback(admin: any, cq: any) {
       groupIdScope = pr?.active_teacher_group_id || null;
     }
     await answerCallback(cq.id);
-    if (data.startsWith("gs:list:")) {
-      const page = parseInt(data.slice("gs:list:".length), 10) || 0;
-      await renderStudentPicker(admin, chatId, _effId, locale, isAdmin, page, groupIdScope);
+    if (data.startsWith("gs:grp:")) {
+      // Group chooser tap: explicit scope ("all" or a group the teacher owns).
+      const tok = data.slice("gs:grp:".length);
+      let scope: string | null = null;
+      if (tok !== "all") {
+        if (!isAdmin) {
+          const tg2 = await teacherGroups(admin, _effId);
+          if (!tg2.find((x: any) => x.id === tok)) { return; }
+        }
+        scope = tok;
+      }
+      await renderStudentPicker(admin, chatId, _effId, locale, isAdmin, 0, scope);
+    } else if (data.startsWith("gs:list:")) {
+      // gs:list:<page>[:<groupId|all>] — the token pins pagination to the chosen scope.
+      const parts0 = data.slice("gs:list:".length).split(":");
+      const page = parseInt(parts0[0], 10) || 0;
+      const tok = parts0[1];
+      let scope: string | null = null;
+      if (tok && tok !== "all") {
+        if (!isAdmin) {
+          const tg2 = await teacherGroups(admin, _effId);
+          if (!tg2.find((x: any) => x.id === tok)) { return; }
+        }
+        scope = tok;
+      } else if (!tok) {
+        scope = groupIdScope; // legacy buttons (pre-scope-token) keep old behavior
+      }
+      await renderStudentPicker(admin, chatId, _effId, locale, isAdmin, page, scope);
     } else if (data.startsWith("gs:pick:")) {
       const sid = data.slice("gs:pick:".length);
       await renderStudentBreakdown(admin, chatId, _effId, sid, locale, isAdmin);
@@ -5914,8 +6139,22 @@ async function handleCallback(admin: any, cq: any) {
       await renderStudentModules(admin, chatId, _effId, sid, locale, isAdmin);
     } else if (data.startsWith("tr:mod:")) {
       const rest = data.slice("tr:mod:".length);
-      const [sid, mid] = rest.split(":");
-      if (sid && mid) await renderStudentModuleDetail(admin, chatId, _effId, sid, mid, locale, isAdmin);
+      const [sid, midOrPos] = rest.split(":");
+      if (sid && midOrPos) {
+        // Payload carries the module POSITION (uuid pairs blow the 64-byte cap — audit BUG-2).
+        // Resolve via the student's group course; accept a 36-char uuid defensively.
+        let mid: string | null = midOrPos.length === 36 ? midOrPos : null;
+        if (!mid) {
+          const { data: sp } = await admin.from("profiles").select("group_id, groups:group_id(course_id)").eq("id", sid).maybeSingle();
+          const courseId = (sp as any)?.groups?.course_id;
+          if (courseId) {
+            const { data: m } = await admin.from("modules").select("id")
+              .eq("course_id", courseId).eq("position", parseInt(midOrPos, 10) || 0).maybeSingle();
+            mid = m?.id ?? null;
+          }
+        }
+        if (mid) await renderStudentModuleDetail(admin, chatId, _effId, sid, mid, locale, isAdmin);
+      }
     } else if (data.startsWith("thm:list:")) {
       const page = parseInt(data.slice("thm:list:".length), 10) || 0;
       await renderTeacherModulePicker(admin, chatId, _effId, locale, isAdmin, page, groupIdScope);
