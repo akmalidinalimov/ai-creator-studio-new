@@ -3,6 +3,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { computeLeaves, pickNextLeaf } from "./homework-routing.ts";
 import { effectiveLeafGrades, summarizeHomework } from "./homework-stats.ts";
+import {
+  checksAllGreen, ghAddLabel, ghClosePr, ghFetchChecks, ghFetchPr, ghMergePr,
+  OPS_REPO, parseOpsCallback, verifyOpsPr,
+} from "./ops-approve.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -5586,8 +5590,99 @@ async function handleCallback(admin: any, cq: any) {
       _isImp = true;
     }
   }
-  if (_isImp && (/^grade_task:|^grade:open:|^gs:open:|^settings:|^setlang:/.test(data) || /^hw:(start|resub_yes):/.test(data))) {
+  if (_isImp && (/^grade_task:|^grade:open:|^gs:open:|^settings:|^setlang:|^ops:/.test(data) || /^hw:(start|resub_yes):/.test(data))) {
     await answerCallback(cq.id, "👁 Faqat o'qish — /admin");
+    return;
+  }
+
+  // --- Autonomous-ops approve flow (Phase 2): ops:a|c|x|reject:<pr#> — ADMIN ONLY ---
+  // Verification is layered: real-clicker admin persona → parseOpsCallback (strict format) →
+  // verifyOpsPr (label/branch/fork/workflow rules) → checksAllGreen (the CI merge gate — no
+  // server-side branch protection on the Free plan, so THIS is the gate) → two-tap confirm.
+  if (data.startsWith("ops:") && chatId) {
+    if (!_clicker) { await answerCallback(cq.id); return; }
+    const opsPersona = await getPersona(admin, _clicker.id);
+    if (opsPersona !== "admin") { await answerCallback(cq.id, "⛔"); return; }
+    const cb = parseOpsCallback(data);
+    if (!cb) { await answerCallback(cq.id); return; }
+    const { data: pat } = await admin.rpc("ops_github_pat");
+    if (!pat) { await answerCallback(cq.id, "OPS_GITHUB_PAT Vaultda yo'q — sozlang"); return; }
+    const opsAudit = async (action: string, details: Record<string, unknown>) => {
+      try {
+        await admin.from("admin_actions").insert({
+          actor_user_id: _clicker.id, action, target_resource_type: "github_pr",
+          target_resource_id: String(cb.pr), details,
+        });
+      } catch (_e) { /* audit best-effort */ }
+    };
+
+    const pr = await ghFetchPr(fetch, String(pat), cb.pr);
+    if (!pr) { await answerCallback(cq.id, "PR topilmadi"); return; }
+    const v = verifyOpsPr(pr);
+
+    if (cb.kind === "ask") {
+      if (!v.ok) { await answerCallback(cq.id, `Rad: ${v.reason}`); return; }
+      const checks = checksAllGreen(await ghFetchChecks(fetch, String(pat), pr.headSha));
+      if (!checks.ok) { await answerCallback(cq.id, `CI yashil emas: ${checks.reason}`); return; }
+      await answerCallback(cq.id);
+      const migLine = pr.changedMigration ? "\n\n⚠️ <b>DIQQAT: MIGRATION BOR</b> — ma'lumotlar bazasi o'zgaradi!" : "";
+      await tgApi("editMessageText", {
+        chat_id: chatId, message_id: cq.message?.message_id,
+        text: `Merge <b>PR #${pr.number}</b> — ${csvEscapeHtml(pr.title.slice(0, 120))}?${migLine}\n\nCI: ✅ yashil. Tasdiqlaysizmi?`,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[
+          { text: "✅ Ha, merge", callback_data: `ops:c:${pr.number}` },
+          { text: "⬅️ Bekor", callback_data: `ops:x:${pr.number}` },
+        ]] },
+      });
+      await opsAudit("ops_pr_confirm_shown", { title: pr.title, migration: pr.changedMigration });
+      return;
+    }
+
+    if (cb.kind === "confirm") {
+      if (!v.ok) { await answerCallback(cq.id, `Rad: ${v.reason}`); return; }
+      const checks = checksAllGreen(await ghFetchChecks(fetch, String(pat), pr.headSha));
+      if (!checks.ok) { await answerCallback(cq.id, `CI yashil emas: ${checks.reason}`); return; }
+      if (pr.changedMigration) {
+        await ghAddLabel(fetch, String(pat), pr.number, "migration-approved"); // arms the deploy gate
+      }
+      const merged = await ghMergePr(fetch, String(pat), pr.number);
+      if (!merged.ok) {
+        await answerCallback(cq.id, `Merge xato: ${(merged.message || "?").slice(0, 60)}`);
+        await opsAudit("ops_pr_merge_failed", { message: merged.message });
+        return;
+      }
+      await answerCallback(cq.id, "✅ Merged");
+      await tgApi("editMessageText", {
+        chat_id: chatId, message_id: cq.message?.message_id,
+        text: `✅ <b>PR #${pr.number}</b> merged — deploy pipeline ishga tushdi.\n${csvEscapeHtml(pr.title.slice(0, 120))}`,
+        parse_mode: "HTML",
+      });
+      await opsAudit("ops_pr_merged", { title: pr.title, migration: pr.changedMigration });
+      return;
+    }
+
+    if (cb.kind === "cancel") {
+      await answerCallback(cq.id, "Bekor qilindi");
+      await tgApi("editMessageText", {
+        chat_id: chatId, message_id: cq.message?.message_id,
+        text: `⏸ PR #${cb.pr} — qaror keyinga qoldirildi (PR ochiq qoladi).`,
+      });
+      await opsAudit("ops_pr_deferred", {});
+      return;
+    }
+
+    // reject: close the PR + delete its ops/ branch
+    const closed = await ghClosePr(fetch, String(pat), pr.number, pr.headRef);
+    await answerCallback(cq.id, closed ? "❌ Yopildi" : "Yopishda xato");
+    if (closed) {
+      await tgApi("editMessageText", {
+        chat_id: chatId, message_id: cq.message?.message_id,
+        text: `❌ <b>PR #${pr.number}</b> rad etildi va yopildi.\n${csvEscapeHtml(pr.title.slice(0, 120))}`,
+        parse_mode: "HTML",
+      });
+    }
+    await opsAudit("ops_pr_rejected", { closed });
     return;
   }
 
