@@ -111,15 +111,6 @@ jobs:
           set -euo pipefail
           API="https://api.supabase.com/v1/projects/$PROJECT_REF/database/query"
 
-          # Gate: the merged PR for this commit must carry the migration-approved label.
-          LABELS=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" \
-                    --jq '[.[].labels[].name] | join(",")' || echo "")
-          echo "PR labels: $LABELS"
-          if ! echo "$LABELS" | grep -q 'migration-approved'; then
-            echo "::error::New migration file(s) present but the merged PR lacks the 'migration-approved' label. NOT applying. Apply manually or re-merge with the label."
-            exit 1
-          fi
-
           q() { # run SQL, print response body, fail on non-2xx
             jq -n --arg q "$1" '{query:$q}' \
               | curl -sS --fail-with-body -X POST "$API" \
@@ -127,23 +118,45 @@ jobs:
                   -H "Content-Type: application/json" -d @-
           }
 
+          # Filter to migrations NOT yet in the ledger FIRST — re-runs and dispatches over
+          # already-applied files must be silent no-ops, not label-gate failures.
+          : > unapplied.txt
+          while read -r path; do
+            [ -z "$path" ] && continue
+            f=$(basename "$path")
+            APPLIED=$(q "select 1 from ops_applied_migrations where filename = '$f'" | jq 'length')
+            if [ "$APPLIED" != "0" ]; then
+              echo "ledgered already — skipping: $f"
+            else
+              echo "$path" >> unapplied.txt
+            fi
+          done < migs.txt
+          if [ ! -s unapplied.txt ]; then
+            echo "All migrations already applied — nothing to do."
+            exit 0
+          fi
+
+          # Gate: the merged PR for this commit must carry the migration-approved label.
+          LABELS=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" \
+                    --jq '[.[].labels[].name] | join(",")' || echo "")
+          echo "PR labels: $LABELS"
+          if ! echo "$LABELS" | grep -q 'migration-approved'; then
+            echo "::error::Unapplied migration file(s) present but the merged PR lacks the 'migration-approved' label. NOT applying. Apply manually or re-merge with the label."
+            exit 1
+          fi
+
           while read -r path; do
             [ -z "$path" ] && continue
             f=$(basename "$path")
             echo "::group::migration $f"
-            APPLIED=$(q "select 1 from ops_applied_migrations where filename = '$f'" | jq 'length')
-            if [ "$APPLIED" != "0" ]; then
-              echo "already in ledger — skipping"
-            else
-              jq -n --rawfile sql "$path" '{query:$sql}' \
-                | curl -sS --fail-with-body -X POST "$API" \
-                    -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
-                    -H "Content-Type: application/json" -d @-
-              q "insert into ops_applied_migrations (filename, commit_sha) values ('$f', '${{ github.sha }}') on conflict (filename) do nothing"
-              echo "applied + ledgered"
-            fi
+            jq -n --rawfile sql "$path" '{query:$sql}' \
+              | curl -sS --fail-with-body -X POST "$API" \
+                  -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+                  -H "Content-Type: application/json" -d @-
+            q "insert into ops_applied_migrations (filename, commit_sha) values ('$f', '${{ github.sha }}') on conflict (filename) do nothing"
+            echo "applied + ledgered"
             echo "::endgroup::"
-          done < migs.txt
+          done < unapplied.txt
 
       - name: Notify owner on failure (best-effort)
         if: failure()
