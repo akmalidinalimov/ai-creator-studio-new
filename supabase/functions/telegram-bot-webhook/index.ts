@@ -66,16 +66,21 @@ async function getEnrollmentSettings(admin: any, locale: Locale): Promise<{ mess
 //     submission is created for the chosen task; if the student ignores it (~10 min) the smart
 //     auto-tag fallback files it anyway — work is never lost. Explicit /vazifalar intents bypass
 //     the picker entirely (the student already chose).
+//   "auto_register": true — an UNKNOWN Telegram member posting valid homework media in a
+//     registered homework topic is auto-registered as a PROVISIONAL student (name/username/id
+//     taken from their Telegram profile — no form to fill) and their work is accepted normally.
+//     Existing platform students matched by username just gain their telegram_id — their
+//     account type is NEVER touched.
 // Missing/malformed row ⇒ auto, so deploying this code changes nothing until the flag is flipped.
-async function getHomeworkCaptureConfig(admin: any): Promise<{ mode: "auto" | "require_intent" | "picker"; courseIds: string[] }> {
+async function getHomeworkCaptureConfig(admin: any): Promise<{ mode: "auto" | "require_intent" | "picker"; courseIds: string[]; autoRegister: boolean }> {
   try {
     const { data } = await admin.from("platform_settings").select("value").eq("key", "homework_capture").maybeSingle();
     const v = (data?.value as any) || {};
     const mode = v.mode === "require_intent" ? "require_intent" : (v.mode === "picker" ? "picker" : "auto");
     const courseIds = Array.isArray(v.course_ids) ? v.course_ids.filter((x: any) => typeof x === "string") : [];
-    return { mode, courseIds };
+    return { mode, courseIds, autoRegister: v.auto_register === true };
   } catch (_e) {
-    return { mode: "auto", courseIds: [] };
+    return { mode: "auto", courseIds: [], autoRegister: false };
   }
 }
 
@@ -282,6 +287,8 @@ const T = {
     pkExistingAsk: (lbl: string, n: number, gradeLine: string) => `📎 <b>${lbl}</b> — bu vazifaga allaqachon topshirilgan (${n} ta fayl).${gradeLine}\nNima qilamiz?`,
     pkAddFiles: "➕ Fayl qo'shish (avvalgisiga)",
     pkAppended: (lbl: string, n: number) => `✅ <b>${lbl}</b> — fayl qo'shildi (jami ${n} ta).`,
+    pkWelcome: (name: string) => `👋 <b>${name}</b>, siz AI Creators platformasiga qo'shildingiz (sinov hisobi). Vazifalaringiz qabul qilinadi, ball va statistika yuritiladi. Darsliklar to'liq to'lovdan so'ng ochiladi — administrator bilan bog'laning.`,
+    pkWelcomeBtn: "🤖 Botga ulanish",
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ hammasi" : `${n} vazifa baholanmagan`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Modul ${n} topikga o'tish`,
@@ -546,6 +553,8 @@ const T = {
     pkExistingAsk: (lbl: string, n: number, gradeLine: string) => `📎 <b>${lbl}</b> — по этому заданию уже сдано (${n} файл(ов)).${gradeLine}\nЧто делаем?`,
     pkAddFiles: "➕ Добавить файл (к прежней сдаче)",
     pkAppended: (lbl: string, n: number) => `✅ <b>${lbl}</b> — файл добавлен (всего ${n}).`,
+    pkWelcome: (name: string) => `👋 <b>${name}</b>, вы добавлены на платформу AI Creators (пробный аккаунт). Ваши работы принимаются, баллы и статистика ведутся. Уроки откроются после полной оплаты — свяжитесь с администратором.`,
+    pkWelcomeBtn: "🤖 Подключить бота",
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ всё" : `${n} не оценено`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Перейти в топик модуля ${n}`,
@@ -802,6 +811,8 @@ const T = {
     pkExistingAsk: (lbl: string, n: number, gradeLine: string) => `📎 <b>${lbl}</b> — you already submitted this task (${n} file(s)).${gradeLine}\nWhat shall we do?`,
     pkAddFiles: "➕ Add file (to the existing one)",
     pkAppended: (lbl: string, n: number) => `✅ <b>${lbl}</b> — file added (${n} total).`,
+    pkWelcome: (name: string) => `👋 <b>${name}</b>, you've been added to the AI Creators platform (trial account). Your homework is accepted and your points/statistics are tracked. Lessons unlock after full payment — contact the administrator.`,
+    pkWelcomeBtn: "🤖 Connect the bot",
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ all done" : `${n} ungraded`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Open module ${n} topic`,
@@ -4653,6 +4664,100 @@ async function sweepExpiredPendingPosts(admin: any) {
   } catch (e) { console.error("pk:sweep-err", String(e)); }
 }
 
+// AUTO-REGISTER (flag "auto_register"): an unknown Telegram member posting valid homework media
+// in a registered homework topic becomes a PROVISIONAL student on the spot — name/username/id
+// come from their Telegram profile (no form), the group comes from the chat they posted in.
+// Routed through the admin-create-students engine so all dedupe/role rules apply. CRITICAL:
+// account_type is NOT passed to the engine — an existing platform student matched by username
+// must never be downgraded; provisional is set only when the engine reports status='created'.
+async function autoRegisterProvisionalPoster(
+  admin: any,
+  msg: any,
+  chatId: number,
+  threadId: number,
+): Promise<any | null> {
+  try {
+    const from = msg.from;
+    if (!from?.id || from.is_bot) return null;
+    const cfg = await getHomeworkCaptureConfig(admin);
+    if (!cfg.autoRegister) return null;
+    // The chat must map to a platform group, and the thread must be ITS homework topic.
+    const { groupId } = await resolveGroupFromChatId(admin, chatId);
+    if (!groupId) return null;
+    const { data: grp } = await admin.from("groups")
+      .select("id, course_id, homework_topic_id").eq("id", groupId).maybeSingle();
+    if (!grp?.course_id) return null;
+    if (cfg.courseIds.length > 0 && !cfg.courseIds.includes(grp.course_id)) return null;
+    let isHwTopic = grp.homework_topic_id != null && Number(grp.homework_topic_id) === Number(threadId);
+    if (!isHwTopic) {
+      const { data: gmt } = await admin.from("group_module_topics")
+        .select("module_id").eq("group_id", grp.id).eq("telegram_topic_id", threadId).maybeSingle();
+      isHwTopic = !!gmt?.module_id;
+    }
+    if (!isHwTopic) return null;
+
+    // Server-to-server into the proven creation engine (same pattern as staff-intake).
+    const { data: sec } = await admin.rpc("internal_fn_secret");
+    if (!sec) return null;
+    const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/admin-create-students`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-internal-secret": String(sec),
+        "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      },
+      body: JSON.stringify({
+        students: [{
+          name: (from.first_name || "").slice(0, 60) || (from.username || `tg-${from.id}`),
+          last_name: (from.last_name || "").slice(0, 60) || undefined,
+          telegram_user_id: from.id,
+          telegram_username: from.username || undefined,
+          role: "student",
+        }],
+        target_group_id: grp.id,
+        target_course_id: grp.course_id,
+      }),
+    });
+    const out = await resp.json().catch(() => ({}));
+    const r0 = (out?.results || [])[0] || {};
+    if (!r0.userId) {
+      console.log("hw:autoreg:engine-refused", JSON.stringify({ tg: from.id, status: r0.status, err: r0.error }));
+      return null;
+    }
+    if (r0.status === "created") {
+      // New account → trial. (Existing matched accounts keep their type untouched.)
+      await admin.from("profiles").update({ account_type: "provisional" }).eq("id", r0.userId);
+      try {
+        await admin.from("admin_actions").insert({
+          actor_user_id: null, action: "auto_registered_provisional", target_user_id: r0.userId,
+          target_resource_type: "profile", target_resource_id: r0.userId,
+          details: { telegram_id: from.id, telegram_username: from.username || null, group_id: grp.id, source: "homework_topic_post" },
+        });
+      } catch (_e) { /* audit best-effort */ }
+      // Welcome them in-thread (they can't be DMed — they never started the bot).
+      try {
+        const t = T.uz as any;
+        const botU = Deno.env.get("TELEGRAM_BOT_USERNAME") || "";
+        const kb = botU ? { inline_keyboard: [[{ text: t.pkWelcomeBtn, url: `https://t.me/${botU}` }]] } : undefined;
+        await tgApi("sendMessage", {
+          chat_id: chatId, message_thread_id: threadId, reply_to_message_id: msg.message_id,
+          text: t.pkWelcome((from.first_name || from.username || "do'st").slice(0, 40)),
+          parse_mode: "HTML", disable_web_page_preview: true,
+          ...(kb ? { reply_markup: kb } : {}),
+        });
+      } catch (_e) { /* welcome is best-effort */ }
+      console.log("hw:autoreg:created", JSON.stringify({ user_id: r0.userId, tg: from.id, group_id: grp.id }));
+    } else {
+      console.log("hw:autoreg:matched-existing", JSON.stringify({ user_id: r0.userId, tg: from.id, status: r0.status }));
+    }
+    return await findProfileByTelegramId(admin, from.id);
+  } catch (e) {
+    console.error("hw:autoreg:err", String(e));
+    return null;
+  }
+}
+
 // A media post under picker mode: append to the live pending post (albums) or create one + ask.
 async function handlePickerPost(
   admin: any,
@@ -4788,11 +4893,15 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       profile = await findProfileByTelegramId(admin, fromId);
     }
 
-    // Strict per-student attribution. Submissions are only created by the
-    // identified student who opened an intent via /vazifalar → 📤 Topshirish.
+    // Strict per-student attribution — but an unknown group member posting real homework in a
+    // registered homework topic can now SELF-REGISTER as a provisional student (flag-gated;
+    // name/username/id come from Telegram, group from the chat — no form, no bot-start needed).
     if (!profile) {
-      console.log("hw:group:unknown-sender-ignored", JSON.stringify({ fromId, isAnon, chatId, threadId, messageId }));
-      return;
+      profile = await autoRegisterProvisionalPoster(admin, msg, chatId, threadId);
+      if (!profile) {
+        console.log("hw:group:unknown-sender-ignored", JSON.stringify({ fromId, isAnon, chatId, threadId, messageId }));
+        return;
+      }
     }
 
     const nowIso = new Date().toISOString();
