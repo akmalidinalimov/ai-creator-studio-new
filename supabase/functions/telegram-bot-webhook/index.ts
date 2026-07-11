@@ -252,6 +252,15 @@ const T = {
     gradeCancelled: "Bekor qilindi.",
     gradeNotFound: "Vazifa topilmadi.",
     gradePickStudent: "📝 <b>Talabani tanlang:</b>",
+    retagBtn: "✏️ Vazifani o'zgartirish",
+    retagPickModule: "✏️ Qaysi modulga o'tkazamiz?",
+    retagPickTask: (m: string) => `✏️ ${m} — qaysi vazifa?`,
+    retagDone: (lbl: string) => `✅ O'tkazildi: <b>${lbl}</b>. Endi baho qo'yishingiz mumkin.`,
+    retagGraded: "Baholangan ishni o'zgartirib bo'lmaydi",
+    retagTargetGraded: "U vazifada allaqachon baholangan ish bor",
+    retagSame: "Bu o'sha vazifaning o'zi",
+    retagNoTasks: "Bu modulda faol vazifa yo'q.",
+    retagStudentNote: (lbl: string) => `✏️ O'qituvchi topshirig'ingizni <b>${lbl}</b> vazifasiga o'tkazdi. Ball va tarix saqlanadi.`,
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ hammasi" : `${n} vazifa baholanmagan`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Modul ${n} topikga o'tish`,
@@ -491,6 +500,15 @@ const T = {
     gradeCancelled: "Отменено.",
     gradeNotFound: "Работа не найдена.",
     gradePickStudent: "📝 <b>Выберите студента:</b>",
+    retagBtn: "✏️ Изменить задание",
+    retagPickModule: "✏️ В какой модуль перенести?",
+    retagPickTask: (m: string) => `✏️ ${m} — какое задание?`,
+    retagDone: (lbl: string) => `✅ Перенесено: <b>${lbl}</b>. Теперь можно ставить оценку.`,
+    retagGraded: "Оценённую работу нельзя переносить",
+    retagTargetGraded: "По тому заданию уже есть оценённая работа",
+    retagSame: "Это то же самое задание",
+    retagNoTasks: "В этом модуле нет активных заданий.",
+    retagStudentNote: (lbl: string) => `✏️ Учитель перенёс вашу работу на задание <b>${lbl}</b>. Баллы и история сохраняются.`,
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ всё" : `${n} не оценено`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Перейти в топик модуля ${n}`,
@@ -722,6 +740,15 @@ const T = {
     gradeCancelled: "Cancelled.",
     gradeNotFound: "Submission not found.",
     gradePickStudent: "📝 <b>Pick a student:</b>",
+    retagBtn: "✏️ Change task",
+    retagPickModule: "✏️ Move to which module?",
+    retagPickTask: (m: string) => `✏️ ${m} — which task?`,
+    retagDone: (lbl: string) => `✅ Moved to <b>${lbl}</b>. You can grade it now.`,
+    retagGraded: "A graded submission can't be moved",
+    retagTargetGraded: "That task already has a graded submission",
+    retagSame: "That's the same task",
+    retagNoTasks: "No active tasks in that module.",
+    retagStudentNote: (lbl: string) => `✏️ Your teacher moved your submission to <b>${lbl}</b>. Points and history are kept.`,
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ all done" : `${n} ungraded`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Open module ${n} topic`,
@@ -3450,7 +3477,11 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
     updated_at: new Date().toISOString(),
     expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
   });
-  await sendMessage(chatId, t.gradeAskScore(a?.max_score || 10));
+  // Ungraded only: one-tap re-tag if the auto-guessed task is wrong (M1·V1 mis-tag fix).
+  const scoreKb = sub.score == null
+    ? { inline_keyboard: [[{ text: t.retagBtn, callback_data: `hwmv:${submissionId}` }]] }
+    : undefined;
+  await sendMessage(chatId, t.gradeAskScore(a?.max_score || 10), scoreKb);
 }
 
 // Handle text replies for an in-progress grading conversation. Returns true if consumed.
@@ -4257,7 +4288,7 @@ async function resolveAssignmentForTopic(
   // Path A: shared-topic mode (groups.homework_topic_id matches the thread).
   if (group.homework_topic_id != null && Number(group.homework_topic_id) === Number(threadId)) {
     if (!group.course_id) return null;
-    const { data: mods } = await admin.from("modules").select("id").eq("course_id", group.course_id);
+    const { data: mods } = await admin.from("modules").select("id, position").eq("course_id", group.course_id).order("position");
     const modIds = ((mods as any[]) || []).map((m: any) => m.id);
     if (!modIds.length) return null;
     const { data: courseAsgs } = await admin
@@ -4274,10 +4305,52 @@ async function resolveAssignmentForTopic(
       .select("assignment_id, score")
       .eq("user_id", profileId)
       .in("assignment_id", leafIds);
-    const asg =
-      pickNextLeaf(leaves as any, (existingSubs || []) as any) ||
-      // All graded: fall back to the most recent leaf so a resubmission still attaches somewhere.
-      [...leaves].sort((a: any, b: any) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
+    // SMARTER AUTO-TAG (v3.14.42): a bare post used to attach to the FIRST un-submitted leaf of
+    // the whole course, so anyone not submitting strictly in order got "Module 1 · Task 1".
+    // Bias the guess to the student's CURRENT module — where they most recently watched a lesson
+    // or submitted homework — then its successor (just-finished-a-module case). If neither has an
+    // open task (or the student has no history), fall back to exactly the old global behavior.
+    let asg: any = null;
+    try {
+      const [lpRes, hwRes] = await Promise.all([
+        admin.from("lesson_progress")
+          .select("updated_at, lessons!inner(module_id)")
+          .eq("user_id", profileId).in("lessons.module_id", modIds)
+          .order("updated_at", { ascending: false }).limit(1),
+        admin.from("homework_submissions")
+          .select("submitted_at, homework_assignments!inner(module_id)")
+          .eq("user_id", profileId).in("homework_assignments.module_id", modIds)
+          .order("submitted_at", { ascending: false }).limit(1),
+      ]);
+      const lp = (lpRes.data || [])[0] as any;
+      const hw = (hwRes.data || [])[0] as any;
+      const lpTs = lp?.updated_at ? Date.parse(lp.updated_at) : 0;
+      const hwTs = hw?.submitted_at ? Date.parse(hw.submitted_at) : 0;
+      const currentModuleId: string | null =
+        lpTs || hwTs
+          ? (lpTs >= hwTs ? (lp?.lessons?.module_id ?? null) : (hw?.homework_assignments?.module_id ?? null))
+          : null;
+      if (currentModuleId) {
+        const subMap = new Map(((existingSubs || []) as any[]).map((s: any) => [s.assignment_id, s]));
+        const openLeafIn = (mid: string) =>
+          (leaves as any[]).find((l: any) => l.module_id === mid && (() => { const s = subMap.get(l.id); return !s || s.score == null; })());
+        asg = openLeafIn(currentModuleId) || null;
+        if (!asg) {
+          const idx = modIds.indexOf(currentModuleId);
+          const nextModId = idx >= 0 ? modIds[idx + 1] : undefined;
+          if (nextModId) asg = openLeafIn(nextModId) || null;
+        }
+        if (asg) console.log("hw:group:smart-tag", JSON.stringify({ profile_id: profileId, module_id: asg.module_id, assignment_id: asg.id }));
+      }
+    } catch (e) {
+      console.error("hw:group:smart-tag-err", String(e)); // heuristic is best-effort — never block capture
+    }
+    if (!asg) {
+      asg =
+        pickNextLeaf(leaves as any, (existingSubs || []) as any) ||
+        // All graded: fall back to the most recent leaf so a resubmission still attaches somewhere.
+        [...leaves].sort((a: any, b: any) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
+    }
     if (!asg) return null;
     return { moduleId: asg.module_id, assignment: asg, resolvedVia: "shared_topic" };
   }
@@ -5059,6 +5132,108 @@ async function handleCallback(admin: any, cq: any) {
     const locale: Locale = normLocale(profile.preferred_locale);
     await answerCallback(cq.id);
     await startGradingFlow(admin, chatId, tgId, profile.id, submissionId, locale, persona === "admin");
+    return;
+  }
+
+  // Teacher re-tag at grading time: hwmv:<subId> -> module picker -> hwmv:<subId>:<mIdx> ->
+  // task picker -> hwmv:<subId>:<mIdx>:<lIdx> -> atomic move via admin_retag_submission RPC.
+  // Indices (not UUIDs) keep callback_data under Telegram's 64-byte cap; the server re-derives
+  // the real assignment through the SAME deterministic ordering (modules.position, computeLeaves).
+  if (data.startsWith("hwmv:") && chatId) {
+    if (_isImp) { await answerCallback(cq.id, "👁 Faqat o'qish — /admin"); return; }
+    if (!_clicker) { await answerCallback(cq.id); return; }
+    const persona = await getPersona(admin, _clicker.id);
+    if (persona !== "admin" && persona !== "teacher") { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(_clicker.preferred_locale);
+    const t = T[locale] as any;
+    const parts = data.split(":"); // hwmv, subId[, mIdx[, lIdx]]
+    const subId = parts[1];
+    const { data: sub } = await admin.from("homework_submissions")
+      .select("id, user_id, assignment_id, score").eq("id", subId).maybeSingle();
+    if (!sub) { await answerCallback(cq.id, t.gradeNotFound); return; }
+    // C2 scope: a teacher may only re-tag their own groups' students (admins pass).
+    if (persona !== "admin") {
+      const scope = await gradingScopeIds(admin, _clicker.id, false);
+      if (!scope || !scope.includes(sub.user_id)) { await answerCallback(cq.id, "⛔"); return; }
+    }
+    if (sub.score != null) { await answerCallback(cq.id, t.retagGraded); return; }
+    const { data: curA } = await admin.from("homework_assignments")
+      .select("module_id, modules:module_id(course_id)").eq("id", sub.assignment_id).maybeSingle();
+    const courseId = (curA as any)?.modules?.course_id;
+    if (!courseId) { await answerCallback(cq.id, t.gradeNotFound); return; }
+    const { data: mods } = await admin.from("modules")
+      .select("id, position, title").eq("course_id", courseId).order("position");
+    const ordered = (mods || []) as any[];
+    if (!ordered.length) { await answerCallback(cq.id, t.retagNoTasks); return; }
+
+    if (parts.length === 2) {
+      await answerCallback(cq.id);
+      const rows = ordered.map((m: any, i: number) =>
+        [{ text: `M${(m.position ?? 0) + 1} · ${String(m.title || "").slice(0, 28)}`, callback_data: `hwmv:${subId}:${i}` }]);
+      await sendMessage(chatId, t.retagPickModule, { inline_keyboard: rows });
+      return;
+    }
+
+    const mIdx = Number(parts[2]);
+    const mod = ordered[mIdx];
+    if (!mod) { await answerCallback(cq.id); return; }
+    const { data: asgs } = await admin.from("homework_assignments")
+      .select("id, title, task_number, sap_number, parent_id, is_active, created_at, max_score, module_id")
+      .eq("module_id", mod.id).eq("is_active", true);
+    const allRows = (asgs || []) as any[];
+    const leaves = computeLeaves(allRows as any) as any[];
+    const parentTn = (l: any) => allRows.find((p) => p.id === l.parent_id)?.task_number ?? "?";
+    const leafLabel = (l: any) => l.parent_id
+      ? `V${parentTn(l)}.S${l.sap_number ?? "?"} · ${String(l.title || "").slice(0, 20)}`
+      : `V${l.task_number ?? "?"} · ${String(l.title || "").slice(0, 24)}`;
+
+    if (parts.length === 3) {
+      await answerCallback(cq.id);
+      if (!leaves.length) { await sendMessage(chatId, t.retagNoTasks); return; }
+      const rows = leaves.map((l: any, i: number) =>
+        [{ text: leafLabel(l), callback_data: `hwmv:${subId}:${mIdx}:${i}` }]);
+      await sendMessage(chatId, t.retagPickTask(`M${(mod.position ?? 0) + 1}`), { inline_keyboard: rows });
+      return;
+    }
+
+    const lIdx = Number(parts[3]);
+    const leaf = leaves[lIdx];
+    if (!leaf) { await answerCallback(cq.id); return; }
+    const { data: res, error: rpcErr } = await admin.rpc("admin_retag_submission", {
+      _submission: subId, _new_assignment: leaf.id,
+    });
+    if (rpcErr) {
+      console.error("hwmv:rpc-err", JSON.stringify({ subId, leaf: leaf.id, err: rpcErr.message }));
+      await answerCallback(cq.id, "⚠️");
+      return;
+    }
+    const status = (res as any)?.status;
+    const survivorId = (res as any)?.submission_id || subId;
+    if (status === "same") { await answerCallback(cq.id, t.retagSame); return; }
+    if (status === "already_graded") { await answerCallback(cq.id, t.retagGraded); return; }
+    if (status === "target_graded") { await answerCallback(cq.id, t.retagTargetGraded); return; }
+    if (status !== "moved" && status !== "merged") { await answerCallback(cq.id, t.gradeNotFound); return; }
+    const lbl = `M${(mod.position ?? 0) + 1} · ${leafLabel(leaf)}`;
+    await answerCallback(cq.id, "✅");
+    // Refresh the grading session so the score prompt targets the surviving row + right max.
+    await admin.from("bot_conversation_state").upsert({
+      telegram_id: tgId,
+      state: "grade_score",
+      context: { submission_id: survivorId, max_score: leaf.max_score || 10, grader_id: _clicker.id, is_admin: persona === "admin" },
+      updated_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+    });
+    await sendMessage(chatId, `${t.retagDone(lbl)}\n${t.gradeAskScore(leaf.max_score || 10)}`);
+    // Tell the student (best-effort, their locale).
+    try {
+      const { data: stu } = await admin.from("profiles")
+        .select("telegram_id, preferred_locale").eq("id", sub.user_id).maybeSingle();
+      if (stu?.telegram_id) {
+        const sLoc: Locale = normLocale(stu.preferred_locale);
+        await sendMessage(Number(stu.telegram_id), (T[sLoc] as any).retagStudentNote(lbl));
+      }
+    } catch (_e) { /* best-effort */ }
+    console.log("hwmv:done", JSON.stringify({ subId, survivorId, status, to: leaf.id, by: _clicker.id }));
     return;
   }
 
