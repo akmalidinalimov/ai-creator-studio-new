@@ -4773,13 +4773,10 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       fileId = msg.document.file_id;
       kind = "document";
     }
-    // Links count as homework too (reels, GPT share links, published work):
-    // a plain-text message that contains a URL is treated as a 'link' item.
-    let linkUrl: string | null = null;
-    if (!kind && typeof msg.text === "string") {
-      const m = msg.text.match(/https?:\/\/\S{4,}/);
-      if (m) { linkUrl = m[0].slice(0, 500); kind = "link" as any; }
-    }
+    // Links are NOT homework (owner decision 2026-07-11): only photos, videos, and uploaded
+    // files count. A text message containing a URL is treated like any other chat message and
+    // ignored. (linkUrl stays declared because the media-item builders reference it.)
+    const linkUrl: string | null = null;
     if (!kind) {
       console.log("hw:group:non-media-ignored", JSON.stringify({ chatId, threadId, messageId }));
       return;
