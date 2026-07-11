@@ -80,8 +80,10 @@ Deno.serve(async (req) => {
       await admin.from("homework_teacher_dm_queue").update({ sent_at: new Date().toISOString(), error: err || null }).eq("id", row.id);
     };
     // Transient failure (429 burst at the 08:00 flush, 5xx, network blip): leave sent_at NULL so
-    // the every-minute cron retries — capped at 5 attempts so a poison row can't loop forever.
-    const RETRY_CAP = 5;
+    // the every-minute cron retries. Cap 30 (~30 min of minute-retries) — high enough that the
+    // SQL fallback deliverer (claims rows >15 min overdue) always gets a shot before we give up,
+    // low enough that a poison row can't loop forever.
+    const RETRY_CAP = 30;
     const markRetry = async (err: string) => {
       const attempts = ((row.retry_count as number | null) ?? 0) + 1;
       if (attempts > RETRY_CAP) { await markSent(`gave_up_after_${RETRY_CAP}_retries: ${err}`.slice(0, 300)); return; }
