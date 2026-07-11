@@ -79,6 +79,14 @@ Deno.serve(async (req) => {
     const markSent = async (err?: string) => {
       await admin.from("homework_teacher_dm_queue").update({ sent_at: new Date().toISOString(), error: err || null }).eq("id", row.id);
     };
+    // Transient failure (429 burst at the 08:00 flush, 5xx, network blip): leave sent_at NULL so
+    // the every-minute cron retries — capped at 5 attempts so a poison row can't loop forever.
+    const RETRY_CAP = 5;
+    const markRetry = async (err: string) => {
+      const attempts = ((row.retry_count as number | null) ?? 0) + 1;
+      if (attempts > RETRY_CAP) { await markSent(`gave_up_after_${RETRY_CAP}_retries: ${err}`.slice(0, 300)); return; }
+      await admin.from("homework_teacher_dm_queue").update({ retry_count: attempts, error: err.slice(0, 300) }).eq("id", row.id);
+    };
     const teacher = profMap.get(row.teacher_id);
     const grp = groupMap.get(row.group_id);
     // RBAC: teacher must still be the assigned teacher of the group
@@ -107,7 +115,12 @@ Deno.serve(async (req) => {
       if (!resp.ok || !okBody?.ok) {
         const errTxt = okBody ? JSON.stringify(okBody) : await resp.text().catch(() => "");
         console.error("hw teacher dm fail", row.id, resp.status, errTxt);
-        await markSent(`tg_${resp.status}_${String(errTxt).slice(0, 120)}`);
+        const code = okBody?.error_code ?? resp.status;
+        if (code === 429 || code >= 500) {
+          await markRetry(`tg_${code}_${String(errTxt).slice(0, 120)}`); // transient → retry next minute
+        } else {
+          await markSent(`tg_${code}_${String(errTxt).slice(0, 120)}`); // permanent (403 blocked, 400 bad chat) → no point retrying
+        }
         skipped++;
       } else {
         await markSent();
@@ -131,7 +144,7 @@ Deno.serve(async (req) => {
       }
     } catch (e) {
       console.error("hw teacher dm exception", row.id, e);
-      await markSent(String(e));
+      await markRetry(String(e)); // network-level exception = transient → retry next minute
       skipped++;
     }
   }
