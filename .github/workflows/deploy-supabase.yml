@@ -1,0 +1,158 @@
+# Supabase deploy pipeline — Phase 1 of the autonomous ops plan.
+#
+# On every merge to main touching supabase code, this deploys exactly what changed:
+#   • Edge functions: changed function dirs (or ALL when config.toml changed — verify_jwt
+#     flags live there and require redeploys). Always with the explicit prod ref, because
+#     supabase/config.toml carries a stale project_id from the Lovable era.
+#   • Migrations: LABEL-GATED. New files under supabase/migrations/ are applied via the
+#     Management API (the same mechanism used manually until now — NEVER `supabase db push`,
+#     prod's schema_migrations ledger does not track these files) only when the merged PR
+#     carries the `migration-approved` label. Every applied file is recorded in the
+#     ops_applied_migrations ledger, making re-runs no-ops.
+#
+# No-ops gracefully when SUPABASE_ACCESS_TOKEN is absent (workflows land before secrets).
+# Kill-switch: disable this workflow in the Actions UI — manual deploys keep working.
+name: Deploy Supabase (functions + migrations)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/functions/**"
+      - "supabase/config.toml"
+      - "supabase/migrations/**"
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-supabase
+  cancel-in-progress: false
+
+env:
+  PROJECT_REF: cdyidatkegxwhtuoqxly
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check secret present
+        id: gate
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "SUPABASE_ACCESS_TOKEN not configured — deploy pipeline is dormant (no-op)."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          fetch-depth: 0
+
+      - name: Compute changed paths
+        if: steps.gate.outputs.enabled == 'true'
+        id: diff
+        run: |
+          set -euo pipefail
+          BEFORE="${{ github.event.before }}"
+          # First push / force-push / manual dispatch: fall back to the previous commit.
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE" 2>/dev/null; then
+            BEFORE="$(git rev-parse HEAD~1)"
+          fi
+          git diff --name-only "$BEFORE" "${{ github.sha }}" > changed.txt
+          echo "--- changed files ---"; cat changed.txt
+
+          # Changed function dirs (config.toml change => redeploy everything: verify_jwt lives there)
+          if grep -q '^supabase/config\.toml$' changed.txt; then
+            ls -1 supabase/functions | while read -r d; do
+              [ -f "supabase/functions/$d/index.ts" ] && echo "$d"
+            done > fns.txt
+            echo "config.toml changed → deploying ALL functions"
+          else
+            grep '^supabase/functions/' changed.txt | cut -d/ -f3 | sort -u | while read -r d; do
+              [ -f "supabase/functions/$d/index.ts" ] && echo "$d"
+            done > fns.txt || true
+          fi
+          echo "--- functions to deploy ---"; cat fns.txt || true
+
+          # New migration files (added only)
+          git diff --name-only --diff-filter=A "$BEFORE" "${{ github.sha }}" \
+            | grep '^supabase/migrations/.*\.sql$' | sort > migs.txt || true
+          echo "--- new migrations ---"; cat migs.txt || true
+
+          echo "has_fns=$([ -s fns.txt ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "has_migs=$([ -s migs.txt ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy changed edge functions
+        if: steps.gate.outputs.enabled == 'true' && steps.diff.outputs.has_fns == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          while read -r fn; do
+            [ -z "$fn" ] && continue
+            echo "::group::deploy $fn"
+            npx --yes supabase functions deploy "$fn" --project-ref "$PROJECT_REF" --use-api
+            echo "::endgroup::"
+          done < fns.txt
+
+      - name: Apply new migrations (label-gated, ledgered)
+        if: steps.gate.outputs.enabled == 'true' && steps.diff.outputs.has_migs == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          API="https://api.supabase.com/v1/projects/$PROJECT_REF/database/query"
+
+          # Gate: the merged PR for this commit must carry the migration-approved label.
+          LABELS=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" \
+                    --jq '[.[].labels[].name] | join(",")' || echo "")
+          echo "PR labels: $LABELS"
+          if ! echo "$LABELS" | grep -q 'migration-approved'; then
+            echo "::error::New migration file(s) present but the merged PR lacks the 'migration-approved' label. NOT applying. Apply manually or re-merge with the label."
+            exit 1
+          fi
+
+          q() { # run SQL, print response body, fail on non-2xx
+            jq -n --arg q "$1" '{query:$q}' \
+              | curl -sS --fail-with-body -X POST "$API" \
+                  -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+                  -H "Content-Type: application/json" -d @-
+          }
+
+          while read -r path; do
+            [ -z "$path" ] && continue
+            f=$(basename "$path")
+            echo "::group::migration $f"
+            APPLIED=$(q "select 1 from ops_applied_migrations where filename = '$f'" | jq 'length')
+            if [ "$APPLIED" != "0" ]; then
+              echo "already in ledger — skipping"
+            else
+              jq -n --rawfile sql "$path" '{query:$sql}' \
+                | curl -sS --fail-with-body -X POST "$API" \
+                    -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+                    -H "Content-Type: application/json" -d @-
+              q "insert into ops_applied_migrations (filename, commit_sha) values ('$f', '${{ github.sha }}') on conflict (filename) do nothing"
+              echo "applied + ledgered"
+            fi
+            echo "::endgroup::"
+          done < migs.txt
+
+      - name: Notify owner on failure (best-effort)
+        if: failure()
+        env:
+          OPS_NOTIFY_SECRET: ${{ secrets.OPS_NOTIFY_SECRET }}
+        run: |
+          [ -z "$OPS_NOTIFY_SECRET" ] && exit 0
+          curl -sS --max-time 15 -X POST \
+            "https://cdyidatkegxwhtuoqxly.supabase.co/functions/v1/ops-notify" \
+            -H "x-ops-notify-secret: $OPS_NOTIFY_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "{\"text\":\"🚨 Deploy pipeline FAILED on main (${{ github.sha }}) — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" || true
