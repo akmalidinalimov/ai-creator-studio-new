@@ -2764,9 +2764,11 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
           const tag = `M${(m.module_position ?? 0) + 1}`;
           const title = (m.module_title || "").slice(0, 30);
           lines.push(`<code>${tag}</code> ${csvEscapeHtml(title)} — <b>${m.submitted_count}/${m.total_students}</b> (${pctStr})`);
+          // Module POSITION, not uuid: groupId+moduleId uuids = 81 bytes > Telegram's 64-byte
+          // callback cap → the whole /thomework message was rejected (audit BUG-3). ~48 bytes now.
           buttons.push([
-            { text: `${tag} ✅ Topshirgan`, callback_data: `thw:sub:${g.id}:${m.module_id}` },
-            { text: `${tag} ❌ Topshirmagan`, callback_data: `thw:not:${g.id}:${m.module_id}` },
+            { text: `${tag} ✅ Topshirgan`, callback_data: `thw:sub:${g.id}:${m.module_position ?? 0}` },
+            { text: `${tag} ❌ Topshirmagan`, callback_data: `thw:not:${g.id}:${m.module_position ?? 0}` },
           ]);
         }
       }
@@ -3205,7 +3207,9 @@ async function renderStudentModules(
     lines.push(`📦 <b>${m.mPos + 1}-MODUL</b> — ${m.items.length} ta · ${csvEscapeHtml(scoresStr)}${dateStr ? ` · 📅 ${dateStr}` : ""}`);
     return [{
       text: `${m.mPos + 1}-MODUL · ${m.items.length} ta · ${scoresStr}${dateStr ? ` · ${dateStr}` : ""}`.slice(0, 60),
-      callback_data: `tr:mod:${studentId}:${m.mid}`,
+      // Module POSITION, not uuid: two uuids = 80 bytes > Telegram's 64-byte callback cap, which
+      // made Telegram reject this whole message (BUTTON_DATA_INVALID) — audit BUG-2. ~46 bytes now.
+      callback_data: `tr:mod:${studentId}:${m.mPos}`,
     }];
   });
   buttons.push([{ text: t.backToRoster, callback_data: "tr:list:0" }]);
@@ -5935,13 +5939,25 @@ async function handleCallback(admin: any, cq: any) {
     const sep = rest.indexOf(":");
     if (sep <= 0) { await answerCallback(cq.id); return; }
     const groupId = rest.slice(0, sep);
-    const moduleId = rest.slice(sep + 1);
+    const modRef = rest.slice(sep + 1);
     // Validate teacher owns group (admins ok)
     if (_effPersona === "teacher") {
       const groups = await teacherGroups(admin, _effId);
       if (!groups.find((x) => x.id === groupId)) { await answerCallback(cq.id, "⛔"); return; }
     }
     await answerCallback(cq.id);
+    // Payload carries the module POSITION (uuid pairs blow the 64-byte cap — audit BUG-3).
+    // Resolve via the group's course; accept a 36-char uuid defensively.
+    let moduleId = modRef.length === 36 ? modRef : "";
+    if (!moduleId) {
+      const { data: gRow } = await admin.from("groups").select("course_id").eq("id", groupId).maybeSingle();
+      if (gRow?.course_id) {
+        const { data: mRow } = await admin.from("modules").select("id")
+          .eq("course_id", gRow.course_id).eq("position", parseInt(modRef, 10) || 0).maybeSingle();
+        moduleId = mRow?.id ?? "";
+      }
+    }
+    if (!moduleId) { return; }
     // Load group, module, students, submissions
     const [{ data: grp }, { data: mod }, { data: profs }, { data: asgs }] = await Promise.all([
       admin.from("groups").select("id,name").eq("id", groupId).maybeSingle(),
@@ -6062,8 +6078,22 @@ async function handleCallback(admin: any, cq: any) {
       await renderStudentModules(admin, chatId, _effId, sid, locale, isAdmin);
     } else if (data.startsWith("tr:mod:")) {
       const rest = data.slice("tr:mod:".length);
-      const [sid, mid] = rest.split(":");
-      if (sid && mid) await renderStudentModuleDetail(admin, chatId, _effId, sid, mid, locale, isAdmin);
+      const [sid, midOrPos] = rest.split(":");
+      if (sid && midOrPos) {
+        // Payload carries the module POSITION (uuid pairs blow the 64-byte cap — audit BUG-2).
+        // Resolve via the student's group course; accept a 36-char uuid defensively.
+        let mid: string | null = midOrPos.length === 36 ? midOrPos : null;
+        if (!mid) {
+          const { data: sp } = await admin.from("profiles").select("group_id, groups:group_id(course_id)").eq("id", sid).maybeSingle();
+          const courseId = (sp as any)?.groups?.course_id;
+          if (courseId) {
+            const { data: m } = await admin.from("modules").select("id")
+              .eq("course_id", courseId).eq("position", parseInt(midOrPos, 10) || 0).maybeSingle();
+            mid = m?.id ?? null;
+          }
+        }
+        if (mid) await renderStudentModuleDetail(admin, chatId, _effId, sid, mid, locale, isAdmin);
+      }
     } else if (data.startsWith("thm:list:")) {
       const page = parseInt(data.slice("thm:list:".length), 10) || 0;
       await renderTeacherModulePicker(admin, chatId, _effId, locale, isAdmin, page, groupIdScope);
