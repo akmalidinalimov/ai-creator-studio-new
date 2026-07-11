@@ -4449,9 +4449,14 @@ async function finalizePendingPost(
     const t = T[locale] as any;
 
     // Already-graded short-circuit (same rule as the auto path).
+    // On an EXPLICIT pick (guessed=false) do NOT consume the pending post: the student is told
+    // "pick another" — so the picker must stay alive and the post must stay pending. Consuming it
+    // here (v1 bug, caught in owner testing) silently lost the post while showing a ✅ reaction.
     const { data: prior } = await admin.from("homework_submissions")
       .select("id, score, score_is_stale").eq("user_id", pending.user_id).eq("assignment_id", assignmentId).maybeSingle();
     if (prior && prior.score != null && !prior.score_is_stale) {
+      if (!guessed) return "already_graded"; // picker stays open; nothing consumed
+      // Sweep fallback: mirror the legacy auto path (acknowledge, inform, consume).
       await admin.from("hw_pending_posts").update({ state: "done" }).eq("id", pending.id);
       await deletePicker();
       try { await setMessageReaction(chatId, firstMsgId, "✅"); } catch (_e) { /* ignore */ }
@@ -4460,6 +4465,7 @@ async function finalizePendingPost(
     }
     // Tier gate (defense-in-depth).
     if (await isModuleBlocked(admin, pending.user_id, moduleId)) {
+      if (!guessed) return "tier_locked"; // explicit pick: picker stays open, pick another module
       await admin.from("hw_pending_posts").update({ state: "expired" }).eq("id", pending.id);
       await deletePicker();
       return "tier_locked";
