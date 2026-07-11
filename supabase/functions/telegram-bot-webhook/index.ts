@@ -2944,7 +2944,12 @@ async function handleGradingCommand(
   const t = T[locale] as any;
 
   if (cmd === "/baholash" || cmd === "/grade") {
-    await renderStudentPicker(admin, chatId, graderId, locale, isAdmin, 0, groupId);
+    // GRADING IS NEVER GROUP-SCOPED (2026-07-11): Feruza teaches 6-GURUH (4.0) + PRE 5.0; her
+    // active group was the 4.0 one, so 10 fresh 5.0 submissions were invisible in Baholash while
+    // the DM said "new submission" — grading must show ALL the grader's groups. (Pagination
+    // already re-rendered unscoped; this makes the entry tap consistent.) Stats/roster/broadcast
+    // keep the active-group concept — only grading is exempt.
+    await renderStudentPicker(admin, chatId, graderId, locale, isAdmin, 0, null);
     return true;
   }
 
@@ -2968,7 +2973,9 @@ const PICKER_PAGE_SIZE = 10;
 async function renderStudentPicker(admin: any, chatId: number, graderId: string, locale: Locale, isAdmin: boolean, page: number, groupId?: string | null) {
   const t = T[locale] as any;
   const ids = await gradingScopeIds(admin, graderId, isAdmin, groupId);
-  let q = admin.from("homework_submissions").select("user_id").is("score", null);
+  // Pending = ungraded OR re-opened (stale) — same rule as loadGradingSubmissions, so
+  // resubmissions awaiting regrade are counted here too.
+  let q = admin.from("homework_submissions").select("user_id").or("score.is.null,score_is_stale.is.true");
   if (ids) {
     if (ids.length === 0) {
       await sendWithKeyboard(chatId, `${t.gradePending}\n\n${t.gradeNoneP}`, locale, isAdmin, isAdmin ? "admin" : "teacher");
@@ -2984,12 +2991,23 @@ async function renderStudentPicker(admin: any, chatId: number, graderId: string,
     return;
   }
   const userIds = Array.from(counts.keys());
-  const { data: profs } = await admin.from("profiles").select("id, name, last_name").in("id", userIds);
-  const rows = ((profs || []) as any[]).map((p: any) => ({
-    id: p.id,
-    name: [p.name, p.last_name].filter(Boolean).join(" ") || "—",
-    n: counts.get(p.id) || 0,
-  })).sort((a: any, b: any) => b.n - a.n);
+  const { data: profs } = await admin.from("profiles").select("id, name, last_name, group_id").in("id", userIds);
+  // Multi-group teachers see every group's pending work in one list — tag each student with
+  // their group so e.g. "PRE 5.0" vs "6-GURUH" is obvious at a glance.
+  const grpIds = Array.from(new Set(((profs || []) as any[]).map((p: any) => p.group_id).filter(Boolean)));
+  const grpNames = new Map<string, string>();
+  if (!isAdmin && grpIds.length > 1) {
+    const { data: grps } = await admin.from("groups").select("id, name").in("id", grpIds);
+    for (const g of (grps || []) as any[]) grpNames.set(g.id, g.name);
+  }
+  const rows = ((profs || []) as any[]).map((p: any) => {
+    const tag = grpNames.get(p.group_id);
+    return {
+      id: p.id,
+      name: ([p.name, p.last_name].filter(Boolean).join(" ") || "—") + (tag ? ` · ${tag}` : ""),
+      n: counts.get(p.id) || 0,
+    };
+  }).sort((a: any, b: any) => b.n - a.n);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / PICKER_PAGE_SIZE));
   const pageIdx = Math.min(Math.max(0, page), totalPages - 1);
