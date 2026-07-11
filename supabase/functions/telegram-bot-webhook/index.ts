@@ -61,12 +61,17 @@ async function getEnrollmentSettings(admin: any, locale: Locale): Promise<{ mess
 //     courses (empty/omitted list = ALL courses): only posts made AFTER /vazifalar → 📤 Topshirish
 //     count; un-initiated posts get a one-time hint and are NOT captured (no submission, no teacher
 //     ping). Kills question/chat false-positives. Scoped so e.g. only 5.0 is affected, not finished 4.0.
+//   {"mode":"picker","course_ids":[...]} — ASK, THEN GUESS: a media post is held in hw_pending_posts
+//     and the bot replies in-thread with module→task inline buttons (owner-locked). On pick the
+//     submission is created for the chosen task; if the student ignores it (~10 min) the smart
+//     auto-tag fallback files it anyway — work is never lost. Explicit /vazifalar intents bypass
+//     the picker entirely (the student already chose).
 // Missing/malformed row ⇒ auto, so deploying this code changes nothing until the flag is flipped.
-async function getHomeworkCaptureConfig(admin: any): Promise<{ mode: "auto" | "require_intent"; courseIds: string[] }> {
+async function getHomeworkCaptureConfig(admin: any): Promise<{ mode: "auto" | "require_intent" | "picker"; courseIds: string[] }> {
   try {
     const { data } = await admin.from("platform_settings").select("value").eq("key", "homework_capture").maybeSingle();
     const v = (data?.value as any) || {};
-    const mode = v.mode === "require_intent" ? "require_intent" : "auto";
+    const mode = v.mode === "require_intent" ? "require_intent" : (v.mode === "picker" ? "picker" : "auto");
     const courseIds = Array.isArray(v.course_ids) ? v.course_ids.filter((x: any) => typeof x === "string") : [];
     return { mode, courseIds };
   } catch (_e) {
@@ -261,6 +266,19 @@ const T = {
     retagSame: "Bu o'sha vazifaning o'zi",
     retagNoTasks: "Bu modulda faol vazifa yo'q.",
     retagStudentNote: (lbl: string) => `✏️ O'qituvchi topshirig'ingizni <b>${lbl}</b> vazifasiga o'tkazdi. Ball va tarix saqlanadi.`,
+    pkAsk: "📋 Bu qaysi vazifa? Quyidan tanlang.\n<i>Tanlamasangiz ham qabul qilinadi — 10 daqiqadan so'ng avtomatik belgilanadi.</i>",
+    pkAskTask: (m: string) => `📋 ${m} — qaysi vazifa?`,
+    pkBack: "⬅️ Modullar",
+    pkDone: (lbl: string) => `✅ ${lbl} qabul qilindi`,
+    pkNotYours: "Bu boshqa talabaning topshirig'i 🙂",
+    pkExpired: "Muddati o'tgan — vazifa avtomatik belgilangan.",
+    pkGradedAlready: "Bu vazifa allaqachon baholangan. Boshqasini tanlang.",
+    pkTierLocked: "Bu modul sizning tarifingizda yopiq.",
+    pkWrongTopic: (url: string) => `⚠️ Bu boshqa guruh topigi. Vazifangizni o'z guruhingiz topigiga yuboring: ${url}`,
+    pkResubAsk: (lbl: string, sc: number, mx: number) => `⚠️ ${lbl} allaqachon baholangan: <b>${sc}/${mx}</b>.\nQayta topshirsangiz, eski baho bekor qilinadi va o'qituvchi qaytadan baholaydi.`,
+    pkResubYes: "🔄 Ha, qayta topshirish",
+    pkDoneMsg: (lbl: string) => `✅ <b>${lbl}</b> qabul qilindi — o'qituvchi tekshiradi.`,
+    pkPrevGrade: (sc: number, mx: number) => `📊 Oldingi baho: <b>${sc}/${mx}</b>`,
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ hammasi" : `${n} vazifa baholanmagan`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Modul ${n} topikga o'tish`,
@@ -509,6 +527,19 @@ const T = {
     retagSame: "Это то же самое задание",
     retagNoTasks: "В этом модуле нет активных заданий.",
     retagStudentNote: (lbl: string) => `✏️ Учитель перенёс вашу работу на задание <b>${lbl}</b>. Баллы и история сохраняются.`,
+    pkAsk: "📋 Какое это задание? Выберите ниже.\n<i>Если не выберете — всё равно примем: через 10 минут отметим автоматически.</i>",
+    pkAskTask: (m: string) => `📋 ${m} — какое задание?`,
+    pkBack: "⬅️ Модули",
+    pkDone: (lbl: string) => `✅ ${lbl} принято`,
+    pkNotYours: "Это работа другого студента 🙂",
+    pkExpired: "Время вышло — задание отмечено автоматически.",
+    pkGradedAlready: "Это задание уже оценено. Выберите другое.",
+    pkTierLocked: "Этот модуль закрыт в вашем тарифе.",
+    pkWrongTopic: (url: string) => `⚠️ Это топик другой группы. Отправьте работу в топик своей группы: ${url}`,
+    pkResubAsk: (lbl: string, sc: number, mx: number) => `⚠️ ${lbl} уже оценено: <b>${sc}/${mx}</b>.\nПри повторной сдаче старая оценка сбросится, и учитель оценит заново.`,
+    pkResubYes: "🔄 Да, пересдать",
+    pkDoneMsg: (lbl: string) => `✅ <b>${lbl}</b> принято — учитель проверит.`,
+    pkPrevGrade: (sc: number, mx: number) => `📊 Прежняя оценка: <b>${sc}/${mx}</b>`,
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ всё" : `${n} не оценено`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Перейти в топик модуля ${n}`,
@@ -749,6 +780,19 @@ const T = {
     retagSame: "That's the same task",
     retagNoTasks: "No active tasks in that module.",
     retagStudentNote: (lbl: string) => `✏️ Your teacher moved your submission to <b>${lbl}</b>. Points and history are kept.`,
+    pkAsk: "📋 Which task is this? Pick below.\n<i>No pick needed — it's accepted either way and auto-tagged in 10 minutes.</i>",
+    pkAskTask: (m: string) => `📋 ${m} — which task?`,
+    pkBack: "⬅️ Modules",
+    pkDone: (lbl: string) => `✅ ${lbl} accepted`,
+    pkNotYours: "That's another student's submission 🙂",
+    pkExpired: "Expired — the task was tagged automatically.",
+    pkGradedAlready: "That task is already graded. Pick another.",
+    pkTierLocked: "That module is locked on your plan.",
+    pkWrongTopic: (url: string) => `⚠️ This is another group's topic. Post your homework in your own group's topic: ${url}`,
+    pkResubAsk: (lbl: string, sc: number, mx: number) => `⚠️ ${lbl} is already graded: <b>${sc}/${mx}</b>.\nResubmitting resets the old score and your teacher will regrade it.`,
+    pkResubYes: "🔄 Yes, resubmit",
+    pkDoneMsg: (lbl: string) => `✅ <b>${lbl}</b> accepted — your teacher will review it.`,
+    pkPrevGrade: (sc: number, mx: number) => `📊 Previous grade: <b>${sc}/${mx}</b>`,
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ all done" : `${n} ungraded`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Open module ${n} topic`,
@@ -3427,7 +3471,7 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
   const t = T[locale] as any;
   const { data: sub } = await admin
     .from("homework_submissions")
-    .select("id, assignment_id, user_id, submitted_text, submitted_image_url, submitted_at, is_late, score, telegram_message_url, telegram_file_kind")
+    .select("id, assignment_id, user_id, submitted_text, submitted_image_url, submitted_at, is_late, score, previous_score, telegram_message_url, telegram_file_kind")
     .eq("id", submissionId)
     .maybeSingle();
   if (!sub) {
@@ -3452,7 +3496,10 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
   const tn = a?.task_number ? ` #${a.task_number}` : "";
   const header = `<b>${csvEscapeHtml(name)}</b> — ${csvEscapeHtml(a?.title || "")}${tn}`;
   const body = sub.submitted_text ? csvEscapeHtml(sub.submitted_text) : "<i>(no text)</i>";
-  await sendMessage(chatId, `${header}\n\n${body}`);
+  // Regrade context: a resubmission carries the grade it's trying to improve.
+  const prevLine = (sub as any).previous_score != null && sub.score == null
+    ? `\n${(t as any).pkPrevGrade((sub as any).previous_score, a?.max_score || 10)}` : "";
+  await sendMessage(chatId, `${header}\n\n${body}${prevLine}`);
   // Telegram-source submission: surface the original message link
   if (sub.telegram_message_url) {
     const tt = T[locale] as any;
@@ -4386,8 +4433,284 @@ async function resolveAssignmentForTopic(
 // v3.14.41: Teacher-DM dedupe is now enforced inside notifyTeachersOfSubmission
 // by message_url (per-submission), so resubmissions always notify.
 
+// ---------------- In-group picker ("ask, then guess") ----------------
+// Picker mode holds a media post in hw_pending_posts and asks the student in-thread
+// (inline buttons work in groups for ANY member — no bot Start needed, unlike DMs,
+// which only ~30% of students can receive). On pick → real submission for the chosen
+// task. No pick in ~10 min → the smart auto-tag fallback files it anyway (sweep below),
+// so work is NEVER lost. Explicit /vazifalar intents bypass the picker entirely.
+
+// Turn a pending post into a real submission (shared by the pick tap and the expiry sweep).
+async function finalizePendingPost(
+  admin: any,
+  pending: any,
+  assignmentId: string,
+  moduleId: string,
+  guessed: boolean,
+  allowResubmit = false, // true ONLY after the student explicitly confirmed regrading
+): Promise<"created" | "already_graded" | "tier_locked" | "error"> {
+  try {
+    const chatId = Number(pending.telegram_chat_id);
+    const threadId = Number(pending.telegram_thread_id);
+    const firstMsgId = Number(pending.first_message_id);
+    const deletePicker = async () => {
+      if (pending.picker_message_id) {
+        try { await tgApi("deleteMessage", { chat_id: chatId, message_id: Number(pending.picker_message_id) }); } catch (_e) { /* best-effort */ }
+      }
+    };
+    const { data: profile } = await admin.from("profiles")
+      .select("id, name, last_name, telegram_id, telegram_username, preferred_locale")
+      .eq("id", pending.user_id).maybeSingle();
+    const locale: Locale = normLocale(profile?.preferred_locale);
+    const t = T[locale] as any;
+
+    // Already-graded short-circuit (same rule as the auto path).
+    // On an EXPLICIT pick (guessed=false) do NOT consume the pending post: the student is told
+    // "pick another" — so the picker must stay alive and the post must stay pending. Consuming it
+    // here (v1 bug, caught in owner testing) silently lost the post while showing a ✅ reaction.
+    const { data: prior } = await admin.from("homework_submissions")
+      .select("id, score, score_is_stale, previous_score").eq("user_id", pending.user_id).eq("assignment_id", assignmentId).maybeSingle();
+    // Carry the grade memory: a graded prior stamps its score; an ungraded prior (pending regrade)
+    // keeps whatever previous_score it already carried. Fresh submissions carry null.
+    const prevScore: number | null = prior && prior.score != null ? prior.score : ((prior as any)?.previous_score ?? null);
+    if (prior && prior.score != null && !prior.score_is_stale && !allowResubmit) {
+      if (!guessed) return "already_graded"; // picker stays open; nothing consumed
+      // Sweep fallback: mirror the legacy auto path (acknowledge, inform, consume).
+      await admin.from("hw_pending_posts").update({ state: "done" }).eq("id", pending.id);
+      await deletePicker();
+      try { await setMessageReaction(chatId, firstMsgId, "✅"); } catch (_e) { /* ignore */ }
+      if (profile?.telegram_id) { try { await sendMessage(Number(profile.telegram_id), t.hwIntentAlreadyScored); } catch (_e) { /* ignore */ } }
+      return "already_graded";
+    }
+    // Tier gate (defense-in-depth).
+    if (await isModuleBlocked(admin, pending.user_id, moduleId)) {
+      if (!guessed) return "tier_locked"; // explicit pick: picker stays open, pick another module
+      await admin.from("hw_pending_posts").update({ state: "expired" }).eq("id", pending.id);
+      await deletePicker();
+      return "tier_locked";
+    }
+
+    const media = Array.isArray(pending.media) ? pending.media.slice(0, 10) : [];
+    const first = media[0] || {};
+    const messageUrl = buildMessageLink(chatId, threadId, firstMsgId);
+    const { data: existingSub } = await admin.from("homework_submissions")
+      .select("attempt_number").eq("user_id", pending.user_id).eq("assignment_id", assignmentId).maybeSingle();
+    const nextAttempt = ((existingSub?.attempt_number as number | null) ?? 0) + 1;
+    const { data: upserted, error: upErr } = await admin.from("homework_submissions").upsert({
+      user_id: pending.user_id,
+      assignment_id: assignmentId,
+      submitted_text: (pending.submitted_text || "").slice(0, 4000),
+      submitted_at: new Date().toISOString(),
+      attempt_number: nextAttempt,
+      score: null, score_feedback: null, scored_by: null, scored_at: null,
+      score_is_stale: false, is_late: false,
+      previous_score: prevScore,
+      telegram_chat_id: chatId,
+      telegram_thread_id: threadId,
+      telegram_message_id: firstMsgId,
+      telegram_message_url: messageUrl,
+      telegram_file_id: (first as any).file_id || null,
+      telegram_file_kind: (first as any).kind || null,
+      media,
+      source: "telegram_topic",
+    }, { onConflict: "user_id,assignment_id" }).select("id").maybeSingle();
+    if (upErr || !upserted?.id) { console.error("pk:finalize-upsert-err", upErr); return "error"; }
+
+    // Open the follow-up window so extra files posted after the pick append via the intent path.
+    await admin.from("bot_homework_intents").upsert({
+      user_id: pending.user_id,
+      assignment_id: assignmentId,
+      module_id: moduleId,
+      group_id: pending.group_id,
+      telegram_chat_id: chatId,
+      telegram_thread_id: threadId,
+      submission_id: upserted.id,
+      expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+      created_at: new Date().toISOString(),
+    }, { onConflict: "user_id,assignment_id" });
+
+    try { await setMessageReaction(chatId, firstMsgId, "✅"); } catch (_e) { /* ignore */ }
+
+    // Assignment meta for the notifications + the visible receipt.
+    const { data: a } = await admin.from("homework_assignments")
+      .select("title, task_number, sap_number, parent_id, module_id, max_score, modules(position)")
+      .eq("id", assignmentId).maybeSingle();
+    const mn = ((a?.modules?.position ?? 0) as number) + 1;
+    const tn = (a?.task_number ?? 1) as number;
+    let aTitle = a?.title || "";
+    if (a?.parent_id) {
+      const { data: par } = await admin.from("homework_assignments").select("task_number").eq("id", a.parent_id).maybeSingle();
+      aTitle = `V${par?.task_number ?? "?"}.S${a?.sap_number ?? "?"} — ${a?.title || ""}`;
+    }
+    if (guessed) aTitle = `${aTitle} (taxminiy)`; // teacher sees the tag was auto-guessed → ✏️ if wrong
+
+    // VISIBLE RECEIPT (owner feedback: the toast alone is too easy to miss): morph the picker
+    // message into a short confirmation everyone can see, then self-delete after ~30s.
+    // waitUntil gives the precise 30s; the sweep's done-row pass is the backstop if the
+    // instance dies first (expires_at doubles as the deletion deadline once state='done').
+    await admin.from("hw_pending_posts")
+      .update({ state: "done", expires_at: new Date(Date.now() + 90_000).toISOString() })
+      .eq("id", pending.id);
+    if (pending.picker_message_id) {
+      const pickerMsgId = Number(pending.picker_message_id);
+      const confLbl = `M${mn} · V${tn}${guessed ? " (avto)" : ""}`;
+      // Resubmission receipt carries the grade being improved — the student sees what they had.
+      const receipt = t.pkDoneMsg(confLbl)
+        + (prevScore != null ? `\n${t.pkPrevGrade(prevScore, (a?.max_score ?? 10) as number)}` : "");
+      try {
+        await tgApi("editMessageText", {
+          chat_id: chatId, message_id: pickerMsgId,
+          text: receipt, parse_mode: "HTML",
+        });
+        const delayedDelete = (async () => {
+          await new Promise((r) => setTimeout(r, 30_000));
+          try { await tgApi("deleteMessage", { chat_id: chatId, message_id: pickerMsgId }); } catch (_e) { /* sweep backstop */ }
+          try { await admin.from("hw_pending_posts").update({ picker_message_id: null }).eq("id", pending.id); } catch (_e) { /* ignore */ }
+        })();
+        const er: any = (globalThis as any).EdgeRuntime;
+        if (er?.waitUntil) er.waitUntil(delayedDelete); else delayedDelete.catch(() => {});
+      } catch (_e) { /* receipt is best-effort; ✅ reaction + DM still stand */ }
+    }
+
+    if (profile?.telegram_id) {
+      try { await sendMessage(Number(profile.telegram_id), t.hwReceived(mn, tn, undefined, undefined)); } catch (_e) { /* ~70% can't be DMed — the ✅ reaction is the receipt */ }
+    }
+    await notifyTeachersOfSubmission(admin, profile || { id: pending.user_id }, pending.group_id, mn, tn, aTitle, messageUrl, upserted.id, assignmentId, moduleId);
+    cacheInvalidateUser(pending.user_id);
+    console.log("pk:finalized", JSON.stringify({ pending_id: pending.id, submission_id: upserted.id, assignment_id: assignmentId, guessed }));
+    return "created";
+  } catch (e) {
+    console.error("pk:finalize-err", String(e));
+    return "error";
+  }
+}
+
+// Expiry sweep: unanswered pickers fall back to the smart auto-tag guess. Runs opportunistically
+// on group traffic (throttled) — a quiet night just delays the fallback, which is harmless
+// because grading happens on a scale of days.
+let __pkLastSweep = 0;
+async function sweepExpiredPendingPosts(admin: any) {
+  if (Date.now() - __pkLastSweep < 60_000) return;
+  __pkLastSweep = Date.now();
+  try {
+    const { data: rows } = await admin.from("hw_pending_posts")
+      .select("*").eq("state", "pending").lt("expires_at", new Date().toISOString()).limit(5);
+    for (const p of (rows || []) as any[]) {
+      try {
+        const { data: grp } = await admin.from("groups")
+          .select("id, course_id, homework_topic_id").eq("id", p.group_id).maybeSingle();
+        const resolved = grp ? await resolveAssignmentForTopic(admin, grp, Number(p.telegram_thread_id), p.user_id) : null;
+        if (!resolved) {
+          await admin.from("hw_pending_posts").update({ state: "expired" }).eq("id", p.id);
+          if (p.picker_message_id) { try { await tgApi("deleteMessage", { chat_id: Number(p.telegram_chat_id), message_id: Number(p.picker_message_id) }); } catch (_e) { /* ignore */ } }
+          console.log("pk:sweep-unresolved", JSON.stringify({ pending_id: p.id }));
+          continue;
+        }
+        await finalizePendingPost(admin, p, resolved.assignment.id, resolved.moduleId, true);
+      } catch (e) { console.error("pk:sweep-row-err", String(e)); }
+    }
+    // Backstop pass: receipts whose timed self-delete didn't run (instance died) —
+    // done rows past their deletion deadline that still hold a picker/receipt message.
+    const { data: doneRows } = await admin.from("hw_pending_posts")
+      .select("id, telegram_chat_id, picker_message_id")
+      .eq("state", "done").not("picker_message_id", "is", null)
+      .lt("expires_at", new Date().toISOString()).limit(10);
+    for (const d of (doneRows || []) as any[]) {
+      try { await tgApi("deleteMessage", { chat_id: Number(d.telegram_chat_id), message_id: Number(d.picker_message_id) }); } catch (_e) { /* may already be gone */ }
+      await admin.from("hw_pending_posts").update({ picker_message_id: null }).eq("id", d.id);
+    }
+  } catch (e) { console.error("pk:sweep-err", String(e)); }
+}
+
+// A media post under picker mode: append to the live pending post (albums) or create one + ask.
+async function handlePickerPost(
+  admin: any,
+  profile: any,
+  grp: any,
+  chatId: number,
+  threadId: number,
+  messageId: number,
+  item: Record<string, unknown>,
+  caption: string,
+) {
+  const nowIso = new Date().toISOString();
+  const { data: live } = await admin.from("hw_pending_posts")
+    .select("id, media, submitted_text")
+    .eq("user_id", profile.id).eq("telegram_chat_id", chatId).eq("telegram_thread_id", threadId)
+    .eq("state", "pending").gt("expires_at", nowIso).maybeSingle();
+  if (live) {
+    const media = Array.isArray(live.media) ? live.media : [];
+    if (media.length >= 10) {
+      try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "🙈" }] }); } catch (_e) { /* ignore */ }
+      return;
+    }
+    media.push(item);
+    const mergedText = live.submitted_text && caption && !live.submitted_text.includes(caption)
+      ? `${live.submitted_text}\n${caption}`.slice(0, 4000) : (live.submitted_text || caption);
+    await admin.from("hw_pending_posts").update({ media, submitted_text: mergedText }).eq("id", live.id);
+    try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "👍" }] }); } catch (_e) { /* ignore */ }
+    return;
+  }
+  // Create the pending row. A racing album sibling may win the unique index — append instead.
+  const { data: created, error: insErr } = await admin.from("hw_pending_posts").insert({
+    user_id: profile.id,
+    from_tg_id: Number(profile.telegram_id),
+    group_id: grp.id,
+    course_id: grp.course_id,
+    telegram_chat_id: chatId,
+    telegram_thread_id: threadId,
+    first_message_id: messageId,
+    media: [item],
+    submitted_text: (caption || "").slice(0, 4000),
+    expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+  }).select("id").maybeSingle();
+  if (insErr || !created?.id) {
+    // unique-violation race (album): retry as append
+    const { data: live2 } = await admin.from("hw_pending_posts")
+      .select("id, media").eq("user_id", profile.id).eq("telegram_chat_id", chatId)
+      .eq("telegram_thread_id", threadId).eq("state", "pending").maybeSingle();
+    if (live2) {
+      const media = Array.isArray(live2.media) ? live2.media : [];
+      if (media.length < 10) {
+        media.push(item);
+        await admin.from("hw_pending_posts").update({ media }).eq("id", live2.id);
+        try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "👍" }] }); } catch (_e) { /* ignore */ }
+      }
+    } else {
+      console.error("pk:insert-err", insErr);
+    }
+    return;
+  }
+  // Ask, in-thread, in the student's language. Buttons work for everyone; only the poster's taps count.
+  const locale: Locale = normLocale(profile.preferred_locale);
+  const t = T[locale] as any;
+  const { data: mods } = await admin.from("modules")
+    .select("id, position").eq("course_id", grp.course_id).order("position");
+  const ordered = (mods || []) as any[];
+  const btns = ordered.map((m: any, i: number) => ({ text: `M${(m.position ?? 0) + 1}`, callback_data: `hwpk:${created.id}:m:${i}` }));
+  const rows: any[][] = [];
+  for (let i = 0; i < btns.length; i += 4) rows.push(btns.slice(i, i + 4));
+  try {
+    const resp = await tgApi("sendMessage", {
+      chat_id: chatId,
+      message_thread_id: threadId,
+      reply_to_message_id: messageId,
+      text: t.pkAsk,
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      reply_markup: { inline_keyboard: rows },
+    });
+    const body: any = await resp.json().catch(() => null);
+    const pickerMsgId = body?.result?.message_id;
+    if (pickerMsgId) await admin.from("hw_pending_posts").update({ picker_message_id: pickerMsgId }).eq("id", created.id);
+  } catch (e) { console.error("pk:ask-send-err", String(e)); /* sweep will auto-tag it */ }
+  console.log("pk:pending-created", JSON.stringify({ pending_id: created.id, user_id: profile.id, chatId, threadId, messageId }));
+}
+
 async function handleGroupTopicMessage(admin: any, msg: any) {
   try {
+    // Opportunistic fallback sweep: unanswered pickers auto-tag after expiry (throttled, cheap).
+    sweepExpiredPendingPosts(admin).catch(() => {});
     const chatId = msg.chat?.id;
     const threadId = msg.message_thread_id;
     const fromId = msg.from?.id;
@@ -4469,7 +4792,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       const { data: prof2 } = await admin.from("profiles").select("group_id").eq("id", profile.id).maybeSingle();
       const groupId = prof2?.group_id ?? null;
       const grp = groupId
-        ? (await admin.from("groups").select("id, course_id, homework_topic_id").eq("id", groupId).maybeSingle()).data
+        ? (await admin.from("groups").select("id, course_id, homework_topic_id, homework_topic_url").eq("id", groupId).maybeSingle()).data
         : null;
 
       // ENFORCE-BOT-FLOW gate (course-scoped): if this student's course is configured for
@@ -4496,6 +4819,50 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
           }
         } catch (_e) { /* hint is best-effort */ }
         console.log("hw:group:require-intent-uninitiated-ignored", JSON.stringify({ profile_id: profile.id, course_id: grp?.course_id, chatId, threadId, messageId }));
+        return;
+      }
+
+      // PICKER MODE ("ask, then guess"): hold the post + ask in-thread with buttons.
+      const pickerOn = cfg.mode === "picker" && !!grp?.course_id
+        && (cfg.courseIds.length === 0 || cfg.courseIds.includes(grp.course_id));
+      if (pickerOn) {
+        // Is THIS thread a homework topic of the student's own group (shared or per-module)?
+        let isHwTopic = grp.homework_topic_id != null && Number(grp.homework_topic_id) === Number(threadId);
+        if (!isHwTopic) {
+          const { data: gmt } = await admin.from("group_module_topics")
+            .select("module_id").eq("group_id", grp.id).eq("telegram_topic_id", threadId).maybeSingle();
+          isHwTopic = !!gmt?.module_id;
+        }
+        if (!isHwTopic) {
+          // Wrong-group posts used to vanish silently (the Test-1 hole). If this chat belongs to a
+          // DIFFERENT group's homework setup, point the student to their own topic — in-thread,
+          // rate-limited, so it works even for the ~70% the bot cannot DM.
+          try {
+            const { groupId: chatGroupId } = await resolveGroupFromChatId(admin, chatId);
+            if (chatGroupId && chatGroupId !== grp.id && grp.homework_topic_url) {
+              const since = new Date(Date.now() - 15 * 60_000).toISOString();
+              const { data: recentHint } = await admin.from("notifications_log")
+                .select("id").eq("user_id", profile.id).eq("notification_type", "hw_wrong_topic_hint")
+                .gte("sent_at", since).limit(1);
+              if (!recentHint || !recentHint.length) {
+                const loc0: Locale = normLocale(profile.preferred_locale);
+                await tgApi("sendMessage", {
+                  chat_id: chatId, message_thread_id: threadId, reply_to_message_id: messageId,
+                  text: (T[loc0] as any).pkWrongTopic(grp.homework_topic_url),
+                  disable_web_page_preview: true,
+                });
+                await admin.from("notifications_log").insert({
+                  user_id: profile.id, notification_type: "hw_wrong_topic_hint", sent_at: new Date().toISOString(),
+                });
+              }
+            }
+          } catch (_e) { /* hint is best-effort */ }
+          console.log("hw:group:picker-not-hw-topic-ignored", JSON.stringify({ profile_id: profile.id, group_id: grp.id, chatId, threadId, messageId }));
+          return;
+        }
+        const messageUrl0 = buildMessageLink(chatId, threadId, messageId);
+        const item0 = { kind, ...(linkUrl ? { url: linkUrl } : { file_id: fileId }), msg_url: messageUrl0 };
+        await handlePickerPost(admin, profile, grp, chatId, threadId, messageId, item0, (msg.caption || msg.text || "").slice(0, 4000));
         return;
       }
 
@@ -4591,11 +4958,14 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     // pending list (both /galaba and the web dashboard filter by score IS NULL).
     const { data: existingSub } = await admin
       .from("homework_submissions")
-      .select("attempt_number")
+      .select("attempt_number, score, previous_score")
       .eq("user_id", profile.id)
       .eq("assignment_id", intent.assignment_id)
       .maybeSingle();
     const nextAttempt = ((existingSub?.attempt_number as number | null) ?? 0) + 1;
+    // Grade memory across resubmissions (mirrors the picker path).
+    const prevScore0: number | null = existingSub && (existingSub as any).score != null
+      ? (existingSub as any).score : ((existingSub as any)?.previous_score ?? null);
 
     // Upsert submission. Unique key (user_id, assignment_id) — idempotent.
     const { data: upserted, error: upErr } = await admin
@@ -4612,6 +4982,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
         scored_at: null,
         score_is_stale: false,
         is_late: false,
+        previous_score: prevScore0,
         telegram_chat_id: chatId,
         telegram_thread_id: threadId,
         telegram_message_id: messageId,
@@ -4787,7 +5158,12 @@ async function notifyTeachersOfSubmission(
       scheduled = new Date(targetTashMs - 5 * 60 * 60 * 1000);
     }
 
-    const studentName = [studentProfile.name, studentProfile.last_name].filter(Boolean).join(" ") || "—";
+    // Name + @username: teachers recognize students by handle at least as often as by name.
+    // Baked into student_name so BOTH delivery paths (immediate DM + quiet-hours queue cron)
+    // show it without touching the queue schema or the cron renderer.
+    const _uname = (studentProfile.telegram_username || "").toString().trim().replace(/^@/, "");
+    const studentName = ([studentProfile.name, studentProfile.last_name].filter(Boolean).join(" ") || "—")
+      + (_uname ? ` (@${_uname})` : "");
 
     const { data: queued } = await admin.from("homework_teacher_dm_queue").insert({
       submission_id: submissionId,
@@ -5234,6 +5610,117 @@ async function handleCallback(admin: any, cq: any) {
       }
     } catch (_e) { /* best-effort */ }
     console.log("hwmv:done", JSON.stringify({ subId, survivorId, status, to: leaf.id, by: _clicker.id }));
+    return;
+  }
+
+  // In-group homework picker taps: hwpk:<pendingId>:m:<mIdx> | :back | :t:<mIdx>:<lIdx>
+  // Buttons are visible to the whole group — only the poster (or staff) may operate them.
+  if (data.startsWith("hwpk:") && chatId) {
+    const parts = data.split(":");
+    const pid = parts[1];
+    const { data: pending } = await admin.from("hw_pending_posts").select("*").eq("id", pid).maybeSingle();
+    // Locale: prefer the pending owner's language (the picker is theirs).
+    const { data: ownerProf } = pending
+      ? await admin.from("profiles").select("id, preferred_locale").eq("id", pending.user_id).maybeSingle()
+      : { data: null };
+    const locale: Locale = normLocale(ownerProf?.preferred_locale || _clicker?.preferred_locale);
+    const t = T[locale] as any;
+    if (!pending || pending.state !== "pending") {
+      await answerCallback(cq.id, t.pkExpired);
+      try { await tgApi("deleteMessage", { chat_id: chatId, message_id: cq.message?.message_id }); } catch (_e) { /* ignore */ }
+      return;
+    }
+    const isOwner = Number(pending.from_tg_id) === tgId;
+    let allowed = isOwner;
+    if (!allowed && _clicker) {
+      const p2 = await getPersona(admin, _clicker.id);
+      allowed = p2 === "admin" || p2 === "teacher";
+    }
+    if (!allowed) { await answerCallback(cq.id, t.pkNotYours); return; }
+    // Keep an actively-used picker from being swept mid-tap.
+    await admin.from("hw_pending_posts")
+      .update({ expires_at: new Date(Date.now() + 5 * 60_000).toISOString() }).eq("id", pid);
+
+    const { data: mods } = await admin.from("modules")
+      .select("id, position").eq("course_id", pending.course_id).order("position");
+    const ordered = (mods || []) as any[];
+    const editPicker = async (text: string, kb: any[][]) => {
+      try {
+        await tgApi("editMessageText", {
+          chat_id: chatId, message_id: cq.message?.message_id,
+          text, parse_mode: "HTML", disable_web_page_preview: true,
+          reply_markup: { inline_keyboard: kb },
+        });
+      } catch (_e) { /* e.g. unchanged content — ignore */ }
+    };
+
+    if (parts[2] === "back") {
+      await answerCallback(cq.id);
+      const btns = ordered.map((m: any, i: number) => ({ text: `M${(m.position ?? 0) + 1}`, callback_data: `hwpk:${pid}:m:${i}` }));
+      const rows: any[][] = [];
+      for (let i = 0; i < btns.length; i += 4) rows.push(btns.slice(i, i + 4));
+      await editPicker(t.pkAsk, rows);
+      return;
+    }
+
+    if (parts[2] === "m") {
+      const mod = ordered[Number(parts[3])];
+      if (!mod) { await answerCallback(cq.id); return; }
+      const { data: asgs } = await admin.from("homework_assignments")
+        .select("id, title, task_number, sap_number, parent_id, is_active, created_at")
+        .eq("module_id", mod.id).eq("is_active", true);
+      const allRows = (asgs || []) as any[];
+      const leaves = computeLeaves(allRows as any) as any[];
+      await answerCallback(cq.id);
+      if (!leaves.length) { await editPicker(`${t.pkAsk}\n\n${t.retagNoTasks}`, [[{ text: t.pkBack, callback_data: `hwpk:${pid}:back` }]]); return; }
+      const parentTn = (l: any) => allRows.find((p) => p.id === l.parent_id)?.task_number ?? "?";
+      const rows = leaves.map((l: any, i: number) => [{
+        text: l.parent_id
+          ? `V${parentTn(l)}.S${l.sap_number ?? "?"} · ${String(l.title || "").slice(0, 20)}`
+          : `V${l.task_number ?? "?"} · ${String(l.title || "").slice(0, 24)}`,
+        callback_data: `hwpk:${pid}:t:${parts[3]}:${i}`,
+      }]);
+      rows.push([{ text: t.pkBack, callback_data: `hwpk:${pid}:back` }]);
+      await editPicker(t.pkAskTask(`M${(mod.position ?? 0) + 1}`), rows);
+      return;
+    }
+
+    if (parts[2] === "t" || parts[2] === "r") {
+      const isConfirmedResub = parts[2] === "r"; // "r" only exists on the explicit confirm button
+      const mod = ordered[Number(parts[3])];
+      if (!mod) { await answerCallback(cq.id); return; }
+      const { data: asgs } = await admin.from("homework_assignments")
+        .select("id, title, task_number, sap_number, parent_id, is_active, created_at, max_score")
+        .eq("module_id", mod.id).eq("is_active", true);
+      const leaves = computeLeaves(((asgs || []) as any)) as any[];
+      const leaf = leaves[Number(parts[4])];
+      if (!leaf) { await answerCallback(cq.id); return; }
+      const lbl = `M${(mod.position ?? 0) + 1} · V${leaf.task_number ?? leaf.sap_number ?? ""}`;
+      // Refresh the pending row (media may have grown since the callback row was loaded).
+      const { data: freshPending } = await admin.from("hw_pending_posts").select("*").eq("id", pid).maybeSingle();
+      if (!freshPending || freshPending.state !== "pending") { await answerCallback(cq.id, t.pkExpired); return; }
+      const result = await finalizePendingPost(admin, freshPending, leaf.id, mod.id, false, isConfirmedResub);
+      if (result === "created") {
+        await answerCallback(cq.id, t.pkDone(lbl));
+      } else if (result === "already_graded") {
+        // Resubmission-to-improve: show the current score and ask for explicit confirmation —
+        // an accidental tap must never wipe a real grade. Confirm → new attempt, score reset,
+        // teacher regrades (standard resubmission semantics, same as the /vazifalar flow).
+        const { data: prior } = await admin.from("homework_submissions")
+          .select("score").eq("user_id", freshPending.user_id).eq("assignment_id", leaf.id).maybeSingle();
+        await answerCallback(cq.id);
+        await editPicker(t.pkResubAsk(lbl, (prior?.score ?? 0) as number, (leaf.max_score ?? 10) as number), [
+          [{ text: t.pkResubYes, callback_data: `hwpk:${pid}:r:${parts[3]}:${parts[4]}` }],
+          [{ text: t.pkBack, callback_data: `hwpk:${pid}:m:${parts[3]}` }],
+        ]);
+      } else if (result === "tier_locked") {
+        await answerCallback(cq.id, t.pkTierLocked);
+      } else {
+        await answerCallback(cq.id, "⚠️");
+      }
+      return;
+    }
+    await answerCallback(cq.id);
     return;
   }
 
