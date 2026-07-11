@@ -262,6 +262,8 @@ const T = {
     gradeCancelled: "Bekor qilindi.",
     gradeNotFound: "Vazifa topilmadi.",
     gradePickStudent: "📝 <b>Talabani tanlang:</b>",
+    gradePickGroup: "📝 <b>Qaysi guruhni baholaysiz?</b>",
+    gradeAllGroupsBtn: (n: number) => `🌐 Hammasi (${n})`,
     retagBtn: "✏️ Vazifani o'zgartirish",
     retagPickModule: "✏️ Qaysi modulga o'tkazamiz?",
     retagPickTask: (m: string) => `✏️ ${m} — qaysi vazifa?`,
@@ -528,6 +530,8 @@ const T = {
     gradeCancelled: "Отменено.",
     gradeNotFound: "Работа не найдена.",
     gradePickStudent: "📝 <b>Выберите студента:</b>",
+    gradePickGroup: "📝 <b>Какую группу оцениваем?</b>",
+    gradeAllGroupsBtn: (n: number) => `🌐 Все группы (${n})`,
     retagBtn: "✏️ Изменить задание",
     retagPickModule: "✏️ В какой модуль перенести?",
     retagPickTask: (m: string) => `✏️ ${m} — какое задание?`,
@@ -786,6 +790,8 @@ const T = {
     gradeCancelled: "Cancelled.",
     gradeNotFound: "Submission not found.",
     gradePickStudent: "📝 <b>Pick a student:</b>",
+    gradePickGroup: "📝 <b>Which group are you grading?</b>",
+    gradeAllGroupsBtn: (n: number) => `🌐 All groups (${n})`,
     retagBtn: "✏️ Change task",
     retagPickModule: "✏️ Move to which module?",
     retagPickTask: (m: string) => `✏️ ${m} — which task?`,
@@ -2946,11 +2952,38 @@ async function handleGradingCommand(
   const t = T[locale] as any;
 
   if (cmd === "/baholash" || cmd === "/grade") {
-    // GRADING IS NEVER GROUP-SCOPED (2026-07-11): Feruza teaches 6-GURUH (4.0) + PRE 5.0; her
-    // active group was the 4.0 one, so 10 fresh 5.0 submissions were invisible in Baholash while
-    // the DM said "new submission" — grading must show ALL the grader's groups. (Pagination
-    // already re-rendered unscoped; this makes the entry tap consistent.) Stats/roster/broadcast
-    // keep the active-group concept — only grading is exempt.
+    // GRADING NEVER HIDES WORK (2026-07-11): active-group scoping buried 10 fresh 5.0 submissions
+    // while teacher DMs kept announcing them. Multi-group teachers now get an explicit GROUP
+    // CHOOSER with per-group pending counts on the buttons (nothing can hide behind a count) +
+    // an all-groups view; single-group teachers go straight to their list. Owner-requested UX
+    // for teachers spanning courses. Stats/roster/broadcast keep the active-group concept.
+    if (!isAdmin) {
+      const tGroups = await teacherGroups(admin, graderId);
+      if (tGroups.length > 1) {
+        const gIds = tGroups.map((g: any) => g.id);
+        const { data: studs } = await admin.from("profiles").select("id, group_id").in("group_id", gIds);
+        const uidToGroup = new Map(((studs || []) as any[]).map((s: any) => [s.id, s.group_id]));
+        const uids = Array.from(uidToGroup.keys());
+        let pend: any[] = [];
+        if (uids.length) {
+          const { data: subs } = await admin.from("homework_submissions")
+            .select("user_id").or("score.is.null,score_is_stale.is.true").in("user_id", uids);
+          pend = (subs || []) as any[];
+        }
+        const byGroup = new Map<string, number>();
+        for (const s of pend) {
+          const gid = uidToGroup.get(s.user_id);
+          if (gid) byGroup.set(gid, (byGroup.get(gid) || 0) + 1);
+        }
+        const btns: any[][] = tGroups.map((g: any) => [{
+          text: `${g.name} (${byGroup.get(g.id) || 0})`.slice(0, 60),
+          callback_data: `gs:grp:${g.id}`,
+        }]);
+        btns.push([{ text: t.gradeAllGroupsBtn(pend.length), callback_data: "gs:grp:all" }]);
+        await sendMessage(chatId, t.gradePickGroup, { inline_keyboard: btns });
+        return true;
+      }
+    }
     await renderStudentPicker(admin, chatId, graderId, locale, isAdmin, 0, null);
     return true;
   }
@@ -3019,9 +3052,12 @@ async function renderStudentPicker(admin: any, chatId: number, graderId: string,
     text: `${r.name} (${r.n})`.slice(0, 60),
     callback_data: `gs:pick:${r.id}`,
   }]);
+  // Pagination carries the chosen scope so page 2 shows the same group as page 1
+  // (previously it silently fell back to the active group — a different list).
+  const scopeTok = groupId || "all";
   const nav: any[] = [];
-  if (pageIdx > 0) nav.push({ text: t.gradePrevPage, callback_data: `gs:list:${pageIdx - 1}` });
-  if (pageIdx < totalPages - 1) nav.push({ text: t.gradeNextPage, callback_data: `gs:list:${pageIdx + 1}` });
+  if (pageIdx > 0) nav.push({ text: t.gradePrevPage, callback_data: `gs:list:${pageIdx - 1}:${scopeTok}` });
+  if (pageIdx < totalPages - 1) nav.push({ text: t.gradeNextPage, callback_data: `gs:list:${pageIdx + 1}:${scopeTok}` });
   if (nav.length) buttons.push(nav);
 
   await sendMessage(chatId, t.gradePickStudent, { inline_keyboard: buttons });
@@ -3043,7 +3079,7 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
   const name = [prof?.name, prof?.last_name].filter(Boolean).join(" ") || "—";
   if (!list.length) {
     await sendMessage(chatId, `${t.gradeStudentBreakdown(name)}\n\n${t.gradeNoneP}`, {
-      inline_keyboard: [[{ text: t.gradeBackList, callback_data: "gs:list:0" }]],
+      inline_keyboard: [[{ text: t.gradeBackList, callback_data: "gs:list:0:all" }]],
     });
     return;
   }
@@ -3096,7 +3132,7 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
     if (url && !anyPostUrl) buttons.push([{ text: t.gradeOpenTopicBtn(m.mPos + 1), url }]);
     lines.push("");
   }
-  buttons.push([{ text: t.gradeBackList, callback_data: "gs:list:0" }]);
+  buttons.push([{ text: t.gradeBackList, callback_data: "gs:list:0:all" }]);
   await sendMessage(chatId, lines.join("\n"), { inline_keyboard: buttons });
 }
 
@@ -6050,7 +6086,7 @@ async function handleCallback(admin: any, cq: any) {
     }
     return;
   }
-  if ((data.startsWith("gs:list:") || data.startsWith("gs:pick:") || data.startsWith("gs:open:") || data.startsWith("tr:") || data.startsWith("thm:")) && chatId) {
+  if ((data.startsWith("gs:list:") || data.startsWith("gs:pick:") || data.startsWith("gs:open:") || data.startsWith("gs:grp:") || data.startsWith("tr:") || data.startsWith("thm:")) && chatId) {
     if (!_clicker) { await answerCallback(cq.id); return; }
     if (_effPersona !== "admin" && _effPersona !== "teacher") { await answerCallback(cq.id); return; }
     const locale: Locale = normLocale(_clicker.preferred_locale);
@@ -6061,9 +6097,34 @@ async function handleCallback(admin: any, cq: any) {
       groupIdScope = pr?.active_teacher_group_id || null;
     }
     await answerCallback(cq.id);
-    if (data.startsWith("gs:list:")) {
-      const page = parseInt(data.slice("gs:list:".length), 10) || 0;
-      await renderStudentPicker(admin, chatId, _effId, locale, isAdmin, page, groupIdScope);
+    if (data.startsWith("gs:grp:")) {
+      // Group chooser tap: explicit scope ("all" or a group the teacher owns).
+      const tok = data.slice("gs:grp:".length);
+      let scope: string | null = null;
+      if (tok !== "all") {
+        if (!isAdmin) {
+          const tg2 = await teacherGroups(admin, _effId);
+          if (!tg2.find((x: any) => x.id === tok)) { return; }
+        }
+        scope = tok;
+      }
+      await renderStudentPicker(admin, chatId, _effId, locale, isAdmin, 0, scope);
+    } else if (data.startsWith("gs:list:")) {
+      // gs:list:<page>[:<groupId|all>] — the token pins pagination to the chosen scope.
+      const parts0 = data.slice("gs:list:".length).split(":");
+      const page = parseInt(parts0[0], 10) || 0;
+      const tok = parts0[1];
+      let scope: string | null = null;
+      if (tok && tok !== "all") {
+        if (!isAdmin) {
+          const tg2 = await teacherGroups(admin, _effId);
+          if (!tg2.find((x: any) => x.id === tok)) { return; }
+        }
+        scope = tok;
+      } else if (!tok) {
+        scope = groupIdScope; // legacy buttons (pre-scope-token) keep old behavior
+      }
+      await renderStudentPicker(admin, chatId, _effId, locale, isAdmin, page, scope);
     } else if (data.startsWith("gs:pick:")) {
       const sid = data.slice("gs:pick:".length);
       await renderStudentBreakdown(admin, chatId, _effId, sid, locale, isAdmin);
