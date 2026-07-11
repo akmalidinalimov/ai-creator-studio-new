@@ -4459,7 +4459,7 @@ async function finalizePendingPost(
       }
     };
     const { data: profile } = await admin.from("profiles")
-      .select("id, name, last_name, telegram_id, preferred_locale")
+      .select("id, name, last_name, telegram_id, telegram_username, preferred_locale")
       .eq("id", pending.user_id).maybeSingle();
     const locale: Locale = normLocale(profile?.preferred_locale);
     const t = T[locale] as any;
@@ -5158,7 +5158,12 @@ async function notifyTeachersOfSubmission(
       scheduled = new Date(targetTashMs - 5 * 60 * 60 * 1000);
     }
 
-    const studentName = [studentProfile.name, studentProfile.last_name].filter(Boolean).join(" ") || "—";
+    // Name + @username: teachers recognize students by handle at least as often as by name.
+    // Baked into student_name so BOTH delivery paths (immediate DM + quiet-hours queue cron)
+    // show it without touching the queue schema or the cron renderer.
+    const _uname = (studentProfile.telegram_username || "").toString().trim().replace(/^@/, "");
+    const studentName = ([studentProfile.name, studentProfile.last_name].filter(Boolean).join(" ") || "—")
+      + (_uname ? ` (@${_uname})` : "");
 
     const { data: queued } = await admin.from("homework_teacher_dm_queue").insert({
       submission_id: submissionId,
