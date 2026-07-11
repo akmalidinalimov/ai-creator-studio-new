@@ -143,6 +143,14 @@ Deno.serve(async (req) => {
     : { data: [] as any[] };
   const teacherMap = new Map<string, any>((teachers || []).map((t: any) => [t.id, t]));
 
+  // Reminder tracker (cycle counting). This map was referenced but never built — a runtime
+  // ReferenceError on EVERY row, caught by the per-row try/catch, so the function reported
+  // {ok:true, sent:0} while the reminder leg was completely dead (found in adversarial review).
+  const { data: rems } = await admin.from("homework_ungraded_reminders")
+    .select("submission_id, reminders_sent, last_reminder_at, cycle_submitted_at")
+    .in("submission_id", eligible.map((s) => s.id));
+  const remMap = new Map<string, any>(((rems || []) as any[]).map((r: any) => [r.submission_id, r]));
+
   // Admins fallback (cached for the run)
   let adminRecipients: any[] | null = null;
   async function loadAdmins() {
