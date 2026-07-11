@@ -278,6 +278,7 @@ const T = {
     pkResubAsk: (lbl: string, sc: number, mx: number) => `⚠️ ${lbl} allaqachon baholangan: <b>${sc}/${mx}</b>.\nQayta topshirsangiz, eski baho bekor qilinadi va o'qituvchi qaytadan baholaydi.`,
     pkResubYes: "🔄 Ha, qayta topshirish",
     pkDoneMsg: (lbl: string) => `✅ <b>${lbl}</b> qabul qilindi — o'qituvchi tekshiradi.`,
+    pkPrevGrade: (sc: number, mx: number) => `📊 Oldingi baho: <b>${sc}/${mx}</b>`,
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ hammasi" : `${n} vazifa baholanmagan`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Modul ${n} topikga o'tish`,
@@ -538,6 +539,7 @@ const T = {
     pkResubAsk: (lbl: string, sc: number, mx: number) => `⚠️ ${lbl} уже оценено: <b>${sc}/${mx}</b>.\nПри повторной сдаче старая оценка сбросится, и учитель оценит заново.`,
     pkResubYes: "🔄 Да, пересдать",
     pkDoneMsg: (lbl: string) => `✅ <b>${lbl}</b> принято — учитель проверит.`,
+    pkPrevGrade: (sc: number, mx: number) => `📊 Прежняя оценка: <b>${sc}/${mx}</b>`,
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ всё" : `${n} не оценено`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Перейти в топик модуля ${n}`,
@@ -790,6 +792,7 @@ const T = {
     pkResubAsk: (lbl: string, sc: number, mx: number) => `⚠️ ${lbl} is already graded: <b>${sc}/${mx}</b>.\nResubmitting resets the old score and your teacher will regrade it.`,
     pkResubYes: "🔄 Yes, resubmit",
     pkDoneMsg: (lbl: string) => `✅ <b>${lbl}</b> accepted — your teacher will review it.`,
+    pkPrevGrade: (sc: number, mx: number) => `📊 Previous grade: <b>${sc}/${mx}</b>`,
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ all done" : `${n} ungraded`}`,
     gradeStudentBreakdown: (name: string) => `📝 <b>${csvEscapeHtml(name)}</b>`,
     gradeOpenTopicBtn: (n: number) => `📌 Open module ${n} topic`,
@@ -3468,7 +3471,7 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
   const t = T[locale] as any;
   const { data: sub } = await admin
     .from("homework_submissions")
-    .select("id, assignment_id, user_id, submitted_text, submitted_image_url, submitted_at, is_late, score, telegram_message_url, telegram_file_kind")
+    .select("id, assignment_id, user_id, submitted_text, submitted_image_url, submitted_at, is_late, score, previous_score, telegram_message_url, telegram_file_kind")
     .eq("id", submissionId)
     .maybeSingle();
   if (!sub) {
@@ -3493,7 +3496,10 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
   const tn = a?.task_number ? ` #${a.task_number}` : "";
   const header = `<b>${csvEscapeHtml(name)}</b> — ${csvEscapeHtml(a?.title || "")}${tn}`;
   const body = sub.submitted_text ? csvEscapeHtml(sub.submitted_text) : "<i>(no text)</i>";
-  await sendMessage(chatId, `${header}\n\n${body}`);
+  // Regrade context: a resubmission carries the grade it's trying to improve.
+  const prevLine = (sub as any).previous_score != null && sub.score == null
+    ? `\n${(t as any).pkPrevGrade((sub as any).previous_score, a?.max_score || 10)}` : "";
+  await sendMessage(chatId, `${header}\n\n${body}${prevLine}`);
   // Telegram-source submission: surface the original message link
   if (sub.telegram_message_url) {
     const tt = T[locale] as any;
@@ -4463,7 +4469,10 @@ async function finalizePendingPost(
     // "pick another" — so the picker must stay alive and the post must stay pending. Consuming it
     // here (v1 bug, caught in owner testing) silently lost the post while showing a ✅ reaction.
     const { data: prior } = await admin.from("homework_submissions")
-      .select("id, score, score_is_stale").eq("user_id", pending.user_id).eq("assignment_id", assignmentId).maybeSingle();
+      .select("id, score, score_is_stale, previous_score").eq("user_id", pending.user_id).eq("assignment_id", assignmentId).maybeSingle();
+    // Carry the grade memory: a graded prior stamps its score; an ungraded prior (pending regrade)
+    // keeps whatever previous_score it already carried. Fresh submissions carry null.
+    const prevScore: number | null = prior && prior.score != null ? prior.score : ((prior as any)?.previous_score ?? null);
     if (prior && prior.score != null && !prior.score_is_stale && !allowResubmit) {
       if (!guessed) return "already_graded"; // picker stays open; nothing consumed
       // Sweep fallback: mirror the legacy auto path (acknowledge, inform, consume).
@@ -4495,6 +4504,7 @@ async function finalizePendingPost(
       attempt_number: nextAttempt,
       score: null, score_feedback: null, scored_by: null, scored_at: null,
       score_is_stale: false, is_late: false,
+      previous_score: prevScore,
       telegram_chat_id: chatId,
       telegram_thread_id: threadId,
       telegram_message_id: firstMsgId,
@@ -4523,7 +4533,7 @@ async function finalizePendingPost(
 
     // Assignment meta for the notifications + the visible receipt.
     const { data: a } = await admin.from("homework_assignments")
-      .select("title, task_number, sap_number, parent_id, module_id, modules(position)")
+      .select("title, task_number, sap_number, parent_id, module_id, max_score, modules(position)")
       .eq("id", assignmentId).maybeSingle();
     const mn = ((a?.modules?.position ?? 0) as number) + 1;
     const tn = (a?.task_number ?? 1) as number;
@@ -4544,10 +4554,13 @@ async function finalizePendingPost(
     if (pending.picker_message_id) {
       const pickerMsgId = Number(pending.picker_message_id);
       const confLbl = `M${mn} · V${tn}${guessed ? " (avto)" : ""}`;
+      // Resubmission receipt carries the grade being improved — the student sees what they had.
+      const receipt = t.pkDoneMsg(confLbl)
+        + (prevScore != null ? `\n${t.pkPrevGrade(prevScore, (a?.max_score ?? 10) as number)}` : "");
       try {
         await tgApi("editMessageText", {
           chat_id: chatId, message_id: pickerMsgId,
-          text: t.pkDoneMsg(confLbl), parse_mode: "HTML",
+          text: receipt, parse_mode: "HTML",
         });
         const delayedDelete = (async () => {
           await new Promise((r) => setTimeout(r, 30_000));
@@ -4945,11 +4958,14 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     // pending list (both /galaba and the web dashboard filter by score IS NULL).
     const { data: existingSub } = await admin
       .from("homework_submissions")
-      .select("attempt_number")
+      .select("attempt_number, score, previous_score")
       .eq("user_id", profile.id)
       .eq("assignment_id", intent.assignment_id)
       .maybeSingle();
     const nextAttempt = ((existingSub?.attempt_number as number | null) ?? 0) + 1;
+    // Grade memory across resubmissions (mirrors the picker path).
+    const prevScore0: number | null = existingSub && (existingSub as any).score != null
+      ? (existingSub as any).score : ((existingSub as any)?.previous_score ?? null);
 
     // Upsert submission. Unique key (user_id, assignment_id) — idempotent.
     const { data: upserted, error: upErr } = await admin
@@ -4966,6 +4982,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
         scored_at: null,
         score_is_stale: false,
         is_late: false,
+        previous_score: prevScore0,
         telegram_chat_id: chatId,
         telegram_thread_id: threadId,
         telegram_message_id: messageId,
