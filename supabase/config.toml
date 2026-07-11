@@ -94,3 +94,8 @@ verify_jwt = false
 # verifier. Gated by x-health-secret (HW_HEALTH_SECRET env) — NOT a user session.
 [functions.hw-dm-health]
 verify_jwt = false
+
+# ops-notify: least-privilege Telegram notifier for the autonomous-ops pipeline. Gated by
+# x-ops-notify-secret (Vault, via ops_notify_secret() RPC) — can only DM platform admins.
+[functions.ops-notify]
+verify_jwt = false

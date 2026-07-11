@@ -1,11 +1,26 @@
 # AI Creators — project instructions
 
 Production Supabase project: `cdyidatkegxwhtuoqxly` (ACADEMY). Vercel deploys from `main`.
-Edge functions deploy via `npx supabase functions deploy <fn> --project-ref cdyidatkegxwhtuoqxly --use-api`
-(needs `SUPABASE_ACCESS_TOKEN` provided by the owner — never echo it, never commit it).
-Migrations are applied to prod via the Management API query endpoint, then committed to
-`supabase/migrations/` so the repo always mirrors prod. Self-merges to `main` require the owner's
-explicit "merge it" per PR.
+Self-merges to `main` require the owner's explicit "merge it" per PR.
+
+## Deploys & migrations (autonomous-ops pipeline — since 2026-07-12)
+
+- Merges to `main` auto-deploy via `.github/workflows/deploy-supabase.yml`: changed edge
+  functions deploy directly (ALL when `supabase/config.toml` changes); NEW migration files apply
+  ONLY when the merged PR carries the `migration-approved` label, and are ledgered in
+  `ops_applied_migrations` (never `db push`, never re-applied). **Do NOT deploy functions or
+  apply migrations manually anymore** — commit, PR, merge; the pipeline does the rest.
+- Telegram approve flow: `ops-notify` edge fn DMs admins with `ops:a:<pr#>`/`ops:reject:<pr#>`
+  buttons; the bot webhook's `ops:` callback (admin-only, impersonation-denied) verifies the PR
+  (label `ops-agent`, branch `ops/*`, same-repo head, must NOT touch `.github/**`) and requires
+  **CI check-runs green** (`checksAllGreen` in `telegram-bot-webhook/ops-approve.ts` — this IS
+  the merge gate; the repo is on the GitHub Free plan, no server-side branch protection), then
+  two-tap confirm → squash-merge.
+- Secrets: `ops_github_pat()` / `ops_notify_secret()` read Vault (owner-inserted values); NULL =
+  flow gracefully dormant. Kill-switches: remove the Vault secret (merges impossible), disable
+  the workflow in the Actions UI, `platform_settings.ops_agent.enabled` (Phase 4 dispatch).
+- Agent-authored PRs (Phase 3+) always land on `ops/*` branches with the `ops-agent` label and
+  may never touch `.github/**`, `supabase/migrations/**`, or secrets.
 
 ## The incident doctrine (self-learning loop) — MANDATORY
 
