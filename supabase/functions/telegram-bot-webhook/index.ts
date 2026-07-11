@@ -4680,21 +4680,39 @@ async function autoRegisterProvisionalPoster(
     const from = msg.from;
     if (!from?.id || from.is_bot) return null;
     const cfg = await getHomeworkCaptureConfig(admin);
-    if (!cfg.autoRegister) return null;
-    // The chat must map to a platform group, and the thread must be ITS homework topic.
-    const { groupId } = await resolveGroupFromChatId(admin, chatId);
-    if (!groupId) return null;
-    const { data: grp } = await admin.from("groups")
-      .select("id, course_id, homework_topic_id").eq("id", groupId).maybeSingle();
-    if (!grp?.course_id) return null;
-    if (cfg.courseIds.length > 0 && !cfg.courseIds.includes(grp.course_id)) return null;
-    let isHwTopic = grp.homework_topic_id != null && Number(grp.homework_topic_id) === Number(threadId);
-    if (!isHwTopic) {
-      const { data: gmt } = await admin.from("group_module_topics")
-        .select("module_id").eq("group_id", grp.id).eq("telegram_topic_id", threadId).maybeSingle();
-      isHwTopic = !!gmt?.module_id;
+    if (!cfg.autoRegister) { console.log("hw:autoreg:skip", JSON.stringify({ reason: "flag_off" })); return null; }
+    // COURSE-AWARE chat→group resolution. One Telegram chat can host TWO platform groups (real
+    // case: 9-GURUH 4.0 and 1-GURUH PRE 5.0 share t.me/c/3718576417 — the chat was reused for the
+    // new cohort). resolveGroupFromChatId's limit(1) picked the finished-4.0 group and the course
+    // scope silently bailed (caught in owner testing). Fetch ALL candidates whose homework topic
+    // is THIS thread and prefer the in-scope (active-course) one — new members of a reused chat
+    // belong to the current cohort.
+    const stripped = String(chatId).replace(/^-100/, "");
+    const needle = `%/c/${stripped}/%`;
+    const { data: cands } = await admin.from("groups")
+      .select("id, course_id, homework_topic_id, courses:course_id(published)")
+      .or(`homework_topic_url.ilike.${needle},telegram_group_url.ilike.${needle}`);
+    const all = (cands || []) as any[];
+    const withTopic: any[] = [];
+    for (const g of all) {
+      if (!g.course_id) continue;
+      let ok = g.homework_topic_id != null && Number(g.homework_topic_id) === Number(threadId);
+      if (!ok) {
+        const { data: gmt } = await admin.from("group_module_topics")
+          .select("module_id").eq("group_id", g.id).eq("telegram_topic_id", threadId).maybeSingle();
+        ok = !!gmt?.module_id;
+      }
+      if (ok) withTopic.push(g);
     }
-    if (!isHwTopic) return null;
+    const grp = withTopic.find((g: any) => cfg.courseIds.length === 0 || cfg.courseIds.includes(g.course_id))
+      ?? null;
+    if (!grp) {
+      console.log("hw:autoreg:skip", JSON.stringify({
+        reason: "no_in_scope_group_for_topic", chatId, threadId,
+        candidates: all.map((g: any) => ({ id: g.id, course: g.course_id })),
+      }));
+      return null;
+    }
 
     // Server-to-server into the proven creation engine (same pattern as staff-intake).
     const { data: sec } = await admin.rpc("internal_fn_secret");
@@ -5331,8 +5349,11 @@ async function notifyTeachersOfSubmission(
         const { data: grp } = await admin.from("groups").select("name").eq("id", groupId).maybeSingle();
         const moduleName = `Modul ${mn}`;
         const body = hwTeacherBody(studentName, grp?.name || "—", moduleName, aTitle || "");
+        // grade:open:<submissionId> = 47 bytes. The previous grade_task:<assignmentId>:<studentId>
+        // was 84 bytes — over Telegram's 64-byte callback_data cap — so EVERY immediate DM failed
+        // with BUTTON_DATA_INVALID and silently rode the 1-minute cron retry (found in logs).
         const inlineKb = [
-          [{ text: "🎯 Baholash", callback_data: `grade_task:${assignmentId}:${studentProfile.id}` }],
+          [{ text: "🎯 Baholash", callback_data: `grade:open:${submissionId}` }],
           [{ text: "📌 Topikga o'tish", url: messageUrl }],
         ];
         try {
