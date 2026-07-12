@@ -4,6 +4,7 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   checksAllGreen,
+  ghFetchChecks,
   parseOpsCallback,
   REQUIRED_CHECKS,
   verifyOpsPr,
@@ -110,4 +111,39 @@ Deno.test("checksAllGreen: re-run success after earlier failure counts", () => {
 Deno.test("checksAllGreen: unrelated extra checks are ignored", () => {
   const runs: CheckRun[] = [...REQUIRED_CHECKS.map(green), { name: "Vercel", status: "completed", conclusion: "neutral" }];
   assertEquals(checksAllGreen(runs), { ok: true });
+});
+
+// ---- ghFetchChecks (Actions API — feeds the merge gate, so its mapping is tested too) ----
+
+Deno.test("ghFetchChecks: maps Actions runs+jobs to CheckRun[]", async () => {
+  const fakeFetch = ((url: string) => {
+    const u = String(url);
+    if (u.includes("/actions/runs?head_sha=")) {
+      return Promise.resolve(new Response(JSON.stringify({ workflow_runs: [{ id: 42 }, { id: 43 }] }), { status: 200 }));
+    }
+    if (u.includes("/actions/runs/42/jobs")) {
+      return Promise.resolve(new Response(JSON.stringify({ jobs: [
+        { name: REQUIRED_CHECKS[0], status: "completed", conclusion: "success" },
+      ] }), { status: 200 }));
+    }
+    if (u.includes("/actions/runs/43/jobs")) {
+      return Promise.resolve(new Response(JSON.stringify({ jobs: [
+        { name: REQUIRED_CHECKS[1], status: "completed", conclusion: "success" },
+      ] }), { status: 200 }));
+    }
+    return Promise.resolve(new Response("{}", { status: 404 }));
+  }) as unknown as typeof fetch;
+  const runs = await ghFetchChecks(fakeFetch, "tok", "sha123");
+  assertEquals(runs, [
+    { name: REQUIRED_CHECKS[0], status: "completed", conclusion: "success" },
+    { name: REQUIRED_CHECKS[1], status: "completed", conclusion: "success" },
+  ]);
+  assertEquals(checksAllGreen(runs), { ok: true });
+});
+
+Deno.test("ghFetchChecks: API failure returns [] (gate then refuses merge)", async () => {
+  const fakeFetch = (() => Promise.resolve(new Response("{}", { status: 403 }))) as unknown as typeof fetch;
+  const runs = await ghFetchChecks(fakeFetch, "tok", "sha123");
+  assertEquals(runs, []);
+  assertEquals(checksAllGreen(runs).ok, false);
 });

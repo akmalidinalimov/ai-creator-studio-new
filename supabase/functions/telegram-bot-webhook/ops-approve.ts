@@ -95,11 +95,24 @@ export async function ghFetchPr(fetchFn: FetchFn, token: string, prNumber: numbe
   };
 }
 
+// CI state comes from the Actions API (workflow runs + per-run jobs), NOT the check-runs API:
+// fine-grained PATs need the "Checks" permission for check-runs, and GitHub's PAT UI no longer
+// offers it (verified live 2026-07-12 — the Add-permissions list has no Checks entry). Job names
+// equal check-run names, so checksAllGreen() semantics are unchanged. PAT needs "Actions: read".
 export async function ghFetchChecks(fetchFn: FetchFn, token: string, sha: string, repo = OPS_REPO): Promise<CheckRun[]> {
-  const resp = await fetchFn(`https://api.github.com/repos/${repo}/commits/${sha}/check-runs?per_page=100`, { headers: ghHeaders(token) });
-  if (!resp.ok) return [];
-  const body: any = await resp.json();
-  return (body.check_runs || []).map((c: any) => ({ name: String(c.name), status: String(c.status), conclusion: c.conclusion ?? null }));
+  const runsResp = await fetchFn(`https://api.github.com/repos/${repo}/actions/runs?head_sha=${sha}&per_page=50`, { headers: ghHeaders(token) });
+  if (!runsResp.ok) return [];
+  const runsBody: any = await runsResp.json();
+  const out: CheckRun[] = [];
+  for (const run of runsBody.workflow_runs || []) {
+    const jobsResp = await fetchFn(`https://api.github.com/repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`, { headers: ghHeaders(token) });
+    if (!jobsResp.ok) continue;
+    const jobsBody: any = await jobsResp.json();
+    for (const j of jobsBody.jobs || []) {
+      out.push({ name: String(j.name), status: String(j.status), conclusion: j.conclusion ?? null });
+    }
+  }
+  return out;
 }
 
 export async function ghAddLabel(fetchFn: FetchFn, token: string, prNumber: number, label: string, repo = OPS_REPO): Promise<boolean> {
