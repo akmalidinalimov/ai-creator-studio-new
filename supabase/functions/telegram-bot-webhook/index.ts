@@ -119,6 +119,8 @@ const T = {
     chooseLang: "Tilni tanlang:",
     langSet: "Til o'zgartirildi ✅",
     noProfile: "Akkauntingiz topilmadi. Avval saytda ro'yxatdan o'tishingiz kerak.",
+    nmNotMember: "Bu bot faqat AI Creators talabalari uchun.",
+    nmWelcome: (name: string) => `👋 <b>${name}</b>, xush kelibsiz! Akkountingiz yaratildi (sinov hisobi) — vazifalaringiz qabul qilinadi, ball va statistika yuritiladi. Darsliklar to'liq to'lovdan so'ng ochiladi. Quyidagi menyudan foydalaning 👇`,
     noNextLesson: "Yangi dars yo'q. Keyinroq qayta urinib ko'ring.",
     noCourse: "Kurs topilmadi.",
     kbDavom: "📚 Davom etish",
@@ -395,6 +397,8 @@ const T = {
     chooseLang: "Выберите язык:",
     langSet: "Язык изменён ✅",
     noProfile: "Аккаунт не найден. Сначала зарегистрируйтесь на сайте.",
+    nmNotMember: "Этот бот только для студентов AI Creators.",
+    nmWelcome: (name: string) => `👋 <b>${name}</b>, добро пожаловать! Ваш аккаунт создан (пробный) — задания принимаются, баллы и статистика ведутся. Уроки откроются после полной оплаты. Пользуйтесь меню ниже 👇`,
     noNextLesson: "Новых уроков нет. Попробуйте позже.",
     noCourse: "Курс не найден.",
     kbDavom: "📚 Продолжить",
@@ -661,6 +665,8 @@ const T = {
     chooseLang: "Choose language:",
     langSet: "Language updated ✅",
     noProfile: "Account not found. Please sign up on the site first.",
+    nmNotMember: "This bot is for AI Creators students only.",
+    nmWelcome: (name: string) => `👋 <b>${name}</b>, welcome! Your account has been created (trial) — homework is accepted, points and stats are tracked. Lessons unlock after full payment. Use the menu below 👇`,
     noNextLesson: "No new lesson. Check back later.",
     noCourse: "Course not found.",
     kbDavom: "📚 Continue",
@@ -1575,10 +1581,180 @@ async function findProfileByUsername(admin: any, username: string) {
 const UNREGISTERED_REPLY_TTL_MS = 60_000;
 const unregisteredLastReplyAt = new Map<number, number>();
 
+// MEMBERSHIP GATE (owner directive 2026-07-13): the Telegram GROUP is the trust boundary.
+// Unknown users who ARE members of an active-course group chat get onboarded (provisional,
+// same engine + kill-switch flag as in-topic auto-register); everyone else gets ONE plain
+// sentence — no keyboards, no buttons, no links, no account. Membership answers are cached
+// in bot_conversation_state (state 'nm_cache', 30 min) so spam can't turn into getChatMember
+// sweeps; replies are additionally throttled to 1/min in-memory.
+const NM_CACHE_TTL_MIN = 30;
+
+type MembershipResult = {
+  member: boolean;
+  staff: boolean;
+  // true when EVERY chat probe errored (Telegram 429 storm / outage) — the answer is unknown,
+  // callers must NOT cache it and must fail toward the least destructive behavior.
+  indeterminate: boolean;
+  group: { id: string; course_id: string } | null;
+};
+
+// Sweep the distinct Telegram chats behind all published-course groups and ask each whether
+// tgId is a member. Chat ids come from groups.homework_topic_url / telegram_group_url AND
+// group_module_topics.telegram_topic_url (telegram_group_url is usually an invite link with
+// no chat id — per-module topic URLs are where /c/<id>/ reliably lives). Short-circuits on
+// the first hit; 'administrator'/'creator' means staff — member:true but never auto-registered
+// as a student (U4 rule).
+async function resolveMembershipGroup(admin: any, tgId: number): Promise<MembershipResult> {
+  const [groupsRes, gmtRes] = await Promise.all([
+    admin.from("groups")
+      .select("id, course_id, homework_topic_url, telegram_group_url, homework_topic_id, created_at, courses:course_id(published)")
+      .not("course_id", "is", null),
+    admin.from("group_module_topics").select("group_id, telegram_topic_url"),
+  ]);
+  const published = new Map<string, any>();
+  for (const g of (groupsRes.data || []) as any[]) {
+    if ((g as any).courses?.published) published.set(g.id, g);
+  }
+  const chats = new Map<string, Map<string, any>>();
+  const addChat = (url: string | null | undefined, g: any) => {
+    const m = /\/c\/(\d+)\//.exec(String(url || ""));
+    if (!m) return;
+    const chatId = `-100${m[1]}`;
+    if (!chats.has(chatId)) chats.set(chatId, new Map());
+    chats.get(chatId)!.set(g.id, g);
+  };
+  for (const g of published.values()) {
+    addChat(g.homework_topic_url, g);
+    addChat(g.telegram_group_url, g);
+  }
+  for (const r of (gmtRes.data || []) as any[]) {
+    const g = published.get(r.group_id);
+    if (g) addChat(r.telegram_topic_url, g);
+  }
+
+  let errors = 0;
+  let checked = 0;
+  for (const [chatId, groupMap] of chats) {
+    checked++;
+    try {
+      const resp = await tgApi("getChatMember", { chat_id: Number(chatId), user_id: tgId });
+      const cm: any = await resp.json().catch(() => null);
+      if (!cm || cm.ok !== true) {
+        // 429 / bot kicked / chat gone — distinguish from a clean "not a member".
+        errors++;
+        console.warn("[membership-gate] getChatMember failed", { chatId, code: cm?.error_code, desc: cm?.description });
+        continue;
+      }
+      const st = cm.result?.status;
+      const isMember = st === "member" || st === "administrator" || st === "creator" ||
+        (st === "restricted" && cm.result?.is_member === true);
+      if (!isMember) continue;
+      const staff = st === "administrator" || st === "creator";
+      const groups = Array.from(groupMap.values());
+      groups.sort((a: any, b: any) =>
+        (b.homework_topic_id != null ? 1 : 0) - (a.homework_topic_id != null ? 1 : 0) ||
+        String(b.created_at).localeCompare(String(a.created_at)));
+      return { member: true, staff, indeterminate: false, group: groups[0] ? { id: groups[0].id, course_id: groups[0].course_id } : null };
+    } catch (e) {
+      errors++;
+      console.warn("[membership-gate] getChatMember threw", { chatId, err: String(e) });
+    }
+  }
+  const indeterminate = checked > 0 && errors === checked;
+  if (indeterminate) {
+    // DB-visible signal (doctrine): a probe storm must be discoverable before complaints.
+    try {
+      await admin.from("admin_actions").insert({
+        actor_user_id: null, action: "membership_gate_indeterminate",
+        details: { telegram_id: tgId, chats_checked: checked, errors },
+      });
+    } catch (_e) { /* best-effort */ }
+  }
+  return { member: false, staff: false, indeterminate, group: null };
+}
+
+type NmCache = { member: boolean; staff: boolean; group_id: string | null; course_id: string | null };
+
+async function getNmCache(admin: any, tgId: number): Promise<NmCache | null> {
+  const { data } = await admin.from("bot_conversation_state")
+    .select("state, context, expires_at").eq("telegram_id", tgId).maybeSingle();
+  if (!data || data.state !== "nm_cache") return null;
+  if (!data.expires_at || new Date(data.expires_at).getTime() < Date.now()) return null;
+  const c = (data.context || {}) as any;
+  return { member: !!c.member, staff: !!c.staff, group_id: c.group_id ?? null, course_id: c.course_id ?? null };
+}
+
+async function setNmCache(admin: any, tgId: number, m: MembershipResult) {
+  try {
+    // NEVER clobber an active conversation flow (awaiting_name / confirm_name / grading):
+    // only write over nothing, an expired row, or a previous nm_cache row.
+    const { data: existing } = await admin.from("bot_conversation_state")
+      .select("state, expires_at").eq("telegram_id", tgId).maybeSingle();
+    if (existing && existing.state !== "nm_cache" &&
+        existing.expires_at && new Date(existing.expires_at).getTime() > Date.now()) {
+      return;
+    }
+    await admin.from("bot_conversation_state").upsert({
+      telegram_id: tgId, state: "nm_cache",
+      context: { member: m.member, staff: m.staff, group_id: m.group?.id ?? null, course_id: m.group?.course_id ?? null },
+      updated_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + NM_CACHE_TTL_MIN * 60_000).toISOString(),
+    });
+  } catch (_e) { /* cache best-effort */ }
+}
+
+// Cached membership check shared by every username-linking / unknown-user path.
+// Returns null when the answer is indeterminate (probe storm) — callers decide the safe fallback.
+async function membershipCheckCached(admin: any, tgId: number): Promise<MembershipResult | null> {
+  const cached = await getNmCache(admin, tgId);
+  if (cached) {
+    return {
+      member: cached.member, staff: cached.staff, indeterminate: false,
+      group: cached.group_id && cached.course_id ? { id: cached.group_id, course_id: cached.course_id } : null,
+    };
+  }
+  const m = await resolveMembershipGroup(admin, tgId);
+  if (m.indeterminate) return null;
+  await setNmCache(admin, tgId, m);
+  return m;
+}
+
+// GATE for first-time username-based account linking (bot commands AND website login):
+// usernames are not owned — anyone can rename to a pre-created student's username and claim
+// the account. Staff profiles (created deliberately by admins) bypass the group requirement.
+// Refusals are audited (DB-visible). Returns false when linking must be refused.
+async function usernameLinkAllowed(admin: any, profile: any, tgId: number): Promise<boolean> {
+  try {
+    const { data: roles } = await admin.from("user_roles").select("role").eq("user_id", profile.id);
+    const staffRole = (roles || []).some((r: any) => ["admin", "superadmin", "teacher"].includes(r.role));
+    if (staffRole) return true;
+  } catch (_e) { /* fall through to membership check */ }
+  const m = await membershipCheckCached(admin, tgId);
+  if (m === null) {
+    // Unknown (API storm): refuse WITHOUT caching — the next message retries cleanly.
+    console.warn("[telegram-auth] username-link deferred: membership indeterminate", { profile_id: profile.id, telegram_id: tgId });
+    return false;
+  }
+  if (!m.member) {
+    console.warn("[telegram-auth] username-link REFUSED: claimer not a group member", {
+      profile_id: profile.id, telegram_id: tgId,
+    });
+    try {
+      await admin.from("admin_actions").insert({
+        actor_user_id: null, action: "username_link_refused", target_user_id: profile.id,
+        target_resource_type: "profile", target_resource_id: profile.id,
+        details: { telegram_id: tgId, telegram_username: profile.telegram_username || null },
+      });
+    } catch (_e) { /* audit best-effort */ }
+    return false;
+  }
+  return true;
+}
+
 async function sendUnregisteredReply(
   admin: any,
   chatId: number,
-  from: { id: number; username?: string; first_name?: string; language_code?: string } | null | undefined,
+  from: { id: number; username?: string; first_name?: string; last_name?: string; language_code?: string } | null | undefined,
   localeOverride?: Locale,
 ) {
   const tgId = from?.id ?? chatId;
@@ -1588,11 +1764,53 @@ async function sendUnregisteredReply(
   if (now - last < UNREGISTERED_REPLY_TTL_MS) return;
   unregisteredLastReplyAt.set(tgId, now);
   const locale: Locale = localeOverride || normLocale(from?.language_code);
+  const t = T[locale] as any;
+
+  const membership = from?.id ? await membershipCheckCached(admin, from.id) : { member: false, staff: false, indeterminate: false, group: null };
+
+  if (membership === null) {
+    // Probe storm — answer unknown. Fail toward the old, harmless behavior (enrollment funnel),
+    // cache nothing so the next message re-checks cleanly.
+    const enroll = await getEnrollmentSettings(admin, locale);
+    await sendMessage(chatId, enroll.message, {
+      inline_keyboard: [[{ text: enroll.buttonLabel, url: enroll.formUrl }]],
+    });
+    return;
+  }
+
+  if (!membership.member) {
+    // NOT a member of any active-course group: plain message, NO keyboard/button/link.
+    await sendMessage(chatId, t.nmNotMember);
+    return;
+  }
+
+  // Member without an account → onboard as provisional through the shared engine,
+  // honoring the same kill-switch flag as in-topic auto-register. Staff never become students.
+  if (!membership.staff && membership.group && from?.id) {
+    const cfg = await getHomeworkCaptureConfig(admin);
+    if (cfg.autoRegister) {
+      const reg = await registerProvisionalViaEngine(admin, from as any, membership.group, "dm_start_member");
+      if (reg) {
+        const prof = await findProfileByTelegramId(admin, from.id);
+        if (prof) {
+          await admin.from("bot_conversation_state").delete().eq("telegram_id", from.id).eq("state", "nm_cache");
+          const name = (from.first_name || from.username || "do'st").slice(0, 40);
+          // Engine may MATCH an existing account instead of creating one — never tell a paid
+          // student their account "was created (trial)" (review finding).
+          const text = reg.created ? t.nmWelcome(csvEscapeHtml(name)) : t.kbHint;
+          await sendWithKeyboard(chatId, text, locale, false, "student");
+          return;
+        }
+      }
+    }
+  }
+
+  // Member but flag off / staff / engine refused → the human enrollment funnel (form button).
   const enroll = await getEnrollmentSettings(admin, locale);
   await sendMessage(chatId, enroll.message, {
     inline_keyboard: [[{ text: enroll.buttonLabel, url: enroll.formUrl }]],
   });
-  }
+}
 
 
 async function getDefaultCourseId(admin: any): Promise<string | null> {
@@ -1659,6 +1877,13 @@ async function resolveProfileForTelegramUser(
   // v3.14.27: archived profiles are treated as unregistered for the bot.
   if (profile.status && profile.status !== "active") return null;
   if (!profile.telegram_id) {
+    // MEMBERSHIP GATE on first-time username linking: a pre-created profile matched only by
+    // telegram_username is claimable by ANYONE who renames their Telegram username to match
+    // (usernames are not owned — squatting = account takeover). Shared gate: staff bypass +
+    // cached membership + audited refusal (same gate protects handleStartLogin).
+    if (matchedBy === "telegram_username") {
+      if (!(await usernameLinkAllowed(admin, profile, tgId))) return null;
+    }
     await admin
       .from("profiles")
       .update({ telegram_id: tgId, updated_at: new Date().toISOString() })
@@ -2236,6 +2461,16 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
 
   // Permanently bind telegram_id on first successful match (was NULL before).
   if (!profile.telegram_id) {
+    // MEMBERSHIP GATE (same class as resolveProfileForTelegramUser): the website-login path
+    // mints a full Supabase session for whoever binds first — username squatting here is a
+    // straight account+session takeover. Same shared gate, same staff bypass, same audit.
+    if (matchedBy === "telegram_username" && !(await usernameLinkAllowed(admin, profile, tgId))) {
+      const enroll = await getEnrollmentSettings(admin, locale);
+      await sendMessage(chatId, enroll.message, {
+        inline_keyboard: [[{ text: enroll.buttonLabel, url: enroll.formUrl }]],
+      });
+      return;
+    }
     await admin.from("profiles").update({ telegram_id: tgId, updated_at: new Date().toISOString() }).eq("id", profile.id).is("telegram_id", null);
     profile.telegram_id = tgId;
     console.log("[telegram-auth] backfilled telegram_id", { profile_id: profile.id, telegram_id: tgId, matched_by: matchedBy, source: "bot" });
@@ -4946,45 +5181,10 @@ async function autoRegisterProvisionalPoster(
       }
     } catch (_e) { /* best-effort — proceed */ }
 
-    // Server-to-server into the proven creation engine (same pattern as staff-intake).
-    const { data: sec } = await admin.rpc("internal_fn_secret");
-    if (!sec) return null;
-    const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/admin-create-students`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-internal-secret": String(sec),
-        "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-        "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-      },
-      body: JSON.stringify({
-        students: [{
-          name: (from.first_name || "").slice(0, 60) || (from.username || `tg-${from.id}`),
-          last_name: (from.last_name || "").slice(0, 60) || undefined,
-          telegram_user_id: from.id,
-          telegram_username: from.username || undefined,
-          role: "student",
-        }],
-        target_group_id: grp.id,
-        target_course_id: grp.course_id,
-      }),
-    });
-    const out = await resp.json().catch(() => ({}));
-    const r0 = (out?.results || [])[0] || {};
-    if (!r0.userId) {
-      console.log("hw:autoreg:engine-refused", JSON.stringify({ tg: from.id, status: r0.status, err: r0.error }));
-      return null;
-    }
-    if (r0.status === "created") {
-      // New account → trial. (Existing matched accounts keep their type untouched.)
-      await admin.from("profiles").update({ account_type: "provisional" }).eq("id", r0.userId);
-      try {
-        await admin.from("admin_actions").insert({
-          actor_user_id: null, action: "auto_registered_provisional", target_user_id: r0.userId,
-          target_resource_type: "profile", target_resource_id: r0.userId,
-          details: { telegram_id: from.id, telegram_username: from.username || null, group_id: grp.id, source: "homework_topic_post" },
-        });
-      } catch (_e) { /* audit best-effort */ }
+    // Shared creation engine (also used by the DM /start membership path).
+    const reg = await registerProvisionalViaEngine(admin, from, grp, "homework_topic_post");
+    if (!reg) return null;
+    if (reg.created) {
       // Welcome them in-thread (they can't be DMed — they never started the bot).
       try {
         const t = T.uz as any;
@@ -4997,15 +5197,68 @@ async function autoRegisterProvisionalPoster(
           ...(kb ? { reply_markup: kb } : {}),
         });
       } catch (_e) { /* welcome is best-effort */ }
-      console.log("hw:autoreg:created", JSON.stringify({ user_id: r0.userId, tg: from.id, group_id: grp.id }));
-    } else {
-      console.log("hw:autoreg:matched-existing", JSON.stringify({ user_id: r0.userId, tg: from.id, status: r0.status }));
     }
     return await findProfileByTelegramId(admin, from.id);
   } catch (e) {
     console.error("hw:autoreg:err", String(e));
     return null;
   }
+}
+
+// Server-to-server into the proven creation engine (same pattern as staff-intake). Shared by
+// the in-topic auto-register and the DM /start membership path — one engine, all dedupe/role
+// rules apply in one place. CRITICAL: account_type is NOT passed to the engine — an existing
+// platform student matched by username must never be downgraded; provisional is set only when
+// the engine reports status='created'.
+async function registerProvisionalViaEngine(
+  admin: any,
+  from: { id: number; username?: string; first_name?: string; last_name?: string },
+  grp: { id: string; course_id: string },
+  source: string,
+): Promise<{ created: boolean } | null> {
+  const { data: sec } = await admin.rpc("internal_fn_secret");
+  if (!sec) return null;
+  const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/admin-create-students`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-internal-secret": String(sec),
+      "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+      "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    },
+    body: JSON.stringify({
+      students: [{
+        name: (from.first_name || "").slice(0, 60) || (from.username || `tg-${from.id}`),
+        last_name: (from.last_name || "").slice(0, 60) || undefined,
+        telegram_user_id: from.id,
+        telegram_username: from.username || undefined,
+        role: "student",
+      }],
+      target_group_id: grp.id,
+      target_course_id: grp.course_id,
+    }),
+  });
+  const out = await resp.json().catch(() => ({}));
+  const r0 = (out?.results || [])[0] || {};
+  if (!r0.userId) {
+    console.log("hw:autoreg:engine-refused", JSON.stringify({ tg: from.id, status: r0.status, err: r0.error, source }));
+    return null;
+  }
+  if (r0.status === "created") {
+    // New account → trial. (Existing matched accounts keep their type untouched.)
+    await admin.from("profiles").update({ account_type: "provisional" }).eq("id", r0.userId);
+    try {
+      await admin.from("admin_actions").insert({
+        actor_user_id: null, action: "auto_registered_provisional", target_user_id: r0.userId,
+        target_resource_type: "profile", target_resource_id: r0.userId,
+        details: { telegram_id: from.id, telegram_username: from.username || null, group_id: grp.id, source },
+      });
+    } catch (_e) { /* audit best-effort */ }
+    console.log("hw:autoreg:created", JSON.stringify({ user_id: r0.userId, tg: from.id, group_id: grp.id, source }));
+    return { created: true };
+  }
+  console.log("hw:autoreg:matched-existing", JSON.stringify({ user_id: r0.userId, tg: from.id, status: r0.status, source }));
+  return { created: false };
 }
 
 // A media post under picker mode: append to the live pending post (albums) or create one + ask.
@@ -6901,6 +7154,14 @@ Deno.serve(async (req) => {
       const tgUsername = (cq.from.username || "").toLowerCase();
       const cbProfile = await resolveProfileForTelegramUser(admin, cq.from.id, tgUsername, "bot");
       if (!cbProfile) {
+        // Group-button taps by unknown users: ephemeral toast to the tapper only — the bot
+        // must never post enrollment/non-member text INTO a group chat (pre-existing leak,
+        // fixed with the membership gate 2026-07-13).
+        if (cq.message?.chat?.type !== "private") {
+          const loc: Locale = normLocale(cq.from.language_code);
+          try { await answerCallback(cq.id, (T[loc] as any).nmNotMember); } catch (_e) {}
+          return new Response("ok", { status: 200, headers: corsHeaders });
+        }
         try { await answerCallback(cq.id); } catch (_e) {}
         if (cq.message?.chat?.id) {
           await sendUnregisteredReply(admin, cq.message.chat.id, cq.from);
