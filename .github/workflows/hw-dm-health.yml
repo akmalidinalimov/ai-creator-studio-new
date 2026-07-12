@@ -71,3 +71,13 @@ jobs:
             echo "::warning::${misconfig} active-course group(s) with students but NO homework topic configured — capture is degraded there"
           fi
           exit $fail
+
+      - name: Credential expiry countdown
+        # ops-merge-token (Vault OPS_GITHUB_PAT) expires 2026-10-10 — merges 401 that day.
+        # Start failing the run 9 days ahead so the owner regenerates in time.
+        run: |
+          set -euo pipefail
+          if [ "$(date -u +%Y%m%d)" -ge 20261001 ]; then
+            echo "::error::ops-merge-token (OPS_GITHUB_PAT) expires 2026-10-10 — regenerate at github.com/settings/personal-access-tokens and vault.update_secret it NOW"
+            exit 1
+          fi
