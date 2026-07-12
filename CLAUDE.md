@@ -61,3 +61,29 @@ leg must stay independent of the thing it watches.
 - Telegram constraints to check on every new button: callback_data ≤ 64 bytes (two UUIDs never
   fit — use positions/indices), bots can't DM users who never pressed Start (~70% of students),
   group-visible buttons need server-side owner locks.
+
+## Members vs. non-members: forgiving sandbox vs. strict gate
+
+The Telegram **group membership is the trust boundary** (enforced in `telegram-bot-webhook`
+2026-07-13). Two asymmetric contracts — keep every future change on this axis:
+
+- **Non-members are gated hard.** An unknown Telegram user who isn't a member of any
+  active-course group gets ONE plain sentence (`nmNotMember`) — no keyboards, no buttons, no
+  enrollment links, no account. First-time username→profile linking (bot AND website-login
+  paths) requires membership, because usernames are squattable (account-takeover class).
+  Gate/refusal events are DB-visible (`admin_actions`: `username_link_refused`,
+  `membership_gate_indeterminate`).
+- **Members get a forgiving sandbox.** A registered student — or any group member — resolves by
+  `telegram_id` and NEVER hits a gate, throttle, or membership probe (those run only for users
+  with no profile). Their fumbling is expected and must stay cheap and un-flagged:
+  - Wrong/stale/expired button taps → friendly message, never an error, work never lost
+    (`pkNotYours`/`pkExpired`/`pkGradedAlready`; retag preserves score+history).
+  - Posting homework in another group's topic → in-thread redirect hint (rate-limited 15 min).
+  - Posting anything in their OWN group's non-homework topics → **leave them alone.** It's their
+    space; the bot must NOT police or comment on general-chat posts. Silence is correct here.
+  - Member activity must never inflate an owner-facing anomaly/health flag. The uncaptured
+    detector already excludes anything that created a pending post or submission (picker mode
+    creates one for every homework-topic media), so member chatter doesn't trip it — preserve
+    that property when touching detectors.
+  - Never apply the expensive `getChatMember` sweep or the unregistered-reply throttle to a
+    user who already has a profile.
