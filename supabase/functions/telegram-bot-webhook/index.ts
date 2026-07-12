@@ -177,7 +177,12 @@ const T = {
     settingsAllOff: "🔕 Barcha bildirishnomalar o'chirildi",
     back: "← Orqaga",
     // Admin panel
-    adminKbAnalytics: "📊 Analitika",
+    adminKbAnalytics: "📊 Statistika",
+    astGroupsHint: "👇 Guruh bo'yicha batafsil:",
+    astBack: "← Umumiy",
+    astRefresh: "🔄 Yangilash",
+    adminHw7d: "7 kunda topshirilgan vazifalar",
+    adminHwPending: "Baholanmagan vazifalar",
     adminKbInactive3: "😴 3 kun faolsiz",
     adminKbInactive7: "💤 7 kun faolsiz",
     adminKbNever: "🚫 Hech qachon kirmagan",
@@ -447,7 +452,12 @@ const T = {
     settingsTzSet: (tz: string) => `🌍 Часовой пояс: ${tz}`,
     settingsAllOff: "🔕 Все уведомления отключены",
     back: "← Назад",
-    adminKbAnalytics: "📊 Аналитика",
+    adminKbAnalytics: "📊 Статистика",
+    astGroupsHint: "👇 Подробно по группам:",
+    astBack: "← Общая",
+    astRefresh: "🔄 Обновить",
+    adminHw7d: "Сдано заданий за 7 дней",
+    adminHwPending: "Непроверенные задания",
     adminKbInactive3: "😴 Неактивны 3 дн",
     adminKbInactive7: "💤 Неактивны 7 дн",
     adminKbNever: "🚫 Ни разу не входили",
@@ -708,7 +718,12 @@ const T = {
     settingsTzSet: (tz: string) => `🌍 Timezone: ${tz}`,
     settingsAllOff: "🔕 All notifications disabled",
     back: "← Back",
-    adminKbAnalytics: "📊 Analytics",
+    adminKbAnalytics: "📊 Statistics",
+    astGroupsHint: "👇 Per-group detail:",
+    astBack: "← Overall",
+    astRefresh: "🔄 Refresh",
+    adminHw7d: "Homework submitted in 7 days",
+    adminHwPending: "Ungraded homework",
     adminKbInactive3: "😴 Inactive 3d",
     adminKbInactive7: "💤 Inactive 7d",
     adminKbNever: "🚫 Never logged in",
@@ -1326,12 +1341,13 @@ function getMainKeyboard(locale: Locale) {
 
 function getAdminKeyboard(locale: Locale) {
   const t = T[locale] as any;
+  // Slimmed 2026-07-12 per owner: statistics-first. Grading/Homeworks/inactive/never-active
+  // buttons removed — their slash commands (/baholash, /inactive3, /nevr, …) still work, and
+  // per-group detail lives behind inline buttons under 📊 Statistika.
   return {
     keyboard: [
       [{ text: t.adminKbAnalytics }],
-      [{ text: t.tKbGrade }, { text: t.tKbHomework }],
-      [{ text: t.adminKbInactive3 }, { text: t.adminKbInactive7 }],
-      [{ text: t.adminKbNever }, { text: t.adminKbNew }],
+      [{ text: t.adminKbNew }],
       [{ text: t.adminKbStudentMode }, { text: t.kbLang }],
     ],
     resize_keyboard: true,
@@ -1437,6 +1453,8 @@ function buttonTextToCommand(text: string): string | null {
     if (trimmed === t.kbHelp) return "/yordam";
     // Admin keyboard buttons
     if (trimmed === t.adminKbAnalytics) return "/analitika";
+    // Legacy cached label (pre-2026-07-12 keyboards still show "Analitika")
+    if (trimmed === "📊 Analitika" || trimmed === "📊 Аналитика" || trimmed === "📊 Analytics") return "/analitika";
     if (trimmed === t.adminKbInactive3) return "/inactive3";
     if (trimmed === t.adminKbInactive7) return "/inactive7";
     if (trimmed === t.adminKbNever) return "/nevr";
@@ -2447,6 +2465,107 @@ function csvEscapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// ---- Admin statistics (📊 Statistika button + ast: callbacks) ----
+
+// Overall platform stats + an inline keyboard of groups for per-group drill-down.
+// Groups and counts are queried live on every render, so new groups/students
+// appear automatically — nothing is cached in the keyboard.
+async function buildAdminOverallStats(admin: any, locale: Locale): Promise<{ text: string; keyboard: any }> {
+  const t = T[locale] as any;
+  const rows = await loadStudentActivity(admin);
+  const now = Date.now();
+  const total = rows.length;
+  const loggedOnce = rows.filter((s) => !!s.last_sign_in_at).length;
+  const neverLogged = total - loggedOnce;
+  const sevenDayMs = 7 * 86400_000;
+  const active7d = rows.filter((s) => {
+    const la = lastActivityOf(s);
+    return la && now - la.getTime() <= sevenDayMs;
+  }).length;
+  const new7d = rows.filter((s) => now - new Date(s.created_at).getTime() <= sevenDayMs).length;
+
+  const sevenAgoIso = new Date(now - sevenDayMs).toISOString();
+  const [compRes, hw7dRes, hwPendRes] = await Promise.all([
+    admin.from("lesson_progress").select("user_id", { count: "exact", head: true }).gte("completed_at", sevenAgoIso),
+    admin.from("homework_submissions").select("id", { count: "exact", head: true }).gte("submitted_at", sevenAgoIso),
+    // Same pending rule as the teacher grading queue: ungraded OR stale after resubmission.
+    admin.from("homework_submissions").select("id", { count: "exact", head: true }).or("score.is.null,score_is_stale.is.true"),
+  ]);
+
+  const lines = [
+    t.adminAnalyticsTitle,
+    "",
+    t.adminLine(t.adminTotalStudents, total),
+    t.adminLine(t.adminLoggedOnce, loggedOnce),
+    t.adminLine(t.adminNeverLogged, neverLogged),
+    t.adminLine(t.adminActive7d, active7d),
+    t.adminLine(t.adminNew7d, new7d),
+    t.adminLine(t.adminCompletions7d, compRes?.count ?? 0),
+    t.adminLine(t.adminHw7d, hw7dRes?.count ?? 0),
+    t.adminLine(t.adminHwPending, hwPendRes?.count ?? 0),
+    "",
+    t.astGroupsHint,
+  ];
+
+  const { data: groups } = await admin.from("groups").select("id, name").order("name");
+  const { data: memb } = await admin.from("profiles").select("group_id").not("group_id", "is", null);
+  const counts = new Map<string, number>();
+  for (const m of (memb || []) as any[]) counts.set(m.group_id, (counts.get(m.group_id) || 0) + 1);
+  const btns = ((groups || []) as any[]).map((g) => ({
+    text: `${g.name} (${counts.get(g.id) || 0})`.slice(0, 30),
+    callback_data: `ast:g:${g.id}`,
+  }));
+  const kbRows: any[] = [];
+  for (let i = 0; i < btns.length; i += 2) kbRows.push(btns.slice(i, i + 2));
+  kbRows.push([{ text: t.astRefresh, callback_data: "ast:all" }]);
+
+  return { text: lines.join("\n"), keyboard: { inline_keyboard: kbRows } };
+}
+
+// Per-group stats — same engine as the teacher's /tstats (teacher_group_statistics RPC
+// admits admins), so admin and teacher numbers can never disagree.
+async function buildAdminGroupStats(admin: any, locale: Locale, groupId: string, callerId: string): Promise<{ text: string; keyboard: any }> {
+  const t = T[locale] as any;
+  const { data, error } = await admin.rpc("teacher_group_statistics", { p_group_id: groupId, p_caller_profile_id: callerId });
+  if (error) throw error;
+  const s: any = data || {};
+  const m = s.messages || {};
+  const a = s.active_students || {};
+  const total = s.total_students ?? 0;
+  const groupName = csvEscapeHtml(s.group_name || "—");
+  const avg = s.avg_module_score;
+  const avgLine = (avg === null || avg === undefined)
+    ? "📊 O'rtacha modul bahosi: hali baholanmagan"
+    : `📊 O'rtacha modul bahosi: ${avg}/10`;
+  const sevenAgoIso = new Date(Date.now() - 7 * 86400_000).toISOString();
+  const { count: new7d } = await admin.from("profiles").select("id", { count: "exact", head: true })
+    .eq("group_id", groupId).gte("created_at", sevenAgoIso);
+  const text = [
+    `📊 <b>${groupName}</b> · Statistika`,
+    ``,
+    `📨 <b>Xabarlar</b>`,
+    `   Bugun:    ${m.today ?? 0}`,
+    `   7 kun:   ${m.last_7d ?? 0}`,
+    `   30 kun:  ${m.last_30d ?? 0}`,
+    ``,
+    `👥 <b>Eng aktiv talabalar</b>`,
+    `   Bugun:   ${a.today ?? 0} / ${total}`,
+    `   7 kun:   ${a.last_7d ?? 0} / ${total}`,
+    `   30 kun: ${a.last_30d ?? 0} / ${total}`,
+    ``,
+    `🆕 ${t.adminNew7d}: <b>${new7d ?? 0}</b>`,
+    `📝 ${t.adminHwPending}: <b>${s.pending_homework_count ?? 0}</b>`,
+    avgLine,
+  ].join("\n");
+  const keyboard = {
+    inline_keyboard: [[
+      { text: t.astBack, callback_data: "ast:all" },
+      { text: t.astRefresh, callback_data: `ast:g:${groupId}` },
+    ]],
+  };
+  return { text, keyboard };
+}
+
 async function handleAdminCommand(
   admin: any,
   chatId: number,
@@ -2467,51 +2586,10 @@ async function handleAdminCommand(
   }
 
   if (cmd === "/analitika") {
-    const rows = await loadStudentActivity(admin);
-    const now = Date.now();
-    const total = rows.length;
-    const loggedOnce = rows.filter((s) => !!s.last_sign_in_at).length;
-    const neverLogged = total - loggedOnce;
-    const sevenDayMs = 7 * 86400_000;
-    const threeDayMs = 3 * 86400_000;
-    const active7d = rows.filter((s) => {
-      const la = lastActivityOf(s);
-      return la && now - la.getTime() <= sevenDayMs;
-    }).length;
-    const inactive3d = rows.filter((s) => {
-      if (!s.last_sign_in_at) return false; // never-logged-in handled separately
-      const la = lastActivityOf(s);
-      return !la || now - la.getTime() > threeDayMs;
-    }).length;
-    const inactive7d = rows.filter((s) => {
-      if (!s.last_sign_in_at) return false;
-      const la = lastActivityOf(s);
-      return !la || now - la.getTime() > sevenDayMs;
-    }).length;
-    const new7d = rows.filter(
-      (s) => now - new Date(s.created_at).getTime() <= sevenDayMs,
-    ).length;
-
-    // Lessons completed in last 7d
-    const sevenAgoIso = new Date(now - sevenDayMs).toISOString();
-    const { count: completions7d } = await admin
-      .from("lesson_progress")
-      .select("user_id", { count: "exact", head: true })
-      .gte("completed_at", sevenAgoIso);
-
-    const lines = [
-      t.adminAnalyticsTitle,
-      "",
-      t.adminLine(t.adminTotalStudents, total),
-      t.adminLine(t.adminLoggedOnce, loggedOnce),
-      t.adminLine(t.adminNeverLogged, neverLogged),
-      t.adminLine(t.adminActive7d, active7d),
-      t.adminLine(t.adminInactive3d, inactive3d),
-      t.adminLine(t.adminInactive7d, inactive7d),
-      t.adminLine(t.adminNew7d, new7d),
-      t.adminLine(t.adminCompletions7d, completions7d ?? 0),
-    ];
-    await sendWithKeyboard(chatId, lines.join("\n"), locale, true);
+    // Inline group buttons ride on the message itself; the persistent admin
+    // reply keyboard stays visible from prior sends.
+    const { text, keyboard } = await buildAdminOverallStats(admin, locale);
+    await sendMessage(chatId, text, keyboard);
     return true;
   }
 
@@ -5590,8 +5668,39 @@ async function handleCallback(admin: any, cq: any) {
       _isImp = true;
     }
   }
-  if (_isImp && (/^grade_task:|^grade:open:|^gs:open:|^settings:|^setlang:|^ops:/.test(data) || /^hw:(start|resub_yes):/.test(data))) {
+  if (_isImp && (/^grade_task:|^grade:open:|^gs:open:|^settings:|^setlang:|^ops:|^ast:/.test(data) || /^hw:(start|resub_yes):/.test(data))) {
     await answerCallback(cq.id, "👁 Faqat o'qish — /admin");
+    return;
+  }
+
+  // --- Admin statistics drill-down: ast:all | ast:g:<groupId> — ADMIN ONLY ---
+  // Renders in place (editMessageText) so the admin flips between overall and
+  // per-group views on one message. Group data comes from teacher_group_statistics
+  // (the RPC admits admins), keeping admin and teacher numbers identical.
+  if (data.startsWith("ast:") && chatId) {
+    if (!_clicker) { await answerCallback(cq.id); return; }
+    const astPersona = await getPersona(admin, _clicker.id);
+    if (astPersona !== "admin") { await answerCallback(cq.id, "⛔"); return; }
+    const astLocale: Locale = normLocale(_clicker?.preferred_locale);
+    try {
+      let view: { text: string; keyboard: any } | null = null;
+      if (data === "ast:all") {
+        view = await buildAdminOverallStats(admin, astLocale);
+      } else {
+        const gm = /^ast:g:([0-9a-f-]{36})$/.exec(data);
+        if (gm) view = await buildAdminGroupStats(admin, astLocale, gm[1], _clicker.id);
+      }
+      if (!view) { await answerCallback(cq.id); return; }
+      await answerCallback(cq.id);
+      await tgApi("editMessageText", {
+        chat_id: chatId, message_id: cq.message?.message_id,
+        text: view.text, parse_mode: "HTML", disable_web_page_preview: true,
+        reply_markup: view.keyboard,
+      });
+    } catch (e: any) {
+      console.error("[bot:ast] failed", e?.message || e);
+      await answerCallback(cq.id, "⚠️ Xato — qayta urinib ko'ring");
+    }
     return;
   }
 
