@@ -103,6 +103,8 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
   const [loading, setLoading] = useState(true);
   const [savingBio, setSavingBio] = useState(false);
   const [bioDraft, setBioDraft] = useState<string | null>(null);
+  const [savingName, setSavingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState<{ first: string; last: string } | null>(null);
   const [avatarBroken, setAvatarBroken] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const sectionRefs = {
@@ -247,6 +249,24 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
     toast.success(t("profile.bioSaved"));
   };
 
+  const saveName = async () => {
+    if (!userId || nameDraft === null) return;
+    const first = nameDraft.first.trim().slice(0, 60);
+    const last = nameDraft.last.trim().slice(0, 60);
+    if (first.length < 2) { toast.error(t("profile.nameTooShort")); return; }
+    setSavingName(true);
+    // Own row per RLS ("profiles update own or admin"). name_confirmed_at stops the bot's
+    // one-time name nudge from re-asking after a web edit.
+    const { error } = await supabase.from("profiles")
+      .update({ name: first, last_name: last || null, name_confirmed_at: new Date().toISOString() } as any)
+      .eq("id", userId);
+    setSavingName(false);
+    if (error) { toast.error(t("profile.nameFailed")); return; }
+    setProfile((p) => (p ? { ...p, name: first, last_name: last || null } : p));
+    setNameDraft(null);
+    toast.success(t("profile.nameSaved"));
+  };
+
   const xpPrev = prevThreshold(stats?.level ?? 1);
   const xpPct = stats ? Math.min(Math.max((stats.total_xp - xpPrev) / Math.max(stats.xp_next_level - xpPrev, 1), 0), 1) : 0;
   const top = group[0];
@@ -298,7 +318,31 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
               <div className="mt-1 flex items-center justify-center">
                 <span className="rounded-full bg-violet-600 text-white text-[11px] font-bold px-2 py-0.5 tabular-nums">L{stats?.level ?? 1}</span>
               </div>
-              <h1 className="mt-2 text-xl font-semibold tracking-tight text-center">{fullName}</h1>
+              {nameDraft === null ? (
+                <div className="mt-2 inline-flex items-center gap-1.5">
+                  <h1 className="text-xl font-semibold tracking-tight text-center">{fullName}</h1>
+                  <button type="button" aria-label={t("profile.editName")} title={t("profile.editName")}
+                    onClick={() => setNameDraft({ first: profile?.name ?? "", last: profile?.last_name ?? "" })}
+                    className="text-muted-foreground hover:text-foreground shrink-0">
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-2 w-full max-w-xs space-y-2">
+                  <input value={nameDraft.first} autoFocus maxLength={60}
+                    onChange={(e) => setNameDraft((d) => (d ? { ...d, first: e.target.value } : d))}
+                    onKeyDown={(e) => { if (e.key === "Enter") saveName(); if (e.key === "Escape") setNameDraft(null); }}
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm" placeholder={t("profile.firstNamePlaceholder")} />
+                  <input value={nameDraft.last} maxLength={60}
+                    onChange={(e) => setNameDraft((d) => (d ? { ...d, last: e.target.value } : d))}
+                    onKeyDown={(e) => { if (e.key === "Enter") saveName(); if (e.key === "Escape") setNameDraft(null); }}
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm" placeholder={t("profile.lastNamePlaceholder")} />
+                  <div className="flex items-center justify-end gap-2 text-xs">
+                    <Button size="sm" variant="ghost" onClick={() => setNameDraft(null)}>{t("common.cancel")}</Button>
+                    <Button size="sm" onClick={saveName} disabled={savingName}>{t("common.save")}</Button>
+                  </div>
+                </div>
+              )}
 
               {/* group + teacher */}
               <div className="mt-2 flex flex-wrap justify-center gap-1.5">
