@@ -17,6 +17,7 @@ import { ProgressRing } from "@/components/dashboard/ProgressRing";
 interface CourseRow {
   id: string; title: string; tagline: string | null; cover_url: string | null; duration_hours: number | null;
   total: number; completed: number; nextLessonId?: string; nextCourseId?: string;
+  lastActivityMs: number; // most-recent lesson activity in this course (0 = never touched)
 }
 
 export default function Dashboard() {
@@ -75,18 +76,27 @@ export default function Dashboard() {
         const total = lessonIds.length;
         const { data: progress } = await supabase
           .from("lesson_progress")
-          .select("lesson_id, completed_at")
+          .select("lesson_id, completed_at, updated_at")
           .eq("user_id", user.id)
           .in("lesson_id", lessonIds.length ? lessonIds : ["00000000-0000-0000-0000-000000000000"]);
         const completedSet = new Set((progress || []).filter((p: any) => p.completed_at).map((p: any) => p.lesson_id));
+        const lastActivityMs = (progress || []).reduce((mx: number, p: any) => {
+          const ts = p.updated_at ? Date.parse(p.updated_at) : 0;
+          return ts > mx ? ts : mx;
+        }, 0);
         const next = ordered.find((l) => !completedSet.has(l.id));
         rows.push({
           id: c.id, title: c.title, tagline: c.tagline, cover_url: c.cover_url, duration_hours: c.duration_hours,
           total, completed: completedSet.size,
-          nextLessonId: next?.id, nextCourseId: c.id,
+          nextLessonId: next?.id, nextCourseId: c.id, lastActivityMs,
         });
       }
       if (cancelled) return;
+      // "Continue where you left off" must show the course the student is actually working
+      // in. Enrollment order is arbitrary, so a student enrolled in 2 courses (e.g. finished
+      // 4.0 + active 5.0) could see the stale one. Order by most-recent activity, then by
+      // progress, so the resume card + course list lead with the live course.
+      rows.sort((a, b) => (b.lastActivityMs - a.lastActivityMs) || (b.completed - a.completed));
       setCourses(rows);
      } catch (e) {
        if (!cancelled) { console.error("[Dashboard] load failed", e); setError(true); }
