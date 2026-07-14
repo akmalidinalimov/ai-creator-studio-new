@@ -364,6 +364,7 @@ const T = {
     nameBtnYes: "✅ Ha, saqlash",
     nameBtnRetry: "✏️ Qayta kiritish",
     nameSaved: (d: string) => `✅ Saqlandi! Endi reytingda shunday ko'rinasiz: <b>${d}</b> ⭐`,
+    nameSaveError: "Saqlashda xato — qayta urinib ko'ring",
     nameConfirmedOk: "✅ Rahmat! Ismingiz tasdiqlandi.",
     nameLater: "OK, keyinroq so'rayman 👍",
   },
@@ -632,6 +633,7 @@ const T = {
     nameBtnYes: "✅ Да, сохранить",
     nameBtnRetry: "✏️ Ввести заново",
     nameSaved: (d: string) => `✅ Сохранено! Теперь в рейтинге вы выглядите так: <b>${d}</b> ⭐`,
+    nameSaveError: "Ошибка сохранения — попробуйте ещё раз",
     nameConfirmedOk: "✅ Спасибо! Ваше имя подтверждено.",
     nameLater: "Хорошо, спрошу позже 👍",
   },
@@ -900,6 +902,7 @@ const T = {
     nameBtnYes: "✅ Yes, save",
     nameBtnRetry: "✏️ Re-enter",
     nameSaved: (d: string) => `✅ Saved! You now appear in the rating as: <b>${d}</b> ⭐`,
+    nameSaveError: "Save failed — please try again",
     nameConfirmedOk: "✅ Thank you! Your name is confirmed.",
     nameLater: "OK, I'll ask later 👍",
   },
@@ -976,6 +979,7 @@ const PROF_T = {
     profNextLevel: (need: number, lvl: number) => `${lvl}-darajagacha ${need} XP qoldi`,
     btnProfStats: "📊 Statistika", btnProfBadges: "🏆 Yutuqlarim",
     btnProfGroup: "👥 Guruh reytingi", btnProfOpen: "👤 Profilni ochish",
+    btnEditName: "✏️ Ismni o'zgartirish",
     profOpenHint: "Statistika, yutuqlar, guruh reytingi va vazifalaringiz — barchasi profilingizda 👇",
     profGroupTitle: (g: string) => `👥 <b>${g} reytingi</b>`,
     profYou: "Siz", profToFirst: (xp: number) => `Birinchi o'ringa ${xp} XP qoldi ↑`,
@@ -1000,6 +1004,7 @@ const PROF_T = {
     profNextLevel: (need: number, lvl: number) => `До уровня ${lvl}: ${need} XP`,
     btnProfStats: "📊 Статистика", btnProfBadges: "🏆 Достижения",
     btnProfGroup: "👥 Рейтинг группы", btnProfOpen: "👤 Открыть профиль",
+    btnEditName: "✏️ Изменить имя",
     profOpenHint: "Статистика, достижения, рейтинг группы и задания — всё в вашем профиле 👇",
     profGroupTitle: (g: string) => `👥 <b>Рейтинг ${g}</b>`,
     profYou: "Вы", profToFirst: (xp: number) => `До 1-го места ${xp} XP ↑`,
@@ -1024,6 +1029,7 @@ const PROF_T = {
     profNextLevel: (need: number, lvl: number) => `${need} XP to level ${lvl}`,
     btnProfStats: "📊 Statistics", btnProfBadges: "🏆 Achievements",
     btnProfGroup: "👥 Group rating", btnProfOpen: "👤 Open my profile",
+    btnEditName: "✏️ Edit my name",
     profOpenHint: "Statistics, achievements, group rating and homework — all in your profile 👇",
     profGroupTitle: (g: string) => `👥 <b>${g} rating</b>`,
     profYou: "You", profToFirst: (xp: number) => `${xp} XP to reach #1 ↑`,
@@ -1063,7 +1069,13 @@ async function buildProfileCard(admin: any, userId: string, locale: Locale): Pro
 
   const text = `👤 <b>${name}</b> · ${bits.join(" · ")}\n\n${p.profOpenHint}`;
   const url = await createMagicLink(admin, userId, "login", "/profile");
-  const keyboard = { inline_keyboard: [[{ text: p.btnProfOpen, url }]] };
+  // ✏️ Edit name → reuses the confirm-your-name flow (name:edit → awaiting_name → preview →
+  // name:yes writes profiles.name/last_name). Lets any student fix their own display name so
+  // the rating/leaderboard shows it correctly.
+  const keyboard = { inline_keyboard: [
+    [{ text: p.btnProfOpen, url }],
+    [{ text: p.btnEditName, callback_data: "name:edit" }],
+  ] };
   return { text, keyboard };
 }
 
@@ -6089,10 +6101,10 @@ async function handleCallback(admin: any, cq: any) {
     return;
   }
 
-  // --- "Confirm your name" flow callbacks ---
+  // --- "Confirm your name" flow callbacks (also the profile card's ✏️ Edit name button) ---
   if (data.startsWith("name:") && chatId) {
     if (!_clicker) { await answerCallback(cq.id); return; }
-    if (_isImp) { await answerCallback(cq.id); return; }
+    if (_isImp) { await answerCallback(cq.id, "👁 Faqat o'qish — /admin"); return; }
     const locale: Locale = normLocale(_clicker.preferred_locale);
     const t = T[locale] as any;
     const action = data.slice("name:".length);
@@ -6129,11 +6141,24 @@ async function handleCallback(admin: any, cq: any) {
       const ctx = (st?.context || {}) as any;
       const notExpired = st?.expires_at ? new Date(st.expires_at).getTime() > Date.now() : false;
       if (st?.state === "confirm_name" && notExpired && typeof ctx.first === "string" && ctx.first) {
-        await admin.from("profiles").update({
+        const { error: upErr } = await admin.from("profiles").update({
           name: ctx.first,
           last_name: ctx.last || null,
           name_confirmed_at: new Date().toISOString(),
         }).eq("id", _clicker.id);
+        if (upErr) {
+          // Don't claim success on a failed write, and keep confirm_name so the student can
+          // retry the same name with one more tap. Emit a DB-visible signal for the watchdog.
+          console.error("name:yes update failed", { user_id: _clicker.id, err: upErr.message });
+          try {
+            await admin.from("admin_actions").insert({
+              actor_user_id: _clicker.id, action: "name_update_failed",
+              target_user_id: _clicker.id, details: { err: upErr.message },
+            });
+          } catch (_e) { /* audit best-effort */ }
+          await answerCallback(cq.id, t.nameSaveError);
+          return;
+        }
         await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
         cacheInvalidateUser(_clicker.id);
         await answerCallback(cq.id);
