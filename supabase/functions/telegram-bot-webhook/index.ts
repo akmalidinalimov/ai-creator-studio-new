@@ -265,7 +265,8 @@ const T = {
     gradedNone: "Hali baholangan vazifa yo'q.",
     gradedItem: (i: number, name: string, title: string, sc: number, mx: number) => `${i}. <b>${name}</b> — ${title} · <b>${sc}/${mx}</b>`,
     gradeAskScore: (max: number) => `Baho kiriting (0–${max}):`,
-    gradeAskComment: "Izoh yozing (yoki /skip):",
+    gradeAskComment: "Izoh yozing yoki 🎤 ovozli xabar yuboring (yoki /skip):",
+    gradeVoiceNote: "🎧 O'qituvchidan ovozli izoh:",
     gradeBadScore: (max: number) => `Bal 0–${max} oralig'ida bo'lishi kerak.`,
     gradeSaved: (sc: number, mx: number) => `✅ Saqlandi: ${sc}/${mx}. Talaba xabardor qilindi.`,
     gradeStudentDM: (title: string, sc: number, mx: number, fb: string) =>
@@ -542,7 +543,8 @@ const T = {
     gradedNone: "Пока нет оценённых работ.",
     gradedItem: (i: number, name: string, title: string, sc: number, mx: number) => `${i}. <b>${name}</b> — ${title} · <b>${sc}/${mx}</b>`,
     gradeAskScore: (max: number) => `Введите балл (0–${max}):`,
-    gradeAskComment: "Напишите комментарий (или /skip):",
+    gradeAskComment: "Напишите комментарий или 🎤 отправьте голосовое (или /skip):",
+    gradeVoiceNote: "🎧 Голосовой комментарий преподавателя:",
     gradeBadScore: (max: number) => `Балл должен быть от 0 до ${max}.`,
     gradeSaved: (sc: number, mx: number) => `✅ Сохранено: ${sc}/${mx}. Студенту отправлено уведомление.`,
     gradeStudentDM: (title: string, sc: number, mx: number, fb: string) =>
@@ -811,7 +813,8 @@ const T = {
     gradedNone: "No graded work yet.",
     gradedItem: (i: number, name: string, title: string, sc: number, mx: number) => `${i}. <b>${name}</b> — ${title} · <b>${sc}/${mx}</b>`,
     gradeAskScore: (max: number) => `Enter score (0–${max}):`,
-    gradeAskComment: "Write a comment (or /skip):",
+    gradeAskComment: "Write a comment or 🎤 send a voice message (or /skip):",
+    gradeVoiceNote: "🎧 Voice feedback from your teacher:",
     gradeBadScore: (max: number) => `Score must be between 0 and ${max}.`,
     gradeSaved: (sc: number, mx: number) => `✅ Saved: ${sc}/${mx}. Student notified.`,
     gradeStudentDM: (title: string, sc: number, mx: number, fb: string) =>
@@ -1418,6 +1421,19 @@ async function sendDocument(chatId: number, filename: string, content: string, c
     method: "POST",
     body: form,
   });
+}
+
+// Re-send a Telegram voice note by its file_id (grade voice feedback). file_id-based → the audio
+// stays on Telegram's servers, no download/upload, robust re-delivery. Returns true on success.
+async function sendVoice(chatId: number, fileId: string, caption?: string): Promise<boolean> {
+  try {
+    const resp = await tgApi("sendVoice", {
+      chat_id: chatId, voice: fileId,
+      ...(caption ? { caption, parse_mode: "HTML" } : {}),
+    });
+    const j: any = await resp.json().catch(() => null);
+    return !!j?.ok;
+  } catch (_e) { return false; }
 }
 
 async function isAdminUser(admin: any, userId: string): Promise<boolean> {
@@ -4026,7 +4042,10 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
         return true;
       }
     }
-    const feedback = text === "/skip" ? null : text;
+    // Feedback can be TEXT or a VOICE note (or both). A voice message arrives with no text, so
+    // "/skip" only applies to typed input; a voice message is never a skip.
+    const voiceFileId: string | null = msg.voice?.file_id || msg.audio?.file_id || null;
+    const feedback = (text && text !== "/skip") ? text : null;
     const score = Number(ctx.score);
 
     // U8: detect a resubmission that landed WHILE the teacher was grading — warn instead of
@@ -4038,7 +4057,8 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
     }
 
     const { error: upErr } = await admin.from("homework_submissions").update({
-      score, score_feedback: feedback, scored_by: profileId, scored_at: new Date().toISOString(), score_is_stale: false,
+      score, score_feedback: feedback, score_feedback_voice_file_id: voiceFileId,
+      scored_by: profileId, scored_at: new Date().toISOString(), score_is_stale: false,
     }).eq("id", submissionId);
     if (upErr) {
       await sendMessage(msg.chat.id, `❌ ${upErr.message}`);
@@ -4078,9 +4098,26 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
             rows.push([{ text: tt.hwResubYes, callback_data: `hw:resub_yes:${sub.assignment_id}` }]);
           }
           rows.push([{ text: tt.btnSiteOpen, url }]);
-          await sendLongMessage(stu.telegram_id, tt.gradeStudentDM(csvEscapeHtml(title), score, max, csvEscapeHtml(feedback || "")), {
+          // If the teacher left a voice note, the card flags it and the voice follows as its own
+          // message (voice notes can't carry an inline keyboard, so the card keeps the buttons).
+          const cardFeedback = feedback ? feedback : (voiceFileId ? tt.gradeVoiceNote : "");
+          await sendLongMessage(stu.telegram_id, tt.gradeStudentDM(csvEscapeHtml(title), score, max, csvEscapeHtml(cardFeedback)), {
             inline_keyboard: rows,
           });
+          if (voiceFileId) {
+            const vok = await sendVoice(Number(stu.telegram_id), voiceFileId, tt.gradeVoiceNote);
+            if (!vok) {
+              // DB-visible signal (doctrine): a dropped voice note must not be invisible.
+              console.error("grade voice delivery failed", { submission_id: submissionId, student: sub.user_id });
+              try {
+                await admin.from("admin_actions").insert({
+                  actor_user_id: profileId, action: "grade_voice_delivery_failed",
+                  target_user_id: sub.user_id, target_resource_type: "homework_submission",
+                  target_resource_id: submissionId, details: { has_text: !!feedback },
+                });
+              } catch (_e) { /* audit best-effort */ }
+            }
+          }
         } catch (e) {
           console.error("auto-DM student failed", e);
         }
@@ -5022,7 +5059,7 @@ async function finalizePendingPost(
       submitted_text: (pending.submitted_text || "").slice(0, 4000),
       submitted_at: new Date().toISOString(),
       attempt_number: nextAttempt,
-      score: null, score_feedback: null, scored_by: null, scored_at: null,
+      score: null, score_feedback: null, score_feedback_voice_file_id: null, scored_by: null, scored_at: null,
       score_is_stale: false, is_late: false,
       previous_score: prevScore,
       telegram_chat_id: chatId,
@@ -5662,6 +5699,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
         attempt_number: nextAttempt,
         score: null,
         score_feedback: null,
+        score_feedback_voice_file_id: null,
         scored_by: null,
         scored_at: null,
         score_is_stale: false,
