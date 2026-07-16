@@ -517,13 +517,19 @@ export default function Landing() {
               <Link to="/login" className="block hover:text-primary">{t("landing.nav.signIn")}</Link>
               <Link to="/signup" className="block hover:text-primary">{t("auth.signUp")}</Link>
               <a href="mailto:hello@aicreators.app" className="block hover:text-primary">{t("landing.footer.contact")}</a>
+              <Link to="/privacy" className="block hover:text-primary">{t("landing.footer.privacy")}</Link>
+              <Link to="/terms" className="block hover:text-primary">{t("landing.footer.terms")}</Link>
             </div>
           </div>
         </div>
         <div className="border-t border-border">
           <div className="container py-5 text-xs text-muted-foreground flex flex-wrap items-center justify-between gap-2">
             <span>{t("landing.footer.copyright")}</span>
-            <span>{courseTitle}</span>
+            <div className="flex items-center gap-3">
+              <Link to="/privacy" className="hover:text-primary">{t("landing.footer.privacy")}</Link>
+              <Link to="/terms" className="hover:text-primary">{t("landing.footer.terms")}</Link>
+              <span>{courseTitle}</span>
+            </div>
           </div>
         </div>
       </footer>

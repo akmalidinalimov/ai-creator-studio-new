@@ -29,6 +29,7 @@ import NotFound from "./pages/NotFound";
 import Landing from "./pages/Landing";
 import AuthMagicLink from "./pages/AuthMagicLink";
 import SalesIntake from "./pages/SalesIntake";
+import { Privacy, Terms } from "./pages/Legal";
 
 // Lazy-load the authenticated pages so they stay out of the initial bundle.
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -100,6 +101,8 @@ const App = () => (
             <Route path="/auth/magic" element={<AuthMagicLink />} />
             {/* Passwordless sales intake form: no login — gated by the ?code= in the link. */}
             <Route path="/intake" element={<SalesIntake />} />
+            <Route path="/privacy" element={<Privacy />} />
+            <Route path="/terms" element={<Terms />} />
 
             <Route path="/dashboard" element={<RequireAuth><StudentOrStaffRedirect><Dashboard /></StudentOrStaffRedirect></RequireAuth>} />
             <Route path="/course/:courseId" element={<RequireAuth><CoursePage /></RequireAuth>} />
