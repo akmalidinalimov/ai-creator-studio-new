@@ -1436,6 +1436,26 @@ async function sendVoice(chatId: number, fileId: string, caption?: string): Prom
   } catch (_e) { return false; }
 }
 
+// DB-visible error capture — a caught exception / genuine failure lands in platform_error_log so
+// the detectors + ops agent can see and classify it. NEVER called for expected member behaviour
+// (wrong button, stale tap) — those are handled gracefully and are not errors. Logging must never
+// throw or block the request.
+async function logError(
+  admin: any, source: string, message: unknown,
+  ctx: { action?: string; user_id?: string | null; telegram_id?: number | null; context?: Record<string, unknown> } = {},
+): Promise<void> {
+  try {
+    await admin.from("platform_error_log").insert({
+      source,
+      action: ctx.action ?? null,
+      message: String(message instanceof Error ? message.message : message).slice(0, 1000),
+      user_id: ctx.user_id ?? null,
+      telegram_id: ctx.telegram_id ?? null,
+      context: ctx.context ?? {},
+    });
+  } catch (_e) { /* error logging must never throw */ }
+}
+
 async function isAdminUser(admin: any, userId: string): Promise<boolean> {
   const { data } = await admin
     .from("user_roles")
@@ -4062,6 +4082,11 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
     }).eq("id", submissionId);
     if (upErr) {
       await sendMessage(msg.chat.id, `❌ ${upErr.message}`);
+      // A real failure that hit a teacher mid-grade — capture it (system error, not a fumble).
+      await logError(admin, "telegram-bot-webhook", upErr.message, {
+        action: "grade_save", user_id: sub?.user_id ?? null, telegram_id: tgId,
+        context: { submission_id: submissionId },
+      });
       return true;
     }
     if (racedResubmit) {
@@ -7234,7 +7259,17 @@ Deno.serve(async (req) => {
       await handleCallback(admin, cq);
     }
   } catch (e) {
+    // A genuine, unhandled failure while processing a Telegram update — capture it DB-visibly so
+    // the agent can classify it (real code bug vs transient) rather than it vanishing into logs.
     console.error("update handler error", e);
+    try {
+      const from = update?.message?.from || update?.callback_query?.from || update?.edited_message?.from;
+      await logError(admin, "telegram-bot-webhook", e, {
+        action: "update_handler",
+        telegram_id: from?.id ?? null,
+        context: { update_keys: Object.keys(update || {}).filter((k) => k !== "update_id") },
+      });
+    } catch (_e) { /* never let logging break the 200 */ }
   }
 
   // Always 200 OK so Telegram doesn't retry

@@ -11,9 +11,18 @@ everything downstream (via a Telegram tap); you never merge and never deploy.
 Work the loop, in order. Do not skip to a fix.
 
 1. **Reproduce & root-cause from evidence.** Never fix on a guess. Evidence sources you CAN reach:
-   - The health endpoint: `curl -sS -H "x-health-secret: $HW_HEALTH_SECRET" https://cdyidatkegxwhtuoqxly.supabase.co/functions/v1/hw-dm-health` — the platform's DB-visible health signals.
+   - The health endpoint: `curl -sS -H "x-health-secret: $HW_HEALTH_SECRET" https://cdyidatkegxwhtuoqxly.supabase.co/functions/v1/hw-dm-health` — the platform's DB-visible health signals. Its `recent_errors` field is the **genuine platform error log** (grouped by signature, last 24h): captured code exceptions / failed operations, NOT member fumbling.
    - The repository: read the relevant edge functions, SQL migrations, and frontend code. `CLAUDE.md`
      and the memory of past incidents are your map. Reference `file:line`.
+
+   **Classify every error before acting** (this is the whole point): for each entry in `recent_errors`,
+   decide — is it a **system error** (a real code bug: an unhandled exception, a wrong query, a
+   null-deref, a broken assumption) that a code change would fix? Or is it **transient/environmental**
+   (a one-off Telegram/network blip, a since-resolved data state) or **expected user behaviour** that
+   was mis-captured? Only pursue a fix for genuine, reproducible **system errors** — trace each to the
+   `source`/`action` in the code and confirm the failure sequence. Ignore transient noise, and if an
+   error was actually a member fumble that shouldn't have been logged, note it (the capture site may
+   itself be the thing to fix — but only if that's a clean code change).
    You do NOT have database write access or production credentials — by design. If you need data you
    can't see, say so and escalate (see below) rather than guessing.
 2. **Fan out the class.** Before writing the fix, enumerate every sibling scenario (other code paths,
