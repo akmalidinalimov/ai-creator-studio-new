@@ -1,0 +1,87 @@
+# Autonomous ops agent — Phase 3 (manual-trigger only).
+# You describe a problem; Claude Code investigates it from evidence and opens a small, tested fix as
+# an ops/* PR (authored by OPS_GH_PAT so CI fires), or a GitHub issue if it's not safely code-fixable.
+# A human still approves the merge via the Telegram tap (Phase 2). Dormant until OPS_AGENT_ENABLED=true
+# AND the ANTHROPIC_API_KEY + OPS_GH_PAT secrets exist. Kill-switch: set OPS_AGENT_ENABLED=false.
+name: Ops investigate (agent)
+
+on:
+  workflow_dispatch:
+    inputs:
+      problem:
+        description: "Describe the problem to investigate (paste an anomaly, complaint, or symptom)"
+        required: true
+        type: string
+      model:
+        description: "Model (blank = OPS_AGENT_MODEL var, else claude-sonnet-5)"
+        required: false
+        type: string
+
+concurrency:
+  group: ops-agent
+  cancel-in-progress: false
+
+jobs:
+  investigate:
+    # Kill-switch: repo variable OPS_AGENT_ENABLED must be 'true'.
+    if: vars.OPS_AGENT_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Dedupe — skip if an ops/* PR is already open
+        id: dedupe
+        env:
+          GH_TOKEN: ${{ secrets.OPS_GH_PAT }}
+        run: |
+          set -euo pipefail
+          open=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label ops-agent --json number --jq 'length')
+          if [ "$open" -gt 0 ]; then
+            echo "An ops-agent PR is already open — not starting another. Review/merge it first."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout (full history)
+        if: steps.dedupe.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Assemble prompt (contract + the described problem)
+        if: steps.dedupe.outputs.skip != 'true'
+        env:
+          PROBLEM: ${{ github.event.inputs.problem }}
+        run: |
+          {
+            cat .github/ops/investigate-prompt.md
+            echo ""
+            echo "## Problem to investigate"
+            echo ""
+            printf '%s\n' "$PROBLEM"
+          } > /tmp/ops-prompt.md
+          {
+            echo "OPS_PROMPT<<__OPS_EOF__"
+            cat /tmp/ops-prompt.md
+            echo "__OPS_EOF__"
+          } >> "$GITHUB_ENV"
+
+      - name: Run ops investigator
+        if: steps.dedupe.outputs.skip != 'true'
+        uses: anthropics/claude-code-action@v1
+        env:
+          # Evidence source — the agent curls the health endpoint with this (read-only counts).
+          HW_HEALTH_SECRET: ${{ secrets.HW_HEALTH_SECRET }}
+        with:
+          prompt: ${{ env.OPS_PROMPT }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # PR authored by the fine-grained PAT → CI runs on the agent's PR (GITHUB_TOKEN-authored
+          # PRs don't trigger CI, which would break the "merge only when green" gate).
+          github_token: ${{ secrets.OPS_GH_PAT }}
+          claude_args: |
+            --model ${{ github.event.inputs.model || vars.OPS_AGENT_MODEL || 'claude-sonnet-5' }}
+            --max-turns 80
