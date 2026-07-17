@@ -85,3 +85,4 @@ jobs:
           claude_args: |
             --model ${{ github.event.inputs.model || vars.OPS_AGENT_MODEL || 'claude-sonnet-5' }}
             --max-turns 80
+            --allowedTools "Bash,Edit,MultiEdit,Write,Read,Grep,Glob,TodoWrite,WebFetch,WebSearch"
