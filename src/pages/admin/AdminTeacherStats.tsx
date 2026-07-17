@@ -111,16 +111,24 @@ export default function AdminTeacherStats() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
+  const [courseId, setCourseId] = useState<string>(""); // "" = all courses
   const labels = useMemo(() => buildDayLabels(DAYS), []);
 
-  const reload = async () => {
+  const reload = async (cid: string) => {
     setLoading(true); setErr(null);
-    const { data, error } = await supabase.rpc("admin_teacher_weekly" as any, { p_days: DAYS });
+    const { data, error } = await supabase.rpc("admin_teacher_weekly" as any, {
+      p_days: DAYS, ...(cid ? { p_course_id: cid } : {}),
+    });
     if (error) setErr(error.message || "Ma'lumotni yuklab bo'lmadi");
     else setRows(((data as any[]) || []) as Row[]);
     setLoading(false);
   };
-  useEffect(() => { reload(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    supabase.from("courses").select("id, title").eq("published", true).order("created_at")
+      .then(({ data }) => setCourses(((data as any[]) || []).map((c) => ({ id: c.id, title: c.title }))));
+    reload(""); /* eslint-disable-next-line */
+  }, []);
 
   // ranking: most hours in the group over the window first (then messages, then grading)
   const sorted = useMemo(
@@ -134,11 +142,22 @@ export default function AdminTeacherStats() {
         <div>
           <h1 className="text-2xl font-semibold flex items-center gap-2"><GraduationCap className="h-6 w-6" /> Teacher Statistics</h1>
           <p className="text-sm text-muted-foreground">So'nggi 7 kun — <b>har bir guruh alohida qator</b> (bir o'qituvchi 2 guruhga biriktirilgan bo'lsa, 2 qator chiqadi). Guruhda eng ko'p <b>faol vaqt</b> o'tkazganlar yuqorida (reyting). Har kungi katakda — o'sha kuni nechta xabar; <span className="text-rose-600 dark:text-rose-400 font-medium">qizil = o'sha kuni bironta ham xabar yo'q</span>.</p>
+          <div className="mt-3 flex items-center gap-2">
+            <label className="text-sm text-muted-foreground">Kurs bo'yicha:</label>
+            <select
+              value={courseId}
+              onChange={(e) => { setCourseId(e.target.value); reload(e.target.value); }}
+              className="rounded-md border bg-background px-3 py-1.5 text-sm"
+            >
+              <option value="">Barcha kurslar</option>
+              {courses.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+            </select>
+          </div>
         </div>
 
         {err && (
           <div className="rounded border border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-400 text-sm p-3">
-            ⚠️ {err} <button className="underline ml-2" onClick={reload}>Qayta urinish</button>
+            ⚠️ {err} <button className="underline ml-2" onClick={() => reload(courseId)}>Qayta urinish</button>
           </div>
         )}
 
