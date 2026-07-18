@@ -11,7 +11,7 @@ create table if not exists public.ops_agent_runs (
   id bigint generated always as identity primary key,
   run_id text,                       -- GitHub Actions run id
   problem text,                      -- the dispatched problem description
-  outcome_type text,                 -- 'pr' | 'issue' | 'none'
+  outcome_type text check (outcome_type in ('pr','issue','none')),
   outcome_ref text,                  -- PR / issue number when applicable
   note text,
   created_at timestamptz not null default now()
@@ -36,8 +36,8 @@ declare
   _stats jsonb; _stats_ran int; _stats_line text;
   _joiners int;
   _cron_ok int; _cron_fail int; _errors int;
-  _agent_runs int; _agent_prs int; _agent_issues int; _agent_refs text;
-  _agent_block text;
+  _agent_runs int; _agent_prs int; _agent_issues int;
+  _agent_pr_refs text; _agent_issue_refs text; _agent_block text;
   _msg text;
 begin
   select public.hw_dm_health_stats() into _health;
@@ -75,23 +75,23 @@ begin
            then ' · ⚠️ ' || (_stats->>'residual_missing') || ' hal qilinmadi' else '' end;
   end if;
 
-  -- 🕵️ LLM ops agent activity (from ops_agent_runs).
-  select count(*), count(*) filter (where outcome_type='pr'), count(*) filter (where outcome_type='issue'),
-    string_agg(distinct case when outcome_type='pr' then 'PR #'||outcome_ref
-                             when outcome_type='issue' then 'issue #'||outcome_ref end, ', ')
-    into _agent_runs, _agent_prs, _agent_issues, _agent_refs
+  -- 🕵️ LLM ops agent activity. PR and issue refs kept SEPARATE so each renders under its own
+  -- heading even when both occur in the same window.
+  select count(*) filter (where outcome_type='pr'),
+         count(*) filter (where outcome_type='issue'),
+         string_agg(distinct 'PR #'||outcome_ref, ', ') filter (where outcome_type='pr'),
+         string_agg(distinct 'issue #'||outcome_ref, ', ') filter (where outcome_type='issue')
+    into _agent_prs, _agent_issues, _agent_pr_refs, _agent_issue_refs
   from ops_agent_runs where created_at > _since and outcome_ref is not null and outcome_ref <> '';
-  if _agent_runs is null then _agent_runs := 0; end if;
-  -- count ALL runs (incl. no-output) separately for the "ran but no action" case
   select count(*) into _agent_runs from ops_agent_runs where created_at > _since;
+
   if _agent_runs > 0 then
     _agent_block := E'\n🕵️ <b>Avtonom agent</b>' || E'\n' ||
       '   Ishga tushdi: ' || _agent_runs || ' marta' || E'\n' ||
-      case
-        when coalesce(_agent_prs,0) > 0 then '   Tuzatish PR ochdi: ' || coalesce(_agent_refs,'') || E'\n'
-        when coalesce(_agent_issues,0) > 0 then '   Muammo qayd etdi (issue): ' || coalesce(_agent_refs,'') || E'\n'
-        else '   Harakat talab qilinmadi (muammo topilmadi)' || E'\n'
-      end;
+      (case when coalesce(_agent_prs,0) > 0 then '   Tuzatish PR ochdi: ' || _agent_pr_refs || E'\n' else '' end) ||
+      (case when coalesce(_agent_issues,0) > 0 then '   Muammo qayd etdi: ' || _agent_issue_refs || E'\n' else '' end) ||
+      (case when coalesce(_agent_prs,0)=0 and coalesce(_agent_issues,0)=0
+            then '   Harakat talab qilinmadi (muammo topilmadi)' || E'\n' else '' end);
   else
     _agent_block := '';
   end if;
