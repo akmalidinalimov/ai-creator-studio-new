@@ -58,9 +58,9 @@ the change is testable (`deno test` for edge functions; `vitest` for web). Verif
 
 **If it is NOT safely code-fixable** (needs a migration/backfill, needs data you can't see, is an infra
 or product decision, or the root cause is unclear after investigation):
-- Do NOT open a speculative PR. Open a GitHub issue instead:
-  `gh issue create --title "..." --body "..."` with your evidence, root-cause hypothesis, and the
-  specific human action required (e.g. "needs a migration to add column X", "needs a data backfill").
+- Do NOT open a speculative PR. Open a GitHub issue instead, WITH the `ops-agent` label:
+  `gh issue create --label ops-agent --title "..." --body "..."` with your evidence, root-cause
+  hypothesis, and the specific human action required (e.g. "needs a migration to add column X").
 
 ## Tone
 
