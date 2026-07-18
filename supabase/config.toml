@@ -99,3 +99,7 @@ verify_jwt = false
 # x-ops-notify-secret (Vault, via ops_notify_secret() RPC) — can only DM platform admins.
 [functions.ops-notify]
 verify_jwt = false
+
+# ops-agent-log: records one ops-agent run outcome (x-health-secret gated) for the daily digest.
+[functions.ops-agent-log]
+verify_jwt = false

@@ -86,3 +86,22 @@ jobs:
             --model ${{ github.event.inputs.model || vars.OPS_AGENT_MODEL || 'claude-sonnet-5' }}
             --max-turns 80
             --allowedTools "Bash,Edit,MultiEdit,Write,Read,Grep,Glob,TodoWrite,WebFetch,WebSearch"
+
+      - name: Log the run outcome (for the daily digest)
+        if: always() && steps.dedupe.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.OPS_GH_PAT }}
+          HW_HEALTH_SECRET: ${{ secrets.HW_HEALTH_SECRET }}
+          PROBLEM: ${{ github.event.inputs.problem }}
+        run: |
+          set -uo pipefail
+          # Determine what the agent produced (dedupe + concurrency=1 → at most one open ops PR).
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label ops-agent --json number --jq 'first(.[]).number // ""' 2>/dev/null || echo "")
+          iss=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label ops-agent --json number --jq 'first(.[]).number // ""' 2>/dev/null || echo "")
+          if [ -n "$pr" ]; then otype="pr"; oref="$pr"
+          elif [ -n "$iss" ]; then otype="issue"; oref="$iss"
+          else otype="none"; oref=""; fi
+          curl -sS -X POST "https://cdyidatkegxwhtuoqxly.supabase.co/functions/v1/ops-agent-log" \
+            -H "x-health-secret: ${HW_HEALTH_SECRET}" -H "Content-Type: application/json" \
+            -d "$(jq -n --arg rid "$GITHUB_RUN_ID" --arg p "$PROBLEM" --arg ot "$otype" --arg or "$oref" \
+                  '{run_id:$rid, problem:$p, outcome_type:$ot, outcome_ref:$or}')" || true
