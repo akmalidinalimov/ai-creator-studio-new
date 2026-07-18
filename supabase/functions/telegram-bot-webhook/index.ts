@@ -4185,7 +4185,13 @@ async function handleTeacherSession(admin: any, msg: any, profileId: string, loc
       await sendMessage(r.telegram_id, body);
       await admin.from("bot_broadcast_rate").insert({ actor_user_id: profileId, recipient_user_id: r.id, scope: "recipient" });
       sent++;
-    } catch (_e) { /* ignore */ }
+    } catch (e) {
+      // A genuine exception here (not a Telegram-side "blocked bot", which never throws) is a
+      // real delivery fault — capture it DB-visibly instead of letting it vanish silently.
+      await logError(admin, "telegram-bot-webhook", e, {
+        action: "teacher_broadcast_dm", user_id: r.id, telegram_id: r.telegram_id,
+      });
+    }
   }
   await admin.from("bot_broadcast_rate").insert({ actor_user_id: profileId, scope: "teacher" });
   await admin.from("bot_sessions").delete().eq("user_id", profileId);
