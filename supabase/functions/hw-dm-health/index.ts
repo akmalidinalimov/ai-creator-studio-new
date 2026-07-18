@@ -32,7 +32,15 @@ Deno.serve(async (req) => {
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const { data, error } = await admin.rpc("hw_dm_health_stats");
     if (error) throw error;
-    return new Response(JSON.stringify(data), {
+    // Also surface recent genuine platform errors so the out-of-band verifier AND the ops agent
+    // (whose only DB window is this endpoint) can see + classify them. Best-effort: never let a
+    // missing errors summary fail the core health check.
+    let recent_errors: unknown = null;
+    try {
+      const { data: errs } = await admin.rpc("recent_platform_errors", { _hours: 24 });
+      recent_errors = errs ?? null;
+    } catch (_e) { /* keep health working even if the errors summary fails */ }
+    return new Response(JSON.stringify({ ...(data as Record<string, unknown>), recent_errors }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
