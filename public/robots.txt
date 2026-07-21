@@ -1,14 +1,37 @@
-User-agent: Googlebot
-Allow: /
+# AI Creators — https://www.aicreator.academy
+# Public marketing + legal pages are crawlable; the authenticated app is not.
+# A discoverable sitemap + a clean crawl surface are legitimacy signals that
+# help search engines (and the reputation feeds that consume them) recognize
+# this as a real education site rather than a bare login page.
 
-User-agent: Bingbot
-Allow: /
-
+# Social / link-preview crawlers — allow everything so share cards render.
 User-agent: Twitterbot
 Allow: /
 
 User-agent: facebookexternalhit
 Allow: /
 
+# Search crawlers — index the public pages, keep the gated app out of results.
 User-agent: *
-Allow: /
+Allow: /$
+Allow: /login
+Allow: /signup
+Allow: /privacy
+Allow: /terms
+Disallow: /dashboard
+Disallow: /course
+Disallow: /lesson
+Disallow: /quiz
+Disallow: /settings
+Disallow: /leaderboard
+Disallow: /badges
+Disallow: /activity
+Disallow: /profile
+Disallow: /admin
+Disallow: /teacher
+Disallow: /intake
+Disallow: /auth
+Disallow: /forgot-password
+Disallow: /reset-password
+
+Sitemap: https://www.aicreator.academy/sitemap.xml
