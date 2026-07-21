@@ -40,7 +40,14 @@ Deno.serve(async (req) => {
       const { data: errs } = await admin.rpc("recent_platform_errors", { _hours: 24 });
       recent_errors = errs ?? null;
     } catch (_e) { /* keep health working even if the errors summary fails */ }
-    return new Response(JSON.stringify({ ...(data as Record<string, unknown>), recent_errors }), {
+    // Badge-card delivery health — so the out-of-band verifier also asserts rewards are reaching
+    // students, not just teacher DMs. Best-effort: a missing badge summary never fails core health.
+    let badge: unknown = null;
+    try {
+      const { data: b } = await admin.rpc("badge_dm_health_stats");
+      badge = b ?? null;
+    } catch (_e) { /* keep health working even if the badge summary fails */ }
+    return new Response(JSON.stringify({ ...(data as Record<string, unknown>), recent_errors, badge }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
