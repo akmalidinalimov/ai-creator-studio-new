@@ -9,13 +9,13 @@
 //  - tg() returns {ok,error} parsed from the Telegram API response;
 //  - rows are CLAIMED atomically (last_attempt_at lease) before sending, so an
 //    overlapping cron tick / manual call can't double-send the same badge;
-//  - success        -> sent_at set (error null) + admin_actions 'badge_dm_sent';
-//  - terminal fail  -> sent_at set + error kept + 'badge_dm_failed' (recipient
-//    blocked/never-started, content too long, or retry cap) — counted undeliverable;
-//  - transient fail -> left unsent with error + attempts+1 so the every-minute
-//    drainer auto-retries (capped at MAX_ATTEMPTS);
-//  - skip (no telegram_id / notifications off) -> sent_at set + error 'skip:%'
-//    so it's excluded from both the sent and undeliverable counts.
+//  - each delivered UNIT (image chunk / follow-up message) marks ITS rows sent
+//    immediately, so a transient failure only retries the rows that didn't land —
+//    a partially-delivered batch never resends the images it already sent;
+//  - terminal failure (recipient blocked / content too long / retry cap) -> sent_at
+//    + error kept + 'badge_dm_failed', counted undeliverable;
+//  - skip (no telegram_id / notifications off) -> sent_at + error 'skip:%' so it's
+//    excluded from both the sent and undeliverable counts.
 // badge_dm_health_stats() + badge_dm_watchdog() read these columns.
 //
 // The badge card is rendered by Cloudinary: a pre-baked 1080x1920 background
@@ -74,9 +74,9 @@ async function tg(method: string, body: unknown): Promise<{ ok: boolean; error: 
   }
 }
 
-// Content/validation errors — the SAME content will never succeed on retry (over-long caption from
-// an admin-edited "Batch matnlar" text, unparseable entities, bad media). Terminal, but distinct
-// from recipient-undeliverable so an admin can tell "fix the text" from "student never started".
+// Content/validation errors — the SAME content never succeeds on retry (over-long caption from an
+// admin-edited "Batch matnlar" text, unparseable entities, bad media). Terminal, but distinct from
+// recipient-undeliverable so an admin can tell "fix the text" from "student never started".
 function isContentTgError(err: string | null): boolean {
   if (!err) return false;
   const e = err.toLowerCase();
@@ -155,52 +155,74 @@ function shareBlock(msgs: Msgs, name: string): string {
   return (msgs["__share__"] || DEFAULT_SHARE).replace(/\{\{name\}\}/g, name);
 }
 
-// Sends all of a user's due badges. Returns {ok,error} reflecting EVERY required send: each image
-// chunk (media groups capped at Telegram's 10 items) AND the follow-up/text message (which carries
-// the share block, the inline button an album can't have, and any image-less badges' only content).
-// A single image-only badge is one self-contained document (caption + share + button, no follow-up).
+// Delivers all of a user's due badges, marking each SUCCESSFULLY-delivered unit's queue rows sent
+// the moment Telegram accepts it (via markSent). Returns the ids actually delivered + the first
+// error. Because delivered rows are marked as we go, a later transient failure leaves ONLY the
+// undelivered rows for the caller to retry — the images already sent are never resent.
+//   • single image-only badge  -> one self-contained document (caption + share + button)
+//   • image badges             -> media groups chunked to Telegram's 10-item cap
+//   • follow-up / text message  -> share block + inline button (an album can't carry one) + any
+//                                  image-less badges' only content
 async function deliverBadges(
-  admin: any, chatId: number, uid: string, name: string | null, enriched: any[], msgs: Msgs,
-): Promise<{ ok: boolean; error: string | null }> {
+  admin: any, chatId: number, uid: string, name: string | null, items: any[], badgeById: Map<string, any>,
+  msgs: Msgs, markSent: (ids: string[]) => Promise<void>,
+): Promise<{ error: string | null; delivered: string[] }> {
   const nm = firstName(name);
+  // Map each unique badge -> its queue row id(s); keep insertion order for stable batching.
+  const idsByBadge = new Map<string, string[]>();
+  const ordered: any[] = [];
+  for (const it of items) {
+    const b = badgeById.get(it.badge_id);
+    if (!b) continue; // unknown badge ids are handled (skip) by the caller
+    if (!idsByBadge.has(b.id)) { idsByBadge.set(b.id, []); ordered.push(b); }
+    idsByBadge.get(b.id)!.push(it.id);
+  }
+  const idsFor = (badges: any[]) => badges.flatMap((b) => idsByBadge.get(b.id) || []);
+  const withImg = ordered.filter((b) => badgeImageUrl(b.code, name));
+  const noImg = ordered.filter((b) => !badgeImageUrl(b.code, name));
+  const delivered: string[] = [];
+
   const url = await magicLink(admin, uid, `/profile?tab=badges`);
   const button = { inline_keyboard: [[{ text: "🏅 Barcha nishonlarim", url }]] };
-  const withImg = enriched.filter((b: any) => badgeImageUrl(b.code, name));
-  const noImg = enriched.filter((b: any) => !badgeImageUrl(b.code, name));
 
+  // Single image-only badge: one document carrying caption + share + button.
   if (withImg.length === 1 && noImg.length === 0) {
     const b = withImg[0];
-    return await tg("sendDocument", {
+    const res = await tg("sendDocument", {
       chat_id: chatId, document: badgeImageUrl(b.code, name),
       caption: `${badgeBody(b.code, msgs, nm, b)}\n\n${shareBlock(msgs, nm)}`, reply_markup: button,
     });
+    if (!res.ok) return { error: res.error, delivered };
+    const ids = idsFor([b]); await markSent(ids); delivered.push(...ids);
+    return { error: null, delivered };
   }
 
-  // Image badges in chunks of 10 (sendMediaGroup's cap); every chunk must be accepted.
+  // Image badges in chunks of 10; mark each chunk sent as soon as it lands.
   for (let i = 0; i < withImg.length; i += 10) {
     const chunk = withImg.slice(i, i + 10);
-    const media = chunk.map((b: any) => ({ type: "document", media: badgeImageUrl(b.code, name), caption: badgeBody(b.code, msgs, nm, b) }));
+    const media = chunk.map((b) => ({ type: "document", media: badgeImageUrl(b.code, name), caption: badgeBody(b.code, msgs, nm, b) }));
     const res = media.length === 1
       ? await tg("sendDocument", { chat_id: chatId, document: media[0].media, caption: media[0].caption })
       : await tg("sendMediaGroup", { chat_id: chatId, media });
-    if (!res.ok) return res;
+    if (!res.ok) return { error: res.error, delivered };
+    const ids = idsFor(chunk); await markSent(ids); delivered.push(...ids);
   }
 
-  // Follow-up (or text-only) — required whenever there are image-less badges, an image album (no
-  // button on it), or no images at all. Its result counts: those noImg badges have no other content.
+  // Follow-up / text-only message: carries the share block, the inline button, and any image-less
+  // badges' only content. Required when there are noImg badges, an image album, or no images at all.
   const textOnly = withImg.length === 0;
   if (textOnly || noImg.length > 0 || withImg.length > 1) {
-    let text: string;
-    if (textOnly) {
-      text = `${enriched.map((b: any) => `🏅 ${badgeBody(b.code, msgs, nm, b)}`).join("\n\n")}\n\n${shareBlock(msgs, nm)}`;
-    } else {
-      const extra = noImg.length ? `\n\n${noImg.map((b: any) => `🏅 ${badgeBody(b.code, msgs, nm, b)}`).join("\n\n")}` : "";
-      text = `${shareBlock(msgs, nm)}${extra}`;
-    }
+    const text = textOnly
+      ? `${ordered.map((b) => `🏅 ${badgeBody(b.code, msgs, nm, b)}`).join("\n\n")}\n\n${shareBlock(msgs, nm)}`
+      : `${shareBlock(msgs, nm)}${noImg.length ? `\n\n${noImg.map((b) => `🏅 ${badgeBody(b.code, msgs, nm, b)}`).join("\n\n")}` : ""}`;
     const res = await tg("sendMessage", { chat_id: chatId, text, reply_markup: button });
-    if (!res.ok) return res;
+    if (!res.ok) return { error: res.error, delivered };
+    // The follow-up carries the noImg badges' content (their only delivery). For a pure image album
+    // (no noImg) the images were already marked; the follow-up is just share+button.
+    const ids = textOnly ? idsFor(ordered) : idsFor(noImg);
+    if (ids.length) { await markSent(ids); delivered.push(...ids); }
   }
-  return { ok: true, error: null };
+  return { error: null, delivered };
 }
 
 Deno.serve(async (req) => {
@@ -283,6 +305,12 @@ Deno.serve(async (req) => {
   (msgRows || []).forEach((m: any) => { if (m?.code) msgs[m.code] = m.body_uz || ""; });
 
   let processed = 0, sent = 0, skipped = 0, retrying = 0, undeliverable = 0;
+  const stamp = () => new Date().toISOString();
+  const markIds = async (ids: string[], patch: Record<string, unknown>, tag: string, uid: string) => {
+    if (!ids.length) return;
+    const { error: uerr } = await admin.from("badge_award_queue").update(patch).in("id", ids);
+    if (uerr) console.error(`badge ${tag} failed`, uid, uerr.message);
+  };
 
   for (const [uid, items] of byUser.entries()) {
     const prof = profById.get(uid);
@@ -291,68 +319,60 @@ Deno.serve(async (req) => {
     // Shared retry budget across a user's simultaneously-due badges: if the chat is unreachable they
     // ALL fail for the same reason, so advancing them together is correct (documented tradeoff).
     const attemptsSoFar = Math.max(0, ...items.map((i: any) => Number(i.attempts) || 0));
-    const stamp = () => new Date().toISOString();
 
-    // Terminal (delivered, gave up, or intentionally skipped): set sent_at so it leaves the queue.
-    const markTerminal = async (err: string | null) => {
-      const { error: uerr } = await admin.from("badge_award_queue")
-        .update({ sent_at: stamp(), error: err, last_attempt_at: stamp() }).in("id", queueIds);
-      if (uerr) console.error("badge markTerminal failed", uid, uerr.message);
-    };
-    // Transient failure: leave unsent (drainer retries next minute), record error + bump attempts.
-    const markRetry = async (err: string) => {
-      const { error: uerr } = await admin.from("badge_award_queue")
-        .update({ error: err, attempts: attemptsSoFar + 1, last_attempt_at: stamp() }).in("id", queueIds);
-      if (uerr) console.error("badge markRetry failed", uid, uerr.message);
-    };
+    const markSent = (ids: string[]) => markIds(ids, { sent_at: stamp(), error: null, last_attempt_at: stamp() }, "markSent", uid);
+    const markTerm = (ids: string[], err: string | null) => markIds(ids, { sent_at: stamp(), error: err, last_attempt_at: stamp() }, "markTerm", uid);
+    const markRetry = (ids: string[], err: string) => markIds(ids, { error: err, attempts: attemptsSoFar + 1, last_attempt_at: stamp() }, "markRetry", uid);
 
     // Skips are not failures — stamped 'skip:%' so they're excluded from sent/undeliverable counts.
-    if (!prof || !prof.telegram_id) { await markTerminal("skip:no_telegram"); processed += items.length; skipped += items.length; continue; }
-    if (prof.notifications_enabled === false) { await markTerminal("skip:notifications_off"); processed += items.length; skipped += items.length; continue; }
+    if (!prof || !prof.telegram_id) { await markTerm(queueIds, "skip:no_telegram"); processed += items.length; skipped += items.length; continue; }
+    if (prof.notifications_enabled === false) { await markTerm(queueIds, "skip:notifications_off"); processed += items.length; skipped += items.length; continue; }
+    // Any queue rows whose badge no longer exists can never be sent — clear them (not a failure).
+    const knownIds = items.filter((i: any) => badgeById.has(i.badge_id)).map((i: any) => i.id);
+    const unknownIds = queueIds.filter((id: string) => !knownIds.includes(id));
+    if (unknownIds.length) { await markTerm(unknownIds, "skip:unknown_badge"); skipped += unknownIds.length; }
+    if (!knownIds.length) { processed += items.length; continue; }
 
-    // Dedupe badges within this user's batch (same badge can't repeat, but be safe)
-    const seen = new Set<string>();
-    const enriched = items
-      .map((i: any) => badgeById.get(i.badge_id))
-      .filter((b: any) => b && !seen.has(b.id) && seen.add(b.id));
-    if (!enriched.length) { await markTerminal("skip:unknown_badge"); processed += items.length; continue; }
-
-    const outcome = await deliverBadges(admin, Number(prof.telegram_id), uid, prof.name, enriched, msgs);
+    const { error: outErr, delivered } = await deliverBadges(
+      admin, Number(prof.telegram_id), uid, prof.name, items, badgeById, msgs, markSent,
+    );
     processed += items.length;
+    sent += delivered.length;
 
-    if (outcome.ok) {
-      await markTerminal(null);
-      sent += enriched.length;
+    const deliveredSet = new Set(delivered);
+    const pendingIds = knownIds.filter((id: string) => !deliveredSet.has(id));
+    if (!pendingIds.length) {
       try {
         await admin.from("admin_actions").insert({
           actor_user_id: uid, action: "badge_dm_sent", target_user_id: uid,
           target_resource_type: "profile", target_resource_id: uid,
           details: {
-            badge_ids: badgeIdsForUser, batched: enriched.length > 1, count: enriched.length,
-            as_image: enriched.some((b: any) => badgeImageUrl(b.code, prof.name)), sent_at: stamp(),
+            badge_ids: badgeIdsForUser, batched: delivered.length > 1, count: delivered.length,
+            as_image: items.some((i: any) => { const b = badgeById.get(i.badge_id); return b && badgeImageUrl(b.code, prof.name); }),
+            sent_at: stamp(),
             queued_for_quiet_hours: items.some((i: any) => new Date(i.scheduled_for).getTime() - new Date(i.awarded_at).getTime() > 60_000),
           },
         });
       } catch { /* ignore */ }
-    } else if (isTerminalTgError(outcome.error) || attemptsSoFar + 1 >= MAX_ATTEMPTS) {
-      // Give up: mark terminal WITH the error so it's counted as undeliverable, not retried forever.
-      await markTerminal(outcome.error);
-      undeliverable += enriched.length;
+    } else if (isTerminalTgError(outErr) || attemptsSoFar + 1 >= MAX_ATTEMPTS) {
+      // Give up on the undelivered rows: mark terminal WITH the error (counted undeliverable).
+      await markTerm(pendingIds, outErr);
+      undeliverable += pendingIds.length;
       try {
         await admin.from("admin_actions").insert({
           actor_user_id: uid, action: "badge_dm_failed", target_user_id: uid,
           target_resource_type: "profile", target_resource_id: uid,
           details: {
-            badge_ids: badgeIdsForUser, error: outcome.error,
-            recipient_error: isRecipientTgError(outcome.error), content_error: isContentTgError(outcome.error),
-            attempts: attemptsSoFar + 1,
+            badge_ids: badgeIdsForUser, error: outErr,
+            recipient_error: isRecipientTgError(outErr), content_error: isContentTgError(outErr),
+            attempts: attemptsSoFar + 1, undelivered: pendingIds.length,
           },
         });
       } catch { /* ignore */ }
     } else {
-      // Transient — keep it queued; the every-minute drainer will retry.
-      await markRetry(outcome.error!);
-      retrying += enriched.length;
+      // Transient — keep the undelivered rows queued; the every-minute drainer will retry just those.
+      await markRetry(pendingIds, outErr!);
+      retrying += pendingIds.length;
     }
   }
 
