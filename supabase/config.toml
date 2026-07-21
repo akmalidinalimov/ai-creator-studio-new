@@ -103,3 +103,8 @@ verify_jwt = false
 # ops-agent-log: records one ops-agent run outcome (x-health-secret gated) for the daily digest.
 [functions.ops-agent-log]
 verify_jwt = false
+
+# reputation-check: domain-reputation monitor (Safe Browsing + VirusTotal). Cron-invoked; self-checks
+# x-internal-secret. Dormant until SAFE_BROWSING_API_KEY / VIRUSTOTAL_API_KEY secrets are set.
+[functions.reputation-check]
+verify_jwt = false
