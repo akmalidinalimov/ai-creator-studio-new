@@ -342,6 +342,10 @@ Deno.serve(async (req) => {
     const deliveredSet = new Set(delivered);
     const pendingIds = knownIds.filter((id: string) => !deliveredSet.has(id));
     if (!pendingIds.length) {
+      // Every badge row landed. A non-null outErr here can only mean a pure-image-album's follow-up
+      // (share prompt + CTA button) failed — the badges themselves reached the student, so there's
+      // nothing to retry, but we still record it (health-signal rule) so a pattern is visible.
+      if (outErr) console.error("badge followup failed (non-blocking)", uid, outErr);
       try {
         await admin.from("admin_actions").insert({
           actor_user_id: uid, action: "badge_dm_sent", target_user_id: uid,
@@ -351,6 +355,7 @@ Deno.serve(async (req) => {
             as_image: items.some((i: any) => { const b = badgeById.get(i.badge_id); return b && badgeImageUrl(b.code, prof.name); }),
             sent_at: stamp(),
             queued_for_quiet_hours: items.some((i: any) => new Date(i.scheduled_for).getTime() - new Date(i.awarded_at).getTime() > 60_000),
+            ...(outErr ? { followup_failed: outErr } : {}),
           },
         });
       } catch { /* ignore */ }
