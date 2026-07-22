@@ -93,8 +93,15 @@ function isTerminalTgError(err: string | null): boolean {
   return isRecipientTgError(err) || isContentTgError(err);
 }
 
+// Strip glyphs Cloudinary's Arial text overlay can't render (emoji, flags, symbols) — they make the
+// generated badge image error out, so Telegram returns "failed to get HTTP URL content" and the card
+// never reaches the student. Keep letters (Latin/Cyrillic/Uzbek), marks, digits, spaces, hyphen,
+// apostrophes; drop the rest. Names that are ALL emoji collapse to "" → the "Talaba" fallback below.
+function sanitizeName(n: string | null): string {
+  return (n || "").replace(/[^\p{L}\p{M}\p{Nd}\s'’ʻʼ-]/gu, " ").replace(/\s+/g, " ").trim();
+}
 function firstName(n: string | null): string {
-  return (n || "").trim().split(/\s+/)[0] || "Talaba";
+  return sanitizeName(n).split(/\s+/)[0] || "Talaba";
 }
 
 // Cloudinary name overlay on the 3x base (1620x2880). Only the first name
