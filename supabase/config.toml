@@ -118,3 +118,8 @@ verify_jwt = true
 # x-internal-secret.
 [functions.broadcast-drainer]
 verify_jwt = false
+
+# tg-broadcast: Telegram Mini App entry point for broadcasts. verify_jwt=false — it authenticates via
+# Telegram-signed initData (HMAC bot token), not a Supabase session, then checks admin role.
+[functions.tg-broadcast]
+verify_jwt = false
