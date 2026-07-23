@@ -66,6 +66,15 @@ Deno.serve(async (req) => {
   }
   if ((button_label && !button_url) || (button_url && !button_label)) return json({ error: "button needs both label and url" }, 400);
 
+  // Idempotency: refuse a second live send to the same course (guards double-click / client retry
+  // from DM'ing every student twice). Only one mode='all' broadcast may be 'sending' per course.
+  if (mode === "all") {
+    const { count } = await admin.from("broadcasts")
+      .select("id", { count: "exact", head: true })
+      .eq("course_id", course_id).eq("mode", "all").eq("status", "sending");
+    if ((count || 0) > 0) return json({ error: "broadcast_in_progress" }, 409);
+  }
+
   // Create the broadcast row.
   const { data: bc, error: bErr } = await admin.from("broadcasts").insert({
     course_id, created_by: uid, image_path, body_uz, body_ru, body_en,
@@ -93,13 +102,17 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Nothing to send (admin has no linked Telegram for a test, or no reachable students) — close the
+  // broadcast immediately so it doesn't sit 'sending' forever, and tell the caller why.
+  if (!targets.length) {
+    await admin.from("broadcasts").update({ status: "done", finished_at: new Date().toISOString() }).eq("id", broadcast_id);
+    return json({ broadcast_id, total: 0, note: mode === "test" ? "no_telegram_linked" : "no_reachable_students" });
+  }
+
   const scheduled_for = mode === "all" ? scheduledStart() : new Date().toISOString();
-  if (targets.length) {
-    const deliveries = targets.map((t) => ({ broadcast_id, user_id: t.id, telegram_id: t.telegram_id, scheduled_for }));
-    // Insert in chunks to stay well under statement limits.
-    for (let i = 0; i < deliveries.length; i += 500) {
-      await admin.from("broadcast_deliveries").insert(deliveries.slice(i, i + 500));
-    }
+  const deliveries = targets.map((t) => ({ broadcast_id, user_id: t.id, telegram_id: t.telegram_id, scheduled_for }));
+  for (let i = 0; i < deliveries.length; i += 500) {
+    await admin.from("broadcast_deliveries").insert(deliveries.slice(i, i + 500));
   }
   await admin.from("broadcasts").update({ total: targets.length }).eq("id", broadcast_id);
 

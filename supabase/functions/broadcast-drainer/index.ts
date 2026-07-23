@@ -79,19 +79,35 @@ Deno.serve(async (req) => {
   const bIds = Array.from(new Set(rows.map((r) => r.broadcast_id)));
   const uIds = Array.from(new Set(rows.map((r) => r.user_id)));
   const [{ data: bcasts }, { data: profs }] = await Promise.all([
-    admin.from("broadcasts").select("id, image_path, body_uz, body_ru, body_en, button_label, button_url").in("id", bIds),
+    admin.from("broadcasts").select("id, image_path, body_uz, body_ru, body_en, button_label, button_url, mode").in("id", bIds),
     admin.from("profiles").select("id, preferred_locale").in("id", uIds),
   ]);
   const bById = new Map<string, any>((bcasts || []).map((b: any) => [b.id, b]));
   const localeById = new Map<string, Locale>((profs || []).map((p: any) => [p.id, normLocale(p.preferred_locale)]));
 
   const stamp = () => new Date().toISOString();
-  let processed = 0, sent = 0, failed = 0, retrying = 0;
+  let processed = 0, sent = 0, failed = 0, retrying = 0, deferred = 0;
+
+  // Quiet hours (22:00–08:00 Tashkent, UTC+5): mode='all' rows that come due at night — e.g. a
+  // transient retry landing just after 22:00 — are re-deferred to the next 08:00 rather than sent,
+  // so students are never DM'd overnight. Test sends always go (the admin asked for them now).
+  const tHour = (new Date().getUTCHours() + 5) % 24;
+  const quiet = tHour >= 22 || tHour < 8;
+  let nextMorningIso = "";
+  if (quiet) {
+    const t = new Date(); t.setUTCMinutes(0, 0, 0); t.setUTCHours(3); // 08:00 Tashkent
+    if (t <= new Date()) t.setUTCDate(t.getUTCDate() + 1);
+    nextMorningIso = t.toISOString();
+  }
 
   for (const d of rows) {
     processed++;
     const b = bById.get(d.broadcast_id);
     if (!b) { await admin.from("broadcast_deliveries").update({ status: "failed", error: "broadcast_gone" }).eq("id", d.id); failed++; continue; }
+    if (quiet && b.mode === "all") {
+      await admin.from("broadcast_deliveries").update({ scheduled_for: nextMorningIso }).eq("id", d.id);
+      deferred++; continue;
+    }
 
     const loc = localeById.get(d.user_id) || "uz";
     const body: string = (loc === "ru" ? b.body_ru : loc === "en" ? b.body_en : null) || b.body_uz;
@@ -134,5 +150,5 @@ Deno.serve(async (req) => {
     }).eq("id", bid);
   }
 
-  return new Response(JSON.stringify({ ok: true, processed, sent, failed, retrying }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  return new Response(JSON.stringify({ ok: true, processed, sent, failed, retrying, deferred }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 });
