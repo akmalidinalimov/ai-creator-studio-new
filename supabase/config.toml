@@ -108,3 +108,13 @@ verify_jwt = false
 # x-internal-secret. Dormant until SAFE_BROWSING_API_KEY / VIRUSTOTAL_API_KEY secrets are set.
 [functions.reputation-check]
 verify_jwt = false
+
+# admin-broadcast: admin composes a course broadcast; creates the row + fans out deliveries.
+# Requires a logged-in admin's JWT (verify_jwt=true) + internal role check + kill-switch.
+[functions.admin-broadcast]
+verify_jwt = true
+
+# broadcast-drainer: sends pending broadcast_deliveries as Telegram DMs. Cron-invoked; self-checks
+# x-internal-secret.
+[functions.broadcast-drainer]
+verify_jwt = false
