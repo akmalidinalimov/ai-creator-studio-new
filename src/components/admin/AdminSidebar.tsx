@@ -11,6 +11,7 @@ import {
   History,
   Bell,
   MessageSquare,
+  Megaphone,
   BarChart3,
   Trophy,
   Settings,
@@ -58,6 +59,7 @@ const SECTIONS: Section[] = [
       { to: "/admin/engagement", label: "Faollik va eslatmalar", icon: Bell, adminOnly: true, match: (p) => p.startsWith("/admin/engagement") || p.startsWith("/admin/nudges") || p.startsWith("/admin/reengagement") },
       { to: "/admin/teacher-stats", label: "Teacher Statistics", icon: GraduationCap, adminOnly: true, match: (p) => p.startsWith("/admin/teacher-stats") },
       { to: "/admin/notifications", label: "Bildirishnomalar", icon: MessageSquare, adminOnly: true, match: (p) => p.startsWith("/admin/notifications") },
+      { to: "/admin/broadcast", label: "Ommaviy xabar", icon: Megaphone, adminOnly: true, match: (p) => p.startsWith("/admin/broadcast") },
     ],
   },
   {

@@ -58,6 +58,7 @@ const AdminAudit = lazy(() => import("./pages/admin/AdminAudit"));
 const AdminBotDebug = lazy(() => import("./pages/admin/AdminBotDebug"));
 const AdminBunnyDiagnostics = lazy(() => import("./pages/admin/AdminBunnyDiagnostics"));
 const AdminNotifications = lazy(() => import("./pages/admin/AdminNotifications"));
+const AdminBroadcast = lazy(() => import("./pages/admin/AdminBroadcast"));
 const AdminGroups = lazy(() => import("./pages/admin/AdminGroups"));
 const GroupDetail = lazy(() => import("./pages/admin/GroupDetail"));
 const AdminHomework = lazy(() => import("./pages/admin/AdminHomework"));
@@ -131,6 +132,7 @@ const App = () => (
             <Route path="/admin/diagnostics/bunny" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminBunnyDiagnostics /></Suspense></RequireAuth>} />
             <Route path="/admin/bot-debug" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminBotDebug /></Suspense></RequireAuth>} />
             <Route path="/admin/notifications" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminNotifications /></Suspense></RequireAuth>} />
+            <Route path="/admin/broadcast" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminBroadcast /></Suspense></RequireAuth>} />
             <Route path="/admin/groups" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminGroups /></Suspense></RequireAuth>} />
             <Route path="/admin/groups/:id" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><GroupDetail /></Suspense></RequireAuth>} />
             <Route path="/admin/engagement" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminEngagement /></Suspense></RequireAuth>} />
