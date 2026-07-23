@@ -107,17 +107,22 @@ export async function createBroadcast(admin: any, p: CreateParams): Promise<{ st
 
   const scheduled_for = p.mode === "all" ? scheduledStart() : new Date().toISOString();
   const deliveries = targets.map((t) => ({ broadcast_id, user_id: t.id, telegram_id: t.telegram_id, scheduled_for }));
+  let inserted = 0;
   for (let i = 0; i < deliveries.length; i += 500) {
-    await admin.from("broadcast_deliveries").insert(deliveries.slice(i, i + 500));
+    const chunk = deliveries.slice(i, i + 500);
+    const { error: insErr } = await admin.from("broadcast_deliveries").insert(chunk);
+    if (insErr) console.error("broadcast delivery insert failed", broadcast_id, insErr.message);
+    else inserted += chunk.length;
   }
-  await admin.from("broadcasts").update({ total: targets.length }).eq("id", broadcast_id);
+  // total reflects rows ACTUALLY queued, so the report is honest even if a batch insert failed.
+  await admin.from("broadcasts").update({ total: inserted }).eq("id", broadcast_id);
 
   try {
     await admin.from("admin_actions").insert({
       actor_user_id: p.actor_uid, action: "broadcast_created",
-      details: { broadcast_id, course_id: p.course_id, mode: p.mode, total: targets.length, has_image: !!p.image_path, scheduled_for },
+      details: { broadcast_id, course_id: p.course_id, mode: p.mode, total: inserted, has_image: !!p.image_path, scheduled_for },
     });
   } catch { /* best-effort */ }
 
-  return { status: 200, body: { broadcast_id, total: targets.length, scheduled_for } };
+  return { status: 200, body: { broadcast_id, total: inserted, scheduled_for } };
 }

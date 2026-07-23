@@ -180,6 +180,7 @@ const T = {
     back: "← Orqaga",
     // Admin panel
     adminKbAnalytics: "📊 Statistika",
+    adminKbBroadcast: "📣 Ommaviy xabar",
     astGroupsHint: "👇 Guruh bo'yicha batafsil:",
     astBack: "← Umumiy",
     astRefresh: "🔄 Yangilash",
@@ -459,6 +460,7 @@ const T = {
     settingsAllOff: "🔕 Все уведомления отключены",
     back: "← Назад",
     adminKbAnalytics: "📊 Статистика",
+    adminKbBroadcast: "📣 Массовое сообщение",
     astGroupsHint: "👇 Подробно по группам:",
     astBack: "← Общая",
     astRefresh: "🔄 Обновить",
@@ -729,6 +731,7 @@ const T = {
     settingsAllOff: "🔕 All notifications disabled",
     back: "← Back",
     adminKbAnalytics: "📊 Statistics",
+    adminKbBroadcast: "📣 Broadcast",
     astGroupsHint: "👇 Per-group detail:",
     astBack: "← Overall",
     astRefresh: "🔄 Refresh",
@@ -1369,7 +1372,7 @@ function getAdminKeyboard(locale: Locale) {
     keyboard: [
       [{ text: t.adminKbAnalytics }],
       // Mini App: opens the broadcast composer inside Telegram (auth via signed initData, admin-only).
-      [{ text: "📣 Ommaviy xabar", web_app: { url: "https://www.aicreator.academy/tg/broadcast" } }],
+      [{ text: t.adminKbBroadcast, web_app: { url: "https://www.aicreator.academy/tg/broadcast" } }],
       [{ text: t.adminKbNew }],
       [{ text: t.adminKbStudentMode }, { text: t.kbLang }],
     ],

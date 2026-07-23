@@ -19,6 +19,14 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
+// Constant-time hex compare for the signature check.
+function ctEq(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
+}
+
 // Validate Telegram Mini App initData. secret = HMAC_SHA256(key="WebAppData", msg=bot_token);
 // hash = HMAC_SHA256(key=secret, msg=data_check_string). Also enforce a 1h freshness window.
 async function validateInitData(initData: string): Promise<{ ok: boolean; userId?: number }> {
@@ -27,6 +35,7 @@ async function validateInitData(initData: string): Promise<{ ok: boolean; userId
   const hash = params.get("hash");
   if (!hash) return { ok: false };
   params.delete("hash");
+  params.delete("signature"); // Telegram 7.0+ adds this for its Ed25519 path; excluded from the HMAC check.
   const dcs = [...params.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, v]) => `${k}=${v}`).join("\n");
   const enc = new TextEncoder();
   const wk = await crypto.subtle.importKey("raw", enc.encode("WebAppData"), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
@@ -34,7 +43,7 @@ async function validateInitData(initData: string): Promise<{ ok: boolean; userId
   const sk = await crypto.subtle.importKey("raw", secret, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const mac = new Uint8Array(await crypto.subtle.sign("HMAC", sk, enc.encode(dcs)));
   const hex = Array.from(mac, (b) => b.toString(16).padStart(2, "0")).join("");
-  if (hex !== hash) return { ok: false };
+  if (!ctEq(hex, hash)) return { ok: false };
   const authDate = Number(params.get("auth_date") || 0);
   if (!authDate || Date.now() / 1000 - authDate > 3600) return { ok: false };
   try {
