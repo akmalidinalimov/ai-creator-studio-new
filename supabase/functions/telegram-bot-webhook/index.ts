@@ -1368,6 +1368,8 @@ function getAdminKeyboard(locale: Locale) {
   return {
     keyboard: [
       [{ text: t.adminKbAnalytics }],
+      // Mini App: opens the broadcast composer inside Telegram (auth via signed initData, admin-only).
+      [{ text: "📣 Ommaviy xabar", web_app: { url: "https://www.aicreator.academy/tg/broadcast" } }],
       [{ text: t.adminKbNew }],
       [{ text: t.adminKbStudentMode }, { text: t.kbLang }],
     ],
