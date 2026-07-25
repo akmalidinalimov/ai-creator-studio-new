@@ -37,18 +37,32 @@ export default function TgBroadcast() {
   const reachable = courses.find((c) => c.id === courseId)?.reachable ?? null;
   const limit = imageB64 ? 1024 : 4096;
 
-  // Load the Telegram Web App SDK, then fetch courses via the signed initData.
+  // Read Telegram's signed initData. Telegram injects window.Telegram.WebApp NATIVELY into the
+  // Mini App webview, so we read it directly (with a short retry for the race where the object is
+  // present but initData fills in a tick later). We only load the SDK if the object is absent, and
+  // still read the injected object even if that CDN load fails — never bail just because the script
+  // hiccuped (that was the "open via the button" dead-end on first launch).
   useEffect(() => {
-    const s = document.createElement("script");
-    s.src = "https://telegram.org/js/telegram-web-app.js";
-    s.onload = () => {
+    let cancelled = false;
+    const done = (v: string | null) => { if (!cancelled) setInitData(v); };
+    const tryRead = (attempts: number) => {
+      if (cancelled) return;
       const wa = (window as unknown as { Telegram?: { WebApp?: any } }).Telegram?.WebApp;
-      if (wa && wa.initData) { wa.ready(); wa.expand(); setInitData(wa.initData); }
-      else setInitData(null);
+      if (wa?.initData) { try { wa.ready(); wa.expand(); } catch { /* ignore */ } return done(wa.initData); }
+      if (attempts <= 0) return done(null);
+      window.setTimeout(() => tryRead(attempts - 1), 150);
     };
-    s.onerror = () => setInitData(null);
-    document.body.appendChild(s);
-    return () => { if (pollRef.current) window.clearInterval(pollRef.current); };
+    if ((window as unknown as { Telegram?: { WebApp?: any } }).Telegram?.WebApp) {
+      tryRead(20);
+    } else {
+      const s = document.createElement("script");
+      s.src = "https://telegram.org/js/telegram-web-app.js";
+      s.async = true;
+      s.onload = () => tryRead(20);
+      s.onerror = () => tryRead(20);
+      document.head.appendChild(s);
+    }
+    return () => { cancelled = true; if (pollRef.current) window.clearInterval(pollRef.current); };
   }, []);
 
   useEffect(() => {
