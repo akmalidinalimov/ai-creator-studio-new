@@ -588,6 +588,26 @@ Deno.serve(async (req) => {
     delta = csv_rows - successful;
     console.log(JSON.stringify({ scope: "admin-create-students", request_id: requestId, action: "summary", csv_rows, group_count_after, results_total: results.length, created: results.filter(r => r.status === "created").length, updated: results.filter(r => r.status === "updated").length, skipped: results.filter(r => r.status === "skipped_already_in_group").length, errors: results.filter(r => r.status === "error" || r.status === "invalid_email").length }));
 
+    // DB-visible signal: genuine student-creation failures land in platform_error_log so the daily
+    // digest + hourly anomaly watchdog surface them within the hour. Previously these failures lived
+    // ONLY in this function's stdout + the Auth/Postgres logs — invisible to every DB-side detector,
+    // which let a ~24h signup outage go unalerted (2026-07-25, tierless-enrollment guard aborting
+    // createUser). Best-effort; logging must never break the response.
+    const failures = results.filter((r) => r.status === "error" || r.status === "invalid_email");
+    if (failures.length) {
+      try {
+        await admin.from("platform_error_log").insert(
+          failures.map((r) => ({
+            source: "admin-create-students",
+            action: "student_create_failed",
+            message: String(r.error || "unknown").slice(0, 1000),
+            user_id: r.userId ?? null,
+            context: { email: r.email, row_index: r.row_index, identifier_used: r.identifier_used, status: r.status, request_id: requestId },
+          })),
+        );
+      } catch (_e) { /* logging must never throw */ }
+    }
+
     return new Response(JSON.stringify({ ok: true, results, request_id: requestId, csv_rows, group_count_after, delta, auto_created_groups: autoCreatedGroups }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
