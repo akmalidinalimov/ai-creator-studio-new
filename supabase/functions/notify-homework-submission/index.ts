@@ -111,17 +111,31 @@ Deno.serve(async (req) => {
     }
 
     const loc = (teacher.preferred_locale === "ru" || teacher.preferred_locale === "en") ? teacher.preferred_locale : "uz";
-    const text = (MSG as any)[loc](row.student_name || "—", row.module_number, row.task_number, row.assignment_title || "");
+    // An auto-GUESSED attribution carries "(taxminiy)" in the stored title. Make it loud + offer a
+    // one-tap ✏️ retag so a wrong guess is cheap to fix (the row.task_number here is already the
+    // sap-aware step written by the fixed queue insert, so "Vazifa 1/2/3" now renders correctly).
+    const guessed = /\(taxminiy\)/.test(row.assignment_title || "");
+    let text = (MSG as any)[loc](row.student_name || "—", row.module_number, row.task_number, row.assignment_title || "");
+    if (guessed) {
+      text += loc === "ru"
+        ? "\n\n⚠️ <b>Авто-назначено</b> — задание выбрано примерно. Если неверно — исправьте ✏️."
+        : loc === "en"
+        ? "\n\n⚠️ <b>Auto-assigned</b> — the task was guessed. If it's wrong, fix it with ✏️."
+        : "\n\n⚠️ <b>Avto-belgilangan</b> — vazifa taxminan tanlandi. Noto'g'ri bo'lsa ✏️ bilan to'g'rilang.";
+    }
     const buttons = [
       { text: loc === "ru" ? "📂 Открыть пост" : loc === "en" ? "📂 View post" : "📂 Topshirgan postni ko'rish", url: row.message_url },
       { text: loc === "ru" ? "🎯 Оценить" : loc === "en" ? "🎯 Grade" : "🎯 Baholash", callback_data: `gs:open:${row.submission_id}` },
     ];
+    const retagRow = guessed
+      ? [[{ text: loc === "ru" ? "✏️ Изменить задание" : loc === "en" ? "✏️ Change task" : "✏️ Vazifani o'zgartirish", callback_data: `hwmv:${row.submission_id}` }]]
+      : [];
     try {
       const resp = await tg("sendMessage", {
         chat_id: Number(teacher.telegram_id),
         text,
         parse_mode: "HTML",
-        reply_markup: { inline_keyboard: [buttons] },
+        reply_markup: { inline_keyboard: [buttons, ...retagRow] },
       });
       let okBody: any = null;
       try { okBody = await resp.clone().json(); } catch { /* ignore */ }

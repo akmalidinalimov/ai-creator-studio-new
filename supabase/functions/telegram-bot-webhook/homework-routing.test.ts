@@ -2,6 +2,7 @@ import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   type AssignmentRow,
   computeLeaves,
+  displayStepNumber,
   pickNextLeaf,
   type SubmissionRow,
 } from "./homework-routing.ts";
@@ -134,4 +135,34 @@ Deno.test("two students with different submission states get different leaves", 
 Deno.test("empty leaves -> null", () => {
   assertEquals(pickNextLeaf([], []), null);
   assertEquals(pickNextLeaf(computeLeaves([]), []), null);
+});
+
+// 11. displayStepNumber: SAP sub-step shows sap_number, not the parent's task_number -------
+Deno.test("displayStepNumber: SAP leaf shows its sap_number", () => {
+  // The reported bug: Module-3 SAP steps all share task_number=3; the human step is sap_number.
+  assertEquals(displayStepNumber(sap("v3s1", "v3", 3, 1)), 1);
+  assertEquals(displayStepNumber(sap("v3s2", "v3", 3, 2)), 2);
+  assertEquals(displayStepNumber(sap("v3s3", "v3", 3, 3)), 3);
+});
+
+Deno.test("displayStepNumber: normal task shows task_number (unchanged)", () => {
+  assertEquals(displayStepNumber(parent("v1", 1)), 1);
+  assertEquals(displayStepNumber(parent("v2", 2)), 2);
+});
+
+Deno.test("displayStepNumber: null-safe defaults", () => {
+  // SAP leaf missing sap_number -> falls back to task_number, then 1.
+  assertEquals(displayStepNumber({ parent_id: "p", task_number: 3, sap_number: null }), 3);
+  assertEquals(displayStepNumber({ parent_id: "p", task_number: null, sap_number: null }), 1);
+  assertEquals(displayStepNumber({ parent_id: null, task_number: null, sap_number: null }), 1);
+});
+
+// 12. computeLeaves is deterministic across fetch order when sort keys collide ------------
+Deno.test("computeLeaves: stable id tiebreak when (task_number, sap_number) collide", () => {
+  // Two leaves sharing (task=1, sap=1) — the picker/retag resolve leaves[index], so the order
+  // MUST be identical no matter what order the DB returned the rows in.
+  const forward = computeLeaves([sap("a", "v1", 1, 1), sap("b", "v1", 1, 1)]);
+  const reverse = computeLeaves([sap("b", "v1", 1, 1), sap("a", "v1", 1, 1)]);
+  assertEquals(forward.map((l) => l.id), ["a", "b"]);
+  assertEquals(reverse.map((l) => l.id), ["a", "b"]);
 });
