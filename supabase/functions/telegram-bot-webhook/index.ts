@@ -288,6 +288,7 @@ const T = {
     retagNoTasks: "Bu modulda faol vazifa yo'q.",
     retagStudentNote: (lbl: string) => `✏️ O'qituvchi topshirig'ingizni <b>${lbl}</b> vazifasiga o'tkazdi. Ball va tarix saqlanadi.`,
     pkAsk: "📋 Bu qaysi vazifa? Quyidan tanlang.\n<i>Tanlamasangiz ham qabul qilinadi — 10 daqiqadan so'ng avtomatik belgilanadi.</i>",
+    pkRemind: "☝️ Rasm/videongiz qabul qilindi. Iltimos, bu qaysi vazifa ekanini tanlang 👇",
     pkAskTask: (m: string) => `📋 ${m} — qaysi vazifa?`,
     pkBack: "⬅️ Modullar",
     pkDone: (lbl: string) => `✅ ${lbl} qabul qilindi`,
@@ -567,6 +568,7 @@ const T = {
     retagNoTasks: "В этом модуле нет активных заданий.",
     retagStudentNote: (lbl: string) => `✏️ Учитель перенёс вашу работу на задание <b>${lbl}</b>. Баллы и история сохраняются.`,
     pkAsk: "📋 Какое это задание? Выберите ниже.\n<i>Если не выберете — всё равно примем: через 10 минут отметим автоматически.</i>",
+    pkRemind: "☝️ Ваше фото/видео получено. Пожалуйста, выберите, какое это задание 👇",
     pkAskTask: (m: string) => `📋 ${m} — какое задание?`,
     pkBack: "⬅️ Модули",
     pkDone: (lbl: string) => `✅ ${lbl} принято`,
@@ -838,6 +840,7 @@ const T = {
     retagNoTasks: "No active tasks in that module.",
     retagStudentNote: (lbl: string) => `✏️ Your teacher moved your submission to <b>${lbl}</b>. Points and history are kept.`,
     pkAsk: "📋 Which task is this? Pick below.\n<i>No pick needed — it's accepted either way and auto-tagged in 10 minutes.</i>",
+    pkRemind: "☝️ Your photo/video was received. Please choose which task it is 👇",
     pkAskTask: (m: string) => `📋 ${m} — which task?`,
     pkBack: "⬅️ Modules",
     pkDone: (lbl: string) => `✅ ${lbl} accepted`,
@@ -5163,6 +5166,54 @@ const __anonHintAt = new Map<string, number>();
 // Expiry sweep: unanswered pickers fall back to the smart auto-tag guess. Runs opportunistically
 // on group traffic (throttled) — a quiet night just delays the fallback, which is harmless
 // because grading happens on a scale of days.
+// ~10s "choose your task" nudge after the picker if the student neither picks nor engages.
+const PICK_REMINDER_MS = 10_000;
+
+// Sends the one-time pick-reminder for a pending picker post, IF it is still pending and neither
+// reminded nor engaged. The atomic claim (set reminder_at where it is null) both dedupes and defers
+// to the hwpk handler, which sets reminder_at the moment the student taps any picker button — so an
+// actively-choosing student is never nagged (member-forgiving). Best-effort; re-sends the modules.
+async function maybeSendPickReminder(admin: any, pendingId: string) {
+  const { data: p } = await admin.from("hw_pending_posts")
+    .update({ reminder_at: new Date().toISOString() })
+    .eq("id", pendingId).eq("state", "pending").is("reminder_at", null)
+    .select("id, user_id, course_id, telegram_chat_id, telegram_thread_id, first_message_id")
+    .maybeSingle();
+  if (!p?.id) return; // picked, engaged, expired, or already reminded
+  try {
+    const { data: prof } = await admin.from("profiles").select("preferred_locale").eq("id", p.user_id).maybeSingle();
+    const t = T[normLocale(prof?.preferred_locale)] as any;
+    const { data: mods } = await admin.from("modules").select("id, position").eq("course_id", p.course_id).order("position");
+    const btns = ((mods || []) as any[]).map((m: any, i: number) => ({ text: `M${(m.position ?? 0) + 1}`, callback_data: `hwpk:${p.id}:m:${i}` }));
+    const rows: any[][] = [];
+    for (let i = 0; i < btns.length; i += 4) rows.push(btns.slice(i, i + 4));
+    const resp = await tgApi("sendMessage", {
+      chat_id: Number(p.telegram_chat_id), message_thread_id: Number(p.telegram_thread_id),
+      reply_to_message_id: Number(p.first_message_id),
+      text: t.pkRemind, parse_mode: "HTML", disable_web_page_preview: true,
+      reply_markup: { inline_keyboard: rows },
+    });
+    const body: any = await resp.json().catch(() => null);
+    if (resp.ok && body?.ok) {
+      console.log("pk:reminder-sent", JSON.stringify({ pending_id: p.id }));
+    } else {
+      // Benign: the student deleted their post before the nudge (reply target gone) — no work lost,
+      // the 10-min auto-tag still finalizes. Systemic (bot kicked / topic closed / write forbidden)
+      // → a DB-visible signal so the watchdog/digest layer sees reminders failing, not just logs.
+      const desc = String(body?.description || resp.status);
+      if (/reply/i.test(desc)) {
+        console.log("pk:reminder-skip-benign", JSON.stringify({ pending_id: p.id, desc }));
+      } else {
+        await logError(admin, "pk-reminder", `send failed: ${desc}`.slice(0, 200),
+          { action: "pick_reminder_failed", user_id: p.user_id, telegram_id: Number(p.telegram_chat_id), context: { pending_id: p.id } });
+      }
+    }
+  } catch (e) {
+    await logError(admin, "pk-reminder", e instanceof Error ? e.message : String(e),
+      { action: "pick_reminder_failed", user_id: p.user_id, context: { pending_id: p.id } });
+  }
+}
+
 let __pkLastSweep = 0;
 async function sweepExpiredPendingPosts(admin: any) {
   if (Date.now() - __pkLastSweep < 60_000) return;
@@ -5186,6 +5237,16 @@ async function sweepExpiredPendingPosts(admin: any) {
         await finalizePendingPost(admin, p, resolved.assignment.id, resolved.moduleId, true);
       } catch (e) { console.error("pk:sweep-row-err", String(e)); }
     }
+    // Reminder backstop: pending posts whose ~10s pick-reminder never fired (this instance died
+    // before waitUntil). Still pending, not yet reminded/engaged, past the delay, not yet expired.
+    const remindCutoff = new Date(Date.now() - PICK_REMINDER_MS).toISOString();
+    const { data: needRemind } = await admin.from("hw_pending_posts")
+      .select("id").eq("state", "pending").is("reminder_at", null)
+      .lt("created_at", remindCutoff).gt("expires_at", new Date().toISOString()).limit(5);
+    for (const r of (needRemind || []) as any[]) {
+      try { await maybeSendPickReminder(admin, r.id); } catch (_e) { /* ignore */ }
+    }
+
     // Backstop pass: receipts whose timed self-delete didn't run (instance died) —
     // done rows past their deletion deadline that still hold a picker/receipt message.
     const { data: doneRows } = await admin.from("hw_pending_posts")
@@ -5425,6 +5486,15 @@ async function handlePickerPost(
     if (pickerMsgId) await admin.from("hw_pending_posts").update({ picker_message_id: pickerMsgId }).eq("id", created.id);
   } catch (e) { console.error("pk:ask-send-err", String(e)); /* sweep will auto-tag it */ }
   console.log("pk:pending-created", JSON.stringify({ pending_id: created.id, user_id: profile.id, chatId, threadId, messageId }));
+
+  // ~10s nudge if the student neither picks nor engages. waitUntil gives the precise delay; the
+  // expiry sweep is the backstop if this instance dies first. Suppressed the instant they tap any button.
+  const remindTask = (async () => {
+    await new Promise((r) => setTimeout(r, PICK_REMINDER_MS));
+    await maybeSendPickReminder(admin, created.id);
+  })();
+  const erR: any = (globalThis as any).EdgeRuntime;
+  if (erR?.waitUntil) erR.waitUntil(remindTask); else remindTask.catch(() => {});
 }
 
 async function handleGroupTopicMessage(admin: any, msg: any) {
@@ -6528,6 +6598,10 @@ async function handleCallback(admin: any, cq: any) {
     // Keep an actively-used picker from being swept mid-tap.
     await admin.from("hw_pending_posts")
       .update({ expires_at: new Date(Date.now() + 5 * 60_000).toISOString() }).eq("id", pid);
+    // Engaged → suppress the pending ~10s "choose your task" reminder (set-once; never overwrites a
+    // reminder already sent). Only a student who taps nothing gets nudged.
+    await admin.from("hw_pending_posts")
+      .update({ reminder_at: new Date().toISOString() }).eq("id", pid).is("reminder_at", null);
 
     const { data: mods } = await admin.from("modules")
       .select("id, position").eq("course_id", pending.course_id).order("position");
