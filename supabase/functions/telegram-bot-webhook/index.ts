@@ -1,7 +1,7 @@
 // Telegram bot webhook. Receives Updates from api.telegram.org via setWebhook.
 // Verifies X-Telegram-Bot-Api-Secret-Token, then dispatches commands.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { computeLeaves, pickNextLeaf } from "./homework-routing.ts";
+import { computeLeaves, displayStepNumber, pickNextLeaf } from "./homework-routing.ts";
 import { effectiveLeafGrades, summarizeHomework } from "./homework-stats.ts";
 import {
   checksAllGreen, ghAddLabel, ghClosePr, ghFetchChecks, ghFetchPr, ghMergePr,
@@ -2383,9 +2383,6 @@ async function buildHomeworkMessage(
     const list = allList
       .filter((a) => a.parent_id || !parentIdsWithSap.has(a.id))
       .filter((a) => !blockedModules.has(a.module_id));
-    // Map parent task_number for label rendering
-    const parentTaskNum = new Map<string, number>();
-    allList.filter((a) => !a.parent_id).forEach((p) => parentTaskNum.set(p.id, p.task_number || 1));
     list.sort((a, b) => (a.modules?.position ?? 0) - (b.modules?.position ?? 0)
       || (a.task_number ?? 1) - (b.task_number ?? 1)
       || ((a.sap_number ?? 0) - (b.sap_number ?? 0)));
@@ -2428,8 +2425,7 @@ async function buildHomeworkMessage(
       lines.push(t.hwModuleHeader(m.position + 1, m.title, m.arr.length));
       for (const a of m.arr) {
         const s: any = subMap.get(a.id);
-        const parentTn = a.parent_id ? (parentTaskNum.get(a.parent_id) || 1) : (a.task_number || 1);
-        const tnLabel: any = a.parent_id ? `${parentTn}.S${a.sap_number ?? "?"}` : parentTn;
+        const tnLabel: any = displayStepNumber(a); // SAP sub-step → sap_number ("Vazifa 1/2/3")
         const prevScore = (() => {
           const arr = Array.isArray(s?.previous_attempts) ? s.previous_attempts : [];
           for (let i = arr.length - 1; i >= 0; i--) {
@@ -2456,7 +2452,7 @@ async function buildHomeworkMessage(
         lines.push(t.hwModuleAllDone);
       } else if (topic) {
         const u0 = ungraded[0];
-        const u0Tn: any = u0.parent_id ? `${parentTaskNum.get(u0.parent_id) || 1}.S${u0.sap_number ?? "?"}` : (u0.task_number || 1);
+        const u0Tn: any = displayStepNumber(u0);
         lines.push(t.hwSubmitHint(m.position + 1, u0Tn));
       }
       lines.push("");
@@ -3472,7 +3468,7 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
     return;
   }
   const aIds = Array.from(new Set(list.map((s) => s.assignment_id)));
-  const { data: assigns } = await admin.from("homework_assignments").select("id, title, max_score, task_number, module_id, modules(position, title)").in("id", aIds);
+  const { data: assigns } = await admin.from("homework_assignments").select("id, title, max_score, task_number, sap_number, parent_id, module_id, modules(position, title)").in("id", aIds);
   const aMap = new Map(((assigns || []) as any[]).map((a: any) => [a.id, a]));
   const moduleIds = Array.from(new Set(((assigns || []) as any[]).map((a: any) => a.module_id)));
   const topicsRes = prof?.group_id && moduleIds.length
@@ -3507,7 +3503,7 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
     lines.push(`📚 <b>Modul ${m.mPos + 1} — ${csvEscapeHtml(m.mTitle)}</b>`);
     let anyPostUrl = false;
     for (const it of m.items) {
-      const tn = it.a.task_number || 1;
+      const tn = displayStepNumber(it.a);
       // 🔄 = resubmission awaiting REGRADE (old score shown); ⏳ = first-time ungraded.
       const isResub = it.sub.score != null && it.sub.score_is_stale;
       lines.push(isResub
@@ -3683,8 +3679,8 @@ async function renderStudentModuleDetail(
     for (const s of list) {
       const a: any = aMap.get(s.assignment_id);
       if (!a) continue;
-      const tn = a.task_number || 1;
-      const label = a.parent_id ? `V${tn}.S${a.sap_number ?? "?"}` : `V${tn}`;
+      const tn = displayStepNumber(a);
+      const label = `V${tn}`;
       const scoreStr = s.score == null ? `⏳ ${t.scorePending || ""}`.trim() : `<b>${s.score}/${a.max_score || 10}</b>`;
       const dateStr = s.submitted_at ? new Date(s.submitted_at).toISOString().slice(0, 10) : "";
       lines.push(`• ${label} — ${csvEscapeHtml(a.title || "")}${dateStr ? ` · 📅 ${dateStr}` : ""} · ${scoreStr}`);
@@ -3880,14 +3876,14 @@ async function renderTeacherModuleDetail(
       const name = fmtName(p);
       const head = handle ? `@${handle}${name && name !== "—" ? ` (${csvEscapeHtml(name)})` : ""}` : `<b>${csvEscapeHtml(name)}</b>`;
       submittedLines.push(`• ${head}`);
-      const userSubs = (subsByUser.get(p.id) || []).slice().sort((a: any, b: any) =>
-        ((aMap.get(a.assignment_id) as any)?.task_number || 0) - ((aMap.get(b.assignment_id) as any)?.task_number || 0)
-      );
+      const userSubs = (subsByUser.get(p.id) || []).slice().sort((a: any, b: any) => {
+        const aa = aMap.get(a.assignment_id) as any, bb = aMap.get(b.assignment_id) as any;
+        return ((aa?.task_number || 0) - (bb?.task_number || 0)) || ((aa?.sap_number || 0) - (bb?.sap_number || 0));
+      });
       for (const s of userSubs) {
         const a: any = aMap.get(s.assignment_id);
         if (!a) continue;
-        const tn = a.task_number || 1;
-        const lbl = a.parent_id ? `V${tn}.S${a.sap_number ?? "?"}` : `V${tn}`;
+        const lbl = `V${displayStepNumber(a)}`;
         const scoreStr = s.score == null ? `⏳ ${t.scorePending || ""}`.trim() : `<b>${s.score}/${a.max_score || 10}</b>`;
         const fbStr = s.score_feedback ? ` · 💬 ${csvEscapeHtml(String(s.score_feedback))}` : "";
         submittedLines.push(`   ${lbl} — ${scoreStr}${fbStr}`);
@@ -3960,10 +3956,10 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
       return;
     }
   }
-  const { data: a } = await admin.from("homework_assignments").select("id, title, max_score, task_number").eq("id", sub.assignment_id).maybeSingle();
+  const { data: a } = await admin.from("homework_assignments").select("id, title, max_score, task_number, sap_number, parent_id").eq("id", sub.assignment_id).maybeSingle();
   const { data: p } = await admin.from("profiles").select("id, name, last_name").eq("id", sub.user_id).maybeSingle();
   const name = [p?.name, p?.last_name].filter(Boolean).join(" ") || "—";
-  const tn = a?.task_number ? ` #${a.task_number}` : "";
+  const tn = a ? ` #${displayStepNumber(a)}` : ""; // SAP sub-step → its sap_number (not the parent's task_number)
   const header = `<b>${csvEscapeHtml(name)}</b> — ${csvEscapeHtml(a?.title || "")}${tn}`;
   const body = sub.submitted_text ? csvEscapeHtml(sub.submitted_text) : "<i>(no text)</i>";
   // Regrade context: a resubmission carries the grade it's trying to improve — either the
@@ -4111,13 +4107,13 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
 
     // Auto-DM the student (always)
     if (sub) {
-      const { data: a } = await admin.from("homework_assignments").select("title, max_score, task_number").eq("id", sub.assignment_id).maybeSingle();
+      const { data: a } = await admin.from("homework_assignments").select("title, max_score, task_number, sap_number, parent_id").eq("id", sub.assignment_id).maybeSingle();
       const { data: stu } = await admin.from("profiles").select("telegram_id, preferred_locale, name").eq("id", sub.user_id).maybeSingle();
       const max = a?.max_score || 10;
       if (stu?.telegram_id) {
         const stuLocale: Locale = normLocale(stu.preferred_locale);
         const tt = T[stuLocale] as any;
-        const tn = a?.task_number ? ` #${a.task_number}` : "";
+        const tn = a ? ` #${displayStepNumber(a)}` : ""; // SAP sub-step → its sap_number
         const title = `${a?.title || ""}${tn}`;
         try {
           const url = await createMagicLink(admin, sub.user_id, "login", "/profile");
@@ -4601,7 +4597,7 @@ async function startHomeworkIntent(
   // 1. Load assignment + module
   const { data: a } = await admin
     .from("homework_assignments")
-    .select("id, title, max_score, task_number, module_id, modules(id, title, position)")
+    .select("id, title, max_score, task_number, sap_number, parent_id, module_id, modules(id, title, position)")
     .eq("id", assignmentId)
     .maybeSingle();
   if (!a) { await sendMessage(chatId, t.gradeNotFound); return; }
@@ -4647,7 +4643,7 @@ async function startHomeworkIntent(
   }, { onConflict: "user_id,assignment_id" });
 
   const mn = (a.modules?.position ?? 0) + 1;
-  const tn = a.task_number || 1;
+  const tn = displayStepNumber(a); // SAP sub-step → its sap_number ("Vazifa 1/2/3"), not the parent's task_number
   await sendMessage(chatId, t.hwIntentReady(mn, tn), {
     inline_keyboard: [[{ text: t.hwIntentBtnGoTopic, url: topicUrl }]],
   });
@@ -5071,8 +5067,8 @@ async function finalizePendingPost(
         .update({ media: mergedMedia, submitted_text: mergedText }).eq("id", (prior as any).id);
       if (mergeErr) { console.error("pk:append-err", mergeErr); await revertClaim(); return "error"; }
       const { data: a0 } = await admin.from("homework_assignments")
-        .select("task_number, modules:module_id(position)").eq("id", assignmentId).maybeSingle();
-      const lbl0 = `M${(((a0 as any)?.modules?.position ?? 0) as number) + 1} · V${(a0 as any)?.task_number ?? ""}`;
+        .select("task_number, sap_number, parent_id, modules:module_id(position)").eq("id", assignmentId).maybeSingle();
+      const lbl0 = `M${(((a0 as any)?.modules?.position ?? 0) as number) + 1} · V${a0 ? displayStepNumber(a0 as any) : ""}`;
       await admin.from("hw_pending_posts")
         .update({ state: "done", expires_at: new Date(Date.now() + 90_000).toISOString() })
         .eq("id", pending.id);
@@ -5120,12 +5116,11 @@ async function finalizePendingPost(
       .select("title, task_number, sap_number, parent_id, module_id, max_score, modules(position)")
       .eq("id", assignmentId).maybeSingle();
     const mn = ((a?.modules?.position ?? 0) as number) + 1;
-    const tn = (a?.task_number ?? 1) as number;
+    // SAP sub-step → its sap_number ("Vazifa 1/2/3"); a normal task → task_number. The step now
+    // rides on `tn`, so the title stays the plain descriptive text (no more "V3.S1" prefix that
+    // read as "step 3" for every sub-step — the reported bug).
+    const tn = a ? displayStepNumber(a) : 1;
     let aTitle = a?.title || "";
-    if (a?.parent_id) {
-      const { data: par } = await admin.from("homework_assignments").select("task_number").eq("id", a.parent_id).maybeSingle();
-      aTitle = `V${par?.task_number ?? "?"}.S${a?.sap_number ?? "?"} — ${a?.title || ""}`;
-    }
     if (guessed) aTitle = `${aTitle} (taxminiy)`; // teacher sees the tag was auto-guessed → ✏️ if wrong
 
     // VISIBLE RECEIPT (owner feedback: the toast alone is too easy to miss): morph the picker
@@ -5780,12 +5775,9 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       .eq("id", intent.assignment_id)
       .maybeSingle();
     const mn = ((a?.modules?.position ?? 0) as number) + 1;
-    const tn = (a?.task_number ?? 1) as number;
-    let aTitle = a?.title || "";
-    if (a?.parent_id) {
-      const { data: par } = await admin.from("homework_assignments").select("task_number").eq("id", a.parent_id).maybeSingle();
-      aTitle = `V${par?.task_number ?? "?"}.S${a?.sap_number ?? "?"} — ${a?.title || ""}`;
-    }
+    // SAP sub-step → its sap_number ("Vazifa 1/2/3"); a normal task → task_number. Step rides on `tn`.
+    const tn = a ? displayStepNumber(a) : 1;
+    const aTitle = a?.title || "";
     const moduleId = a?.module_id || intent.module_id;
 
     // Private DM to student (confirmation). Log Telegram errors so failures are visible.
@@ -5950,13 +5942,18 @@ async function notifyTeachersOfSubmission(
         console.log("hw:group:teacher-skip", JSON.stringify({ teacher_id: teacherId, has_tg: !!teacher?.telegram_id, notif: teacher?.notifications_enabled }));
       } else {
         const { data: grp } = await admin.from("groups").select("name").eq("id", groupId).maybeSingle();
-        const moduleName = `Modul ${mn}`;
-        const body = hwTeacherBody(studentName, grp?.name || "—", moduleName, aTitle || "");
-        // grade:open:<submissionId> = 47 bytes. The previous grade_task:<assignmentId>:<studentId>
-        // was 84 bytes — over Telegram's 64-byte callback_data cap — so EVERY immediate DM failed
-        // with BUTTON_DATA_INVALID and silently rode the 1-minute cron retry (found in logs).
+        // A3: the step is now shown here too (tn is sap-aware) so the teacher sees "Modul 3 · Vazifa 1".
+        const moduleName = `Modul ${mn} · Vazifa ${tn}`;
+        // A4: an auto-GUESSED attribution (student ignored the picker) carries the "(taxminiy)" marker
+        // on aTitle. Make it loud + give the teacher a one-tap ✏️ retag right on the notification.
+        const guessed = /\(taxminiy\)/.test(aTitle || "");
+        const body = hwTeacherBody(studentName, grp?.name || "—", moduleName, aTitle || "")
+          + (guessed ? "\n\n⚠️ <b>Avto-belgilangan</b> — vazifa taxminan tanlandi. Noto'g'ri bo'lsa ✏️ bilan to'g'rilang." : "");
+        // grade:open:<submissionId> = 47 bytes; hwmv:<submissionId> = 41 bytes. Both under Telegram's
+        // 64-byte callback_data cap (the previous grade_task:<assignmentId>:<studentId> was 84 → BUTTON_DATA_INVALID).
         const inlineKb = [
           [{ text: "🎯 Baholash", callback_data: `grade:open:${submissionId}` }],
+          ...(guessed ? [[{ text: "✏️ Vazifani o'zgartirish", callback_data: `hwmv:${submissionId}` }]] : []),
           [{ text: "📌 Topikga o'tish", url: messageUrl }],
         ];
         try {
@@ -6263,8 +6260,6 @@ async function handleCallback(admin: any, cq: any) {
     if (!list.length) { await sendMessage(chatId, "Vazifa topilmadi."); return; }
     const parentIdsWithSap = new Set(list.filter((a) => a.parent_id).map((a) => a.parent_id));
     const leaves = list.filter((a) => a.parent_id || !parentIdsWithSap.has(a.id));
-    const parentTaskNum = new Map<string, number>();
-    list.filter((a) => !a.parent_id).forEach((p) => parentTaskNum.set(p.id, p.task_number || 1));
     leaves.sort((a, b) => (a.task_number ?? 1) - (b.task_number ?? 1) || ((a.sap_number ?? 0) - (b.sap_number ?? 0)));
     const leafIds = leaves.map((a) => a.id);
     const { data: subs } = await admin
@@ -6276,10 +6271,8 @@ async function handleCallback(admin: any, cq: any) {
     const modulePos = (list[0]?.modules?.position ?? 0) + 1;
     const moduleTitle = list[0]?.modules?.title || "";
     const buttons: any[][] = [];
-    let seq = 0;
     for (const a of leaves) {
-      seq++;
-      const tnLabel = `Vazifa ${a.sap_number ?? a.task_number ?? seq}`;
+      const tnLabel = `Vazifa ${displayStepNumber(a)}`;
       const title = (a.title || "").slice(0, 30);
       const s: any = subMap.get(a.id);
       if (s && s.score != null) {
@@ -6455,10 +6448,8 @@ async function handleCallback(admin: any, cq: any) {
       .eq("module_id", mod.id).eq("is_active", true);
     const allRows = (asgs || []) as any[];
     const leaves = computeLeaves(allRows as any) as any[];
-    const parentTn = (l: any) => allRows.find((p) => p.id === l.parent_id)?.task_number ?? "?";
-    const leafLabel = (l: any) => l.parent_id
-      ? `V${parentTn(l)}.S${l.sap_number ?? "?"} · ${String(l.title || "").slice(0, 20)}`
-      : `V${l.task_number ?? "?"} · ${String(l.title || "").slice(0, 24)}`;
+    const leafLabel = (l: any) =>
+      `V${displayStepNumber(l)} · ${String(l.title || "").slice(0, l.parent_id ? 20 : 24)}`;
 
     if (parts.length === 3) {
       await answerCallback(cq.id);
@@ -6570,11 +6561,10 @@ async function handleCallback(admin: any, cq: any) {
       const leaves = computeLeaves(allRows as any) as any[];
       await answerCallback(cq.id);
       if (!leaves.length) { await editPicker(`${t.pkAsk}\n\n${t.retagNoTasks}`, [[{ text: t.pkBack, callback_data: `hwpk:${pid}:back` }]]); return; }
-      const parentTn = (l: any) => allRows.find((p) => p.id === l.parent_id)?.task_number ?? "?";
       const rows = leaves.map((l: any, i: number) => [{
-        text: l.parent_id
-          ? `V${parentTn(l)}.S${l.sap_number ?? "?"} · ${String(l.title || "").slice(0, 20)}`
-          : `V${l.task_number ?? "?"} · ${String(l.title || "").slice(0, 24)}`,
+        // Step number = sap_number for SAP sub-steps ("V1/V2/V3" within the module), task_number
+        // otherwise. Module context is already in the header (pkAskTask), so "V1" is unambiguous.
+        text: `V${displayStepNumber(l)} · ${String(l.title || "").slice(0, l.parent_id ? 20 : 24)}`,
         callback_data: `hwpk:${pid}:t:${parts[3]}:${i}`,
       }]);
       rows.push([{ text: t.pkBack, callback_data: `hwpk:${pid}:back` }]);
@@ -6594,7 +6584,7 @@ async function handleCallback(admin: any, cq: any) {
       const leaves = computeLeaves(((asgs || []) as any)) as any[];
       const leaf = leaves[Number(parts[4])];
       if (!leaf) { await answerCallback(cq.id); return; }
-      const lbl = `M${(mod.position ?? 0) + 1} · V${leaf.task_number ?? leaf.sap_number ?? ""}`;
+      const lbl = `M${(mod.position ?? 0) + 1} · V${displayStepNumber(leaf)}`;
       // Refresh the pending row (media may have grown since the callback row was loaded).
       const { data: freshPending } = await admin.from("hw_pending_posts").select("*").eq("id", pid).maybeSingle();
       if (!freshPending || freshPending.state !== "pending") { await answerCallback(cq.id, t.pkExpired); return; }
@@ -6680,7 +6670,7 @@ async function handleCallback(admin: any, cq: any) {
       admin.from("groups").select("id,name").eq("id", groupId).maybeSingle(),
       admin.from("modules").select("id,position,title").eq("id", moduleId).maybeSingle(),
       admin.from("profiles").select("id,name,last_name,telegram_username,telegram_id").eq("group_id", groupId).is("archived_at", null),
-      admin.from("homework_assignments").select("id,title,task_number").eq("module_id", moduleId).eq("is_active", true),
+      admin.from("homework_assignments").select("id,title,task_number,sap_number,parent_id").eq("module_id", moduleId).eq("is_active", true),
     ]);
     const students = (profs || []) as any[];
     const asgIds = ((asgs || []) as any[]).map((a) => a.id);
@@ -6715,7 +6705,7 @@ async function handleCallback(admin: any, cq: any) {
       if (isSubmitted) {
         const items = (byUser.get(p.id) || []).map((s) => {
           const a = asgMap.get(s.assignment_id) as any;
-          const label = a ? `${tag}·V${a.task_number}` : "vazifa";
+          const label = a ? `${tag}·V${displayStepNumber(a)}` : "vazifa";
           return s.telegram_message_url ? `<a href="${s.telegram_message_url}">${label}</a>` : label;
         }).join(", ");
         return `• ${fmtName(p)} — ${items}`;

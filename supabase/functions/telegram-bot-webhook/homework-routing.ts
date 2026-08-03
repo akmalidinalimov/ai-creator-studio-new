@@ -35,9 +35,26 @@ export function computeLeaves(all: AssignmentRow[]): AssignmentRow[] {
   leaves.sort(
     (x, y) =>
       (x.task_number ?? 0) - (y.task_number ?? 0) ||
-      (x.sap_number ?? 0) - (y.sap_number ?? 0),
+      (x.sap_number ?? 0) - (y.sap_number ?? 0) ||
+      // Stable id tiebreak: the picker/retag resolve leaves[index] from a fetch with no ORDER BY,
+      // so the order must be identical across two separate fetches even if two leaves happen to
+      // share (task_number, sap_number). Without this, DB row order could leak into the index.
+      (x.id < y.id ? -1 : x.id > y.id ? 1 : 0),
   );
   return leaves;
+}
+
+/**
+ * The step number shown to humans (student receipts, teacher DMs, picker labels).
+ * For a SAP sub-step (parent_id set) that is its `sap_number` — so Module 3's sub-steps read
+ * "Vazifa 1/2/3" instead of all sharing the parent's `task_number` (=3), the reported bug.
+ * For a normal task it is `task_number`, unchanged. Never throws; defaults to 1.
+ */
+export function displayStepNumber(
+  leaf: { parent_id: string | null; task_number: number | null; sap_number: number | null },
+): number {
+  if (leaf.parent_id != null) return leaf.sap_number ?? leaf.task_number ?? 1;
+  return leaf.task_number ?? 1;
 }
 
 /**
