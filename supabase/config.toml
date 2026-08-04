@@ -123,3 +123,8 @@ verify_jwt = false
 # Telegram-signed initData (HMAC bot token), not a Supabase session, then checks admin role.
 [functions.tg-broadcast]
 verify_jwt = false
+
+# claude-agent: task-queue API for the owner's laptop Claude Code poller. Gated by x-claude-agent-secret
+# (CLAUDE_AGENT_SECRET env) — NOT a user session. Dormant until that secret is set. heartbeat/claim/report.
+[functions.claude-agent]
+verify_jwt = false
