@@ -1585,12 +1585,30 @@ function randomToken(len = 32): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("").slice(0, len);
 }
 
+// Runtime-overridable site domain for the bot's webapp links: platform_settings.site_url =
+// {"url":"https://..."} takes precedence over the SITE_URL env, so we can reroute the webapp to a
+// clean domain (e.g. while aicreator.academy's VirusTotal reputation flag is disputed and blocked on
+// students' networks) with a single DB flip — no secret change, instantly revertible. Cached ~60s.
+let __siteUrlCache: { url: string; at: number } | null = null;
+async function getSiteUrl(admin: any): Promise<string> {
+  if (__siteUrlCache && Date.now() - __siteUrlCache.at < 60_000) return __siteUrlCache.url;
+  let url = SITE_URL;
+  try {
+    const { data } = await admin.from("platform_settings").select("value").eq("key", "site_url").maybeSingle();
+    const override = (data?.value as any)?.url;
+    if (typeof override === "string" && /^https?:\/\//.test(override)) url = override.replace(/\/$/, "");
+  } catch (_e) { /* fall back to the SITE_URL env value */ }
+  __siteUrlCache = { url, at: Date.now() };
+  return url;
+}
+
 async function createMagicLink(
   admin: any,
   user_id: string,
   purpose: string,
   target_path?: string,
 ): Promise<string> {
+  const base = await getSiteUrl(admin); // runtime-overridable site domain (clean-domain reroute)
   // Reuse non-expired, unused link for same (user, purpose, target_path) — links live 7 days.
   try {
     let q = admin.from("telegram_magic_links")
@@ -1601,7 +1619,7 @@ async function createMagicLink(
     const { data: existing } = await q;
     const row = existing?.[0];
     if (row && new Date(row.expires_at).getTime() > Date.now() + 60_000 && (row.target_path || null) === (target_path || null)) {
-      return `${SITE_URL}/auth/magic?t=${row.token}`;
+      return `${base}/auth/magic?t=${row.token}`;
     }
   } catch (_e) { /* fall through to insert */ }
   const token = randomToken(32);
@@ -1610,7 +1628,7 @@ async function createMagicLink(
     .from("telegram_magic_links")
     .insert({ token, user_id, purpose, target_path, expires_at: expiresAt });
   if (error) throw error;
-  return `${SITE_URL}/auth/magic?t=${token}`;
+  return `${base}/auth/magic?t=${token}`;
 }
 
 // ===== In-memory response cache for hot bot replies (per Edge Function instance) =====
