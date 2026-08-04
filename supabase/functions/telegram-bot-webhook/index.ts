@@ -181,6 +181,12 @@ const T = {
     // Admin panel
     adminKbAnalytics: "📊 Statistika",
     adminKbBroadcast: "📣 Ommaviy xabar",
+    adminKbClaude: "🤖 Claude Code",
+    ccPrompt: "✍️ Claude Code bajaradigan vazifani yozing (bitta xabar).\nBekor qilish: /cancel",
+    ccQueuedOnline: "⚙️ Qabul qilindi — Claude Code ishlayapti. Natija shu yerga keladi.",
+    ccQueuedOffline: (n: number) => `⚠️ Noutbuk hozir o'chiq. Vazifa navbatga qo'yildi (navbatda ${n} ta) — noutbuk yoqilganda bajariladi.`,
+    ccCancelled: "Bekor qilindi 👍",
+    ccDenied: "⛔ Bu funksiya faqat platforma egasi uchun.",
     astGroupsHint: "👇 Guruh bo'yicha batafsil:",
     astBack: "← Umumiy",
     astRefresh: "🔄 Yangilash",
@@ -462,6 +468,12 @@ const T = {
     back: "← Назад",
     adminKbAnalytics: "📊 Статистика",
     adminKbBroadcast: "📣 Массовое сообщение",
+    adminKbClaude: "🤖 Claude Code",
+    ccPrompt: "✍️ Напишите задачу для Claude Code (одним сообщением).\nОтмена: /cancel",
+    ccQueuedOnline: "⚙️ Принято — Claude Code работает. Результат придёт сюда.",
+    ccQueuedOffline: (n: number) => `⚠️ Ноутбук сейчас выключен. Задача в очереди (в очереди ${n}) — выполнится, когда ноутбук включат.`,
+    ccCancelled: "Отменено 👍",
+    ccDenied: "⛔ Функция только для владельца платформы.",
     astGroupsHint: "👇 Подробно по группам:",
     astBack: "← Общая",
     astRefresh: "🔄 Обновить",
@@ -734,6 +746,12 @@ const T = {
     back: "← Back",
     adminKbAnalytics: "📊 Statistics",
     adminKbBroadcast: "📣 Broadcast",
+    adminKbClaude: "🤖 Claude Code",
+    ccPrompt: "✍️ Type the task for Claude Code (one message).\nCancel: /cancel",
+    ccQueuedOnline: "⚙️ Queued — Claude Code is working. The result will arrive here.",
+    ccQueuedOffline: (n: number) => `⚠️ Laptop is off right now. Task queued (${n} in queue) — it'll run when the laptop is back on.`,
+    ccCancelled: "Cancelled 👍",
+    ccDenied: "⛔ This feature is owner-only.",
     astGroupsHint: "👇 Per-group detail:",
     astBack: "← Overall",
     astRefresh: "🔄 Refresh",
@@ -1376,6 +1394,7 @@ function getAdminKeyboard(locale: Locale) {
       [{ text: t.adminKbAnalytics }],
       // Mini App: opens the broadcast composer inside Telegram (auth via signed initData, admin-only).
       [{ text: t.adminKbBroadcast, web_app: { url: "https://www.aicreator.academy/tg/broadcast" } }],
+      [{ text: t.adminKbClaude }],
       [{ text: t.adminKbNew }],
       [{ text: t.adminKbStudentMode }, { text: t.kbLang }],
     ],
@@ -1490,6 +1509,17 @@ async function getPersona(admin: any, userId: string): Promise<Persona> {
   return "student";
 }
 
+// Claude Code is owner-gated: an admin AND on the explicit allowlist of telegram_ids in
+// platform_settings.claude_agent.owner_tg_ids. FAIL-CLOSED — an empty/absent allowlist means NOBODY
+// (this queues code that runs with real permissions on the owner's laptop, so it must never fall open
+// to every admin account). The migration seeds the owner's own telegram_id.
+async function claudeOwnerAllowed(admin: any, userProfileId: string, tgId: number): Promise<boolean> {
+  if (!(await isAdminUser(admin, userProfileId))) return false;
+  const { data: cfg } = await admin.from("platform_settings").select("value").eq("key", "claude_agent").maybeSingle();
+  const allow = (((cfg?.value as any)?.owner_tg_ids) as unknown[]) || [];
+  return allow.map(Number).includes(Number(tgId));
+}
+
 // After sending an inline-keyboard message, follow up with a tiny hint that
 // re-applies the persistent reply keyboard (since you can't combine both).
 async function sendKeyboardHint(_chatId: number, _locale: Locale, _isAdmin = false, _persona?: Persona) {
@@ -1515,6 +1545,7 @@ function buttonTextToCommand(text: string): string | null {
     if (trimmed === t.kbHelp) return "/yordam";
     // Admin keyboard buttons
     if (trimmed === t.adminKbAnalytics) return "/analitika";
+    if (trimmed === t.adminKbClaude) return "/claude";
     // Legacy cached label (pre-2026-07-12 keyboards still show "Analitika")
     if (trimmed === "📊 Analitika" || trimmed === "📊 Аналитика" || trimmed === "📊 Analytics") return "/analitika";
     if (trimmed === t.adminKbInactive3) return "/inactive3";
@@ -2867,6 +2898,22 @@ async function handleAdminCommand(
     return true;
   }
 
+  // 🤖 Claude Code: owner types a task → it's queued for the laptop poller. OWNER-ONLY (this runs
+  // Claude Code with real permissions on the owner's laptop), so gate to superadmin even though
+  // handleAdminCommand is already admin-gated. Sets a conversation state; the next message is the task.
+  if (cmd === "/claude") {
+    if (!(await claudeOwnerAllowed(admin, adminProfileId, chatId))) { await sendWithKeyboard(chatId, t.ccDenied, locale, true); return true; }
+    await admin.from("bot_conversation_state").upsert({
+      telegram_id: chatId, // admin panel is a private DM → chat.id === the owner's telegram_id
+      state: "awaiting_claude_task",
+      context: {},
+      updated_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+    });
+    await sendMessage(chatId, t.ccPrompt);
+    return true;
+  }
+
   if (cmd === "/talaba") {
     await sendWithKeyboard(chatId, t.adminStudentModeOn, locale, false);
     return true;
@@ -4024,6 +4071,33 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
 
   const text: string = (msg.text || "").trim();
   const ctx = (state.context || {}) as any;
+
+  // 🤖 Claude Code task capture: the next message after tapping the button is the task. The state is
+  // deleted immediately (one-shot), so only the first message is consumed.
+  if (state.state === "awaiting_claude_task") {
+    await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+    // Empty, /cancel, a typed command, or a tapped menu button (its label maps to a command) → cancel,
+    // so a stray navigation tap is never queued as a Claude task. The owner just taps again.
+    if (!text || text === "/cancel" || text.startsWith("/") || buttonTextToCommand(text)) {
+      await sendWithKeyboard(msg.chat.id, t.ccCancelled, locale, isAdmin, "admin");
+      return true;
+    }
+    // Defense-in-depth: only an allowed owner may enqueue (the state is only ever set for them).
+    const { data: prof } = await admin.from("profiles").select("id").eq("telegram_id", tgId).maybeSingle();
+    if (!prof || !(await claudeOwnerAllowed(admin, prof.id, tgId))) { await sendWithKeyboard(msg.chat.id, t.ccDenied, locale, isAdmin, "admin"); return true; }
+    await admin.from("claude_code_tasks").insert({ prompt: text.slice(0, 8000), requested_by: prof.id, requested_tg: tgId });
+    // Laptop on/off from the heartbeat freshness (the poller heartbeats every ~15-30s; 90s is generous).
+    const { data: hb } = await admin.from("platform_settings").select("value").eq("key", "claude_agent_heartbeat").maybeSingle();
+    const at = (hb?.value as any)?.at ? new Date((hb!.value as any).at).getTime() : 0;
+    const online = at > 0 && (Date.now() - at) < 90_000;
+    if (online) {
+      await sendWithKeyboard(msg.chat.id, t.ccQueuedOnline, locale, isAdmin, "admin");
+    } else {
+      const { count } = await admin.from("claude_code_tasks").select("id", { count: "exact", head: true }).eq("status", "queued");
+      await sendWithKeyboard(msg.chat.id, t.ccQueuedOffline(count || 1), locale, isAdmin, "admin");
+    }
+    return true;
+  }
 
   if (state.state === "grade_score") {
     if (text === "/cancel") {
