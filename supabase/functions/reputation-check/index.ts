@@ -6,8 +6,9 @@
 // REGRESSION with the dispute pre-staged. De-duped via app_settings so a standing flag doesn't spam.
 //   • Safe Browsing (serious — real browser blocks): alert on transition-to-flagged AND re-alert while
 //     still flagged; recovery when cleared.
-//   • VirusTotal (noisy aggregator): alert ONLY when the malicious count RISES (a new vendor);
-//     recovery when it hits zero. A standing count never re-alerts.
+//   • VirusTotal (noisy aggregator): alert when the malicious count RISES (a new vendor), AND
+//     re-remind ~daily while it stays ≥3 vendors (a standing flag that blocks students on firewall/AV
+//     networks — the gap that let an 8-vendor flag sit silent for days); recovery when it hits zero.
 //   • First run (no prior state) just seeds the baseline — never alerts (else day-one's existing ~11
 //     VT flags would read as a false "+11 regression").
 // Cron-invoked (x-internal-secret). Dormant until SAFE_BROWSING_API_KEY and/or VIRUSTOTAL_API_KEY
@@ -107,23 +108,37 @@ Deno.serve(async (req) => {
   const firstRun = !st?.value;
   const prev = (st?.value as any) || { sb_flagged: false, vt_malicious: 0, last_alert: 0 };
   const now = Date.now();
-  const staleHour = now - (prev.last_alert || 0) > 3600_000;
+  const SB_REALERT_MS = 3600_000;        // Safe Browsing: re-alert hourly while flagged (serious).
+  const VT_REALERT_MS = 20 * 3600_000;   // VirusTotal: re-remind ~daily while a standing flag persists.
+  const VT_STANDING_THRESHOLD = 3;       // A standing count this high blocks students on firewall/AV
+                                         // networks (the 8-vendor flag that sat silent for days).
+  const sbLastAlert = prev.sb_last_alert ?? prev.last_alert ?? 0; // migrate from the old single field
+  const vtLastAlert = prev.vt_last_alert ?? 0;
 
   const alerts: string[] = [];
   const recoveries: string[] = [];
+  let sbAlerted = false, vtAlerted = false;
   if (sb?.ok) {
-    // Serious + persistent: alert on transition-to-flagged, and re-alert while still flagged.
-    if (sb.flagged && (!prev.sb_flagged || staleHour)) {
+    // Serious + persistent: alert on transition-to-flagged, and re-alert hourly while still flagged.
+    if (sb.flagged && (!prev.sb_flagged || now - sbLastAlert > SB_REALERT_MS)) {
       alerts.push(`🚨 Google Safe Browsing endi ${DOMAIN} ni XAVFLI deb belgiladi (${(sb.detail as any)?.matches?.join(", ") || "threat"}). Bu Chrome/Android'da bloklanishga olib keladi — zudlik bilan e'tiroz bildiring: https://safebrowsing.google.com/safebrowsing/report_error/`);
+      sbAlerted = true;
     } else if (!sb.flagged && prev.sb_flagged) {
       recoveries.push(`✅ Google Safe Browsing ${DOMAIN} ni tozaladi.`);
     }
   }
   if (vt?.ok) {
-    // Noisy aggregator: alert only when the count RISES (a genuinely new vendor); never on standing.
-    if (vt.malicious > (prev.vt_malicious || 0)) {
-      alerts.push(`⚠️ VirusTotal'da yangi belgilashlar: ${vt.malicious} ta vendor ${DOMAIN} ni xavfli deb belgiladi (avval ${prev.vt_malicious || 0}). Yangi firewall bloklari ehtimoli — VirusTotal'ni tekshiring.`);
-    } else if ((prev.vt_malicious || 0) > 0 && vt.malicious === 0) {
+    const prevVt = prev.vt_malicious || 0;
+    if (vt.malicious > prevVt) {
+      // RISE: a genuinely new vendor flagged — alert immediately.
+      alerts.push(`⚠️ VirusTotal'da yangi belgilashlar: ${vt.malicious} ta vendor ${DOMAIN} ni xavfli deb belgiladi (avval ${prevVt}). Yangi firewall bloklari ehtimoli — VirusTotal'ni tekshiring.`);
+      vtAlerted = true;
+    } else if (vt.malicious >= VT_STANDING_THRESHOLD && now - vtLastAlert > VT_REALERT_MS) {
+      // STANDING: a persistent, student-blocking flag re-reminds ~daily until disputed/cleared. This
+      // closes the gap that let an 8-vendor flag sit silent for days while students couldn't load the site.
+      alerts.push(`⚠️ VirusTotal hali ham ${vt.malicious} ta vendor ${DOMAIN} ni xavfli deb belgilagan — talabalar tarmoqlarida (firewall/AV) sayt bloklanishi mumkin. E'tirozni davom ettiring: https://www.virustotal.com/gui/domain/${DOMAIN}`);
+      vtAlerted = true;
+    } else if (prevVt > 0 && vt.malicious === 0) {
       recoveries.push(`✅ VirusTotal ${DOMAIN} uchun toza.`);
     }
   }
@@ -147,7 +162,10 @@ Deno.serve(async (req) => {
     value: {
       sb_flagged: sb?.ok ? sb.flagged : (prev.sb_flagged || false),
       vt_malicious: vt?.ok ? vt.malicious : (prev.vt_malicious || 0),
-      last_alert: shouldAlert ? now : (prev.last_alert || 0),
+      // Per-source alert clocks so SB (hourly) and VT (daily) cadences don't reset each other.
+      sb_last_alert: (shouldAlert && sbAlerted) ? now : sbLastAlert,
+      vt_last_alert: (shouldAlert && vtAlerted) ? now : vtLastAlert,
+      last_alert: shouldAlert ? now : (prev.last_alert || 0), // legacy field, kept for compatibility
       checked_at: new Date().toISOString(),
     },
   }, { onConflict: "key" });
