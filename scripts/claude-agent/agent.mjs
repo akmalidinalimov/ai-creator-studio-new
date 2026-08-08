@@ -66,7 +66,14 @@ function runClaude(taskPrompt) {
     const prompt = `${CONSTRAINTS}\n\n----- TASK FROM TELEGRAM -----\n${taskPrompt}`;
     // Prompt goes via STDIN (no shell-escaping of the task text). Only fixed, simple flags as args.
     const args = ["-p", "--dangerously-skip-permissions", "--max-turns", MAX_TURNS];
-    const child = spawn(CLAUDE_BIN, args, { cwd: REPO, shell: IS_WIN });
+    // Run against your Claude login (credentials.json) directly — strip any third-party-router overrides
+    // the shell may have set (e.g. an OpenRouter ANTHROPIC_BASE_URL/AUTH_TOKEN), so the helper is
+    // deterministic and never hits a third-party credit wall. Set CLAUDE_AGENT_KEEP_ENV=1 to opt out.
+    const childEnv = { ...process.env };
+    if (process.env.CLAUDE_AGENT_KEEP_ENV !== "1") {
+      for (const k of ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_MODEL"]) delete childEnv[k];
+    }
+    const child = spawn(CLAUDE_BIN, args, { cwd: REPO, shell: IS_WIN, env: childEnv });
     let out = "", err = "";
     const timer = setTimeout(() => {
       try { child.kill("SIGKILL"); } catch { /* ignore */ }
