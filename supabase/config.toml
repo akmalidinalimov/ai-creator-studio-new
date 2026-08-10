@@ -34,6 +34,9 @@ verify_jwt = false
 [functions.cron-engagement]
 verify_jwt = false
 
+[functions.teacher-daily-digest]
+verify_jwt = false
+
 [functions.cron-admin-digest]
 verify_jwt = false
 
