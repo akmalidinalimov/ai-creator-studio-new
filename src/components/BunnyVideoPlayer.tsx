@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useEffect, useRef, useState } from "react";
+import { forwardRef, useImperativeHandle, useEffect, useRef } from "react";
 
 interface Props {
   libraryId: string;
@@ -54,13 +54,6 @@ export const BunnyVideoPlayer = forwardRef<BunnyPlayerHandle, Props>(function Bu
   const lastTickPosRef = useRef<number>(0);
   const durationRef = useRef<number>(0);
   const endedFiredRef = useRef<boolean>(false);
-
-  const [wmStamp, setWmStamp] = useState<number>(() => Date.now());
-  useEffect(() => {
-    if (!watermarkEmail) return;
-    const id = window.setInterval(() => setWmStamp(Date.now()), 5000);
-    return () => window.clearInterval(id);
-  }, [watermarkEmail]);
 
   // Build src with resume position
   const params = new URLSearchParams({
@@ -158,7 +151,7 @@ export const BunnyVideoPlayer = forwardRef<BunnyPlayerHandle, Props>(function Bu
       />
       {watermarkEmail && (
         <div className="absolute bottom-2 right-2 pointer-events-none select-none text-white/40 text-xs font-mono bg-black/30 px-2 py-1 rounded">
-          {watermarkEmail} · {wmStamp}
+          {watermarkEmail}
         </div>
       )}
     </div>
