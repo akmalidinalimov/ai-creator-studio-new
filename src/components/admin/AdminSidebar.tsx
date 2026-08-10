@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Megaphone,
   BarChart3,
+  PieChart,
   Trophy,
   Settings,
   FileText,
@@ -66,6 +67,7 @@ const SECTIONS: Section[] = [
     heading: "Tahlil va sozlamalar",
     items: [
       { to: "/admin/analytics", label: "Chuqur tahlillar", icon: BarChart3, adminOnly: true, match: (p) => p.startsWith("/admin/analytics") },
+      { to: "/admin/statistics", label: "Statistika", icon: PieChart, adminOnly: true, match: (p) => p.startsWith("/admin/statistics") },
       { to: "/leaderboard", label: "Reyting", icon: Trophy, match: (p) => p === "/leaderboard" },
       { to: "/admin/batch-texts", label: "Batch matnlar", icon: Sparkles, adminOnly: true, match: (p) => p.startsWith("/admin/batch-texts") },
       { to: "/admin/settings", label: "Sozlamalar", icon: Settings, adminOnly: true, match: (p) => p.startsWith("/admin/settings") },
