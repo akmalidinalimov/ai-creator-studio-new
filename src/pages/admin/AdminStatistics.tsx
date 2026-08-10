@@ -62,6 +62,8 @@ export default function AdminStatistics() {
   const [windowDays, setWindowDays] = useState(7);
   const [rows, setRows] = useState<GroupRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sortKey, setSortKey] = useState("activePct");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   useEffect(() => {
     (async () => {
@@ -116,6 +118,24 @@ export default function AdminStatistics() {
     { name: "Faol", value: overall.active },
     { name: "Nofaol", value: Math.max(overall.students - overall.active, 0) },
   ], [overall]);
+
+  // Ranking: sortable by any metric; default = most active first (active %). Pending sorts asc (less = better).
+  const sortedRows = useMemo(() => {
+    const withPct = rows.map((r) => ({ ...r, activePct: pct(r.active_students, r.total_students) }));
+    const val = (r: any) => (sortKey === "activePct" ? r.activePct : Number(r[sortKey] ?? 0));
+    return withPct.sort((a, b) => (sortDir === "desc" ? val(b) - val(a) : val(a) - val(b)));
+  }, [rows, sortKey, sortDir]);
+  const toggleSort = (k: string) => {
+    if (sortKey === k) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    else { setSortKey(k); setSortDir(k === "pending_homework" ? "asc" : "desc"); }
+  };
+  const Th = ({ k, label }: { k: string; label: string }) => (
+    <th className="px-3 py-2 text-right">
+      <button onClick={() => toggleSort(k)} className="inline-flex items-center gap-1 hover:text-foreground uppercase tracking-wide">
+        {label}{sortKey === k && <span className="text-[10px]">{sortDir === "desc" ? "▼" : "▲"}</span>}
+      </button>
+    </th>
+  );
 
   return (
     <PageShell>
@@ -230,26 +250,31 @@ export default function AdminStatistics() {
 
             {/* Per-group detail table */}
             <Card className="p-0 overflow-hidden shadow-soft">
-              <div className="px-4 py-3 border-b bg-muted/30"><h3 className="text-sm font-semibold">Guruhlar bo'yicha batafsil</h3></div>
+              <div className="px-4 py-3 border-b bg-muted/30 flex items-center justify-between gap-2 flex-wrap">
+                <h3 className="text-sm font-semibold">Guruhlar reytingi</h3>
+                <span className="text-xs text-muted-foreground">Ustundan bosib tartiblang · standart: eng faol birinchi</span>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className="px-3 py-2 w-8 text-center">#</th>
                       <th className="px-3 py-2">Guruh</th><th className="px-3 py-2">Tarif</th><th className="px-3 py-2">Ustoz</th>
-                      <th className="px-3 py-2 text-right">Talaba</th><th className="px-3 py-2 text-right">Faol</th>
-                      <th className="px-3 py-2 text-right">Nishon</th><th className="px-3 py-2 text-right">Tugallanish</th>
-                      <th className="px-3 py-2 text-right">Jami XP</th><th className="px-3 py-2 text-right">Vazifa</th>
-                      <th className="px-3 py-2 text-right">O'rt. baho</th><th className="px-3 py-2 text-right">Kutilmoqda</th>
+                      <Th k="total_students" label="Talaba" /><Th k="activePct" label="Faol" />
+                      <Th k="badges_earned" label="Nishon" /><Th k="avg_completion_pct" label="Tugallanish" />
+                      <Th k="total_xp" label="Jami XP" /><Th k="homework_submitted" label="Vazifa" />
+                      <Th k="homework_avg_score" label="O'rt. baho" /><Th k="pending_homework" label="Kutilmoqda" />
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((r) => (
+                    {sortedRows.map((r, i) => (
                       <tr key={r.group_id} className="border-t hover:bg-muted/20">
+                        <td className="px-3 py-2 text-center">{i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : <span className="text-muted-foreground">{i + 1}</span>}</td>
                         <td className="px-3 py-2 font-medium">{r.group_name}</td>
                         <td className="px-3 py-2">{r.tier_name || "—"}</td>
                         <td className="px-3 py-2">{r.teacher_name}</td>
                         <td className="px-3 py-2 text-right tabular-nums">{r.total_students}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{r.active_students} <span className="text-muted-foreground text-xs">({pct(r.active_students, r.total_students)}%)</span></td>
+                        <td className="px-3 py-2 text-right tabular-nums">{r.active_students} <span className="text-muted-foreground text-xs">({r.activePct}%)</span></td>
                         <td className="px-3 py-2 text-right tabular-nums">{r.badges_earned}</td>
                         <td className="px-3 py-2 text-right tabular-nums">{r.avg_completion_pct}%</td>
                         <td className="px-3 py-2 text-right tabular-nums">{Number(r.total_xp).toLocaleString()}</td>
