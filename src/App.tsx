@@ -60,6 +60,7 @@ const AdminBunnyDiagnostics = lazy(() => import("./pages/admin/AdminBunnyDiagnos
 const AdminNotifications = lazy(() => import("./pages/admin/AdminNotifications"));
 const AdminBroadcast = lazy(() => import("./pages/admin/AdminBroadcast"));
 const TgBroadcast = lazy(() => import("./pages/TgBroadcast"));
+const TgGroupBoard = lazy(() => import("./pages/TgGroupBoard"));
 const AdminGroups = lazy(() => import("./pages/admin/AdminGroups"));
 const GroupDetail = lazy(() => import("./pages/admin/GroupDetail"));
 const AdminHomework = lazy(() => import("./pages/admin/AdminHomework"));
@@ -105,6 +106,7 @@ const App = () => (
             {/* Passwordless sales intake form: no login — gated by the ?code= in the link. */}
             <Route path="/intake" element={<SalesIntake />} />
             <Route path="/tg/broadcast" element={<Suspense fallback={<AdminFallback />}><TgBroadcast /></Suspense>} />
+            <Route path="/tg/group-board" element={<Suspense fallback={<AdminFallback />}><TgGroupBoard /></Suspense>} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/terms" element={<Terms />} />
 
