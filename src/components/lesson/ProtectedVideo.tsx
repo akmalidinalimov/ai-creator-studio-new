@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { toast } from "sonner";
+import { isTouchDevice, isTelegramWebView } from "@/lib/platform";
 
 interface Settings {
   watermark: boolean;
@@ -35,8 +36,13 @@ export function ProtectedVideo({ src, watermarkText, refreshSrc, videoRef: exter
   const videoRef = externalRef || internalRef;
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [s] = useState<Settings>({ ...DEFAULTS, ...(settings || {}) });
+  // Anti-piracy heuristics (pause-on-blur, devtools-size check, FPS watchdog, keydown blocking)
+  // false-positive badly on mobile and in the Telegram in-app webview — an app-switch, the mobile
+  // URL bar, or a low-end GPU trip them and interrupt LEGITIMATE playback. Only run that aggressive
+  // layer on non-touch desktop; the signed-URL + watermark protections still apply everywhere.
+  const [aggressive] = useState(() => !isTouchDevice() && !isTelegramWebView());
   const [currentSrc, setCurrentSrc] = useState(src);
-  const [wm, setWm] = useState({ text: `${watermarkText} • ${Date.now()}`, pos: CORNERS[0] });
+  const [wm, setWm] = useState({ text: watermarkText, pos: CORNERS[0] });
   const [devtoolsOpen, setDevtoolsOpen] = useState(false);
   const fpsToastFiredRef = useRef(false);
 
@@ -48,14 +54,14 @@ export function ProtectedVideo({ src, watermarkText, refreshSrc, videoRef: exter
     if (!s.watermark) return;
     const id = setInterval(() => {
       const pos = CORNERS[Math.floor(Math.random() * CORNERS.length)];
-      setWm({ text: `${watermarkText} • ${Date.now()}`, pos });
+      setWm({ text: watermarkText, pos });
     }, 2000);
     return () => clearInterval(id);
   }, [s.watermark, watermarkText]);
 
   // Pause on blur / visibility change
   useEffect(() => {
-    if (!s.pause_on_blur) return;
+    if (!s.pause_on_blur || !aggressive) return;
     const pause = () => { try { videoRef.current?.pause(); } catch {} };
     const onVis = () => { if (document.hidden) pause(); };
     window.addEventListener("blur", pause);
@@ -64,11 +70,11 @@ export function ProtectedVideo({ src, watermarkText, refreshSrc, videoRef: exter
       window.removeEventListener("blur", pause);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [s.pause_on_blur, videoRef]);
+  }, [s.pause_on_blur, aggressive, videoRef]);
 
   // DevTools detection
   useEffect(() => {
-    if (!s.devtools_detect) return;
+    if (!s.devtools_detect || !aggressive) return;
     const check = () => {
       const open =
         (window.outerHeight - window.innerHeight) > 200 ||
@@ -79,10 +85,11 @@ export function ProtectedVideo({ src, watermarkText, refreshSrc, videoRef: exter
     check();
     const id = setInterval(check, 1000);
     return () => clearInterval(id);
-  }, [s.devtools_detect, videoRef]);
+  }, [s.devtools_detect, aggressive, videoRef]);
 
-  // Block keyboard shortcuts
+  // Block keyboard shortcuts (desktop only — touch devices have no physical shortcuts to block)
   useEffect(() => {
+    if (!aggressive) return;
     const onKey = (e: KeyboardEvent) => {
       const meta = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
@@ -95,7 +102,7 @@ export function ProtectedVideo({ src, watermarkText, refreshSrc, videoRef: exter
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [aggressive]);
 
   // Signed-URL refresh every 25 minutes
   useEffect(() => {
@@ -120,8 +127,9 @@ export function ProtectedVideo({ src, watermarkText, refreshSrc, videoRef: exter
     return () => clearInterval(id);
   }, [refreshSrc, videoRef]);
 
-  // FPS watchdog
+  // FPS watchdog (desktop only — low-end mobile GPUs drop below 30fps on normal playback)
   useEffect(() => {
+    if (!aggressive) return;
     let raf = 0; let last = performance.now();
     const samples: number[] = [];
     let lowSeconds = 0;
@@ -148,7 +156,7 @@ export function ProtectedVideo({ src, watermarkText, refreshSrc, videoRef: exter
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [aggressive]);
 
   const onContextMenu = useCallback((e: React.MouseEvent) => {
     if (s.no_right_click) { e.preventDefault(); return false; }

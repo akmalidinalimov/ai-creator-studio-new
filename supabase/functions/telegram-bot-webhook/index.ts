@@ -276,8 +276,8 @@ const T = {
     gradeVoiceNote: "🎧 O'qituvchidan ovozli izoh:",
     gradeBadScore: (max: number) => `Bal 0–${max} oralig'ida bo'lishi kerak.`,
     gradeSaved: (sc: number, mx: number) => `✅ Saqlandi: ${sc}/${mx}. Talaba xabardor qilindi.`,
-    gradeStudentDM: (title: string, sc: number, mx: number, fb: string) =>
-      `🎉 Vazifangiz baholandi!\n\n📝 <b>${title}</b>\nBaho: <b>${sc}/${mx}</b>${fb ? `\nIzoh: ${fb}` : ""}`,
+    gradeStudentDM: (title: string, sc: number, mx: number, fb: string, xp?: number) =>
+      `🎉 Vazifangiz baholandi!\n\n📝 <b>${title}</b>\nBaho: <b>${sc}/${mx}</b>${xp ? `\n⚡ +${xp} XP` : ""}${fb ? `\nIzoh: ${fb}` : ""}`,
     gradeCancelled: "Bekor qilindi.",
     gradeNotFound: "Vazifa topilmadi.",
     gradePickStudent: "📝 <b>Talabani tanlang:</b>",
@@ -355,8 +355,9 @@ const T = {
     hwResubNo: "❌ Yo'q",
     hwResubCancelled: "OK 👍 Oldingi natija saqlanadi.",
     hwResubError: "❌ Qayta topshirishni boshlab bo'lmadi. Keyinroq urinib ko'ring.",
-    hwReceived: (mn: number, tn: number, preview?: string, expect?: string) =>
+    hwReceived: (mn: number, tn: number, preview?: string, expect?: string, xp?: number) =>
       `✅ <b>Vazifangiz qabul qilindi</b> · Modul ${mn} · V${tn}` +
+      (xp ? `\n⚡ +${xp} XP` : "") +
       (preview ? `\n📄 ${preview}` : "") +
       `\n⏳ Ustozlar odatda ${expect || "1–2 kun"} ichida baholaydi — natija shu yerga keladi.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
@@ -562,8 +563,8 @@ const T = {
     gradeVoiceNote: "🎧 Голосовой комментарий преподавателя:",
     gradeBadScore: (max: number) => `Балл должен быть от 0 до ${max}.`,
     gradeSaved: (sc: number, mx: number) => `✅ Сохранено: ${sc}/${mx}. Студенту отправлено уведомление.`,
-    gradeStudentDM: (title: string, sc: number, mx: number, fb: string) =>
-      `🎉 Ваша работа оценена!\n\n📝 <b>${title}</b>\nОценка: <b>${sc}/${mx}</b>${fb ? `\nКомментарий: ${fb}` : ""}`,
+    gradeStudentDM: (title: string, sc: number, mx: number, fb: string, xp?: number) =>
+      `🎉 Ваша работа оценена!\n\n📝 <b>${title}</b>\nОценка: <b>${sc}/${mx}</b>${xp ? `\n⚡ +${xp} XP` : ""}${fb ? `\nКомментарий: ${fb}` : ""}`,
     gradeCancelled: "Отменено.",
     gradeNotFound: "Работа не найдена.",
     gradePickStudent: "📝 <b>Выберите студента:</b>",
@@ -633,8 +634,9 @@ const T = {
     hwResubNo: "❌ Нет",
     hwResubCancelled: "OK 👍 Прежний результат сохранится.",
     hwResubError: "❌ Не удалось начать пересдачу. Попробуйте позже.",
-    hwReceived: (mn: number, tn: number, preview?: string, expect?: string) =>
+    hwReceived: (mn: number, tn: number, preview?: string, expect?: string, xp?: number) =>
       `✅ <b>Задание принято</b> · Модуль ${mn} · З${tn}` +
+      (xp ? `\n⚡ +${xp} XP` : "") +
       (preview ? `\n📄 ${preview}` : "") +
       `\n⏳ Преподаватели обычно проверяют за ${expect || "1–2 дня"} — результат придёт сюда.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
@@ -840,8 +842,8 @@ const T = {
     gradeVoiceNote: "🎧 Voice feedback from your teacher:",
     gradeBadScore: (max: number) => `Score must be between 0 and ${max}.`,
     gradeSaved: (sc: number, mx: number) => `✅ Saved: ${sc}/${mx}. Student notified.`,
-    gradeStudentDM: (title: string, sc: number, mx: number, fb: string) =>
-      `🎉 Your homework was graded!\n\n📝 <b>${title}</b>\nScore: <b>${sc}/${mx}</b>${fb ? `\nFeedback: ${fb}` : ""}`,
+    gradeStudentDM: (title: string, sc: number, mx: number, fb: string, xp?: number) =>
+      `🎉 Your homework was graded!\n\n📝 <b>${title}</b>\nScore: <b>${sc}/${mx}</b>${xp ? `\n⚡ +${xp} XP` : ""}${fb ? `\nFeedback: ${fb}` : ""}`,
     gradeCancelled: "Cancelled.",
     gradeNotFound: "Submission not found.",
     gradePickStudent: "📝 <b>Pick a student:</b>",
@@ -911,8 +913,9 @@ const T = {
     hwResubNo: "❌ No",
     hwResubCancelled: "OK 👍 Your previous score is kept.",
     hwResubError: "❌ Could not start resubmission. Please try again later.",
-    hwReceived: (mn: number, tn: number, preview?: string, expect?: string) =>
+    hwReceived: (mn: number, tn: number, preview?: string, expect?: string, xp?: number) =>
       `✅ <b>Submission received</b> · Module ${mn} · T${tn}` +
+      (xp ? `\n⚡ +${xp} XP` : "") +
       (preview ? `\n📄 ${preview}` : "") +
       `\n⏳ Teachers usually grade within ${expect || "1–2 days"} — the result will arrive here.`,
     hwTeacherNotify: (name: string, mn: number, tn: number, title: string) =>
@@ -1100,6 +1103,9 @@ async function buildProfileCard(admin: any, userId: string, locale: Locale): Pro
   // name:yes writes profiles.name/last_name). Lets any student fix their own display name so
   // the rating/leaderboard shows it correctly.
   const keyboard = { inline_keyboard: [
+    [{ text: p.btnProfStats, callback_data: "prof:stats" },
+     { text: p.btnProfBadges, callback_data: "prof:badges" }],
+    [{ text: p.btnProfGroup, callback_data: "prof:group" }],
     [{ text: p.btnProfOpen, url }],
     [{ text: p.btnEditName, callback_data: "name:edit" }],
   ] };
@@ -4141,7 +4147,7 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
   if (state.state === "grade_comment") {
     const submissionId = ctx.submission_id as string;
     const { data: sub } = await admin.from("homework_submissions")
-      .select("user_id, assignment_id").eq("id", submissionId).maybeSingle();
+      .select("user_id, assignment_id, score, submitted_at").eq("id", submissionId).maybeSingle();
     if (text === "/cancel") {
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
     if (sub) cacheInvalidateUser(sub.user_id);
@@ -4222,7 +4228,11 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
           // If the teacher left a voice note, the card flags it and the voice follows as its own
           // message (voice notes can't carry an inline keyboard, so the card keeps the buttons).
           const cardFeedback = feedback ? feedback : (voiceFileId ? tt.gradeVoiceNote : "");
-          await sendLongMessage(stu.telegram_id, tt.gradeStudentDM(csvEscapeHtml(title), score, max, csvEscapeHtml(cardFeedback)), {
+          // "+25 XP" only on the FIRST crossing into ≥9 — the +25 award (ref_key hw_score:<assignment_id>)
+          // is idempotent, so a re-grade of an already-≥9 submission earns nothing and must not claim XP.
+          const priorScore = (sub as any)?.score ?? null;
+          const gained25xp = (priorScore == null || priorScore < 9) && score >= 9;
+          await sendLongMessage(stu.telegram_id, tt.gradeStudentDM(csvEscapeHtml(title), score, max, csvEscapeHtml(cardFeedback), gained25xp ? 25 : undefined), {
             inline_keyboard: rows,
           });
           if (voiceFileId) {
@@ -5240,7 +5250,7 @@ async function finalizePendingPost(
       + albumWarn);
 
     if (profile?.telegram_id) {
-      try { await sendMessage(Number(profile.telegram_id), t.hwReceived(mn, tn, undefined, undefined)); } catch (_e) { /* ~70% can't be DMed — the ✅ reaction is the receipt */ }
+      try { await sendMessage(Number(profile.telegram_id), t.hwReceived(mn, tn, undefined, undefined, nextAttempt === 1 ? 15 : undefined)); } catch (_e) { /* ~70% can't be DMed — the ✅ reaction is the receipt */ }
     }
     await notifyTeachersOfSubmission(admin, profile || { id: pending.user_id }, pending.group_id, mn, tn, aTitle, messageUrl, upserted.id, assignmentId, moduleId);
     cacheInvalidateUser(pending.user_id);
@@ -5967,7 +5977,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
         const moreHint = { uz: "📎 Yana rasm/video/PDF yoki havola yuborsangiz — shu topshiriqqa qo'shiladi (jami 10 tagacha, 5 daqiqa ichida).",
           ru: "📎 Ещё фото/видео/PDF или ссылка — добавятся к этой сдаче (до 10, в течение 5 минут).",
           en: "📎 More photos/videos/PDFs or links will be attached to this submission (up to 10, within 5 minutes)." }[locale];
-        const resp = await sendMessage(profile.telegram_id, t.hwReceived(mn, tn, preview, expectStr) + "\n" + moreHint);
+        const resp = await sendMessage(profile.telegram_id, t.hwReceived(mn, tn, preview, expectStr, nextAttempt === 1 ? 15 : undefined) + "\n" + moreHint);
         if (!resp.ok) {
           const errTxt = await resp.text().catch(() => "");
           console.error("hw:group:student-dm-fail", JSON.stringify({ profile_id: profile.id, status: resp.status, err: errTxt.slice(0, 200) }));
