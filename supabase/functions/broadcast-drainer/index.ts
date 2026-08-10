@@ -17,6 +17,24 @@ const MAX_ATTEMPTS = 5;
 const CLAIM_LEASE_MS = 90_000;
 const BATCH = 100;
 
+// Internal-secret check via the Vault RPC (single source of truth) with a cached value that is
+// re-fetched on mismatch — see the handler. Standardized to match notify-homework-submission so a
+// Vault rotation covers this function too (it previously compared against the INTERNAL_FN_SECRET env
+// var, which could diverge from Vault after a rotation without a redeploy).
+const __admin = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+let __sec: string | null = null;
+let __lastFetch = 0;
+async function __internalSecret(force = false): Promise<string> {
+  const now = Date.now();
+  // Debounce the forced re-fetch to ≤1 RPC / 15s (verify_jwt=false endpoint — bound amplification).
+  if (__sec && (!force || now - __lastFetch < 15_000)) return __sec;
+  __lastFetch = now;
+  const { data, error } = await __admin.rpc("internal_fn_secret");
+  if (error) throw error;
+  __sec = data as string;
+  return __sec;
+}
+
 type Locale = "uz" | "ru" | "en";
 function normLocale(l: string | null): Locale {
   return l === "ru" || l === "en" ? l : "uz";
@@ -38,14 +56,18 @@ async function tg(method: string, body: unknown): Promise<{ ok: boolean; error: 
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-  if (req.headers.get("x-internal-secret") !== Deno.env.get("INTERNAL_FN_SECRET")) {
+  // Rotation-safe secret check: re-fetch once on mismatch to drop a stale cached value before rejecting.
+  const __p = req.headers.get("x-internal-secret");
+  let __s = await __internalSecret();
+  if (!__p || __p !== __s) __s = await __internalSecret(true);
+  if (!__p || __p !== __s) {
     return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   if (!BOT_TOKEN) {
     return new Response(JSON.stringify({ ok: false, error: "bot not configured" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
-  const admin = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const admin = __admin;
   const nowIso = new Date().toISOString();
   const claimCutoff = new Date(Date.now() - CLAIM_LEASE_MS).toISOString();
   const leaseFilter = `last_attempt_at.is.null,last_attempt_at.lt.${claimCutoff}`;
