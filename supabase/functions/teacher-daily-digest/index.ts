@@ -47,14 +47,57 @@ function fmtDur(min: number, loc: Loc): string {
 }
 const medal = (r?: number) => (r === 1 ? "🥇" : r === 2 ? "🥈" : r === 3 ? "🥉" : r ? `#${r}` : "—");
 
-async function sendTg(chatId: number, text: string, url?: string): Promise<boolean> {
+// --- Daily group board (per-group student leaderboards appended to the digest) ---
+type BoardRow = { board: "alltime" | "weekly"; rank: number; first_name: string; last_initial: string; xp: number; level: number; current_streak: number };
+type Btn = { text: string; url?: string; web_app?: { url: string } };
+const nm = (r: BoardRow) => `${r.first_name}${r.last_initial ? " " + r.last_initial + "." : ""}`;
+const actPct = (s: { active_students: number; total_students: number }) =>
+  (s.total_students > 0 ? Math.round((s.active_students / s.total_students) * 100) : 0);
+type GroupCard = { name: string; stats: any; weekly: BoardRow[]; alltime: BoardRow[] };
+const BL: Record<Loc, { groups: string; week: string; all: string; noWeek: string; faol: string; tug: string; nishon: string; kut: string; btn: string; moreGroups: string }> = {
+  uz: { groups: "📊 <b>Guruh reytingi</b>", week: "🔥 Shu hafta", all: "🏆 Umumiy", noWeek: "🔥 Shu hafta: hali XP yig'ilmagan", faol: "faol", tug: "tugallanish", nishon: "nishon", kut: "kutilmoqda", btn: "📊 Guruh reytingi", moreGroups: "guruh — ilovada to'liq" },
+  ru: { groups: "📊 <b>Рейтинг группы</b>", week: "🔥 Эта неделя", all: "🏆 Общий", noWeek: "🔥 Эта неделя: пока нет XP", faol: "активны", tug: "прогресс", nishon: "наград", kut: "на проверке", btn: "📊 Рейтинг группы", moreGroups: "групп — полностью в приложении" },
+  en: { groups: "📊 <b>Group board</b>", week: "🔥 This week", all: "🏆 All-time", noWeek: "🔥 This week: no XP yet", faol: "active", tug: "completion", nishon: "badges", kut: "pending", btn: "📊 Group board", moreGroups: "more groups — full board in the app" },
+};
+// One group's block: compact stats line + weekly top-5 (+XP earned this week) + all-time top-5.
+function boardBlock(groupName: string, s: any, weekly: BoardRow[], alltime: BoardRow[], loc: Loc): string {
+  const b = BL[loc];
+  const lines = [
+    `📊 <b>${escHtml(groupName)}</b>`,
+    `${s.active_students} ${b.faol} (${actPct(s)}%) · ${b.tug} ${s.avg_completion_pct}% · ${s.badges_earned} ${b.nishon} · ${s.pending_homework} ${b.kut}`,
+  ];
+  if (weekly.length) {
+    lines.push(b.week + ":");
+    for (const r of weekly.slice(0, 5)) lines.push(`${medal(r.rank)} ${escHtml(nm(r))} +${r.xp} XP`);
+  } else {
+    lines.push(b.noWeek);
+  }
+  if (alltime.length) {
+    lines.push(b.all + ":");
+    for (const r of alltime.slice(0, 5)) lines.push(`${medal(r.rank)} ${escHtml(nm(r))} ${r.xp} XP`);
+  }
+  return lines.join("\n");
+}
+// The board as its OWN message (capped to 3 groups in text — the rest live in the Mini App), so a
+// board/length fault can never suppress the core teacher report it follows.
+function boardMessage(cards: GroupCard[], loc: Loc): string {
+  const b = BL[loc];
+  const shown = cards.slice(0, 3);
+  const out = [b.groups];
+  for (const c of shown) out.push("", boardBlock(c.name, c.stats, c.weekly, c.alltime, loc));
+  if (cards.length > shown.length) out.push("", `… +${cards.length - shown.length} ${b.moreGroups}`);
+  return out.join("\n");
+}
+const BOARD_URL = `${SITE_URL}/tg/group-board`;
+
+async function sendTg(chatId: number, text: string, buttons?: Btn[][]): Promise<boolean> {
   try {
     const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true,
-        ...(url ? { reply_markup: { inline_keyboard: [[{ text: "👤 Profil / Profile", url }]] } } : {}),
+        ...(buttons && buttons.length ? { reply_markup: { inline_keyboard: buttons } } : {}),
       }),
     });
     const jr = await r.json().catch(() => ({}));
@@ -103,6 +146,44 @@ Deno.serve(async (req) => {
     locById[p.id] = (["uz", "ru", "en"].includes(p.preferred_locale) ? p.preferred_locale : "uz") as Loc;
   }
 
+  // --- Group board data (kill-switch: platform_settings.group_board.digest_enabled). If the row is
+  // absent the migration hasn't applied yet (RPCs may not exist) → board stays off, digest unchanged.
+  let boardEnabled = false;
+  const boardByTeacher: Record<string, { name: string; stats: any; weekly: BoardRow[]; alltime: BoardRow[] }[]> = {};
+  const allGroupCards: { name: string; stats: any; weekly: BoardRow[]; alltime: BoardRow[] }[] = [];
+  try {
+    const { data: gbFlag } = await admin.from("platform_settings").select("value").eq("key", "group_board").maybeSingle();
+    boardEnabled = !!gbFlag && (gbFlag.value as any)?.digest_enabled !== false;
+  } catch { /* board optional */ }
+  if (boardEnabled) {
+    try {
+      const { data: grpRows } = await admin.from("groups").select("id, name, course_id, teacher_id").not("teacher_id", "is", null);
+      const groups = ((grpRows || []) as any[]);
+      const courseIds = [...new Set(groups.map((g) => g.course_id).filter(Boolean))];
+      const statsById: Record<string, any> = {};
+      for (const cid of courseIds) {
+        const { data } = await admin.rpc("admin_course_group_stats", { _course_id: cid, _window_days: 7 });
+        for (const r of ((data || []) as any[])) statsById[r.group_id] = r;
+      }
+      for (const g of groups) {
+        const st = statsById[g.id];
+        if (!st) continue; // group has no course / no stats row
+        const { data: bd } = await admin.rpc("group_student_leaderboard", { _group_id: g.id, _limit: 10 });
+        const brows = ((bd || []) as BoardRow[]);
+        const card = {
+          name: g.name, stats: st,
+          weekly: brows.filter((r) => r.board === "weekly").sort((a, b) => a.rank - b.rank),
+          alltime: brows.filter((r) => r.board === "alltime").sort((a, b) => a.rank - b.rank),
+        };
+        allGroupCards.push(card);
+        (boardByTeacher[g.teacher_id] ||= []).push(card);
+      }
+    } catch (e) {
+      boardEnabled = false;
+      await admin.from("admin_actions").insert({ actor_user_id: null, action: "group_board_build_error", details: { error: String(e) } }).then(() => {}, () => {});
+    }
+  }
+
   const T: Record<Loc, any> = {
     uz: {
       title: (n: string) => `📊 <b>Bugungi hisobot</b> — ${n}`,
@@ -148,7 +229,7 @@ Deno.serve(async (req) => {
     },
   };
 
-  let sent = 0, failed = 0;
+  let sent = 0, failed = 0, boardSent = 0, boardFailed = 0;
   for (const t of rows) {
     if (!t.telegram_id) continue;
     try {
@@ -180,7 +261,8 @@ Deno.serve(async (req) => {
     }).then(() => {}, () => {});
     const url = `${SITE_URL}/auth/magic?t=${token}`;
 
-    const ok = await sendTg(Number(t.telegram_id), lines.join("\n"), url);
+    // Core report + Profil (url) button only — never at risk from the board's web_app button/length.
+    const ok = await sendTg(Number(t.telegram_id), lines.join("\n"), [[{ text: "👤 Profil / Profile", url }]]);
     if (ok) {
       sent++;
       await admin.from("notifications_log").insert({
@@ -194,6 +276,16 @@ Deno.serve(async (req) => {
         actor_user_id: null, action: "teacher_daily_report_failed",
         details: { teacher_id: t.teacher_id, telegram_id: t.telegram_id },
       }).then(() => {}, () => {});
+    }
+
+    // The group board is a SEPARATE message (copy-paste-ready for the group) with the Mini App
+    // button — isolated so a board fault can't suppress the core report sent above.
+    const cards = boardEnabled ? (boardByTeacher[t.teacher_id] || []) : [];
+    if (cards.length) {
+      try {
+        const bok = await sendTg(Number(t.telegram_id), boardMessage(cards, loc), [[{ text: BL[loc].btn, web_app: { url: BOARD_URL } }]]);
+        if (bok) boardSent++; else boardFailed++;
+      } catch { boardFailed++; } // board accounting stays independent of the core report's sent/failed
     }
     } catch (e) {
       failed++;
@@ -215,25 +307,42 @@ Deno.serve(async (req) => {
   }
   adminLines.push("", `📤 ${sent} ustozga yuborildi${failed ? ` · ${failed} xato` : ""}.`);
 
+  // Separate admin board message (groups roll-up, most-active-first) + Mini App button — isolated
+  // from the core roll-up above, same reasoning as the teacher board.
+  let adminBoardMsg = "";
+  if (boardEnabled && allGroupCards.length) {
+    const sortedGroups = [...allGroupCards].sort((a, b) => actPct(b.stats) - actPct(a.stats));
+    const gl = ["📊 <b>Guruhlar</b> (faollik bo'yicha):"];
+    for (const c of sortedGroups.slice(0, 25)) {
+      const top = c.weekly[0] || c.alltime[0];
+      gl.push(
+        `• <b>${escHtml(c.name)}</b>: ${c.stats.active_students}/${c.stats.total_students} faol (${actPct(c.stats)}%)` +
+        (top ? ` · 🔥 ${escHtml(nm(top))}` : ""));
+    }
+    adminBoardMsg = gl.join("\n");
+  }
+
   const { data: adminRoles } = await admin.from("user_roles").select("user_id").in("role", ["admin", "superadmin"]);
   const adminIds = ((adminRoles || []) as any[]).map((r) => r.user_id);
   let adminSent = 0;
   if (adminIds.length) {
     const { data: admins } = await admin.from("profiles").select("id, telegram_id").in("id", adminIds).not("telegram_id", "is", null);
     const seen = new Set<number>();
+    const adminBoardBtn: Btn[][] = [[{ text: "📊 Guruh reytingi", web_app: { url: BOARD_URL } }]];
     for (const a of ((admins || []) as any[])) {
       const cid = Number(a.telegram_id);
       if (seen.has(cid)) continue;
       seen.add(cid);
       if (await sendTg(cid, adminLines.join("\n"))) adminSent++;
       else await admin.from("admin_actions").insert({ actor_user_id: null, action: "teacher_daily_admin_send_failed", details: { telegram_id: cid } }).then(() => {}, () => {});
+      if (adminBoardMsg) { if (await sendTg(cid, adminBoardMsg, adminBoardBtn)) boardSent++; else boardFailed++; }
     }
   }
 
   await admin.from("admin_actions").insert({
     actor_user_id: null, action: "teacher_daily_report_run",
-    details: { teachers: rows.length, sent, failed, admin_sent: adminSent, at: new Date().toISOString() },
+    details: { teachers: rows.length, sent, failed, admin_sent: adminSent, board_enabled: boardEnabled, groups: allGroupCards.length, board_sent: boardSent, board_failed: boardFailed, at: new Date().toISOString() },
   }).then(() => {}, () => {});
 
-  return new Response(JSON.stringify({ ok: true, teachers: rows.length, sent, failed, admin_sent: adminSent }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  return new Response(JSON.stringify({ ok: true, teachers: rows.length, sent, failed, admin_sent: adminSent, board_sent: boardSent, board_failed: boardFailed }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 });

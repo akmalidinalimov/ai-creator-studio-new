@@ -127,6 +127,11 @@ verify_jwt = false
 [functions.tg-broadcast]
 verify_jwt = false
 
+# tg-group-board: Telegram Mini App entry point for the daily group board (stats + student leaderboards).
+# verify_jwt=false — authenticates via Telegram-signed initData, then checks admin/teacher role.
+[functions.tg-group-board]
+verify_jwt = false
+
 # claude-agent: task-queue API for the owner's laptop Claude Code poller. Gated by x-claude-agent-secret
 # (CLAUDE_AGENT_SECRET env) — NOT a user session. Dormant until that secret is set. heartbeat/claim/report.
 [functions.claude-agent]
