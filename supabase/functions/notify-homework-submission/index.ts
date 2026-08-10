@@ -29,8 +29,13 @@ const MSG = {
 
 const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 let __sec: string | null = null;
-async function __internalSecret(): Promise<string> {
-  if (__sec) return __sec;
+let __lastFetch = 0;
+async function __internalSecret(force = false): Promise<string> {
+  const now = Date.now();
+  // Cache the Vault secret, but allow a forced re-fetch on mismatch (rotation self-heal). Debounce the
+  // forced path to ≤1 RPC / 15s so a wrong-secret flood on this verify_jwt=false endpoint can't amplify.
+  if (__sec && (!force || now - __lastFetch < 15_000)) return __sec;
+  __lastFetch = now;
   const { data, error } = await __admin.rpc("internal_fn_secret");
   if (error) throw error;
   __sec = data as string;
@@ -40,7 +45,10 @@ async function __internalSecret(): Promise<string> {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const __p = req.headers.get("x-internal-secret");
-  const __s = await __internalSecret();
+  let __s = await __internalSecret();
+  // Cached for the instance's lifetime; if internal_fn_secret was rotated, a warm instance holds the
+  // stale value and would 403 valid cron calls — re-fetch once on mismatch before rejecting (self-heals).
+  if (!__p || __p !== __s) __s = await __internalSecret(true);
   if (!__p || __p !== __s) {
     return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
