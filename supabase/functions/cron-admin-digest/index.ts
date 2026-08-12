@@ -2,6 +2,7 @@
 // Designed to be invoked every 30 minutes by the same scheduler as cron-engagement.
 // Uses notification_templates(admin_daily_brief, locale) for message body.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -26,14 +27,6 @@ const FALLBACK: Record<Locale, string> = {
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 
 const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-let __sec: string | null = null;
-async function __internalSecret(): Promise<string> {
-  if (__sec) return __sec;
-  const { data, error } = await __admin.rpc("internal_fn_secret");
-  if (error) throw error;
-  __sec = data as string;
-  return __sec;
-}
 
 function tg(method: string, body: unknown) {
   return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
@@ -140,9 +133,7 @@ async function computeMetrics(admin: any) {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-  const __p = req.headers.get("x-internal-secret");
-  const __s = await __internalSecret();
-  if (!__p || __p !== __s) {
+  if (!(await verifyInternalSecret(req, __admin))) {
     return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   if (!BOT_TOKEN) return new Response(JSON.stringify({ error: "bot not configured" }), { status: 200, headers: corsHeaders });
