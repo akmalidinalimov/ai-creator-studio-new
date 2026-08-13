@@ -21,7 +21,7 @@ import { toast } from "sonner";
 import { Plus, Pencil, Trash2, MoreVertical } from "lucide-react";
 import { getSetting } from "@/lib/settings";
 
-interface ModuleRow { id: string; title: string; course_id: string; courses?: { title: string } }
+interface ModuleRow { id: string; title: string; position: number; course_id: string; courses?: { title: string } }
 interface Assignment {
   id: string; module_id: string; title: string; description: string | null;
   prompt_uz: string | null; prompt_ru: string | null; prompt_en: string | null;
@@ -48,13 +48,14 @@ export default function AdminHomework() {
   const [newModule, setNewModule] = useState<{ title: string; course_id: string } | null>(null);
   const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
   const [courseFilter, setCourseFilter] = useState<string>("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const load = async () => {
     const { data: cs } = await supabase.from("courses").select("id, title").order("created_at");
     setCourses((cs as any) || []);
     const { data: ms } = await supabase
       .from("modules")
-      .select("id, title, course_id, courses(title)")
+      .select("id, title, position, course_id, courses(title)")
       .order("position");
     setModules((ms as any) || []);
 
@@ -186,6 +187,21 @@ export default function AdminHomework() {
 
   const shownModules = modules.filter((m) => !courseFilter || m.course_id === courseFilter);
 
+  const toggleSelect = (id: string) =>
+    setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  // Bulk delete selected tasks + any SAP sub-tasks of a selected parent.
+  const bulkDelete = async () => {
+    const ids = Array.from(selected);
+    if (!ids.length) return;
+    if (!confirm(`${ids.length} ta vazifa (va tanlangan vazifalarning SAP'lari) o'chiriladi. Davom etamizmi?`)) return;
+    await supabase.from("homework_assignments").delete().in("parent_id", ids);
+    const { error } = await supabase.from("homework_assignments").delete().in("id", ids);
+    if (error) { toast.error(error.message); return; }
+    toast.success(`${ids.length} ta o'chirildi`);
+    setSelected(new Set());
+    load();
+  };
+
   return (
     <PageShell>
       <div className="max-w-4xl space-y-6">
@@ -212,6 +228,17 @@ export default function AdminHomework() {
               <Plus className="h-4 w-4 mr-1" /> Yangi modul
             </Button>
           </div>
+          {selected.size > 0 && (
+            <div className="flex items-center justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+              <span className="text-sm font-medium">{selected.size} ta vazifa tanlandi</span>
+              <div className="flex gap-2">
+                <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>Bekor qilish</Button>
+                <Button size="sm" variant="destructive" onClick={bulkDelete}>
+                  <Trash2 className="h-4 w-4 mr-1" /> Tanlanganni o'chirish
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="space-y-4">
@@ -233,7 +260,11 @@ export default function AdminHomework() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="text-xs text-muted-foreground">{m.courses?.title}</div>
-                    <div className="font-semibold">{m.title}</div>
+                    <div className="font-semibold">
+                      <span className="text-primary">{m.position + 1}-MODUL</span>
+                      <span className="font-normal text-muted-foreground"> · {m.title}</span>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">Botda talabalar buni «{m.position + 1}-MODUL» deb ko'radi</div>
                     {stat && (
                       <div className="text-xs text-muted-foreground mt-1">
                         Baholangan: {stat.submitted_students} talaba
@@ -256,7 +287,8 @@ export default function AdminHomework() {
                       const nextSap = (saps.reduce((mx, s) => Math.max(mx, s.sap_number || 0), 0) || 0) + 1;
                       return (
                         <div key={a.id} className="space-y-2">
-                          <div className="flex items-center gap-3 border rounded-md px-3 py-2">
+                          <div className={`flex items-center gap-3 border rounded-md px-3 py-2 ${selected.has(a.id) ? "ring-1 ring-destructive/40 bg-destructive/5" : ""}`}>
+                            <input type="checkbox" checked={selected.has(a.id)} onChange={() => toggleSelect(a.id)} className="h-4 w-4 accent-primary cursor-pointer shrink-0" aria-label="Tanlash" />
                             <Badge variant={a.is_active ? "default" : "secondary"}>V{a.task_number}</Badge>
                             <div className="flex-1 min-w-0">
                               <div className="text-sm font-medium truncate">{a.title}</div>
@@ -296,7 +328,8 @@ export default function AdminHomework() {
                           {saps.length > 0 && (
                             <div className="pl-6 space-y-2 border-l-2 ml-3">
                               {saps.map((s) => (
-                                <div key={s.id} className="flex items-center gap-3 border rounded-md px-3 py-2 bg-muted/20">
+                                <div key={s.id} className={`flex items-center gap-3 border rounded-md px-3 py-2 bg-muted/20 ${selected.has(s.id) ? "ring-1 ring-destructive/40" : ""}`}>
+                                  <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggleSelect(s.id)} className="h-4 w-4 accent-primary cursor-pointer shrink-0" aria-label="Tanlash" />
                                   <Badge variant={s.is_active ? "default" : "secondary"} className="bg-primary/80">
                                     V{a.task_number}.S{s.sap_number}
                                   </Badge>
@@ -458,7 +491,7 @@ function AssignForm({ initial, moduleId, taskNumber, isSap, sapNumber, defaultMa
             <Select value={f.module_id} onValueChange={(v) => setF((s) => ({ ...s, module_id: v, task_number: nextTaskNumberFor(v) }))}>
               <SelectTrigger><SelectValue placeholder="Modulni tanlang" /></SelectTrigger>
               <SelectContent>
-                {courseModules.map((m) => <SelectItem key={m.id} value={m.id}>{m.title}</SelectItem>)}
+                {courseModules.map((m) => <SelectItem key={m.id} value={m.id}>{m.position + 1}-MODUL · {m.title}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
