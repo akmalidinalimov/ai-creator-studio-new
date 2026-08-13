@@ -661,7 +661,7 @@ function EngagementTab({ userId }: { userId: string }) {
         supabase.from("leaderboard_cache").select("*").eq("user_id", userId).maybeSingle(),
         supabase.from("auth_events").select("event, created_at, ip").eq("user_id", userId).gte("created_at", since30).order("created_at", { ascending: false }).limit(50),
         supabase.from("nudge_log").select("*").eq("profile_id", userId).order("sent_at", { ascending: false }).limit(30),
-        supabase.from("user_badges").select("earned_at, badges:badge_id(code, name_en, icon)").eq("user_id", userId).order("earned_at", { ascending: false }),
+        supabase.from("user_badges").select("earned_at, badges!inner(code, name_en, icon)").eq("user_id", userId).order("earned_at", { ascending: false }),
         supabase.from("daily_watch_summary").select("watch_date, total_seconds").eq("user_id", userId).gte("watch_date", since90),
       ]);
       setStreak(s); setLeaderboard(lb); setLogins(ae || []); setNudges(nl || []); setBadges(ub || []);

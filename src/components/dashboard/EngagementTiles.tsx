@@ -30,7 +30,9 @@ export function EngagementTiles() {
         setStreak(s?.current_streak || 0);
         const row: any = Array.isArray(g) ? g[0] : (g as any);
         if (row) setGoal({ target: row.target ?? 1, done: row.done ?? 0 });
-        setBadgeStats({ earned: (mine || []).length, total: (badges || []).length });
+        // Count only badges that still exist in the catalog (exclude imported orphan awards → no >total inflation).
+        const catalogIds = new Set((badges || []).map((b: any) => b.id));
+        setBadgeStats({ earned: (mine || []).filter((b: any) => catalogIds.has(b.badge_id)).length, total: (badges || []).length });
 
         // Toast newly-earned badges (last 1 hour)
         const recent = (mine || []).filter((b: any) => new Date(b.earned_at).getTime() > Date.now() - 3600_000);
