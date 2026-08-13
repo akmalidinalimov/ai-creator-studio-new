@@ -14,8 +14,9 @@
 --     20260711150000_group_rating_matches_account_points.sql. community XP flows UNSCOPED into
 --     user_group_rating_xp (like daily_active), so it must be scoped to the current group at the SOURCE.
 --   * Daily cap — <= daily_cap (default 10) community XP per student per Tashkent-day, HARD (an award
---     that would cross the cap is skipped, never overshoots). Because events are stamped
---     created_at = the message's sent_at, the per-day cap is accurate even for the historical backfill.
+--     that would cross the cap is skipped, never overshoots). Concurrent invocations are serialized by
+--     an advisory xact lock so the check-then-act cap can't be jointly overshot. Because events are
+--     stamped created_at = the message's sent_at, the per-day cap is accurate even for the backfill.
 --   * Help dedup — one help per (helper, peer, day), enforced for free by ref_key `chelp:<peer>:<day>`
 --     + xp_events' UNIQUE (user_id, ref_key). A second reply to the same peer that day is a no-op.
 --   * Question dedup — ONCE per (student, day) via ref_key `cq:<day>`. has_ustoz is a loose substring
@@ -49,6 +50,10 @@ declare
   _key text := '';      -- current (student, day) group key
   _aw int := 0; _cp int := 0;
 begin
+  -- Serialize concurrent invocations (hourly cron vs. a manual re-run) so the check-then-act daily
+  -- cap below can't be jointly overshot across distinct ref_keys. Released automatically at commit.
+  perform pg_advisory_xact_lock(hashtext('reconcile_community_xp'));
+
   select coalesce((value->>'help')::int, 3),
          coalesce((value->>'question')::int, 2),
          coalesce((value->>'daily_cap')::int, 10)
