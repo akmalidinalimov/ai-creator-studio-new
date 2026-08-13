@@ -2,6 +2,7 @@
 // submission has been ungraded for 24h+. Up to 3 reminders, 24h apart.
 // Mirrors notify-homework-submission for auth + Telegram send pattern.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -26,14 +27,6 @@ async function sendMessage(chatId: number, text: string, inlineKeyboard?: any[][
 }
 
 const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-let __sec: string | null = null;
-async function __internalSecret(): Promise<string> {
-  if (__sec) return __sec;
-  const { data, error } = await __admin.rpc("internal_fn_secret");
-  if (error) throw error;
-  __sec = data as string;
-  return __sec;
-}
 
 type Locale = "uz" | "ru" | "en";
 const normLocale = (c?: string | null): Locale => {
@@ -83,9 +76,7 @@ function fullName(p: any): string {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-  const __p = req.headers.get("x-internal-secret");
-  const __s = await __internalSecret();
-  if (!__p || __p !== __s) {
+  if (!(await verifyInternalSecret(req, __admin))) {
     return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   if (!BOT_TOKEN) {

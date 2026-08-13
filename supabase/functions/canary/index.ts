@@ -3,6 +3,7 @@
 // Alerts only on a healthy->down transition and re-alerts hourly while down
 // (state stored in app_settings) so an outage doesn't spam.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -23,11 +24,11 @@ async function tg(chatId: number, text: string) {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-  if (req.headers.get("x-internal-secret") !== Deno.env.get("INTERNAL_FN_SECRET")) {
+  const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  // Rotation-safe: re-fetches internal_fn_secret() on mismatch (was a raw env-var compare → env/Vault drift risk).
+  if (!(await verifyInternalSecret(req, admin))) {
     return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
-
-  const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const anon = Deno.env.get("SUPABASE_ANON_KEY")!;
   const url = Deno.env.get("SUPABASE_URL")!;
   const failures: string[] = [];
