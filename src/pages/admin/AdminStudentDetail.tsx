@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Copy, ExternalLink, BookOpen, ClipboardCheck, MessageSquare, Clock, Flame, Trophy } from "lucide-react";
+import { ArrowLeft, Copy, ExternalLink, BookOpen, ClipboardCheck, MessageSquare, Clock, Flame, Trophy, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 
 type Profile = {
@@ -22,6 +22,7 @@ type Profile = {
   telegram_onboarded_at: string | null;
   group_id: string | null;
   archived_at: string | null;
+  hide_from_group_boards?: boolean | null;
   created_at: string;
   groups?: { id: string; name: string; course_id?: string | null } | null;
 };
@@ -57,6 +58,7 @@ export default function AdminStudentDetail() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [role, setRole] = useState<string>("student");
   const [loading, setLoading] = useState(true);
+  const [savingVis, setSavingVis] = useState(false);
   // Course scoping: which course this student's stats are shown for, plus the id-sets used to
   // filter every per-lesson / per-assignment read so the page is per-course (not cross-course).
   const [courseId, setCourseId] = useState<string | null>(null);
@@ -129,6 +131,19 @@ export default function AdminStudentDetail() {
 
   const copy = (s: string) => { navigator.clipboard.writeText(s); toast.success("Nusxalandi"); };
 
+  // Hide/show this student on the PUBLIC group boards (weekly leaderboard + homework spotlight).
+  // Does not affect XP, the /leaderboard page, or the teacher/admin digest — only the group-posted names.
+  const toggleBoardVisibility = async () => {
+    if (!profile || savingVis) return;
+    const next = !profile.hide_from_group_boards;
+    setSavingVis(true);
+    const { error } = await supabase.rpc("set_board_visibility" as any, { _student: profile.id, _hidden: next });
+    setSavingVis(false);
+    if (error) { toast.error("Xatolik: " + error.message); return; }
+    setProfile({ ...profile, hide_from_group_boards: next });
+    toast.success(next ? "Guruh reytinglaridan yashirildi" : "Guruh reytinglarida ko'rsatiladi");
+  };
+
   return (
     <PageShell>
       <div className="space-y-4">
@@ -161,13 +176,31 @@ export default function AdminStudentDetail() {
                     <Badge variant="outline" className="text-muted-foreground">Telegram yo'q</Badge>
                   )}
                   {profile.status === "archived" && <Badge variant="destructive">Arxivlangan</Badge>}
+                  {profile.hide_from_group_boards && (
+                    <Badge variant="outline" className="bg-amber-500/10 text-amber-700 border-amber-500/30 gap-1">
+                      <EyeOff className="h-3 w-3" /> Reytingda yashirilgan
+                    </Badge>
+                  )}
                 </div>
               </div>
             </div>
-            <div className="text-xs text-muted-foreground space-y-0.5 text-right">
-              <div>Qo'shilgan: {fmtDate(profile.created_at)}</div>
-              {profile.telegram_username && <div>@{profile.telegram_username}</div>}
-              {profile.telegram_id && <div>TG ID: {profile.telegram_id}</div>}
+            <div className="flex flex-col items-end gap-2">
+              <div className="text-xs text-muted-foreground space-y-0.5 text-right">
+                <div>Qo'shilgan: {fmtDate(profile.created_at)}</div>
+                {profile.telegram_username && <div>@{profile.telegram_username}</div>}
+                {profile.telegram_id && <div>TG ID: {profile.telegram_id}</div>}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={toggleBoardVisibility}
+                disabled={savingVis}
+                className="gap-1.5"
+                title="Guruhga yuboriladigan reyting/spotlight postlarida talaba ismini ko'rsatish yoki yashirish"
+              >
+                {profile.hide_from_group_boards ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                {profile.hide_from_group_boards ? "Reytingda ko'rsatish" : "Reytingdan yashirish"}
+              </Button>
             </div>
           </div>
         </Card>
