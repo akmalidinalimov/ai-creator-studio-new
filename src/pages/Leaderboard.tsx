@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
 import { Trophy } from "lucide-react";
+import { TierProgress, tierBadge, type TierInfo } from "@/components/TierProgress";
 
 /* Group-only rating: each student sees ONLY their own group, ranked by XP.
    No cross-group / whole-course mixing (owner decision, 2026-07-06). */
@@ -18,6 +19,7 @@ export default function Leaderboard() {
   const { user } = useAuth();
   const { t } = useTranslation();
   const [rows, setRows] = useState<Row[]>([]);
+  const [tierInfo, setTierInfo] = useState<TierInfo | null>(null);
   const [groupName, setGroupName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -36,9 +38,15 @@ export default function Leaderboard() {
         ]);
         if (boardRes.error) throw boardRes.error;
         if (cancelled) return;
-        setRows(((boardRes.data as any) || []) as Row[]);
+        const board = ((boardRes.data as any) || []) as Row[];
+        setRows(board);
         const pub: any = Array.isArray(pubRes.data) ? pubRes.data[0] : pubRes.data;
         setGroupName(pub?.group_name || null);
+        // Tier ladder (from my total) → my "almost there" hook + per-row badges.
+        const myXp = board.find((r) => r.is_me)?.total_xp ?? 0;
+        supabase.rpc("xp_tier_for" as any, { _total: myXp }).then(({ data: ti }) => {
+          if (!cancelled && ti) setTierInfo(ti as TierInfo);
+        });
       } catch (e) {
         if (cancelled) return;
         console.error("[Leaderboard] load failed", e);
@@ -64,6 +72,8 @@ export default function Leaderboard() {
           </h1>
         </div>
         <p className="text-sm text-muted-foreground">{t("profile.groupDesc")}</p>
+
+        {tierInfo && <TierProgress info={tierInfo} />}
 
         <Card className="overflow-hidden shadow-soft">
           <table className="w-full text-sm">
@@ -92,19 +102,23 @@ export default function Leaderboard() {
               {!loading && !error && rows.length === 0 && (
                 <tr><td colSpan={5} className="px-4 py-6 text-center text-muted-foreground">{t("profile.noGroup")}</td></tr>
               )}
-              {!error && rows.map((r) => (
+              {!error && rows.map((r) => {
+                const tb = tierBadge(r.total_xp, tierInfo?.tiers);
+                return (
                 <tr key={r.user_id} className={`border-t ${r.is_me ? "bg-primary/5 font-semibold" : ""}`}>
                   <td className="px-4 py-2.5 tabular-nums">
                     {r.rank === 1 ? "🥇" : r.rank === 2 ? "🥈" : r.rank === 3 ? "🥉" : r.rank}
                   </td>
                   <td className="px-4 py-2.5">
+                    {tb.emoji && <span title={tb.name} className="mr-1" aria-label={tb.name}>{tb.emoji}</span>}
                     {r.first_name} {r.last_initial ? r.last_initial + "." : ""}{r.is_me ? ` (${t("profile.you")})` : ""}
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums text-primary font-semibold">{r.total_xp}</td>
                   <td className="px-4 py-2.5 text-right tabular-nums">L{r.level}</td>
                   <td className="px-4 py-2.5 text-right tabular-nums">{r.current_streak || ""}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </Card>
