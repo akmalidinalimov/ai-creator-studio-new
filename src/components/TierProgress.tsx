@@ -13,7 +13,16 @@ export type TierInfo = {
   xp_to_next: number;
   progress: number; // 0..1 toward the next tier (1 when at max)
   is_max: boolean;
+  tiers?: { name: string; emoji: string; min_xp: number }[]; // full ladder (asc by min_xp)
 };
+
+/** Current tier badge for an arbitrary total, from the ladder (asc by min_xp). */
+export function tierBadge(total: number, tiers?: { name: string; emoji: string; min_xp: number }[]): { emoji: string; name: string } {
+  if (!tiers?.length) return { emoji: "", name: "" };
+  let cur = tiers[0];
+  for (const t of tiers) if (t.min_xp <= total) cur = t;
+  return { emoji: cur.emoji, name: cur.name };
+}
 
 /**
  * Prestige tier + "almost there" hook. Shown on the profile and dashboard.
