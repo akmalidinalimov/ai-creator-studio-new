@@ -1156,6 +1156,9 @@
     "hwPending": "baholanmoqda",
     "points": "ball",
     "minutes": "daqiqa",
+    "tierToNext": "{{xp}} XP {{tier}} gacha",
+    "tierMax": "Eng yuqori bosqich! 🎉",
+    "tierUp": "Yangi bosqich: {{tier}}! 🎉",
     "levelNames": [
       "Boshlovchi",
       "O'quvchi",

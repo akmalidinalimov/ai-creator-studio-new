@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Camera, Pencil, Settings as SettingsIcon, Share2 } from "lucide-react";
 import { toast } from "sonner";
 import TeacherProfile from "@/components/profile/TeacherProfile";
+import { TierProgress, type TierInfo } from "@/components/TierProgress";
 
 /* ------------------------------------------------------------------ types */
 
@@ -99,6 +100,7 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
   const [week, setWeek] = useState<{ day: string; minutes: number }[]>([]);
   const [xpWeeks, setXpWeeks] = useState<{ label: string; xp: number }[]>([]);
   const [homework, setHomework] = useState<HwRow[]>([]);
+  const [tierInfo, setTierInfo] = useState<TierInfo | null>(null);
   const [tab, setTab] = useState<Tab>("achievements");
   const [loading, setLoading] = useState(true);
   const [savingBio, setSavingBio] = useState(false);
@@ -141,6 +143,11 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
         setPub(pubRow ? { group_name: pubRow.group_name, teacher_name: pubRow.teacher_name } : null);
         const sRow: any = Array.isArray(sRes.data) ? sRes.data[0] : sRes.data;
         setStats(sRow || null);
+        if (sRow?.total_xp != null) {
+          supabase.rpc("xp_tier_for" as any, { _total: sRow.total_xp }).then(({ data: ti }) => {
+            if (!cancelled && ti) setTierInfo(ti as TierInfo);
+          });
+        }
         setGroup(((gRes.data as any) || []) as GroupRow[]);
         setBadges(((bRes.data as any) || []) as BadgeRow[]);
         setEarned(new Set((((ubRes.data as any) || []) as any[]).map((r) => r.badge_id)));
@@ -417,6 +424,9 @@ function StudentProfile({ userId, t, lng }: { userId: string | null; t: any; lng
             )}
           </div>
         </Card>
+
+        {/* prestige tier + "almost there" hook */}
+        {tierInfo && <TierProgress info={tierInfo} />}
 
         {/* ---------------- tabs ---------------- */}
         <div className="flex gap-1 border-b overflow-x-auto" role="tablist">
