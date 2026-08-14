@@ -1156,6 +1156,9 @@
     "hwPending": "being graded",
     "points": "pts",
     "minutes": "min",
+    "tierToNext": "{{xp}} XP to {{tier}}",
+    "tierMax": "Top tier! 🎉",
+    "tierUp": "New tier: {{tier}}! 🎉",
     "levelNames": [
       "Beginner",
       "Learner",

@@ -1156,6 +1156,9 @@
     "hwPending": "на проверке",
     "points": "баллов",
     "minutes": "минут",
+    "tierToNext": "{{xp}} XP до {{tier}}",
+    "tierMax": "Высший уровень! 🎉",
+    "tierUp": "Новый уровень: {{tier}}! 🎉",
     "levelNames": [
       "Новичок",
       "Ученик",

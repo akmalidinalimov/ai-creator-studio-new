@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ProgressRing } from "@/components/dashboard/ProgressRing";
 import { Flame, Target, Award, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
+import { TierProgress, type TierInfo } from "@/components/TierProgress";
 
 export function EngagementTiles() {
   const { user } = useAuth();
@@ -14,17 +15,19 @@ export function EngagementTiles() {
   const [streak, setStreak] = useState(0);
   const [goal, setGoal] = useState({ target: 1, done: 0 });
   const [badgeStats, setBadgeStats] = useState({ earned: 0, total: 0 });
+  const [tierInfo, setTierInfo] = useState<TierInfo | null>(null);
 
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
     (async () => {
       try {
-        const [{ data: s }, { data: g }, { data: badges }, { data: mine }] = await Promise.all([
+        const [{ data: s }, { data: g }, { data: badges }, { data: mine }, { data: xp }] = await Promise.all([
           supabase.from("streaks").select("current_streak").eq("user_id", user.id).maybeSingle(),
           supabase.rpc("daily_goal_progress", { uid: user.id }),
           supabase.from("badges").select("id"),
           supabase.from("user_badges").select("badge_id, earned_at").eq("user_id", user.id),
+          supabase.from("user_xp").select("total_xp").eq("user_id", user.id).maybeSingle(),
         ]);
         if (cancelled) return;
         setStreak(s?.current_streak || 0);
@@ -33,6 +36,19 @@ export function EngagementTiles() {
         // Count only badges that still exist in the catalog (exclude imported orphan awards → no >total inflation).
         const catalogIds = new Set((badges || []).map((b: any) => b.id));
         setBadgeStats({ earned: (mine || []).filter((b: any) => catalogIds.has(b.badge_id)).length, total: (badges || []).length });
+
+        // Prestige tier + "almost there" hook; celebrate a tier-up once (localStorage, like badges).
+        const totalXp = (xp as any)?.total_xp ?? 0;
+        const { data: ti } = await supabase.rpc("xp_tier_for" as any, { _total: totalXp });
+        if (!cancelled && ti) {
+          setTierInfo(ti as TierInfo);
+          const seenTier = Number(localStorage.getItem("seen_tier") || "0");
+          const idx = (ti as any).tier_index ?? 0;
+          if (seenTier > 0 && idx > seenTier) {
+            toast.success(`Yangi bosqich: ${(ti as any).tier_emoji} ${(ti as any).tier_name}! 🎉`);
+          }
+          localStorage.setItem("seen_tier", String(idx));
+        }
 
         // Toast newly-earned badges (last 1 hour)
         const recent = (mine || []).filter((b: any) => new Date(b.earned_at).getTime() > Date.now() - 3600_000);
@@ -70,7 +86,9 @@ export function EngagementTiles() {
   const goalDone = goal.done >= goal.target;
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+    <div className="space-y-3">
+      {tierInfo && <TierProgress info={tierInfo} />}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
       <Card className="p-4 shadow-soft flex items-center gap-3">
         <span className={`inline-flex items-center justify-center w-11 h-11 rounded-xl bg-muted ${streakTone}`}>
           <Flame className="h-5 w-5" />
@@ -101,6 +119,7 @@ export function EngagementTiles() {
           <ArrowRight className="h-4 w-4 text-muted-foreground" />
         </Card>
       </Link>
+      </div>
     </div>
   );
 }
