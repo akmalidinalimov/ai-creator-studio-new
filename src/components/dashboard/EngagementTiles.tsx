@@ -27,7 +27,7 @@ export function EngagementTiles() {
           supabase.rpc("daily_goal_progress", { uid: user.id }),
           supabase.from("badges").select("id"),
           supabase.from("user_badges").select("badge_id, earned_at").eq("user_id", user.id),
-          supabase.from("user_xp").select("total_xp").eq("user_id", user.id).maybeSingle(),
+          supabase.from("user_xp" as any).select("total_xp").eq("user_id", user.id).maybeSingle(),
         ]);
         if (cancelled) return;
         setStreak(s?.current_streak || 0);
