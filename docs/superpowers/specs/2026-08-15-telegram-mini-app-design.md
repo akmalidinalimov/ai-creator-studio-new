@@ -274,9 +274,11 @@ All version-gated calls guarded with `isVersionAtLeast(...)`; older clients degr
 
 ## Prerequisites / owner actions
 
-1. **BotFather:** create the Mini App (name + short-name) on the production bot, pointing at the app URL.
-2. Decide the Mini App short-name / launch URL (prod domain — `aicreator.academy`).
-3. Phase 0 device testing (video + upload) — owner's phone is the fastest path.
+1. ✅ **BotFather — DONE (2026-08-17):** Mini App registered on the prod bot **@aicreatorsdarsliklari_bot**,
+   short-name `app`, URL `https://aicreator.academy`. Launch/deep-link base: **`t.me/aicreatorsdarsliklari_bot/app`**
+   (Phase 3 `startapp` deep-links + the eventual menu button use this). Menu button NOT yet set (deferred to
+   Phase 3 so a half-built experience isn't exposed to students).
+2. Phase 0 device testing (video + upload) — in progress; run via the link above on iOS/Android.
 
 ## Open questions (none blocking; resolve during planning)
 
