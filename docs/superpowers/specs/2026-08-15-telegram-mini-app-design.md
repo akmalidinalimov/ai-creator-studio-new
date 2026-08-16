@@ -51,6 +51,13 @@ app (lessons, **video**, homework upload, profile, leaderboard, tiers, RLS, edge
 - **Auth context** — `src/contexts/AuthContext.tsx` + `src/pages/Login.tsx` drive the web session; RLS is
   keyed to `auth.uid()` throughout.
 
+**Eng-review verifications (2026-08-15):**
+- ✅ **Every student (670/670) has an `auth.users` email** (synthetic `@telegram.local`) → the
+  `generateLink → verifyOtp` mint path works for all, incl. the 111 username-only profiles. Proven: the
+  same path already runs in prod via `magic-link-redeem`. (35 have unconfirmed emails — already handled.)
+- **DRY:** extract `validateInitData` to `_shared/telegram-initdata.ts` **and refactor `tg-group-board` to
+  consume it** (don't leave two copies of the HMAC logic).
+
 ---
 
 ## Architecture: "one app, two doors"
@@ -103,10 +110,11 @@ Downstream, **nothing changes** — the same routes/RLS/edge functions/video pla
    - **By `telegram_id`** (already linked) → **sign in directly. No gate** (signed id = proof of ownership;
      nothing squattable).
    - **Else by `username`** among profiles with `telegram_id IS NULL`:
-     - exactly one match → **membership gate**: verify `telegram_id` is a member of ≥1 active-course group
-       via `getChatMember` (reuse the bot's existing membership logic). Member → backfill
-       `telegram_id` (+ `telegram_username`), log `admin_actions: username_link_via_miniapp`, sign in.
-       Not a member → `not_linked`.
+     - exactly one match → **membership gate**: the matched profile already has a `group_id`, so verify the
+       `telegram_id` is a member of **that profile's own group's chat** via a **single** `getChatMember`
+       call (the bot must be admin there). Member → backfill `telegram_id` (+ `telegram_username`), log
+       `admin_actions: username_link_via_miniapp`, sign in. **`getChatMember` error or non-member →
+       `not_linked` (fail CLOSED — never fail-open).**
      - zero or multiple matches → `not_linked` (log ambiguity if >1).
    - **Else** → `not_linked`.
 3. Sign in = `mintSessionForUser(admin, user.email)`; `target_path` = map `startParam` → route (e.g.
@@ -124,17 +132,21 @@ input is HMAC-validated server-side.
   call `webApp.ready()`). Returns `isTelegram=false` after timeout → web mode.
 - `TelegramGate` (wraps `<App/>` at the root, above the router or just inside it):
   - web mode → render children unchanged.
-  - mini app mode → if `supabase.auth.getSession()` returns a live session, render children immediately
-    (fast re-open); else call `supabase.functions.invoke("tg-miniapp-auth", { body: { initData } })` →
-    on session, `setSession()` then render; on `not_linked`, render the gated screen; on error, retryable
-    error screen.
+  - mini app mode → if `supabase.auth.getSession()` returns a live session, **verify its user matches the
+    current `initData` telegram_id's profile** (`session.user.id === profile.id`); match → render
+    immediately (fast re-open); **mismatch → `signOut()` then re-auth** (prevents cross-account session
+    bleed on a shared device or Telegram account-switch). No session → call
+    `supabase.functions.invoke("tg-miniapp-auth", { body: { initData } })` → on session, `setSession()`
+    then render; on `not_linked`, render the gated screen; on error, retryable error screen.
   - After session established: `applyTelegramTheme`, `expand`, viewport, back-button wiring.
 - `MiniAppContext.isMiniApp` lets specific components adapt (e.g., the `/login` route auto-redirects into
   the gate when opened with initData; web `/login` unchanged).
 
 **Session persistence & refresh.** `setSession` persists in the Telegram webview's localStorage; the
-Supabase client auto-refreshes. On refresh failure while `initData` is present, silently re-run
-`tg-miniapp-auth` (initData stays available for the life of the open Mini App).
+Supabase client auto-refreshes via its **refresh token — this is the PRIMARY mechanism and needs no
+initData**. Do NOT build silent-re-auth on initData: its `auth_date` goes stale after the 1h freshness
+window on a long-open app, so re-validating it would fail. initData re-auth is only a **cold-open
+fallback** (fresh launch) for when no valid refresh token exists.
 
 ---
 
@@ -194,7 +206,13 @@ All version-gated calls guarded with `isVersionAtLeast(...)`; older clients degr
   account-takeover class flagged in CLAUDE.md; `telegram_id` direct sign-in needs no gate.
 - Generic `not_linked` (don't reveal whether a username/profile exists).
 - Session minted only for the **owner** of the signed `telegram_id`; impersonation path unaffected.
-- Auth logged to `auth_events` / `admin_actions`; basic rate-limit on the function.
+- `tg-miniapp-auth` is a **public** (`verify_jwt=false`) endpoint — HMAC is the sole guard, so: **constant-
+  time compare** (repo's `ctEq` ✓), **rate-limit** per source/telegram_id, and **fail CLOSED** on any
+  validation/membership error. Forging initData requires the bot-token secret (Telegram-only), so it can't
+  mint for arbitrary users.
+- **Bot-token rotation:** rotating `TELEGRAM_BOT_TOKEN` invalidates in-flight initData validation — plan a
+  rotation runbook (both old+new accepted briefly, or a maintenance window).
+- Auth logged to `auth_events` / `admin_actions`.
 - Consistent with the member-forgiveness + trust-boundary doctrine.
 - **A dedicated `/cso` (STRIDE/OWASP) threat-model of this bridge is recommended before build.**
 
@@ -218,7 +236,11 @@ All version-gated calls guarded with `isVersionAtLeast(...)`; older clients degr
 ## Testing
 
 - **Auth bridge (unit/integration):** linked `telegram_id`; username + member (backfill+sign-in); username
-  + non-member (`not_linked`); unknown (`not_linked`); ambiguous username; bad HMAC; expired `auth_date`.
+  + non-member (`not_linked`); username + `getChatMember` **error** (`not_linked`, fail-closed); unknown
+  (`not_linked`); ambiguous username; bad HMAC; expired `auth_date`; **unconfirmed-email profile still
+  mints** (the 35-user case).
+- **Frontend:** stored-session **telegram_id mismatch → signOut + re-auth** (cross-account); cold-open with
+  stale (>1h) initData relies on Supabase refresh, not initData.
 - **Prod E2E** (per the platform verification bar): create a synthetic student via `admin-create-students`
   (`x-internal-secret`), run the Mini App open flow end-to-end, assert sign-in + a data read, DELETE the
   student, assert zero residue.
