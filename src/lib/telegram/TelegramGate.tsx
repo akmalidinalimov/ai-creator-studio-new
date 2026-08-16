@@ -4,6 +4,9 @@ import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useMiniApp } from "./MiniAppContext";
+import { applyTelegramTheme } from "./theme";
+import { useTelegramViewport } from "./useTelegramViewport";
+import { useTelegramBackButton } from "./useTelegramBackButton";
 import TgNotLinked from "@/pages/TgNotLinked";
 
 /**
@@ -38,11 +41,26 @@ async function functionErrorCode(error: unknown, data: unknown): Promise<string 
 }
 
 export function TelegramGate({ children }: { children: ReactNode }) {
-  const { initData } = useMiniApp();
+  const { webApp, initData } = useMiniApp();
   const navigate = useNavigate();
   const { t } = useTranslation();
   const [phase, setPhase] = useState<Phase>("loading");
   const [retryTick, setRetryTick] = useState(0);
+
+  // Native feel: full-height viewport + safe areas + swipe guard, and the header BackButton
+  // drives the router. Both no-op in web mode (webApp === null).
+  useTelegramViewport(webApp);
+  useTelegramBackButton(webApp);
+
+  // Wear the user's Telegram theme (and follow live theme switches). Applied as soon as the
+  // SDK is present so even the sign-in spinner is themed. No-op when themeParams is empty.
+  useEffect(() => {
+    if (!webApp) return;
+    applyTelegramTheme(webApp);
+    const onThemeChanged = () => applyTelegramTheme(webApp);
+    webApp.onEvent("themeChanged", onThemeChanged);
+    return () => webApp.offEvent("themeChanged", onThemeChanged);
+  }, [webApp]);
 
   useEffect(() => {
     if (initData === undefined) { setPhase("loading"); return; }
