@@ -1,4 +1,12 @@
 {
+  "miniapp": {
+    "signingIn": "Signing you in…",
+    "notLinkedTitle": "Account not found",
+    "notLinkedBody": "This Telegram account isn't linked to a profile yet. Please contact your teacher or administrator.",
+    "errorTitle": "Something went wrong",
+    "errorBody": "We couldn't sign you in. Please try again.",
+    "retry": "Try again"
+  },
   "common": {
     "save": "Save",
     "cancel": "Cancel",
