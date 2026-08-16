@@ -109,12 +109,16 @@ Downstream, **nothing changes** — the same routes/RLS/edge functions/video pla
 2. Resolve profile:
    - **By `telegram_id`** (already linked) → **sign in directly. No gate** (signed id = proof of ownership;
      nothing squattable).
-   - **Else by `username`** among profiles with `telegram_id IS NULL`:
+   - **Else by `username`** among **`student`-role** profiles with `telegram_id IS NULL` (**staff profiles
+     — teacher/admin/superadmin — are NEVER auto-linked by username**; squatting a staff account would be
+     privilege escalation — *cso Finding 2*):
      - exactly one match → **membership gate**: the matched profile already has a `group_id`, so verify the
        `telegram_id` is a member of **that profile's own group's chat** via a **single** `getChatMember`
-       call (the bot must be admin there). Member → backfill `telegram_id` (+ `telegram_username`), log
-       `admin_actions: username_link_via_miniapp`, sign in. **`getChatMember` error or non-member →
-       `not_linked` (fail CLOSED — never fail-open).**
+       call (bot must be admin there). Member → backfill `telegram_id` (+ `telegram_username`); **log +
+       DM an admin a reversible "X linked telegram_id N — not them? tap to unlink" alert** (*cso Finding 1*:
+       the gate checks membership, not identity, so a co-member who renames to the victim's username could
+       claim an unlinked profile — a narrow window, now detectable + reversible). Sign in. **`getChatMember`
+       error or non-member → `not_linked` (fail CLOSED — never fail-open).**
      - zero or multiple matches → `not_linked` (log ambiguity if >1).
    - **Else** → `not_linked`.
 3. Sign in = `mintSessionForUser(admin, user.email)`; `target_path` = map `startParam` → route (e.g.
@@ -214,7 +218,24 @@ All version-gated calls guarded with `isVersionAtLeast(...)`; older clients degr
   rotation runbook (both old+new accepted briefly, or a maintenance window).
 - Auth logged to `auth_events` / `admin_actions`.
 - Consistent with the member-forgiveness + trust-boundary doctrine.
-- **A dedicated `/cso` (STRIDE/OWASP) threat-model of this bridge is recommended before build.**
+
+**`/cso` threat-model results (2026-08-15) — folded in:**
+- ✅ **`validateInitData` audited and correct** — Telegram HMAC (`secret=HMAC("WebAppData",token)`,
+  `hash=HMAC(secret,data_check_string)`), sorted `\n`-joined data-check-string (`hash`+`signature`
+  stripped), constant-time `ctEq`, 1h freshness. **Reuse it (extract to `_shared`); do NOT reimplement.**
+- **Finding 1 — username-squatting takeover** (HIGH): the membership gate checks membership, not identity →
+  a co-member who renames to a victim's username could claim an unlinked profile. **Decision: keep
+  username-backfill + harden** (staff-excluded, first-link admin alert + reversible unlink, logged). Narrow
+  and now detectable/recoverable.
+- **Finding 2 — staff-role EoP** (HIGH): username-backfill links **`student` profiles only** (above).
+- **Finding 3 — initData replay** (MED-HIGH): freshness ≠ one-time-use → replayable in-window. **Use a
+  shorter freshness window on this mint endpoint (~10 min, vs the board's 1h), NEVER log initData**, and
+  (optional) a replay cache keyed on `auth_date`+user.
+- **Finding 4 — getChatMember abuse** (MED): the public endpoint fires a Telegram API call per backfill →
+  **rate-limit per source/telegram_id AND cache membership results briefly** (protects the bot's Telegram
+  rate limit + function quota).
+- Appendix (accepted for v1): the getChatMember path is slower → a timing side-channel can infer a username
+  exists. Low impact.
 
 ---
 
@@ -238,7 +259,8 @@ All version-gated calls guarded with `isVersionAtLeast(...)`; older clients degr
 - **Auth bridge (unit/integration):** linked `telegram_id`; username + member (backfill+sign-in); username
   + non-member (`not_linked`); username + `getChatMember` **error** (`not_linked`, fail-closed); unknown
   (`not_linked`); ambiguous username; bad HMAC; expired `auth_date`; **unconfirmed-email profile still
-  mints** (the 35-user case).
+  mints** (the 35-user case); **staff-role username → `not_linked`** (cso F2); **replay of a stale (>10min)
+  initData → rejected** (cso F3); **first-time backfill fires the admin alert** (cso F1).
 - **Frontend:** stored-session **telegram_id mismatch → signOut + re-auth** (cross-account); cold-open with
   stale (>1h) initData relies on Supabase refresh, not initData.
 - **Prod E2E** (per the platform verification bar): create a synthetic student via `admin-create-students`
