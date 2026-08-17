@@ -32,6 +32,24 @@ Deno.test("valid initData → ok with user + startParam", async () => {
   assertEquals(r.startParam, "hw");
 });
 
+Deno.test("initData WITH signature field → ok (signature stays in the HMAC data-check-string)", async () => {
+  // Real modern clients (Telegram Desktop/mobile 2025+) include an Ed25519 `signature` field, and the
+  // bot-token `hash` is computed over ALL fields except `hash` — signature INCLUDED. Mirror that here:
+  // sign a payload that contains `signature`, then assert the validator accepts it. If the validator
+  // wrongly deletes `signature` before hashing, dcs loses a field and this fails — exactly the prod bug.
+  const authDate = String(Math.floor(Date.now() / 1000));
+  const initData = await signInitData({
+    user: JSON.stringify({ id: 7, username: "bob", first_name: "Bob" }),
+    auth_date: authDate,
+    chat_instance: "-1234567890",
+    chat_type: "sender",
+    signature: "3q2-7_ed25519signatureplaceholder",
+  }, BOT);
+  const r = await validateInitData(initData, BOT, 600);
+  assertEquals(r.ok, true);
+  assertEquals(r.user?.id, 7);
+});
+
 Deno.test("tampered hash → not ok", async () => {
   const authDate = String(Math.floor(Date.now() / 1000));
   let initData = await signInitData({ user: JSON.stringify({ id: 1 }), auth_date: authDate }, BOT);

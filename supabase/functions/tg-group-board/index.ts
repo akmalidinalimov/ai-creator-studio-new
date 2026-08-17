@@ -36,8 +36,7 @@ async function validateInitData(initData: string): Promise<{ ok: boolean; userId
   const params = new URLSearchParams(initData);
   const hash = params.get("hash");
   if (!hash) return { ok: false };
-  params.delete("hash");
-  params.delete("signature"); // Telegram 7.0+ Ed25519 field, excluded from the HMAC check.
+  params.delete("hash"); // ONLY hash; `signature` (Telegram's Ed25519 field) STAYS in the bot-token HMAC dcs.
   const dcs = [...params.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, v]) => `${k}=${v}`).join("\n");
   const enc = new TextEncoder();
   const wk = await crypto.subtle.importKey("raw", enc.encode("WebAppData"), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
