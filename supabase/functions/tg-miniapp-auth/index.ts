@@ -19,6 +19,29 @@ const corsHeaders = {
 };
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 
+// Freshness window for initData's `auth_date`. The HMAC is the real authenticity proof; this only
+// bounds replay of a captured payload. Telegram clients REUSE one launch initData for the whole
+// lifetime of the open Mini App (auth_date = first launch, not per-request), so a tight window
+// rejects legitimate reuse — a tester who reopens the app an hour later still sends the old
+// auth_date. 24h is the industry-standard bound (was 600s, which caused false "expired" 401s).
+const MAX_INITDATA_AGE_SEC = 86400;
+
+/** PII-free reject diagnostic — logs the failure CLASS + field NAMES + auth_date age. NEVER values/initData. */
+function logReject(initData: string, expired: boolean) {
+  try {
+    const p = new URLSearchParams(initData);
+    const ad = Number(p.get("auth_date") || 0);
+    console.log("tg-miniapp-auth reject " + JSON.stringify({
+      reason: expired ? "expired" : "invalid",
+      hasHash: p.has("hash"),
+      hasSignature: p.has("signature"),
+      keys: [...p.keys()].sort(),                       // field names only (user/auth_date/hash/…), not values
+      ageSec: ad ? Math.round(Date.now() / 1000 - ad) : null,
+      initLen: initData.length,
+    }));
+  } catch { /* best-effort */ }
+}
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
@@ -136,8 +159,11 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => ({} as Record<string, unknown>));
   const initData = String((body as { initData?: unknown })?.initData || "");
 
-  const v = await validateInitData(initData, BOT_TOKEN, 600); // 10-min window on the mint endpoint (cso F3)
-  if (!v.ok || !v.user) return json({ error: v.expired ? "expired" : "invalid" }, 401);
+  const v = await validateInitData(initData, BOT_TOKEN, MAX_INITDATA_AGE_SEC);
+  if (!v.ok || !v.user) {
+    logReject(initData, !!v.expired);
+    return json({ error: v.expired ? "expired" : "invalid" }, 401);
+  }
   if (rateLimited(v.user.id)) return json({ error: "rate_limited" }, 429);
 
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -151,6 +177,12 @@ Deno.serve(async (req) => {
     console.error("tg-miniapp-auth mint failed for profile", outcome.profileId); // never log initData
     return json({ error: "mint_failed" }, 500);
   }
+
+  // Non-PII success trace: auth_date age proves whether the old 10-min window would have rejected this.
+  console.log("tg-miniapp-auth ok " + JSON.stringify({
+    ageSec: v.authDate ? Math.round(Date.now() / 1000 - v.authDate) : null,
+    backfilled: outcome.backfilled,
+  }));
 
   await admin.from("admin_actions").insert({
     actor_user_id: null,
