@@ -173,6 +173,7 @@ export function ProtectedVideo({ src, watermarkText, refreshSrc, videoRef: exter
         ref={videoRef}
         src={currentSrc}
         controls
+        playsInline
         className="w-full aspect-video"
         onContextMenu={onContextMenu}
         controlsList={s.hardened_controls ? "nodownload noremoteplayback noplaybackrate" : undefined}
