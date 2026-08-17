@@ -28,6 +28,9 @@ verify_jwt = false
 [functions.magic-link-redeem]
 verify_jwt = false
 
+[functions.tg-miniapp-auth]
+verify_jwt = false
+
 [functions.notify-completion]
 verify_jwt = false
 

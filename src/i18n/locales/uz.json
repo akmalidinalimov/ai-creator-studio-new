@@ -1,4 +1,12 @@
 {
+  "miniapp": {
+    "signingIn": "Tizimga kirilmoqda…",
+    "notLinkedTitle": "Hisob topilmadi",
+    "notLinkedBody": "Bu Telegram hisobi hali akkauntga bogʻlanmagan. Iltimos, oʻqituvchingiz yoki administrator bilan bogʻlaning.",
+    "errorTitle": "Xatolik yuz berdi",
+    "errorBody": "Tizimga kirishda muammo boʻldi. Qayta urinib koʻring.",
+    "retry": "Qayta urinish"
+  },
   "common": {
     "save": "Saqlash",
     "cancel": "Bekor qilish",

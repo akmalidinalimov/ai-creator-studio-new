@@ -10,6 +10,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { HtmlLangSync } from "@/components/HtmlLangSync";
 import ImpersonationBanner from "@/components/ImpersonationBanner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { MiniAppProvider } from "@/lib/telegram/MiniAppContext";
+import { TelegramGate } from "@/lib/telegram/TelegramGate";
 
 const StudentOrStaffRedirect = ({ children }: { children: JSX.Element }) => {
   const { role } = useAuth();
@@ -94,6 +96,8 @@ const App = () => (
       <BrowserRouter>
         <HtmlLangSync />
         <ErrorBoundary label="app-root">
+        <MiniAppProvider>
+        <TelegramGate>
         <AuthProvider>
           <Suspense fallback={<AdminFallback />}>
           <Routes>
@@ -161,6 +165,8 @@ const App = () => (
           </Routes>
           </Suspense>
         </AuthProvider>
+        </TelegramGate>
+        </MiniAppProvider>
         </ErrorBoundary>
       </BrowserRouter>
     </TooltipProvider>
