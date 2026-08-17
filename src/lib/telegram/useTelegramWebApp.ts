@@ -17,12 +17,26 @@ export function useTelegramWebApp(): { webApp: TgWebApp | null; initData: string
 
   useEffect(() => {
     let cancelled = false;
-    const getWA = () => (window as unknown as { Telegram?: TelegramNamespace }).Telegram?.WebApp;
+    const win = window as unknown as { Telegram?: TelegramNamespace; TelegramWebviewProxy?: unknown };
+    const getWA = () => win.Telegram?.WebApp;
     const done = (wa: TgWebApp | null, data: string | null) => {
       if (cancelled) return;
       setWebApp(wa);
       setInitData(data);
     };
+
+    // Cheap, synchronous gate so the PUBLIC WEBSITE stays a true no-op. Telegram Mini App
+    // launches always carry `tgWebApp*` params in the URL (tgWebAppData/Version/Platform/…) and
+    // mobile clients expose `TelegramWebviewProxy`. If neither is present we are a normal browser
+    // → resolve web mode immediately and NEVER inject telegram.org's script (no 3rd-party request,
+    // no spinner delay). Only a genuine Mini App context loads the SDK and polls for initData.
+    const inTelegram =
+      location.href.includes("tgWebApp") || !!win.TelegramWebviewProxy || !!getWA()?.initData;
+    if (!inTelegram) {
+      done(null, null);
+      return () => { cancelled = true; };
+    }
+
     const read = (attempts: number) => {
       if (cancelled) return;
       const wa = getWA();
