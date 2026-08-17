@@ -227,7 +227,7 @@
 }
 
 /* Brand type utilities (landing) */
-.font-display { font-family: 'Clash Display', ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.02em; }
+.font-display { font-family: 'Unbounded', 'Onest', ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.02em; }
 .font-brandbody { font-family: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif; }
 
 /* hero entrance */
