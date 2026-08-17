@@ -2,10 +2,15 @@
 //
 // POST { initData } → { session:{access_token,refresh_token}, target_path } | { error }
 //
-// Flow: validate initData HMAC (10-min freshness) → resolve/link profile (resolve.ts) → mint a Supabase
+// Flow: validate initData HMAC (24h freshness) → resolve/link profile (resolve.ts) → mint a Supabase
 // session (mint-session.ts) → return it. The frontend calls supabase.auth.setSession(...) and the whole
 // existing app then works via RLS. Trust is 100% the server-side HMAC — this endpoint is unauthenticated
 // by design. NEVER log initData.
+//
+// DEPLOY GOTCHA: the deploy pipeline only redeploys a function when a file in ITS OWN folder changes.
+// This fn imports ../_shared/telegram-initdata.ts, which is bundled at deploy time — so a fix to that
+// shared file does NOT reach prod until this index.ts is also touched. Keep that in mind before relying
+// on a shared-validator change here.
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { validateInitData } from "../_shared/telegram-initdata.ts";
 import { isChatMember } from "../_shared/telegram-membership.ts";
