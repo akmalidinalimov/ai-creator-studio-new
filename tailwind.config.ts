@@ -48,6 +48,16 @@ export default {
           foreground: "hsl(var(--card-foreground))",
         },
         gold: "hsl(var(--gold))",
+        "surface-2": "hsl(var(--surface-2))",
+        tint: "hsl(var(--tint))",
+        "accent-soft": "hsl(var(--accent-soft))",
+        good: "hsl(var(--good))",
+        warning: "hsl(var(--warning))",
+        danger: "hsl(var(--danger))",
+        "accent-2": "hsl(var(--accent-2))",
+        "gold-2": "hsl(var(--gold-2))",
+        "good-2": "hsl(var(--good-2))",
+        "danger-2": "hsl(var(--danger-2))",
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",
           foreground: "hsl(var(--sidebar-foreground))",
@@ -60,7 +70,8 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
+        sans: ['Onest', 'system-ui', 'sans-serif'],
+        display: ['Unbounded', 'Onest', 'sans-serif'],
         serif: ['Fraunces', 'Georgia', 'serif'],
       },
       borderRadius: {
@@ -69,7 +80,8 @@ export default {
         sm: "calc(var(--radius) - 4px)",
       },
       boxShadow: {
-        soft: "0 1px 2px hsl(240 10% 4% / 0.04), 0 4px 12px hsl(240 10% 4% / 0.04)",
+        soft: "var(--shadow-soft)",
+        gloss: "var(--shadow-gloss)",
         elevated: "0 1px 2px hsl(240 10% 4% / 0.06), 0 12px 32px hsl(240 10% 4% / 0.08)",
       },
       keyframes: {
