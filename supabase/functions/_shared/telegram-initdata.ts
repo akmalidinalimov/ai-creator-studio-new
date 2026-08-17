@@ -3,7 +3,11 @@
 // Algorithm (Telegram standard, audited identical to tg-group-board's proven copy):
 //   secret = HMAC_SHA256(key="WebAppData", msg=bot_token)
 //   hash   = HMAC_SHA256(key=secret,       msg=data_check_string)
-// where data_check_string = the params (minus `hash`/`signature`) sorted by key, joined "k=v" with "\n".
+// where data_check_string = the params MINUS ONLY `hash`, sorted by key, joined "k=v" with "\n".
+// IMPORTANT: `signature` (Telegram's Ed25519 field, 2025+) STAYS in the data-check-string for the
+// bot-token HMAC. Only the *third-party* Ed25519 verification excludes both hash AND signature; the
+// bot-token `hash` is computed over "all received fields" except `hash`. Deleting `signature` here
+// makes the HMAC hash fewer fields than Telegram did → guaranteed mismatch on every modern client.
 // Enforces a freshness window on `auth_date` (default 1h; the mint endpoint passes 600s = 10 min).
 //
 // Returns the SIGNED user (id/username/first_name — trustworthy, part of the checked payload) and the
@@ -42,8 +46,7 @@ export async function validateInitData(
   const params = new URLSearchParams(initData);
   const hash = params.get("hash");
   if (!hash) return { ok: false };
-  params.delete("hash");
-  params.delete("signature"); // Telegram 7.0+ Ed25519 field — excluded from the HMAC data-check-string.
+  params.delete("hash"); // only `hash` is removed; `signature` (if present) STAYS in the data-check-string.
 
   const dcs = [...params.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
