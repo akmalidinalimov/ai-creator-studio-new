@@ -161,6 +161,19 @@
     "emptyBody": "Kursga yozilgach, darslaringiz shu yerda paydo bo'ladi.",
     "loadError": "Darslarni yuklab bo'lmadi."
   },
+  "leaderboard": {
+    "title": "Reyting",
+    "subtitleCount": "{{count}} talaba",
+    "toggleWeekly": "Haftalik",
+    "toggleAllTime": "Umumiy",
+    "xpSourceNote": "Guruh reytingi XP — darslar, seriya va faollikdan yig'iladi",
+    "rankedTitle": "Barcha ishtirokchilar",
+    "nudgeToTop3": "Top-3 gacha",
+    "noGroupTitle": "Guruhingiz yo'q",
+    "noActivityTitle": "Hali faollik yo'q",
+    "noActivityBody": "Bu guruhda hozircha hech kim XP yig'magan. Birinchi darsni tugating va reytingni boshlang! 🚀",
+    "loadError": "Reytingni yuklab bo'lmadi."
+  },
   "course": {
     "modules": "Modullar",
     "lessons": "Darslar",

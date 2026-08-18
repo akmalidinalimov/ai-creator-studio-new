@@ -161,6 +161,19 @@
     "emptyBody": "Once you enroll in a course, your lessons will appear here.",
     "loadError": "Couldn't load lessons."
   },
+  "leaderboard": {
+    "title": "Leaderboard",
+    "subtitleCount": "{{count}} students",
+    "toggleWeekly": "This week",
+    "toggleAllTime": "All-time",
+    "xpSourceNote": "Group rating XP — earned from lessons, streaks, and activity",
+    "rankedTitle": "All participants",
+    "nudgeToTop3": "To top 3",
+    "noGroupTitle": "No group yet",
+    "noActivityTitle": "No activity yet",
+    "noActivityBody": "No one in this group has earned XP yet. Finish your first lesson and start the ranking! 🚀",
+    "loadError": "Couldn't load the leaderboard."
+  },
   "course": {
     "modules": "Modules",
     "lessons": "Lessons",

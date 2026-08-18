@@ -161,6 +161,19 @@
     "emptyBody": "Как только вы запишетесь на курс, уроки появятся здесь.",
     "loadError": "Не удалось загрузить уроки."
   },
+  "leaderboard": {
+    "title": "Рейтинг",
+    "subtitleCount": "{{count}} учащихся",
+    "toggleWeekly": "За неделю",
+    "toggleAllTime": "Всего",
+    "xpSourceNote": "XP группового рейтинга — за уроки, серию и активность",
+    "rankedTitle": "Все участники",
+    "nudgeToTop3": "До топ-3",
+    "noGroupTitle": "У вас нет группы",
+    "noActivityTitle": "Пока нет активности",
+    "noActivityBody": "В этой группе пока никто не набрал XP. Завершите первый урок и начните рейтинг! 🚀",
+    "loadError": "Не удалось загрузить рейтинг."
+  },
   "course": {
     "modules": "Модули",
     "lessons": "Уроки",
