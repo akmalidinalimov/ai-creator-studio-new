@@ -256,7 +256,6 @@
     "next": "Keyingi",
     "markComplete": "Tugatildi",
     "allModules": "Barcha modullar",
-    "markedCompleteToast": "Dars tugatildi deb belgilandi",
     "watchMoreToComplete": "Tugatildi deb belgilashdan oldin darsning kamida yarmini ko'ring.",
     "loadError": "Darsni yuklab bo'lmadi.",
     "completeCelebrateTitle": "Dars tugallandi!",

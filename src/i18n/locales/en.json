@@ -256,7 +256,6 @@
     "next": "Next",
     "markComplete": "Mark complete",
     "allModules": "All modules",
-    "markedCompleteToast": "Lesson marked complete",
     "watchMoreToComplete": "Watch at least half of the lesson before marking it complete.",
     "loadError": "Couldn't load the lesson.",
     "completeCelebrateTitle": "Lesson complete!",

@@ -256,7 +256,6 @@
     "next": "Далее",
     "markComplete": "Отметить пройденным",
     "allModules": "Все модули",
-    "markedCompleteToast": "Урок отмечен как пройденный",
     "watchMoreToComplete": "Посмотрите хотя бы половину урока, прежде чем отмечать его пройденным.",
     "loadError": "Не удалось загрузить урок.",
     "completeCelebrateTitle": "Урок завершён!",
