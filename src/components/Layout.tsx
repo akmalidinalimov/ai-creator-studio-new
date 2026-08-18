@@ -5,7 +5,6 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { LogOut, Settings, LayoutDashboard } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
-import { ThemeToggle } from "@/components/ThemeToggle";
 
 /** Static brand squares (from the logo's pixel motif) scattered in abstract
  *  spots — top-right cluster + bottom-left accent. No animation; both themes. */
@@ -78,7 +77,6 @@ export const TopNav = () => {
           </nav>
         </div>
         <div className="flex items-center gap-1">
-          <ThemeToggle />
           <LanguageSwitcher />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -127,7 +125,7 @@ export const PageShell = ({ children }: { children: React.ReactNode }) => {
   const showSidebar = isStaff && isAdminArea(loc.pathname);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen max-w-full overflow-x-hidden bg-background">
       {/* Brand backdrop: static logo squares scattered in both themes
           (dot grid comes from body CSS — see index.css). */}
       <BrandSquares />
@@ -139,7 +137,11 @@ export const PageShell = ({ children }: { children: React.ReactNode }) => {
             <main className="flex-1 min-w-0 px-4 md:px-6 py-6 md:py-8 animate-fade-in">{children}</main>
           </div>
         ) : (
-          <main className={`container py-6 md:py-10 animate-fade-in ${isStudent ? "pb-24 md:pb-10" : ""}`}>{children}</main>
+          // Bottom padding reserves room below the last piece of content for the fixed
+          // StudentBottomNav (now always rendered, incl. on lesson pages — Fix 3) so it never
+          // covers a screen's final CTA. Safe-area-aware (matches the nav's own env() padding);
+          // purely additive vs. the old flat 6rem, so no other student screen's spacing shrinks.
+          <main className={`container py-6 md:py-10 animate-fade-in ${isStudent ? "pb-[calc(6rem_+_env(safe-area-inset-bottom))] md:pb-10" : ""}`}>{children}</main>
         )}
         {isStudent && <StudentBottomNav />}
       </div>

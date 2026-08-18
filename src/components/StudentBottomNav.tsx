@@ -5,8 +5,9 @@ import { usePendingHomework } from "@/hooks/usePendingHomework";
 export function StudentBottomNav() {
   const loc = useLocation();
   const pendingHomework = usePendingHomework();
-  // Hide on lesson pages so the video has more room (and avoids overlap with sticky next-lesson CTA).
-  if (loc.pathname.startsWith("/lesson/")) return null;
+  // Always visible, including on lesson pages (Fix 3 — the nav used to disappear on /lesson/*,
+  // leaving students with no way back to Darslar/Bosh short of the browser/Telegram back
+  // gesture). LessonPage.tsx reserves bottom padding so this fixed nav never covers its CTAs.
 
   const tabs = [
     { to: "/dashboard", label: "Bosh", icon: Home, match: (p: string) => p === "/dashboard" },

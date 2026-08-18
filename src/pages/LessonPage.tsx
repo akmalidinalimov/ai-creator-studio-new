@@ -9,7 +9,7 @@ import { Button, Card, RewardChip, Skeleton, EmptyState, Celebrate } from "@/com
 import { formatXp } from "@/lib/xp";
 import { cn } from "@/lib/utils";
 
-import { Check, ChevronRight, Send, Sparkles, Upload } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Send, Sparkles, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { ProtectedVideo } from "@/components/lesson/ProtectedVideo";
 import { BunnyVideoPlayer } from "@/components/BunnyVideoPlayer";
@@ -44,6 +44,25 @@ function CelebrationOverlay({
   );
 }
 
+/** Visible in-app back affordance for the Lesson screen (Fix 3 — a lesson deep-link left
+ *  students with no on-screen way back besides the OS/Telegram back gesture, which many
+ *  don't know to use). Token-styled (bg-tint), NOT the coral CTA — this is navigation, not
+ *  the page's call to action. Complements (does not replace) useTelegramBackButton, which
+ *  still drives Telegram's native header BackButton in Mini App mode. */
+function LessonBackButton({ onClick, label }: { onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="inline-flex size-9 flex-none items-center justify-center rounded-full bg-tint text-foreground transition-colors hover:bg-tint/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+    >
+      <ChevronLeft className="size-5" />
+    </button>
+  );
+}
+
 interface Msg { role: "user" | "assistant"; content: string }
 
 const SUPPORTED_ASSISTANT_LANGS = ["uz", "ru", "en"] as const;
@@ -63,6 +82,12 @@ export default function LessonPage() {
   const navigate = useNavigate();
   const { t, i18n } = useTranslation();
   const language = normalizeAssistantLang(i18n.language);
+
+  // Deterministic destination (not raw history navigate(-1)) so the button behaves the same
+  // whether the student clicked into the lesson from Darslar or arrived via a deep link (e.g. a
+  // Telegram-sent link) with no in-app history to pop. Mirrors the notFound state's own
+  // "Kursga qaytish" fallback below.
+  const goBack = () => navigate(courseId ? `/course/${courseId}` : "/lessons");
 
   const [lesson, setLesson] = useState<any>(null);
   const [notFound, setNotFound] = useState(false);
@@ -377,13 +402,16 @@ export default function LessonPage() {
 
   if (notFound) return (
     <PageShell>
-      <div className="max-w-md mx-auto text-center py-16 space-y-4">
-        <div className="text-4xl">📭</div>
-        <h1 className="font-display text-xl font-extrabold text-foreground">{t("lesson.unavailableTitle", { defaultValue: "Dars mavjud emas" })}</h1>
-        <p className="text-sm text-muted-foreground">{t("lesson.unavailableBody", { defaultValue: "Bu dars o'chirilgan yoki hozircha mavjud emas." })}</p>
-        <Button variant="secondary" onClick={() => navigate(courseId ? `/course/${courseId}` : "/dashboard")}>
-          {t("lesson.backToCourse", { defaultValue: "Kursga qaytish" })}
-        </Button>
+      <div className="max-w-md mx-auto space-y-4">
+        <LessonBackButton onClick={goBack} label={t("common.back")} />
+        <div className="text-center py-16 space-y-4">
+          <div className="text-4xl">📭</div>
+          <h1 className="font-display text-xl font-extrabold text-foreground">{t("lesson.unavailableTitle", { defaultValue: "Dars mavjud emas" })}</h1>
+          <p className="text-sm text-muted-foreground">{t("lesson.unavailableBody", { defaultValue: "Bu dars o'chirilgan yoki hozircha mavjud emas." })}</p>
+          <Button variant="secondary" onClick={goBack}>
+            {t("lesson.backToCourse", { defaultValue: "Kursga qaytish" })}
+          </Button>
+        </div>
       </div>
     </PageShell>
   );
@@ -391,7 +419,8 @@ export default function LessonPage() {
     const offline = typeof navigator !== "undefined" && !navigator.onLine;
     return (
       <PageShell>
-        <div className="max-w-2xl mx-auto">
+        <div className="max-w-2xl mx-auto space-y-4">
+          <LessonBackButton onClick={goBack} label={t("common.back")} />
           <EmptyState
             icon={offline ? "📡" : "⚠️"}
             title={offline ? t("common.offlineTitle") : t("common.errorTitle")}
@@ -413,6 +442,7 @@ export default function LessonPage() {
     return (
       <PageShell>
         <div className="max-w-2xl mx-auto space-y-4">
+          <LessonBackButton onClick={goBack} label={t("common.back")} />
           <Skeleton className="h-3 w-40" />
           <Skeleton className="aspect-video w-full rounded-lg" />
           <div className="space-y-3">
@@ -516,17 +546,22 @@ export default function LessonPage() {
         />
       )}
       <div className="max-w-2xl mx-auto space-y-4">
-        {moduleRank > 0 && lessonRankInModule > 0 && (
-          // Normal caption weight — NOT font-display (contains digits; see the title's comment below).
-          <div className="px-0.5 text-[12px] font-extrabold uppercase tracking-wide text-muted-foreground">
-            {t("lesson.caption", {
-              moduleN: formatXp(moduleRank, i18n.language),
-              moduleTitle: currentModule?.title ?? "",
-              lessonN: formatXp(lessonRankInModule, i18n.language),
-              total: formatXp(lessonsInModule, i18n.language),
-            })}
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          <LessonBackButton onClick={goBack} label={t("common.back")} />
+          {moduleRank > 0 && lessonRankInModule > 0 && (
+            // Normal caption weight — NOT font-display (contains digits; see the title's comment
+            // below). min-w-0 + truncate: a long module title must ellipsize on one line rather
+            // than push past the viewport edge (Fix 2 — no horizontal overflow on phone screens).
+            <div className="min-w-0 flex-1 truncate px-0.5 text-[12px] font-extrabold uppercase tracking-wide text-muted-foreground">
+              {t("lesson.caption", {
+                moduleN: formatXp(moduleRank, i18n.language),
+                moduleTitle: currentModule?.title ?? "",
+                lessonN: formatXp(lessonRankInModule, i18n.language),
+                total: formatXp(lessonsInModule, i18n.language),
+              })}
+            </div>
+          )}
+        </div>
 
         <Card className="overflow-hidden bg-black p-0 shadow-elevated">
           {renderPlayer()}
@@ -608,8 +643,10 @@ export default function LessonPage() {
               {t("lesson.submitHomeworkCta")}
             </Button>
             {next && (
+              // min-w-0 on the text span lets it truncate instead of forcing the button (and the
+              // page) wider than the viewport — the title is unbounded student-authored content.
               <Button variant="ghost" block onClick={goNext}>
-                {t("lesson.nextCta", { title: next.title })}
+                <span className="min-w-0 truncate">{t("lesson.nextCta", { title: next.title })}</span>
                 <ChevronRight className="size-4" />
               </Button>
             )}
