@@ -83,6 +83,36 @@ from public.groups g
 where g.teacher_id is not null
 on conflict (group_id, teacher_id) do nothing;
 
+-- Keep group_teachers in sync with the PRIMARY on every groups.teacher_id write path, so reassigning
+-- or removing a group's primary REVOKES the old primary's grading/DM/visibility instead of leaving a
+-- stale junction row behind. Does NOT fire on the one-time backfill above (that is a direct INSERT into
+-- group_teachers, not an UPDATE of groups.teacher_id) → no double-write. Stage-C multi-assign manages
+-- co-teachers via their own (is_primary=false) rows, untouched by this trigger.
+create or replace function public.sync_primary_group_teacher()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if tg_op = 'UPDATE' and new.teacher_id is distinct from old.teacher_id and old.teacher_id is not null then
+    delete from public.group_teachers
+     where group_id = new.id and teacher_id = old.teacher_id and is_primary = true;
+  end if;
+  if new.teacher_id is not null then
+    insert into public.group_teachers (group_id, teacher_id, is_primary, created_by)
+    values (new.id, new.teacher_id, true, auth.uid())
+    on conflict (group_id, teacher_id) do update set is_primary = true;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_sync_primary_group_teacher on public.groups;
+create trigger trg_sync_primary_group_teacher
+  after insert or update of teacher_id on public.groups
+  for each row execute function public.sync_primary_group_teacher();
+
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
 -- 4) Grading / visibility function rewrites — each copied VERBATIM from its latest live definition,
 --    with ONLY the teachership test swapped to the helper. Source migration cited above each.
@@ -696,6 +726,29 @@ create policy "gmt teacher read own groups"
   using (
     has_role(auth.uid(), 'teacher'::app_role)
     and public.is_group_teacher(group_module_topics.group_id, auth.uid())
+  );
+
+-- 5.3 storage.objects "hwimg user read own"  (src: 20260610221750_9c2ac446-...sql:2)
+--     Co-teachers must be able to VIEW homework images to grade them. The teacher branch's
+--     EXISTS(profiles p JOIN groups g ... AND g.teacher_id = auth.uid()) becomes the junction helper;
+--     the student-owner and admin branches are byte-identical to the source. Without this a pure
+--     co-teacher sees the submission row but is DENIED the image → silent image-grading breakage
+--     (the exact original incident class).
+drop policy if exists "hwimg user read own" on storage.objects;
+create policy "hwimg user read own" on storage.objects for select
+  using (
+    bucket_id = 'homework_images' and (
+      (auth.uid())::text = (storage.foldername(storage.objects.name))[1]
+      or public.has_role(auth.uid(), 'admin'::public.app_role)
+      or (
+        public.has_role(auth.uid(), 'teacher'::public.app_role)
+        and exists (
+          select 1 from public.profiles p
+          where p.id::text = (storage.foldername(storage.objects.name))[1]
+            and public.is_group_teacher(p.group_id, auth.uid())
+        )
+      )
+    )
   );
 
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════

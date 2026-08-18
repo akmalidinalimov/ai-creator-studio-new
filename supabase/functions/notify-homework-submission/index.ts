@@ -85,12 +85,18 @@ Deno.serve(async (req) => {
 
   const teacherIds = Array.from(new Set(rows.map((r) => r.teacher_id)));
   const groupIds = Array.from(new Set(rows.map((r) => r.group_id)));
-  const [{ data: profs }, { data: groups }] = await Promise.all([
+  const [{ data: profs }, { data: groups }, { data: gTeachers }] = await Promise.all([
     admin.from("profiles").select("id, telegram_id, preferred_locale, notifications_enabled").in("id", teacherIds),
     admin.from("groups").select("id, teacher_id").in("id", groupIds),
+    admin.from("group_teachers").select("group_id, teacher_id").in("group_id", groupIds),
   ]);
   const profMap = new Map<string, any>((profs || []).map((p: any) => [p.id, p]));
   const groupMap = new Map<string, any>((groups || []).map((g: any) => [g.id, g]));
+  // RBAC set of valid (group, teacher) pairs = primary ∪ co-teachers (group_teachers). A co-teacher row
+  // the reconciler fanned out is legitimate and must NOT be permanently closed as "no longer assigned".
+  const teacherOfGroup = new Set<string>();
+  for (const g of (groups || []) as any[]) if (g.teacher_id) teacherOfGroup.add(`${g.id}:${g.teacher_id}`);
+  for (const gt of (gTeachers || []) as any[]) teacherOfGroup.add(`${gt.group_id}:${gt.teacher_id}`);
 
   let sent = 0, skipped = 0;
 
@@ -110,8 +116,8 @@ Deno.serve(async (req) => {
     };
     const teacher = profMap.get(row.teacher_id);
     const grp = groupMap.get(row.group_id);
-    // RBAC: teacher must still be the assigned teacher of the group
-    if (!grp || grp.teacher_id !== row.teacher_id) {
+    // RBAC: teacher must still be a teacher of the group (primary OR co-teacher)
+    if (!grp || !teacherOfGroup.has(`${row.group_id}:${row.teacher_id}`)) {
       await markSent("teacher_no_longer_assigned"); skipped++; continue;
     }
     if (!teacher || !teacher.telegram_id || teacher.notifications_enabled === false) {
