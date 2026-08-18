@@ -4,7 +4,7 @@
 // Telegram session), never a service key:
 //   • fetchPendingQueue()   → the junction-scoped grading queue (RPC teacher_pending_submissions()).
 //   • resolveImageUrl(id)   → a viewable <img> src via the hw-image-url edge fn (storage OR file_id).
-//   • submitScore/undoScore/returnForRedo → the grade WRITE + its reversals.
+//   • submitScore/returnForRedo → the grade WRITE + the return-for-redo re-open.
 //
 // GRADE-WRITE FIDELITY (the whole point): submitScore writes the EXACT same columns
 // TeacherHomework.saveScore (src/pages/TeacherHomework.tsx:188) and TeacherProfile.grade
@@ -124,19 +124,15 @@ export async function submitScore(
   return { status: "ok" };
 }
 
-/**
- * Best-effort undo of a just-written grade — clears it back to pending. Mirrors TeacherProfile.tsx's
- * 6-second undo (score/score_feedback/scored_by/scored_at → null). Because score returns to null the
- * hourly reconcile_all_xp() re-derives XP from source and removes the award idempotently (xp_events
- * are ref-keyed) — the same reversal the shipped web undo relies on.
- */
-export async function undoScore(submissionId: string): Promise<{ ok: boolean; message?: string }> {
-  const { error } = await supabase
-    .from("homework_submissions")
-    .update({ score: null, score_feedback: null, scored_by: null, scored_at: null } as any)
-    .eq("id", submissionId);
-  return error ? { ok: false, message: error.message } : { ok: true };
-}
+// NOTE: there is deliberately NO `undoScore` that clears score→null. The homework_submissions_guard
+// trigger (20260509085603_...sql) only permits OLD.score→NULL when attempt_number is ALSO bumped (a
+// resubmission); a plain null-clear is SILENTLY reverted (`NEW.score := OLD.score`) while our
+// scored_by/scored_at stay NULL → an orphaned score that disappears from every grading queue yet
+// keeps its homework XP forever (the reconciler is INSERT-ONLY; it never retracts hw_score:<id>).
+// Supabase still returns success, so the UI would falsely believe it undid. The Mini App's "Ortga"
+// is instead a purely client-side RE-OPEN-TO-CORRECT (see TeacherGrade.tsx): it re-presents the
+// just-graded item and the teacher re-submits via submitScore — a safe score-CHANGE (non-null→
+// non-null, guard-allowed; XP ref-keyed idempotent). No score-clear write ever happens.
 
 /**
  * Return a submission to the student for redo. Mirrors TeacherHomework.reset — the

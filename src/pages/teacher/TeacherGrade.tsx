@@ -15,7 +15,8 @@
 // STATES (all required): loading (Skeleton) · error/offline (navigator.onLine + retry) · empty /
 // end-of-queue ("Baholash tugadi ✅") · submit-in-flight (disabled primary + spinner) · submit-failed
 // (toast, KEEP the score, DON'T advance) · already-graded-by-co-teacher (gentle "boshqa ustoz
-// baholadi" skip, member-forgiveness) · undo (Sonner toast "Ortga" restores the item to the front).
+// baholadi" skip, member-forgiveness) · undo (Sonner toast "Ortga" RE-OPENS the just-graded item for
+// correction — purely client-side, NO DB score-clear; the correction lands on the next submitScore).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
@@ -27,7 +28,6 @@ import { GradePhoto } from "@/components/teacher/GradePhoto";
 import {
   fetchPendingQueue,
   submitScore,
-  undoScore,
   returnForRedo,
   type PendingSubmission,
 } from "@/lib/teacherApi";
@@ -47,6 +47,10 @@ function agoUz(iso: string): string {
 
 // student_name arrives as "Ism Familiya (@username)"; strip the handle for compact toast lines.
 const plainName = (s: PendingSubmission) => s.student_name.replace(/\s*\(@[^)]*\)\s*$/, "").trim() || "O'quvchi";
+
+// Preset score chips derived from max_score (top band), clamped to non-negative. Shared by the chip
+// row and the undo re-open so a restored score lands back on its chip when it matches one.
+const chipValuesFor = (maxScore: number) => [maxScore, maxScore - 1, maxScore - 2, maxScore - 3].filter((v) => v >= 0);
 
 export default function TeacherGrade() {
   const navigate = useNavigate();
@@ -81,6 +85,23 @@ export default function TeacherGrade() {
     setCustom("");
     setShowFeedback(false);
     setFeedback("");
+  }, []);
+
+  // Re-open-to-correct (undo): put an already-entered score + feedback BACK into the inputs so the
+  // teacher only has to fix the mis-tap and re-submit. A value matching a preset chip restores the
+  // chip; anything else opens the free "boshqa" entry pre-filled. No DB write — purely local state.
+  const restoreInputs = useCallback((item: PendingSubmission, score: number, fb: string) => {
+    if (chipValuesFor(item.max_score).includes(score)) {
+      setChipScore(score);
+      setCustomOpen(false);
+      setCustom("");
+    } else {
+      setChipScore(null);
+      setCustomOpen(true);
+      setCustom(String(score));
+    }
+    setFeedback(fb);
+    setShowFeedback(fb.trim() !== "");
   }, []);
 
   const advance = useCallback(() => {
@@ -146,12 +167,10 @@ export default function TeacherGrade() {
   const chosenValid =
     current != null && chosen != null && Number.isInteger(chosen) && chosen >= 0 && chosen <= current.max_score;
 
-  const chipValues = current
-    ? [current.max_score, current.max_score - 1, current.max_score - 2, current.max_score - 3].filter((v) => v >= 0)
-    : [];
+  const chipValues = current ? chipValuesFor(current.max_score) : [];
 
   const handleSubmit = async () => {
-    if (!current || !chosenValid || submitting) return;
+    if (!current || !chosenValid || submitting || redoing) return;
     const item = current;
     const value = chosen as number;
     const fb = feedback;
@@ -181,19 +200,19 @@ export default function TeacherGrade() {
     toast.success(`${plainName(item)} — ${value}/${item.max_score} ✓`, {
       duration: 6000,
       action: {
+        // "Ortga" RE-OPENS this item to CORRECT the score — purely client-side, NO DB write here.
+        // The grade stays committed (safe: identical to having no undo) until the teacher re-submits a
+        // corrected value, which is a guard-allowed score-CHANGE (non-null→non-null) that re-uses the
+        // idempotent hw_score:<assignment_id> XP ref-key. We restore the entered score + feedback so
+        // only the mis-tap needs fixing. There is NO score→null clear anywhere (that would trip
+        // homework_submissions_guard and orphan the score — see teacherApi.ts).
         label: "Ortga",
-        onClick: async () => {
-          const u = await undoScore(item.submission_id);
-          if (!u.ok) {
-            toast.error("Ortga qaytarib bo'lmadi");
-            return;
-          }
+        onClick: () => {
           processed.current.delete(item.submission_id);
           setRemaining((prev) => [item, ...prev.filter((p) => p.submission_id !== item.submission_id)]);
           setDoneCount((c) => Math.max(0, c - 1));
-          resetInputs();
-          invalidateBadge();
-          toast.info("Ortga qaytarildi");
+          restoreInputs(item, value, fb);
+          toast.info("Qayta baholash uchun ochildi");
         },
       },
     });
@@ -201,7 +220,7 @@ export default function TeacherGrade() {
   };
 
   const handleSkip = () => {
-    if (!current || submitting) return;
+    if (!current || submitting || redoing) return;
     processed.current.add(current.submission_id);
     advance();
   };
@@ -409,14 +428,14 @@ export default function TeacherGrade() {
         )}
 
         {/* The ONE coral primary — submits + auto-advances. */}
-        <Button variant="primary" block disabled={!chosenValid || submitting} onClick={handleSubmit}>
+        <Button variant="primary" block disabled={!chosenValid || submitting || redoing} onClick={handleSubmit}>
           {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
           Baholash → keyingi
         </Button>
 
         {/* Ghost secondaries — skip + return-for-redo (never coral). */}
         <div className="flex gap-2">
-          <Button variant="ghost" block onClick={handleSkip} disabled={submitting}>
+          <Button variant="ghost" block onClick={handleSkip} disabled={submitting || redoing}>
             <SkipForward className="size-4" />
             O'tkazib yuborish
           </Button>
