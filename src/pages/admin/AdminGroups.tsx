@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Trash2, Users as UsersIcon, Upload, RefreshCw, UserPlus, Pencil } from "lucide-react";
+import { Plus, Trash2, Users as UsersIcon, Upload, RefreshCw, UserPlus, Pencil, X } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -302,6 +302,10 @@ function GroupFormDialog({
   const [tierId, setTierId] = useState<string>(group?.tier_id || NO_TIER);
   const [teacherInput, setTeacherInput] = useState<string>("");
   const [teacherPick, setTeacherPick] = useState<string>(group?.teacher_id || "");
+  // Additional (co-)teachers = group_teachers rows with is_primary=false. The primary stays on
+  // teacherPick / groups.teacher_id (a DB trigger mirrors it as the is_primary row).
+  const [coTeacherIds, setCoTeacherIds] = useState<string[]>([]);
+  const { session } = useAuth();
   const [busy, setBusy] = useState(false);
 
   const [tgGroupUrl, setTgGroupUrl] = useState<string>("");
@@ -320,6 +324,12 @@ function GroupFormDialog({
           .maybeSingle();
         setTgGroupUrl(((g as any)?.telegram_group_url) || "");
         setHwTopicUrl(((g as any)?.homework_topic_url) || "");
+        // Load current co-teachers (is_primary=false); the primary is shown via the Teacher picker.
+        const { data: cts } = await supabase
+          .from("group_teachers" as any)
+          .select("teacher_id, is_primary")
+          .eq("group_id", group.id);
+        setCoTeacherIds((((cts as any[]) || []).filter((r) => !r.is_primary).map((r) => r.teacher_id)));
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -371,12 +381,43 @@ function GroupFormDialog({
         telegram_group_url: tgGroupUrl.trim() || null,
         homework_topic_url: hwTopicUrl.trim() || null,
       };
+      let gid = group?.id as string | undefined;
       if (group) {
         const { error } = await supabase.from("groups").update(payload).eq("id", group.id);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from("groups").insert(payload);
+        const { data: ins, error } = await supabase.from("groups").insert(payload).select("id").single();
         if (error) throw error;
+        gid = (ins as any)?.id;
+      }
+
+      // Reconcile co-teachers (group_teachers.is_primary=false). The primary is handled by
+      // teacher_id + the DB sync trigger, so exclude it and never touch the is_primary=true row.
+      if (gid) {
+        const desired = coTeacherIds.filter((tid) => tid && tid !== teacher_id);
+        const { data: curRows } = await supabase
+          .from("group_teachers" as any)
+          .select("teacher_id")
+          .eq("group_id", gid)
+          .eq("is_primary", false);
+        const current: string[] = (((curRows as any[]) || []).map((r) => r.teacher_id));
+        const toInsert = desired.filter((tid) => !current.includes(tid));
+        const toDelete = current.filter((tid) => !desired.includes(tid));
+        if (toInsert.length) {
+          const { error: ie } = await supabase.from("group_teachers" as any).insert(
+            toInsert.map((tid) => ({ group_id: gid, teacher_id: tid, is_primary: false, created_by: session?.user?.id ?? null })),
+          );
+          if (ie) throw ie;
+        }
+        if (toDelete.length) {
+          const { error: de } = await supabase
+            .from("group_teachers" as any)
+            .delete()
+            .eq("group_id", gid)
+            .eq("is_primary", false)
+            .in("teacher_id", toDelete);
+          if (de) throw de;
+        }
       }
 
       toast.success("Guruh saqlandi");
@@ -421,7 +462,7 @@ function GroupFormDialog({
           </div>
           <div>
             <Label>Teacher (existing)</Label>
-            <Select value={teacherPick} onValueChange={setTeacherPick}>
+            <Select value={teacherPick} onValueChange={(v) => { setTeacherPick(v); setCoTeacherIds((ids) => ids.filter((id) => id !== v)); }}>
               <SelectTrigger><SelectValue placeholder="— none —" /></SelectTrigger>
               <SelectContent>
                 {teachers.map((t) => <SelectItem key={t.id} value={t.id}>{t.name || t.email}</SelectItem>)}
@@ -432,6 +473,43 @@ function GroupFormDialog({
             <Label>Or assign teacher by Telegram id / @username</Label>
             <Input value={teacherInput} onChange={(e) => setTeacherInput(e.target.value)} placeholder="123456789 or @username" />
             <p className="text-xs text-muted-foreground mt-1">Will grant teacher role if not already assigned.</p>
+          </div>
+          <div>
+            <Label>Qo'shimcha ustozlar (yordamchi)</Label>
+            <Select
+              value=""
+              onValueChange={(v) => { if (v && !coTeacherIds.includes(v)) setCoTeacherIds([...coTeacherIds, v]); }}
+            >
+              <SelectTrigger><SelectValue placeholder="Yordamchi ustoz qo'shish…" /></SelectTrigger>
+              <SelectContent>
+                {teachers.filter((t) => t.id !== teacherPick && !coTeacherIds.includes(t.id)).map((t) => (
+                  <SelectItem key={t.id} value={t.id}>{t.name || t.email}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {coTeacherIds.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-2">
+                {coTeacherIds.map((cid) => {
+                  const t = teachers.find((x) => x.id === cid);
+                  return (
+                    <Badge key={cid} variant="secondary" className="gap-1 pr-1">
+                      {t ? (t.name || t.email) : cid}
+                      <button
+                        type="button"
+                        aria-label="Olib tashlash"
+                        className="ml-0.5 rounded hover:bg-muted p-0.5"
+                        onClick={() => setCoTeacherIds(coTeacherIds.filter((x) => x !== cid))}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Badge>
+                  );
+                })}
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground mt-1">
+              Bosh ustozdan tashqari, bu guruhni baholay oladigan qo'shimcha ustozlar (biri kasal bo'lsa yordam uchun).
+            </p>
           </div>
 
           <div className="border-t pt-3 mt-3 space-y-3">
