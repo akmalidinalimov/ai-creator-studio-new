@@ -146,8 +146,20 @@ Deno.serve(async (req) => {
     return json({ role: "admin", courses, course_id: courseId, groups, window_days: windowDays });
   }
 
-  // Teacher: only their own groups.
-  const { data: grps } = await admin.from("groups").select("id, course_id").eq("teacher_id", prof.id);
+  // Teacher: only their own groups — junction-aware (primary ∪ co-teachers), matching the webhook's
+  // teacherGroups(). A pure co-teacher would otherwise see an empty board even though the underlying
+  // group_student_leaderboard RPC is already junction-aware (Stage A).
+  const [{ data: primG }, { data: gtRows }] = await Promise.all([
+    admin.from("groups").select("id").eq("teacher_id", prof.id),
+    admin.from("group_teachers").select("group_id").eq("teacher_id", prof.id),
+  ]);
+  const gids = Array.from(new Set([
+    ...((primG || []) as any[]).map((g: any) => g.id),
+    ...((gtRows || []) as any[]).map((r: any) => r.group_id),
+  ]));
+  const { data: grps } = gids.length
+    ? await admin.from("groups").select("id, course_id").in("id", gids)
+    : { data: [] as any[] };
   const groups = await buildGroups(admin, ((grps || []) as any[]), windowDays);
   return json({ role: "teacher", groups, window_days: windowDays });
 });

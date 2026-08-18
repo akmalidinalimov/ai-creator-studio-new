@@ -111,10 +111,22 @@ async function enqueueTeacherDm(
     if (error) throw error;
     return;
   }
-  const { data: g, error: gErr } = await admin.from("groups").select("teacher_id").eq("id", groupId).maybeSingle();
+  // Feature 2 Stage B (whole-branch review): fan out to EVERY teacher of the group — primary
+  // (groups.teacher_id) ∪ co-teachers (group_teachers) — mirroring the webhook's
+  // notifyTeachersOfSubmission. This Mini App path has NO immediate send (the every-minute
+  // notify-homework-submission cron drains the queue), so co-teachers previously only got the DM
+  // after that reconciler delay; enqueuing a row per teacher here delivers promptly.
+  const [{ data: g, error: gErr }, { data: gt, error: gtErr }] = await Promise.all([
+    admin.from("groups").select("teacher_id").eq("id", groupId).maybeSingle(),
+    admin.from("group_teachers").select("teacher_id").eq("group_id", groupId),
+  ]);
   if (gErr) throw gErr; // a masked failure here would misclassify as "group has no teacher"
-  const teacherId = g?.teacher_id;
-  if (!teacherId) {
+  if (gtErr) throw gtErr; // ditto — a masked junction read would silently drop the co-teachers
+  const teacherIds = Array.from(new Set([
+    ...(g?.teacher_id ? [g.teacher_id] : []),
+    ...((gt || []) as any[]).map((r: any) => r.teacher_id),
+  ]));
+  if (!teacherIds.length) {
     const { error } = await admin.from("admin_actions").insert({
       actor_user_id: studentId,
       action: "homework_submission_dm_sent",
@@ -145,9 +157,11 @@ async function enqueueTeacherDm(
     : `https://t.me/?start=hw_${submissionId}_${attemptNumber}`; // degraded but still a syntactically valid https URL
 
   const { data: recent, error: recentErr } = await admin.from("homework_teacher_dm_queue")
-    .select("id, message_url").eq("submission_id", submissionId).limit(5);
+    .select("id, teacher_id, message_url").eq("submission_id", submissionId);
   if (recentErr) throw recentErr; // a masked failure here could either skip a legit dedupe or (worse) look like success
-  if (recent && recent.some((r: any) => r.message_url === messageUrl)) return; // defends a double-tap/retry of this same attempt
+  // Per-teacher dedupe now runs inside the fan-out loop below — no global early return, since one
+  // teacher already queued must NOT suppress a co-teacher's row. No .limit(): with N co-teachers a
+  // submission legitimately has up to N rows per message_url; a small cap could truncate + leak a dup.
 
   const now = new Date();
   const tashHour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Tashkent", hour: "2-digit", hour12: false }).format(now));
@@ -172,24 +186,36 @@ async function enqueueTeacherDm(
   // queued } = await ...insert(...)`, `error` never named). supabase-js does not throw on a
   // Postgres error — a failed insert here used to resolve silently, the function would report a
   // clean 200 to the student, and the teacher would never be notified with no trace anywhere.
-  const { error: qErr } = await admin.from("homework_teacher_dm_queue").insert({
-    submission_id: submissionId,
-    teacher_id: teacherId,
-    student_id: studentId,
-    group_id: groupId,
-    module_id: moduleId,
-    assignment_id: assignmentId,
-    module_number: moduleNumber,
-    task_number: stepNumber,
-    assignment_title: assignmentTitle,
-    student_name: studentName,
-    message_url: messageUrl,
-    scheduled_for: scheduled.toISOString(),
-    queued_for_quiet_hours: quiet,
-  });
-  if (qErr) throw qErr;
+  // Fan out: one queue row per teacher (primary ∪ co-teachers), each with its own per-teacher dedupe.
+  for (const teacherId of teacherIds) {
+    // Per-teacher retry/double-tap dedupe: THIS teacher already has a row for THIS exact message_url.
+    if ((recent || []).some((r: any) => r.teacher_id === teacherId && r.message_url === messageUrl)) continue;
+    const { error: qErr } = await admin.from("homework_teacher_dm_queue").insert({
+      submission_id: submissionId,
+      teacher_id: teacherId,
+      student_id: studentId,
+      group_id: groupId,
+      module_id: moduleId,
+      assignment_id: assignmentId,
+      module_number: moduleNumber,
+      task_number: stepNumber,
+      assignment_title: assignmentTitle,
+      student_name: studentName,
+      message_url: messageUrl,
+      scheduled_for: scheduled.toISOString(),
+      queued_for_quiet_hours: quiet,
+    });
+    if (qErr) {
+      // 23505 = a concurrent writer (the reconciler) already inserted this exact (submission_id,
+      // teacher_id, message_url) row — benign race, skip it (same as Stage B). The uq index is
+      // PARTIAL (WHERE message_url IS NOT NULL) so a targeted upsert can't infer it; .insert +
+      // 23505-skip is the working equivalent.
+      if ((qErr as any).code === "23505") continue;
+      throw qErr; // any other error → fail loud, preserving this path's existing contract
+    }
+  }
   // No immediate send here on purpose — the every-minute notify-homework-submission cron drains
-  // this row. Sending here too would duplicate delivery.
+  // these rows. Sending here too would duplicate delivery.
 }
 
 // Resubmission: bumps attempt_number (and, only when a score already existed, archives it into
