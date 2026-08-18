@@ -82,6 +82,13 @@ as $$
   join modules m               on m.id = ha.module_id           -- FK NOT NULL → never hides work
   where p.group_id in (select public.teacher_group_ids(auth.uid()))
     and (hs.score is null or hs.score_is_stale is true)
+    -- Defense-in-depth (matches sibling RPCs teacher_groups / group_student_leaderboard): the
+    -- junction scope above already returns zero rows for a non-teacher, but gate on the role
+    -- explicitly too so this never depends solely on teacher_group_ids() semantics (the
+    -- security-definer-anon-guard lesson: keep SECURITY DEFINER reads role-gated).
+    and (public.has_role(auth.uid(), 'teacher'::public.app_role)
+         or public.has_role(auth.uid(), 'admin'::public.app_role)
+         or public.has_role(auth.uid(), 'superadmin'::public.app_role))
   order by hs.submitted_at asc;
 $$;
 
