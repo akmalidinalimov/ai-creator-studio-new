@@ -140,6 +140,27 @@
     "emptyStatusLine": "{{xp}} XP · {{level}} уровень",
     "emptyTierHint": "Вы начинаете с уровня «{{tier}}» 🥉"
   },
+  "darslar": {
+    "title": "Мои уроки",
+    "subtitle": "{{course}} · {{count}} модулей",
+    "resumeLabel": "Там, где вы остановились",
+    "resumeTitle": "Модуль {{n}} · {{title}}",
+    "resumeCta": "Далее",
+    "modulesHeader": "Модули",
+    "modulesProgress": "Завершено {{pct}}%",
+    "moduleDone": "{{completed}} / {{total}} уроков · завершено",
+    "moduleActive": "{{completed}} / {{total}} уроков · в процессе",
+    "moduleLockedSequential": "🔒 Завершите модуль {{n}}",
+    "moduleLockedTier": "🔒 Этот модуль не входит в ваш тариф",
+    "lessonMeta": "{{minutes}} мин",
+    "lessonHereMeta": "{{minutes}} мин · +{{xp}} XP",
+    "trialTitle": "Пробный доступ",
+    "trialBody": "Уроки откроются после полной оплаты. Ваши домашние задания, баллы и статистика сохранятся.",
+    "trialContact": "Для оплаты свяжитесь с администратором.",
+    "emptyTitle": "Вы ещё не записаны на курс",
+    "emptyBody": "Как только вы запишетесь на курс, уроки появятся здесь.",
+    "loadError": "Не удалось загрузить уроки."
+  },
   "course": {
     "modules": "Модули",
     "lessons": "Уроки",

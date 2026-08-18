@@ -140,6 +140,27 @@
     "emptyStatusLine": "{{xp}} XP · {{level}}-daraja",
     "emptyTierHint": "{{tier}} darajadan boshlaysiz 🥉"
   },
+  "darslar": {
+    "title": "Darslarim",
+    "subtitle": "{{course}} · {{count}} modul",
+    "resumeLabel": "Qolgan joyingiz",
+    "resumeTitle": "{{n}}-modul · {{title}}",
+    "resumeCta": "Davom",
+    "modulesHeader": "Modullar",
+    "modulesProgress": "{{pct}}% yakunlandi",
+    "moduleDone": "{{completed}} / {{total}} dars · yakunlandi",
+    "moduleActive": "{{completed}} / {{total}} dars · davom etmoqda",
+    "moduleLockedSequential": "🔒 {{n}}-modulni tugating",
+    "moduleLockedTier": "🔒 Bu modul tarifingizga kirmaydi",
+    "lessonMeta": "{{minutes}} daqiqa",
+    "lessonHereMeta": "{{minutes}} daqiqa · +{{xp}} XP",
+    "trialTitle": "Sinov (trial) hisobi",
+    "trialBody": "Darslar to'liq to'lovdan so'ng ochiladi. Uy vazifalaringiz, ballaringiz va statistikangiz saqlanib qoladi.",
+    "trialContact": "To'lov uchun administrator bilan bog'laning.",
+    "emptyTitle": "Hali kursga yozilmagansiz",
+    "emptyBody": "Kursga yozilgach, darslaringiz shu yerda paydo bo'ladi.",
+    "loadError": "Darslarni yuklab bo'lmadi."
+  },
   "course": {
     "modules": "Modullar",
     "lessons": "Darslar",

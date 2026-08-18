@@ -140,6 +140,27 @@
     "emptyStatusLine": "{{xp}} XP · Level {{level}}",
     "emptyTierHint": "You're starting at {{tier}} tier 🥉"
   },
+  "darslar": {
+    "title": "My lessons",
+    "subtitle": "{{course}} · {{count}} modules",
+    "resumeLabel": "Where you left off",
+    "resumeTitle": "Module {{n}} · {{title}}",
+    "resumeCta": "Continue",
+    "modulesHeader": "Modules",
+    "modulesProgress": "{{pct}}% complete",
+    "moduleDone": "{{completed}} / {{total}} lessons · completed",
+    "moduleActive": "{{completed}} / {{total}} lessons · in progress",
+    "moduleLockedSequential": "🔒 Finish module {{n}}",
+    "moduleLockedTier": "🔒 Not included in your plan",
+    "lessonMeta": "{{minutes}} min",
+    "lessonHereMeta": "{{minutes}} min · +{{xp}} XP",
+    "trialTitle": "Trial account",
+    "trialBody": "Lessons unlock after full payment. Your homework, points, and stats are saved.",
+    "trialContact": "Contact an administrator to complete payment.",
+    "emptyTitle": "You're not enrolled in a course yet",
+    "emptyBody": "Once you enroll in a course, your lessons will appear here.",
+    "loadError": "Couldn't load lessons."
+  },
   "course": {
     "modules": "Modules",
     "lessons": "Lessons",
