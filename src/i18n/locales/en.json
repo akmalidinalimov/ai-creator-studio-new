@@ -203,7 +203,6 @@
     "emptyTitle": "No homework submitted yet",
     "emptyBody": "Send your first submission in your group's Telegram topic — you'll track it here.",
     "loadError": "Couldn't load your homework.",
-    "uploadNoGroupToast": "You're not assigned to a group yet. Contact your teacher.",
     "backToList": "Back to homework",
     "yourWorkTitle": "Your work",
     "feedbackTitle": "Teacher feedback",

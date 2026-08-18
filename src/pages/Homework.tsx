@@ -799,7 +799,8 @@ export default function Homework() {
               <button
                 type="button"
                 onClick={() => setStage("list")}
-                className="inline-flex items-center gap-1 text-[12.5px] font-bold text-muted-foreground"
+                disabled={submitting}
+                className="inline-flex items-center gap-1 text-[12.5px] font-bold text-muted-foreground disabled:pointer-events-none disabled:opacity-50"
               >
                 <ArrowLeft className="size-3.5" />
                 {t("homework.picker.backToPicker")}
@@ -839,7 +840,8 @@ export default function Homework() {
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="absolute bottom-2 right-2 rounded-full bg-card/90 px-3 py-1.5 text-[11.5px] font-bold text-foreground shadow-soft"
+                    disabled={submitting}
+                    className="absolute bottom-2 right-2 rounded-full bg-card/90 px-3 py-1.5 text-[11.5px] font-bold text-foreground shadow-soft disabled:pointer-events-none disabled:opacity-50"
                   >
                     {t("homework.picker.changePhoto")}
                   </button>
@@ -867,7 +869,8 @@ export default function Homework() {
                   onChange={(e) => setNote(e.target.value)}
                   placeholder={t("homework.picker.notePlaceholder")}
                   rows={3}
-                  className="w-full resize-none rounded-lg border border-border bg-card p-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  disabled={submitting}
+                  className="w-full resize-none rounded-lg border border-border bg-card p-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
                 />
               </div>
 
