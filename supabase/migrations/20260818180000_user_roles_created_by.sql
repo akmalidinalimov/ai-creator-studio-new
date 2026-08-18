@@ -1,8 +1,10 @@
 -- Record WHO created each role assignment (esp. teacher accounts).
 -- user_roles gets a nullable created_by. Existing rows stay NULL = "unknown/legacy"
 -- (we do NOT backfill-guess — a null simply renders as "—" in the admin UI).
+-- ON DELETE SET NULL so deleting a staff member who once created roles never fails
+-- (their created_by references just null out; the "who created" attribution is best-effort).
 ALTER TABLE public.user_roles
-  ADD COLUMN IF NOT EXISTS created_by uuid REFERENCES auth.users(id);
+  ADD COLUMN IF NOT EXISTS created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL;
 
 -- Recreate admin_change_role so the role it inserts also stamps created_by with the
 -- calling admin's auth.uid() (the function already computes `caller`). Body is otherwise
