@@ -33,7 +33,7 @@ function Hero({ coverLabel, title, meta, progress, ctaLabel, onCtaClick, onPlayC
           style={{ background: "radial-gradient(120px 90px at 82% 20%, hsl(var(--cta) / 0.55), transparent 70%)" }}
         />
         {coverLabel ? (
-          <span className="relative z-10 rounded-full border border-white/30 bg-white/15 px-2.5 py-1.5 text-[11.5px] font-bold tracking-wide text-white backdrop-blur-sm">
+          <span className="relative z-10 max-w-full truncate rounded-full border border-white/30 bg-white/15 px-2.5 py-1.5 text-[11.5px] font-bold tracking-wide text-white backdrop-blur-sm">
             {coverLabel}
           </span>
         ) : null}
@@ -49,7 +49,7 @@ function Hero({ coverLabel, title, meta, progress, ctaLabel, onCtaClick, onPlayC
         ) : null}
       </div>
       <div className={cn("p-4", glossSurfaceClass)}>
-        <h3 className="mb-1 text-[16.5px] font-extrabold tracking-tight text-foreground">{title}</h3>
+        <h3 className="mb-1 break-words text-[16.5px] font-extrabold tracking-tight text-foreground">{title}</h3>
         {meta ? <div className="mb-3 text-[12.5px] font-semibold text-muted-foreground">{meta}</div> : null}
         <div className="flex items-center gap-3">
           {typeof progress === "number" ? <ProgressBar value={progress} /> : null}

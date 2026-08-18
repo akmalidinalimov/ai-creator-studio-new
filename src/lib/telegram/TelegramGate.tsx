@@ -4,7 +4,6 @@ import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useMiniApp } from "./MiniAppContext";
-import { applyTelegramTheme } from "./theme";
 import { applyTelegramChrome } from "./appShell";
 import { useTelegramViewport } from "./useTelegramViewport";
 import { useTelegramBackButton } from "./useTelegramBackButton";
@@ -53,18 +52,13 @@ export function TelegramGate({ children }: { children: ReactNode }) {
   useTelegramViewport(webApp);
   useTelegramBackButton(webApp);
 
-  // Wear the user's Telegram theme (and follow live theme switches). Applied as soon as the
-  // SDK is present so even the sign-in spinner is themed. No-op when themeParams is empty.
+  // Match Telegram's native chrome (header/background) to the app's own dark ground. The app
+  // NEVER wears Telegram's theme colors anymore (owner decision — dark-only palette; see
+  // index.html's pre-paint script), so there's no themeChanged re-application here, just the
+  // one-time chrome match as soon as the SDK is present.
   useEffect(() => {
     if (!webApp) return;
-    applyTelegramTheme(webApp);
     applyTelegramChrome(webApp);
-    const onThemeChanged = () => {
-      applyTelegramTheme(webApp);
-      applyTelegramChrome(webApp);
-    };
-    webApp.onEvent("themeChanged", onThemeChanged);
-    return () => webApp.offEvent("themeChanged", onThemeChanged);
   }, [webApp]);
 
   useEffect(() => {

@@ -260,7 +260,7 @@ function StudentProfile({ userId }: { userId: string | null }) {
             className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadAvatar(f); e.currentTarget.value = ""; }}
           />
-          <h1 className="mt-1 text-xl font-extrabold tracking-tight text-foreground">{fullName}</h1>
+          <h1 className="mt-1 break-words text-xl font-extrabold tracking-tight text-foreground">{fullName}</h1>
           {(profile?.telegram_username || groupName) && (
             <div className="text-sm font-semibold text-muted-foreground">
               {profile?.telegram_username ? <span>@{profile.telegram_username}</span> : null}
