@@ -12,8 +12,11 @@
 // either kind into a URL a browser can load:
 //   - storage-bucket path (submitted_image_url or a media[] entry that is a bucket key) -> signed URL
 //   - Telegram file_id (no http url)                             -> server-side getFile -> token-free data: URL
-//   - an already-http media url (e.g. an externally posted link)                        -> returned as-is
+//   - an already-http, image-kind media url (an externally posted image)                -> returned as-is
 //   - nothing viewable                                                                  -> { url: null, reason }
+// Only IMAGE-kind media is a candidate (kind === "photo" or, for legacy rows, absent). A video /
+// document / link submission returns { url: null, reason: "non_image_media" } with NO Telegram fetch —
+// this feeds an <img>, so non-image bytes must never be downloaded and returned as a data: image.
 //
 // Media shapes (mirrors src/pages/Homework.tsx header + the bot capture paths in
 // telegram-bot-webhook/index.ts ~5210 picker-finalize / ~5910 auto-capture):
@@ -186,7 +189,7 @@ Deno.serve(async (req) => {
     // --- 2. Load the submission (service role bypasses RLS) + the student's group. ---
     const { data: sub, error: subErr } = await admin
       .from("homework_submissions")
-      .select("id, user_id, submitted_image_url, media, telegram_file_id")
+      .select("id, user_id, submitted_image_url, media, telegram_file_id, telegram_file_kind")
       .eq("id", submissionId)
       .maybeSingle();
     if (subErr) throw subErr;
@@ -217,21 +220,44 @@ Deno.serve(async (req) => {
     }
     if (!allowed) return json({ error: "forbidden" }, 403);
 
-    // --- 4. Resolve a viewable URL, in precedence order. ---
+    // --- 4. Resolve a viewable URL, in precedence order. This endpoint feeds an <img>, and homework
+    // media can be photo | video | document | link (20260707020000_homework_multimedia.sql + the
+    // webhook's kind tagging). So ONLY image-kind entries are candidates: a video/document must not be
+    // downloaded and returned as `data:image/...;base64,<non-image bytes>` (broken <img> / misleading
+    // image_too_large), and a `link`-kind external URL must not be auto-loaded (broken image /
+    // tracking-pixel). An entry is an image candidate when kind === "photo" OR kind is absent (legacy
+    // rows predate the kind tag — keep resolving those as today). ---
     const media: MediaItem[] = Array.isArray(sub.media) ? (sub.media as MediaItem[]) : [];
+    const isImageKind = (k: unknown) => k === "photo" || k == null; // null/undefined = legacy, allow
+    const imageMedia = media.filter((m) => isImageKind(m?.kind));
 
-    // 4a) An already-http media url (external link the student posted) is viewable as-is.
-    for (const m of media) {
+    // A photo scalar signal: submitted_image_url is always a web/miniapp uploaded photo; the
+    // telegram_file_id scalar is an image only when its telegram_file_kind says so.
+    const hasStorageImage = typeof sub.submitted_image_url === "string" && sub.submitted_image_url !== ""
+      && !isHttp(sub.submitted_image_url);
+    const hasScalarImageFile = typeof sub.telegram_file_id === "string" && sub.telegram_file_id !== ""
+      && isImageKind(sub.telegram_file_kind);
+
+    // The submission carries media/files, but none of it is an image → don't spend a getFile; tell the
+    // client it isn't a renderable image (video/document/link submission).
+    const hasAnyMediaSignal = media.length > 0
+      || (typeof sub.telegram_file_id === "string" && sub.telegram_file_id !== "")
+      || (typeof sub.submitted_image_url === "string" && sub.submitted_image_url !== "");
+    const nonImageOnly = hasAnyMediaSignal
+      && imageMedia.length === 0 && !hasStorageImage && !hasScalarImageFile;
+
+    // 4a) An already-http, image-kind media url is viewable as-is.
+    for (const m of imageMedia) {
       if (isHttp(m?.url)) return json({ url: m.url });
     }
 
-    // 4b) Storage path (private homework_images bucket key): submitted_image_url (non-http) or a
-    // media entry whose `url` is a bucket key (miniapp/web upload) -> short-lived signed URL.
+    // 4b) Storage path (private homework_images bucket key): submitted_image_url (non-http) or an
+    // image-kind media entry whose `url` is a bucket key (miniapp/web upload) -> short-lived signed URL.
     let storagePath = "";
-    if (sub.submitted_image_url && !isHttp(sub.submitted_image_url)) {
+    if (hasStorageImage) {
       storagePath = String(sub.submitted_image_url);
     } else {
-      for (const m of media) {
+      for (const m of imageMedia) {
         if (typeof m?.url === "string" && m.url && !isHttp(m.url)) { storagePath = m.url; break; }
       }
     }
@@ -245,14 +271,12 @@ Deno.serve(async (req) => {
       // Fall through: a submission could carry both a bucket key AND a Telegram file_id.
     }
 
-    // 4c) Telegram file_id (no viewable http url) -> getFile proxy URL.
+    // 4c) Telegram file_id (image-kind only) -> server-side getFile -> token-free data: URL.
     let fileId = "";
-    for (const m of media) {
+    for (const m of imageMedia) {
       if (typeof m?.file_id === "string" && m.file_id) { fileId = m.file_id; break; }
     }
-    if (!fileId && typeof sub.telegram_file_id === "string" && sub.telegram_file_id) {
-      fileId = sub.telegram_file_id;
-    }
+    if (!fileId && hasScalarImageFile) fileId = String(sub.telegram_file_id);
     if (fileId) {
       const res = await resolveTelegramFileUrl(fileId);
       if (res && "url" in res) return json({ url: res.url }); // token-free data: URL
@@ -263,8 +287,10 @@ Deno.serve(async (req) => {
       return json({ url: null, reason: "telegram_getfile_failed" });
     }
 
-    // 4d) Nothing viewable. Distinguish a purged storage object from a truly image-less submission.
-    return json({ url: null, reason: triedStorage ? "image_unavailable" : "no_viewable_media" });
+    // 4d) Nothing viewable. Non-image submission (video/document/link) vs a purged storage object vs a
+    // truly media-less submission — distinct reasons so the client can message each correctly.
+    const reason = nonImageOnly ? "non_image_media" : (triedStorage ? "image_unavailable" : "no_viewable_media");
+    return json({ url: null, reason });
   } catch (e) {
     // Unexpected failure -> DB-visible health signal (incident doctrine), best-effort, then 500.
     await logHealth(admin, uid, "hw_image_url_error",
