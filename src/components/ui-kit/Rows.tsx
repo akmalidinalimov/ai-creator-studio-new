@@ -39,7 +39,8 @@ const ModuleRow = React.forwardRef<HTMLDivElement, ModuleRowProps>(
         className={cn(
           "mb-2 flex items-center gap-3 rounded-md border border-border p-[11px]",
           glossSurfaceClass,
-          clickable && "cursor-pointer",
+          clickable &&
+            "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
           state === "locked" && "opacity-55",
           className,
         )}
@@ -97,10 +98,21 @@ const LessonRow = React.forwardRef<HTMLDivElement, LessonRowProps>(
         onClick={onClick}
         role={clickable ? "button" : undefined}
         tabIndex={clickable ? 0 : undefined}
+        onKeyDown={
+          clickable
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onClick?.();
+                }
+              }
+            : undefined
+        }
         className={cn(
           "ml-11 mb-1.5 flex items-center gap-2.5 rounded-md border border-border bg-surface-2 px-[11px] py-2.5",
           here && "border-accent/50 bg-accent-soft",
-          clickable && "cursor-pointer",
+          clickable &&
+            "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
           className,
         )}
       >

@@ -83,13 +83,16 @@ const XpPill = React.forwardRef<HTMLSpanElement, XpPillProps>(({ xp, locale = "u
 ));
 XpPill.displayName = "XpPill";
 
-// Mockup: .hstat.ok/.wait/.redo — homework status pill; text uses the --*-2 (louder) tokens,
-// except `wait` which maps to the semantic --warning token per the token-usage brief.
+// Mockup: .hstat.ok/.wait/.redo — homework status pill; text uses the --*-2 (louder,
+// darker-on-tint) tokens for all three kinds, matching the mockup's `.hstat.wait{color:
+// var(--gold-2)}` exactly. `--warning` (40 73% 56%) is ~25pt lighter than `--gold-2`
+// (40 80% 31%), which read as low-contrast text on the tinted background — fixed per
+// review round 1.
 export type StatusChipKind = "ok" | "wait" | "redo";
 
 const STATUS_CLASSES: Record<StatusChipKind, string> = {
   ok: "bg-good/15 text-good-2",
-  wait: "bg-warning/15 text-warning",
+  wait: "bg-warning/15 text-gold-2",
   redo: "bg-danger/15 text-danger-2",
 };
 
