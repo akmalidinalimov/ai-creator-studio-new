@@ -169,7 +169,15 @@
     "trialContact": "To'lov uchun administrator bilan bog'laning.",
     "emptyTitle": "Hali kursga yozilmagansiz",
     "emptyBody": "Kursga yozilgach, darslaringiz shu yerda paydo bo'ladi.",
-    "loadError": "Darslarni yuklab bo'lmadi."
+    "loadError": "Darslarni yuklab bo'lmadi.",
+    "homeworkStepLabel": "Uy vazifasi"
+  },
+  "moduleHomework": {
+    "backToLessons": "Darslarga qaytish",
+    "title": "Uy vazifasi",
+    "loadError": "Uy vazifasini yuklab bo'lmadi.",
+    "emptyTitle": "Bu modulda uy vazifasi yo'q",
+    "emptyBody": "Hozircha bu modul uchun uy vazifasi tayinlanmagan."
   },
   "leaderboard": {
     "title": "Reyting",

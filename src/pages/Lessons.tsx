@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Play } from "lucide-react";
+import { ChevronRight, Play } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { formatXp } from "@/lib/xp";
 import { cn } from "@/lib/utils";
+import { aggregateHomeworkState, getHomeworkStateChip, type AssignableItem } from "@/lib/homeworkAssignable";
 import {
   ProgressRing,
   SectionHeader,
@@ -16,7 +17,9 @@ import {
   Skeleton,
   ModuleRow,
   LessonRow,
+  StatusChip,
   type ModuleRowState,
+  type StatusChipKind,
 } from "@/components/ui-kit";
 
 // Fixed lesson-completion XP award — supabase/migrations/20260706090000_profile_gamification_phase1.sql
@@ -57,6 +60,12 @@ export default function Lessons() {
   const [moduleLimit, setModuleLimit] = useState<number | null>(null);
   const [completed, setCompleted] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Module-end homework (module-homework feature, 2026-08-18): student_assignable_homework()
+  // rows grouped by module_id, so a module's LessonRows can be followed by a single "Uy
+  // vazifasi" step row when that module has assignable homework. Fetched independently of the
+  // course/module load above and fails SILENTLY (console.error only) — this is purely additive
+  // decoration on top of Darslar, so an RPC hiccup must never break the core lesson list.
+  const [homeworkByModule, setHomeworkByModule] = useState<Map<string, AssignableItem[]>>(new Map());
 
   useEffect(() => {
     if (!user) return;
@@ -166,6 +175,32 @@ export default function Lessons() {
         if (!cancelled) { console.error("[Lessons] load failed", e); setError(true); }
       } finally {
         if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user, reloadKey]);
+
+  // Module-end homework rows — independent, non-blocking fetch (see homeworkByModule above).
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error: rpcErr } = await supabase.rpc("student_assignable_homework" as any);
+        if (rpcErr) throw rpcErr;
+        if (cancelled) return;
+        const rows = ((data as any[]) || []) as AssignableItem[];
+        const byModule = new Map<string, AssignableItem[]>();
+        rows.forEach((r) => {
+          const arr = byModule.get(r.module_id) || [];
+          arr.push(r);
+          byModule.set(r.module_id, arr);
+        });
+        setHomeworkByModule(byModule);
+      } catch (e) {
+        // Non-blocking: the homework step row simply won't render for any module — Darslar
+        // itself (lessons, progress, resume) is unaffected.
+        if (!cancelled) console.error("[Lessons] module homework load failed", e);
       }
     })();
     return () => { cancelled = true; };
@@ -321,27 +356,46 @@ export default function Lessons() {
                     lockReason={lockReason}
                     onClick={handleModuleClick}
                   />
-                  {isOpen &&
-                    m.lessons.map((l, j) => {
-                      const done = completed.has(l.id);
-                      const here = !!nextLesson && l.id === nextLesson.id;
-                      const minutes = Math.max(1, Math.round((l.durationSec || 0) / 60));
-                      return (
-                        <LessonRow
-                          key={l.id}
-                          state={done ? "done" : "upcoming"}
-                          title={l.title}
-                          here={here}
-                          index={formatXp(j + 1, i18n.language)}
-                          meta={
-                            here
-                              ? t("darslar.lessonHereMeta", { minutes: formatXp(minutes, i18n.language), xp: formatXp(LESSON_XP, i18n.language) })
-                              : t("darslar.lessonMeta", { minutes: formatXp(minutes, i18n.language) })
-                          }
-                          onClick={() => courseId && navigate(`/lesson/${courseId}/${l.id}`)}
-                        />
-                      );
-                    })}
+                  {isOpen && (
+                    <>
+                      {m.lessons.map((l, j) => {
+                        const done = completed.has(l.id);
+                        const here = !!nextLesson && l.id === nextLesson.id;
+                        const minutes = Math.max(1, Math.round((l.durationSec || 0) / 60));
+                        return (
+                          <LessonRow
+                            key={l.id}
+                            state={done ? "done" : "upcoming"}
+                            title={l.title}
+                            here={here}
+                            index={formatXp(j + 1, i18n.language)}
+                            meta={
+                              here
+                                ? t("darslar.lessonHereMeta", { minutes: formatXp(minutes, i18n.language), xp: formatXp(LESSON_XP, i18n.language) })
+                                : t("darslar.lessonMeta", { minutes: formatXp(minutes, i18n.language) })
+                            }
+                            onClick={() => courseId && navigate(`/lesson/${courseId}/${l.id}`)}
+                          />
+                        );
+                      })}
+                      {/* Module-end homework step (non-blocking — text + submit, no video;
+                          appears only if the RPC returned assignable homework for this module.
+                          Never affects `state`/`isOpen`/progression above.) */}
+                      {(() => {
+                        const hwItems = homeworkByModule.get(m.id);
+                        if (!hwItems || hwItems.length === 0) return null;
+                        const agg = aggregateHomeworkState(hwItems);
+                        const chip = getHomeworkStateChip(agg.state, agg.score, agg.max, t, i18n.language);
+                        return (
+                          <HomeworkStepRow
+                            label={t("darslar.homeworkStepLabel")}
+                            chip={chip}
+                            onClick={() => navigate(`/homework/module/${m.id}`)}
+                          />
+                        );
+                      })()}
+                    </>
+                  )}
                 </div>
               );
             })}
@@ -350,5 +404,41 @@ export default function Lessons() {
         )}
       </div>
     </PageShell>
+  );
+}
+
+// Module-end homework row — matches LessonRow's visual language (ml-11 indent, rounded-md
+// border, bg-surface-2 leading circle) but with a 📝 icon and a trailing StatusChip instead of
+// a done/upcoming marker, since this row represents a whole homework task (or several, rolled
+// up via aggregateHomeworkState), not a single lesson.
+function HomeworkStepRow({
+  label,
+  chip,
+  onClick,
+}: {
+  label: string;
+  chip: { kind: StatusChipKind; label: string };
+  onClick: () => void;
+}) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      className="ml-11 mb-1.5 flex cursor-pointer items-center gap-2.5 rounded-md border border-border bg-surface-2 px-[11px] py-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+    >
+      <div className="grid size-[26px] flex-none place-items-center rounded-sm bg-card text-sm" aria-hidden>
+        📝
+      </div>
+      <div className="min-w-0 flex-1 text-[13px] font-bold text-foreground">{label}</div>
+      <StatusChip kind={chip.kind} label={chip.label} />
+      <ChevronRight className="size-4 flex-none text-muted-foreground" />
+    </div>
   );
 }
