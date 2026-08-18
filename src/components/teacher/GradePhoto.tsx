@@ -158,7 +158,10 @@ function Lightbox({
     };
     window.addEventListener("keydown", onKey);
     return () => {
-      webApp?.enableVerticalSwipes?.();
+      // Restore the app DEFAULT (swipe-to-close DISABLED — set by useTelegramViewport in the shell),
+      // NOT enableVerticalSwipes. The shell owns the default; the lightbox must leave it as it found
+      // it, or a later downward scroll while grading could accidentally close the Mini App.
+      webApp?.disableVerticalSwipes?.();
       document.body.style.overflow = prevOverflow;
       window.removeEventListener("keydown", onKey);
     };

@@ -175,48 +175,56 @@ export default function TeacherGrade() {
     const value = chosen as number;
     const fb = feedback;
     setSubmitting(true);
-    const res = await submitScore(item.submission_id, value, fb);
-    setSubmitting(false);
+    try {
+      const res = await submitScore(item.submission_id, value, fb);
 
-    if (res.status === "already_graded") {
-      // Member-forgiveness: a co-teacher grabbed it between load and submit. Don't clobber; skip it.
+      if (res.status === "already_graded") {
+        // Member-forgiveness: a co-teacher grabbed it between load and submit. Don't clobber; skip it.
+        processed.current.add(item.submission_id);
+        advance();
+        invalidateBadge();
+        void reconcile();
+        toast.message("Boshqa ustoz baholadi", { description: `${plainName(item)} — o'tkazib yuborildi` });
+        return;
+      }
+      if (res.status === "error") {
+        // KEEP the score, DON'T advance — a grade must never be silently lost.
+        toast.error("Baholashda xatolik. Bal saqlanmadi — qayta urinib ko'ring.");
+        return;
+      }
+
+      // Success — advance immediately, offer a 6s undo (auto-advance makes a fat-finger unrecoverable).
       processed.current.add(item.submission_id);
       advance();
       invalidateBadge();
-      void reconcile();
-      toast.message("Boshqa ustoz baholadi", { description: `${plainName(item)} — o'tkazib yuborildi` });
-      return;
-    }
-    if (res.status === "error") {
-      // KEEP the score, DON'T advance — a grade must never be silently lost.
-      toast.error("Baholashda xatolik. Bal saqlanmadi — qayta urinib ko'ring.");
-      return;
-    }
-
-    // Success — advance immediately, offer a 6s undo (auto-advance makes a fat-finger unrecoverable).
-    processed.current.add(item.submission_id);
-    advance();
-    invalidateBadge();
-    toast.success(`${plainName(item)} — ${value}/${item.max_score} ✓`, {
-      duration: 6000,
-      action: {
-        // "Ortga" RE-OPENS this item to CORRECT the score — purely client-side, NO DB write here.
-        // The grade stays committed (safe: identical to having no undo) until the teacher re-submits a
-        // corrected value, which is a guard-allowed score-CHANGE (non-null→non-null) that re-uses the
-        // idempotent hw_score:<assignment_id> XP ref-key. We restore the entered score + feedback so
-        // only the mis-tap needs fixing. There is NO score→null clear anywhere (that would trip
-        // homework_submissions_guard and orphan the score — see teacherApi.ts).
-        label: "Ortga",
-        onClick: () => {
-          processed.current.delete(item.submission_id);
-          setRemaining((prev) => [item, ...prev.filter((p) => p.submission_id !== item.submission_id)]);
-          setDoneCount((c) => Math.max(0, c - 1));
-          restoreInputs(item, value, fb);
-          toast.info("Qayta baholash uchun ochildi");
+      toast.success(`${plainName(item)} — ${value}/${item.max_score} ✓`, {
+        duration: 6000,
+        action: {
+          // "Ortga" RE-OPENS this item to CORRECT the score — purely client-side, NO DB write here.
+          // The grade stays committed (safe: identical to having no undo) until the teacher re-submits a
+          // corrected value, which is a guard-allowed score-CHANGE (non-null→non-null) that re-uses the
+          // idempotent hw_score:<assignment_id> XP ref-key. We restore the entered score + feedback so
+          // only the mis-tap needs fixing. There is NO score→null clear anywhere (that would trip
+          // homework_submissions_guard and orphan the score — see teacherApi.ts).
+          label: "Ortga",
+          onClick: () => {
+            processed.current.delete(item.submission_id);
+            setRemaining((prev) => [item, ...prev.filter((p) => p.submission_id !== item.submission_id)]);
+            setDoneCount((c) => Math.max(0, c - 1));
+            restoreInputs(item, value, fb);
+            toast.info("Qayta baholash uchun ochildi");
+          },
         },
-      },
-    });
-    void reconcile();
+      });
+      void reconcile();
+    } catch {
+      // supabase-js can THROW on a network failure (exactly when offline). Treat it like a returned
+      // {status:"error"}: keep the entered score, DON'T advance. The finally clears `submitting` so
+      // the coral primary can never wedge disabled+spinning until a remount.
+      toast.error("Baholashda xatolik. Bal saqlanmadi — qayta urinib ko'ring.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleSkip = () => {
@@ -229,17 +237,24 @@ export default function TeacherGrade() {
     if (!current || redoing || submitting) return;
     const item = current;
     setRedoing(true);
-    const r = await returnForRedo(item.submission_id);
-    setRedoing(false);
-    if (!r.ok) {
+    try {
+      const r = await returnForRedo(item.submission_id);
+      if (!r.ok) {
+        toast.error("Qaytarib bo'lmadi. Qayta urinib ko'ring.");
+        return;
+      }
+      processed.current.add(item.submission_id);
+      advance();
+      invalidateBadge();
+      void reconcile();
+      toast.success(`${plainName(item)} — talabaga qaytarildi 🔓`);
+    } catch {
+      // supabase-js can THROW on a network failure — treat like a failed return, keep the item. The
+      // finally clears `redoing` so the button (and the submit/skip lock) can never wedge.
       toast.error("Qaytarib bo'lmadi. Qayta urinib ko'ring.");
-      return;
+    } finally {
+      setRedoing(false);
     }
-    processed.current.add(item.submission_id);
-    advance();
-    invalidateBadge();
-    void reconcile();
-    toast.success(`${plainName(item)} — talabaga qaytarildi 🔓`);
   };
 
   // ---- states ------------------------------------------------------------------------------------
