@@ -391,12 +391,14 @@ export default function LessonPage() {
     );
   };
 
-  // Caption ("N-modul · N-dars") — derived from the already-loaded module tree, no fabricated data.
+  // Caption ("N-modul · module title · N/total-dars") — derived entirely from the already-loaded
+  // module tree, no fabricated data.
   const currentModule = modules.find((m) => m.id === lesson.module_id);
   const moduleRank = currentModule ? modules.findIndex((m) => m.id === currentModule.id) + 1 : 0;
   const lessonRankInModule = currentModule
     ? currentModule.lessons.findIndex((l: any) => l.id === lessonId) + 1
     : 0;
+  const lessonsInModule = currentModule ? currentModule.lessons.length : 0;
   const isCompleted = lessonId ? completed.has(lessonId) : false;
   const durationMinutes = lesson.duration_seconds ? Math.max(1, Math.round(lesson.duration_seconds / 60)) : null;
 
@@ -414,10 +416,13 @@ export default function LessonPage() {
     <PageShell>
       <div className="max-w-2xl mx-auto space-y-4">
         {moduleRank > 0 && lessonRankInModule > 0 && (
+          // Normal caption weight — NOT font-display (contains digits; see the title's comment below).
           <div className="px-0.5 text-[12px] font-extrabold uppercase tracking-wide text-muted-foreground">
             {t("lesson.caption", {
               moduleN: formatXp(moduleRank, i18n.language),
+              moduleTitle: currentModule?.title ?? "",
               lessonN: formatXp(lessonRankInModule, i18n.language),
+              total: formatXp(lessonsInModule, i18n.language),
             })}
           </div>
         )}
@@ -427,7 +432,10 @@ export default function LessonPage() {
         </Card>
 
         <div className="space-y-3">
-          <h1 className="font-display text-[21px] font-extrabold tracking-tight text-foreground break-words">
+          {/* NOT font-display: 121/127 real lesson titles start with digits ("7.2-Modul: …");
+              Unbounded's ss01 stylistic set (global cv11,ss01 font-feature-settings) renders
+              digits as circled numerals. Same rule the ui-kit numeral components follow. */}
+          <h1 className="text-[21px] font-extrabold tracking-tight text-foreground break-words">
             {lesson.title}
           </h1>
 
@@ -463,21 +471,31 @@ export default function LessonPage() {
                       : undefined
                   }
                   title={clickable ? t("lesson.markComplete") : undefined}
+                  aria-label={clickable ? t("lesson.markComplete") : undefined}
                   className={cn(
-                    "flex items-center gap-3 rounded-xl border border-border bg-card p-3 text-[13.5px] font-bold text-foreground shadow-soft",
-                    clickable &&
-                      "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                    "flex items-center gap-3 rounded-xl border p-3 text-[13.5px] font-bold text-foreground shadow-soft",
+                    clickable
+                      ? "border-accent/45 bg-accent-soft cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      : "border-border bg-card",
                   )}
                 >
+                  {/* Clickable (incomplete, watch step) = empty checkbox ring, no number — a clear
+                      "tap to check off" affordance distinct from the plain numbered decorative rows
+                      below it. Done = filled accent circle + check. Otherwise = plain numbered circle. */}
                   <span
                     className={cn(
                       "grid size-6 flex-none place-items-center rounded-full text-xs font-extrabold",
-                      step.done ? "bg-accent text-accent-foreground" : "bg-tint text-muted-foreground",
+                      step.done
+                        ? "bg-accent text-accent-foreground"
+                        : clickable
+                          ? "border-2 border-accent bg-transparent text-accent"
+                          : "bg-tint text-muted-foreground",
                     )}
                   >
-                    {step.done ? <Check className="size-3.5" strokeWidth={3} /> : i + 1}
+                    {step.done ? <Check className="size-3.5" strokeWidth={3} /> : clickable ? null : i + 1}
                   </span>
-                  {step.label}
+                  <span className="flex-1">{step.label}</span>
+                  {clickable && <ChevronRight className="size-4 flex-none text-accent" />}
                 </div>
               );
             })}

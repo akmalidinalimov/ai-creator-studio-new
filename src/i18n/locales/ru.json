@@ -207,7 +207,7 @@
     "allModules": "Все модули",
     "markedCompleteToast": "Урок отмечен как пройденный",
     "watchMoreToComplete": "Посмотрите хотя бы половину урока, прежде чем отмечать его пройденным.",
-    "caption": "Модуль {{moduleN}} · Урок {{lessonN}}",
+    "caption": "Модуль {{moduleN}} · {{moduleTitle}} · Урок {{lessonN}}/{{total}}",
     "durationMinutes": "{{minutes}} мин",
     "xpChip": "+{{xp}} XP",
     "submitHomeworkCta": "Сдать домашнее задание",

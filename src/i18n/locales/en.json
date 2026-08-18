@@ -207,7 +207,7 @@
     "allModules": "All modules",
     "markedCompleteToast": "Lesson marked complete",
     "watchMoreToComplete": "Watch at least half of the lesson before marking it complete.",
-    "caption": "Module {{moduleN}} · Lesson {{lessonN}}",
+    "caption": "Module {{moduleN}} · {{moduleTitle}} · Lesson {{lessonN}}/{{total}}",
     "durationMinutes": "{{minutes}} min",
     "xpChip": "+{{xp}} XP",
     "submitHomeworkCta": "Submit homework",

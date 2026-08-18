@@ -207,7 +207,7 @@
     "allModules": "Barcha modullar",
     "markedCompleteToast": "Dars tugatildi deb belgilandi",
     "watchMoreToComplete": "Tugatildi deb belgilashdan oldin darsning kamida yarmini ko'ring.",
-    "caption": "{{moduleN}}-modul · {{lessonN}}-dars",
+    "caption": "{{moduleN}}-modul · {{moduleTitle}} · {{lessonN}}/{{total}}-dars",
     "durationMinutes": "{{minutes}} daqiqa",
     "xpChip": "+{{xp}} XP",
     "submitHomeworkCta": "Uy vazifasini topshirish",
