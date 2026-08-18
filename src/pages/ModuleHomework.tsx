@@ -61,6 +61,12 @@ export default function ModuleHomework() {
   const [moduleTitle, setModuleTitle] = useState("");
   const [moduleNumber, setModuleNumber] = useState<number | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // Same in-flight-submit guard the Vazifa dialog applies (Homework.tsx's handlePickerOpenChange
+  // checks `submitting` before letting the dialog close) — here it locks the "back to lessons"
+  // link and the accordion header toggles so a tap can't unmount the submitting HomeworkSubmit
+  // mid-upload. No work is actually lost either way (HomeworkSubmit keeps its own state until
+  // unmounted), this is purely about not letting the student interrupt their own upload.
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (!user || !moduleId) return;
@@ -110,6 +116,7 @@ export default function ModuleHomework() {
   }, [user, moduleId, reloadKey]);
 
   const toggleExpanded = (id: string) => {
+    if (submitting) return; // never drop an in-flight submit by collapsing/switching accordion
     setExpandedId((cur) => (cur === id ? null : id));
   };
 
@@ -118,7 +125,8 @@ export default function ModuleHomework() {
     <button
       type="button"
       onClick={() => navigate("/lessons")}
-      className="inline-flex items-center gap-1 text-[12.5px] font-bold text-muted-foreground"
+      disabled={submitting}
+      className="inline-flex items-center gap-1 text-[12.5px] font-bold text-muted-foreground disabled:pointer-events-none disabled:opacity-50"
     >
       <ArrowLeft className="size-3.5" />
       {t("moduleHomework.backToLessons")}
@@ -170,9 +178,14 @@ export default function ModuleHomework() {
               return (
                 <Card key={item.assignment_id} className="space-y-3 p-4">
                   <div
-                    className={cn("flex items-center gap-3", !isSingle && "cursor-pointer")}
+                    className={cn(
+                      "flex items-center gap-3",
+                      !isSingle && "cursor-pointer",
+                      !isSingle && submitting && "pointer-events-none opacity-70",
+                    )}
                     role={!isSingle ? "button" : undefined}
-                    tabIndex={!isSingle ? 0 : undefined}
+                    tabIndex={!isSingle && !submitting ? 0 : undefined}
+                    aria-disabled={!isSingle && submitting ? true : undefined}
                     onClick={!isSingle ? () => toggleExpanded(item.assignment_id) : undefined}
                     onKeyDown={
                       !isSingle
@@ -213,6 +226,7 @@ export default function ModuleHomework() {
                       <HomeworkSubmit
                         key={item.assignment_id}
                         assignment={item}
+                        onSubmittingChange={setSubmitting}
                         onDone={() => setReloadKey((k) => k + 1)}
                       />
                     </div>

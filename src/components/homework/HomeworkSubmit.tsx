@@ -1,4 +1,4 @@
-import { useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ImagePlus, Loader2, Upload } from "lucide-react";
@@ -122,6 +122,21 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
   const [uploadedPath, setUploadedPath] = useState<string | null>(null);
   const [confirmResubmitOpen, setConfirmResubmitOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Blob-URL cleanup (fixed post-review, 2026-08-18): onFileChange/resetForm already revoke
+  // the PRIOR preview url synchronously on re-pick / successful submit, but neither one fires
+  // when the form is simply abandoned (picker closed, "back to list", navigated away, accordion
+  // collapsed) — the pre-extraction Homework.tsx revoked on every dialog close, so restore that
+  // here at the component level. Effect-cleanup keyed on `previewUrl` revokes whatever the
+  // CURRENT previewUrl is whenever it changes (i.e. also on unmount). This can occasionally
+  // double-revoke the outgoing url on a re-pick (once here, once in onFileChange's own updater)
+  // but URL.revokeObjectURL is a silent no-op on an already-revoked/invalid url, so that's
+  // harmless — it never revokes a url that's still the current one.
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
 
   const setSubmittingTracked = (v: boolean) => {
     setSubmitting(v);
