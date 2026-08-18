@@ -11,7 +11,7 @@
 // API; web/miniapp uploads live in the PRIVATE `homework_images` bucket. This function resolves
 // either kind into a URL a browser can load:
 //   - storage-bucket path (submitted_image_url or a media[] entry that is a bucket key) -> signed URL
-//   - Telegram file_id (no http url)                                                    -> getFile proxy URL
+//   - Telegram file_id (no http url)                             -> server-side getFile -> token-free data: URL
 //   - an already-http media url (e.g. an externally posted link)                        -> returned as-is
 //   - nothing viewable                                                                  -> { url: null, reason }
 //
@@ -33,12 +33,13 @@
 // is_group_teacher(_group_id,_uid) RPC (SECURITY DEFINER, live since #86) — OR a platform
 // admin/superadmin. Students and unrelated teachers get 403. No URL is minted before this passes.
 //
-// SECURITY NOTE (flagged for the owner): a Telegram getFile proxy URL embeds the BOT TOKEN
-// (https://api.telegram.org/file/bot<token>/<path>) — that is how Telegram serves files. This URL
-// is returned to the (trusted, staff-only) teacher client, so the token becomes visible in that
-// browser's network/history. The token is NEVER logged (not to console, not to admin_actions). A
-// hardening follow-up would be to proxy the bytes through this function instead of returning the
-// token URL; Phase 1 returns the URL per plan.
+// SECURITY (bot-token containment): a Telegram file URL embeds the BOT TOKEN
+// (https://api.telegram.org/file/bot<token>/<path>) — that is how Telegram serves files — and the
+// bot token controls the ENTIRE bot, so it must NEVER leave the server. This function therefore
+// fetches the Telegram file SERVER-SIDE (the token stays inside the function) and returns a
+// token-free `data:<mime>;base64,<bytes>` URL in the same `{ url }` field. The client never sees the
+// token in any form (no network URL, no history, no screenshare). The token is also never logged
+// (not to console, not to admin_actions). A ~6 MB size guard prevents a pathological base64 blowup.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -50,6 +51,7 @@ const corsHeaders = {
 const BUCKET = "homework_images";
 const SIGNED_TTL = 3600; // ~1h — long enough to grade, short enough not to be a durable leak
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
+const MAX_IMAGE_BYTES = 6 * 1024 * 1024; // ~6 MB — homework photos are small; guards base64 blowup
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isHttp = (s: unknown): s is string => typeof s === "string" && /^https?:\/\//i.test(s);
 
@@ -87,11 +89,39 @@ async function logHealth(
   }
 }
 
-// Resolve a Telegram file_id -> a viewable file URL via the Bot API. Returns null on any failure
-// (bot token missing, getFile !ok, no file_path). NEVER logs the token or the raw getFile response
-// (the response echoes the file_path, harmless, but the built URL embeds the token — keep it out of
-// logs entirely).
-async function resolveTelegramFileUrl(fileId: string): Promise<string | null> {
+// image/* MIME from a Telegram file_path extension. Returns null when unknown (caller then falls
+// back to the response content-type header, else image/jpeg).
+function contentTypeFromPath(filePath: string): string | null {
+  const ext = filePath.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
+  switch (ext) {
+    case "jpg":
+    case "jpeg": return "image/jpeg";
+    case "png": return "image/png";
+    case "webp": return "image/webp";
+    case "gif": return "image/gif";
+    default: return null;
+  }
+}
+
+// Base64-encode bytes in chunks — a single String.fromCharCode(...wholeArray) spread blows the call
+// stack on large inputs. 0x8000 keeps each spread well under the argument-count limit.
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+// Resolve a Telegram file_id -> a token-free data: URL by fetching the file SERVER-SIDE. The bot
+// token is used only inside this function (getFile + the file fetch) and NEVER appears in the return
+// value or any log. Returns:
+//   { url }        — a `data:<mime>;base64,<bytes>` URL
+//   { tooLarge }   — file exceeds MAX_IMAGE_BYTES (caller -> reason:"image_too_large")
+//   null           — any failure (bot token missing, getFile !ok, no file_path, fetch !ok)
+type TgResolve = { url: string } | { tooLarge: true } | null;
+async function resolveTelegramFileUrl(fileId: string): Promise<TgResolve> {
   if (!BOT_TOKEN) return null;
   try {
     const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile`, {
@@ -103,7 +133,28 @@ async function resolveTelegramFileUrl(fileId: string): Promise<string | null> {
     const j = await r.json().catch(() => null);
     const filePath = j && j.ok ? j?.result?.file_path : null;
     if (!filePath || typeof filePath !== "string") return null;
-    return `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
+
+    // Fetch the bytes here — the token-bearing URL is built and consumed server-side only.
+    const fileResp = await fetch(`https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`);
+    if (!fileResp.ok) {
+      try { await fileResp.body?.cancel(); } catch { /* ignore */ }
+      return null;
+    }
+    // Cheap pre-check on the declared length before buffering the whole body.
+    const declaredLen = Number(fileResp.headers.get("content-length") || "0");
+    if (declaredLen > MAX_IMAGE_BYTES) {
+      try { await fileResp.body?.cancel(); } catch { /* ignore */ }
+      return { tooLarge: true };
+    }
+    const bytes = new Uint8Array(await fileResp.arrayBuffer());
+    if (bytes.length > MAX_IMAGE_BYTES) return { tooLarge: true }; // headers can lie / be absent
+
+    let ct = contentTypeFromPath(filePath);
+    if (!ct) {
+      const hdr = (fileResp.headers.get("content-type") || "").split(";")[0].trim();
+      ct = hdr.startsWith("image/") ? hdr : "image/jpeg";
+    }
+    return { url: `data:${ct};base64,${bytesToBase64(bytes)}` };
   } catch {
     return null;
   }
@@ -203,9 +254,10 @@ Deno.serve(async (req) => {
       fileId = sub.telegram_file_id;
     }
     if (fileId) {
-      const url = await resolveTelegramFileUrl(fileId);
-      if (url) return json({ url });
-      // getFile failed: a real degradation of the proxy path — DB-visible (no token in details).
+      const res = await resolveTelegramFileUrl(fileId);
+      if (res && "url" in res) return json({ url: res.url }); // token-free data: URL
+      if (res && "tooLarge" in res) return json({ url: null, reason: "image_too_large" });
+      // getFile / file fetch failed: a real degradation of the proxy path — DB-visible (no token).
       await logHealth(admin, uid, "hw_image_url_getfile_failed",
         { submission_id: submissionId, reason: "telegram_getfile_failed" }, submissionId);
       return json({ url: null, reason: "telegram_getfile_failed" });
