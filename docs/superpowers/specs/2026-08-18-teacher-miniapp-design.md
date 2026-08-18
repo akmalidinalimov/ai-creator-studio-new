@@ -89,14 +89,21 @@ nudges = inactive students in scope.
 **Writes (reuse secured paths — no new scoring logic):** grade → RLS-gated submission update (XP
 triggers auto-fire); broadcast → existing bot broadcast-to-group; nudge → `teacher-nudge-student`.
 
-**Backend touch-ups (the only server work):**
-1. Role-aware `target_path` in `tg-miniapp-auth` (staff → `/tg/teacher`).
-2. A junction-aware **pending-submissions LIST** read for the grading queue (the bot uses
-   `gradingScopeIds` + a query; expose an equivalent RPC/read the Mini App can call).
-3. Entry wiring: `📝 Baholash` keyboard button → `web_app`; set each teacher's ☰ menu button via
-   `setChatMenuButton` (one-time sweep + on teacher creation, mirroring `refresh-teacher-keyboards`).
-4. **Bonus fix:** make the old `/teacher/homework` web page junction-aware (`TeacherHomework.tsx:56`
-   filters `teacher_id` only, so a pure co-teacher currently sees nothing there).
+**Backend work (the review corrected "touch-ups" → real server work):**
+1. Role-aware `target_path` in `tg-miniapp-auth` (staff → `/tg/teacher`) + fix the `TelegramGate`
+   forced-redirect clobbering a `/tg/*` path.
+2. **NEW RPC `teacher_pending_submissions()`** (SECURITY DEFINER, junction-scoped) — the grading
+   queue's data source: pending/stale submissions for the caller's teacher scope, with sap-aware task
+   labels, resubmission/`previous_score` state, `max_score`, and a **resolved image URL** (see #3).
+3. **NEW image resolver — BLOCKER (design review C2):** homework captured via the bot is often
+   Telegram-hosted-only (`media[].file_id`, no http `url`) and **cannot** render in an `<img>`. Without
+   a resolver (bot `getFile` proxy, or backfill an http URL at capture), the grading photo — the whole
+   centerpiece — shows "image unavailable" for a large share of the queue. Storage-bucket images
+   already work via signed URL (junction-aware storage RLS since #86).
+4. Entry wiring: `📝 Baholash` keyboard button → `web_app`; per-teacher ☰ `setChatMenuButton`
+   (sweep like `refresh-teacher-keyboards` + on teacher creation; cleared by the kill-switch).
+5. Co-teacher fix for the old `/teacher/homework` web page (`TeacherHomework.tsx:56` filters
+   `teacher_id` only, so a pure co-teacher sees nothing).
 
 ## Safety, rollout, verification
 
@@ -111,6 +118,50 @@ triggers auto-fire); broadcast → existing bot broadcast-to-group; nudge → `t
 - **E2E verification (prod, synthetic):** create a synthetic teacher + co-teacher + student + a
   submission; grade from the Mini App; confirm score + XP settle; confirm the **co-teacher** can grade
   the same queue; confirm the primary-only path unchanged; delete synthetics (zero residue).
+
+## Phasing (post-review — owner approved 2026-08-18)
+
+The `/autoplan` review found the all-at-once build risky + underspecified. Ship in phases, each its
+own PR, verified live before the next:
+
+- **Phase 1 — the app + grading (the value):** the teacher **app shell** (`TeacherBottomNav` + a
+  `/tg/teacher/*` branch in `PageShell`/a `TeacherShell`, consuming the Telegram viewport/safe-area
+  vars + the `ROOT_PATHS`/back-target fix), the **routing/auth** role-aware landing, and the **full
+  grading flow** — incl. the `teacher_pending_submissions()` RPC, the **image resolver (C2)**, the
+  grading-card layout (photo lightbox+zoom, `max_score`-derived score chips + "return for redo", undo,
+  progress "3/12", keyboard-fold, all states), and the entry wiring. Also the `/teacher/homework`
+  co-teacher fix. This is the whole point; it must be complete.
+- **Phase 2 — groups & students + stats:** roster drill-down; stats = **re-skin the existing
+  `TgGroupBoard`** into the session + ui-kit (do not rebuild).
+- **Phase 3 — broadcast + nudge:** **re-skin the existing `TgBroadcast`** flow; nudge reuses
+  `teacher-nudge-student` + the engagement-nudge cron's inactivity definition, with anti-spam cooldown
+  + "can't-DM (never pressed Start)" + "already nudged" states.
+
+## Review findings folded in (must be honored by the plan)
+
+- **App shell is real work, not "reuse the kit" (C1):** `PageShell` renders staff the *desktop*
+  top-nav and **no** bottom nav. Build `TeacherBottomNav` (clone `StudentBottomNav`: fixed,
+  `env(safe-area-inset-bottom)`, `grid-cols-4 h-14`, pending-count dot via a `usePendingGrading()`
+  hook) + a shell branch that hides TopNav/sidebar for `/tg/teacher/*`.
+- **Grading photo blocker (C2):** see backend #3 — required before the grading card is usable; design
+  the degraded "open in Telegram" state as a *common* state.
+- **Native BackButton (C3):** add `/tg/teacher` to `useTelegramBackButton` `ROOT_PATHS`; give
+  drill-downs deterministic back targets (not raw `navigate(-1)`).
+- **Grading interaction gaps:** progress "3/12", full-screen photo zoom, **undo a mis-tap** (auto-
+  advance makes a fat-finger unrecoverable — Sonner toast w/ undo), score chips **derived from
+  `max_score`** (not hardcoded 7–10) + carry over "🔓 return to student for redo", keyboard-fold so the
+  primary action never hides behind the keyboard (`--tg-viewport-stable-height`), concurrent-claim
+  behavior for co-teachers grading the same queue ("already graded" forgiveness state).
+- **States matrix — ~25 unspecified cells:** every screen needs loading (`Skeleton`) / empty
+  (`EmptyState`) / error+offline (`navigator.onLine`-aware `EmptyState`+retry, verbatim from the
+  student app) / partial / success. Only 1 was spec'd. The plan must enumerate them per screen.
+- **ui-kit by name (no drift to old `ui/*`):** Home→`Hero`+`StatTile`; Grading→`Card`+chips like
+  `RewardChip`+`StatusChip`(ok/wait/**redo**/none)+`XpPill`+`Skeleton`+`EmptyState`; Stats→migrate
+  `TgGroupBoard`'s bespoke chips to `StatTile`. `TeacherHomework.tsx` still uses old shadcn `ui/*` — do
+  not copy it.
+- **Coral discipline + width:** exactly one `Button variant="primary"` per screen; `max-w-2xl` to
+  match the redesigned student app.
+- **Shared group context:** a picked group should persist across tabs (Stats↔Grading filter).
 
 ## Explicitly out of scope for v1
 - Admin Mini App (separate effort).
