@@ -42,6 +42,7 @@ const QuizPage = lazy(() => import("./pages/QuizPage"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Leaderboard = lazy(() => import("./pages/Leaderboard"));
 const Profile = lazy(() => import("./pages/Profile"));
+const Homework = lazy(() => import("./pages/Homework"));
 
 
 // Lazy-load admin pages (code-split)
@@ -120,6 +121,7 @@ const App = () => (
             <Route path="/quiz/:moduleId" element={<RequireAuth><QuizPage /></RequireAuth>} />
             <Route path="/settings" element={<RequireAuth><Settings /></RequireAuth>} />
             <Route path="/leaderboard" element={<RequireAuth><Leaderboard /></RequireAuth>} />
+            <Route path="/homework" element={<RequireAuth><Homework /></RequireAuth>} />
             {/* Folded into Profil (Task 2.5) — the 5-tab nav's Profil tab already treats these
                 paths as Profil (see StudentBottomNav). */}
             <Route path="/badges" element={<Navigate to="/profile" replace />} />
