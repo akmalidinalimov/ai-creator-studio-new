@@ -88,12 +88,17 @@ XpPill.displayName = "XpPill";
 // var(--gold-2)}` exactly. `--warning` (40 73% 56%) is ~25pt lighter than `--gold-2`
 // (40 80% 31%), which read as low-contrast text on the tinted background — fixed per
 // review round 1.
-export type StatusChipKind = "ok" | "wait" | "redo";
+// `none` added for the in-app submit picker (item 4, 2026-08-18): "not yet submitted" is a
+// genuinely new state the read-only hub never rendered (it only ever listed existing
+// submissions) — a neutral tint keeps it visually distinct from "wait" (already submitted,
+// awaiting grade) instead of overloading that color for two different meanings.
+export type StatusChipKind = "ok" | "wait" | "redo" | "none";
 
 const STATUS_CLASSES: Record<StatusChipKind, string> = {
   ok: "bg-good/15 text-good-2",
   wait: "bg-warning/15 text-gold-2",
   redo: "bg-danger/15 text-danger-2",
+  none: "bg-tint text-muted-foreground",
 };
 
 export interface StatusChipProps extends Omit<React.HTMLAttributes<HTMLSpanElement>, "children"> {

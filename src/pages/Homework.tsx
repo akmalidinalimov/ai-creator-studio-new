@@ -1,7 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { ArrowLeft, CheckCircle2, ChevronRight, ClipboardCheck, Clock, Plus, Star } from "lucide-react";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  ChevronRight,
+  ClipboardCheck,
+  Clock,
+  ImagePlus,
+  Loader2,
+  Plus,
+  Star,
+  Upload,
+} from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -10,8 +21,29 @@ import { cn } from "@/lib/utils";
 import { formatXp } from "@/lib/xp";
 import { effectiveLeafGrades } from "@/lib/homeworkStats";
 import { Card, SectionHeader, StatTile, StatusChip, XpPill, Button, EmptyState, Skeleton } from "@/components/ui-kit";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
-/* Vazifa (homework) hub — Task 2.6, READ-ONLY. Mockup: data-screen="homework" + "hw-detail".
+/* Vazifa (homework) hub. Mockup: data-screen="homework" + "hw-detail" + "upload".
+ *
+ * Item 4 (2026-08-18) added the real in-app submit flow on top of the originally read-only
+ * hub (Task 2.6): "Yangi vazifa topshirish" now opens a picker (student_assignable_homework()
+ * RPC — supabase/migrations/20260818160000_*.sql) instead of linking out to the group's
+ * Telegram topic, the student picks a leaf assignment, uploads a photo (+ optional note),
+ * and submit-homework (supabase/functions/submit-homework/index.ts) writes the submission —
+ * same table, same XP triggers, same teacher-DM queue the bot capture paths use, so grading
+ * and notifications are untouched. See doPicker* state below and the PickerList component at
+ * the bottom of this file. The read-only summary/filter/graded-detail views below are
+ * unchanged.
  *
  * Data model: homework_submissions has UNIQUE(assignment_id, user_id) — one row per
  * assignment for this student, so "submission" and "assignment" are 1:1 here. Effective
@@ -86,6 +118,27 @@ interface HwItem {
 
 type FilterKind = "all" | "waiting" | "graded";
 
+// student_assignable_homework() row shape — supabase/migrations/20260818160000_*.sql. `state`
+// is the RPC's own unification of both resubmission mechanisms (bot capture path's
+// previous_score/null-score reset vs. start_homework_resubmission()'s score_is_stale flag) —
+// the picker never needs to know which one produced it.
+type AssignableState = "none" | "pending" | "graded" | "needs_redo";
+
+interface AssignableItem {
+  assignment_id: string;
+  module_id: string;
+  module_number: number;
+  module_title: string;
+  is_sap: boolean;
+  step_number: number;
+  title: string;
+  max_score: number;
+  state: AssignableState;
+  score: number | null;
+  attempt_number: number | null;
+  submission_id: string | null;
+}
+
 function relativeTime(iso: string, t: TFunction): string {
   const ms = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(ms / 60000);
@@ -97,6 +150,72 @@ function relativeTime(iso: string, t: TFunction): string {
   return t("settings.dayAgo", { n: days });
 }
 
+// Client-side downscale before upload — same approach as Profile.tsx's avatar compressor:
+// skip the re-encode round-trip for already-small files, downscale+re-encode large ones so
+// mobile uploads stay fast. Any failure (unsupported format, canvas error) falls back to the
+// original file untouched — compression is a nice-to-have, never a submission blocker.
+async function compressHomeworkImage(file: File, maxDim = 1600, quality = 0.82): Promise<Blob> {
+  if (file.size <= 1.5 * 1024 * 1024) return file;
+  try {
+    return await new Promise<Blob>((resolve, reject) => {
+      const img = new Image();
+      const objUrl = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(objUrl);
+        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          reject(new Error("canvas unavailable"));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, w, h);
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("encode failed"))), "image/jpeg", quality);
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(objUrl);
+        reject(new Error("could not read image"));
+      };
+      img.src = objUrl;
+    });
+  } catch {
+    return file;
+  }
+}
+
+function extForBlob(blob: Blob, originalName: string): string {
+  const type = blob.type || "";
+  if (type.includes("jpeg") || type.includes("jpg")) return "jpg";
+  if (type.includes("png")) return "png";
+  if (type.includes("webp")) return "webp";
+  if (type.includes("heic")) return "heic";
+  if (type.includes("heif")) return "heif";
+  const m = /\.([a-zA-Z0-9]+)$/.exec(originalName);
+  return (m?.[1] || "jpg").toLowerCase();
+}
+
+// submit-homework's error bodies are stable string codes (index.ts) — map the ones a student
+// can realistically hit to friendly copy; anything unmapped (internal_error, bad_json, ...)
+// falls back to a generic retry message rather than surfacing a raw code.
+function pickerErrorMessage(code: string, t: TFunction): string {
+  switch (code) {
+    case "not_assignable":
+      return t("homework.picker.errNotAssignable");
+    case "image_not_found":
+    case "image_path_required":
+      return t("homework.picker.errImageNotFound");
+    case "unauthorized":
+    case "forbidden":
+      return t("homework.picker.errAuth");
+    default:
+      return t("homework.picker.errGeneric");
+  }
+}
+
 export default function Homework() {
   const { user } = useAuth();
   const { t, i18n } = useTranslation();
@@ -104,7 +223,6 @@ export default function Homework() {
 
   const [items, setItems] = useState<HwItem[]>([]);
   const [teacherNames, setTeacherNames] = useState<Record<string, string>>({});
-  const [topicUrl, setTopicUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -113,6 +231,21 @@ export default function Homework() {
   const [images, setImages] = useState<string[] | null>(null);
   const [imagesLoading, setImagesLoading] = useState(false);
 
+  // ---- in-app submit flow (item 4) ----
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerLoading, setPickerLoading] = useState(false);
+  const [pickerError, setPickerError] = useState(false);
+  const [pickerItems, setPickerItems] = useState<AssignableItem[]>([]);
+  const [stage, setStage] = useState<"list" | "upload">("list");
+  const [pickedItem, setPickedItem] = useState<AssignableItem | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [note, setNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [uploadedPath, setUploadedPath] = useState<string | null>(null);
+  const [confirmResubmitOpen, setConfirmResubmitOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
@@ -120,16 +253,13 @@ export default function Homework() {
     setError(false);
     (async () => {
       try {
-        const [subsRes, profRes] = await Promise.all([
-          supabase
-            .from("homework_submissions")
-            .select(
-              "id, assignment_id, submitted_at, submitted_text, submitted_image_url, media, score, score_feedback, score_is_stale, scored_by, scored_at, previous_attempts, homework_assignments(id, title, max_score, modules(title, position))",
-            )
-            .eq("user_id", user.id)
-            .order("submitted_at", { ascending: false }),
-          supabase.from("profiles").select("group_id").eq("id", user.id).maybeSingle(),
-        ]);
+        const subsRes = await supabase
+          .from("homework_submissions")
+          .select(
+            "id, assignment_id, submitted_at, submitted_text, submitted_image_url, media, score, score_feedback, score_is_stale, scored_by, scored_at, previous_attempts, homework_assignments(id, title, max_score, modules(title, position))",
+          )
+          .eq("user_id", user.id)
+          .order("submitted_at", { ascending: false });
         if (subsRes.error) throw subsRes.error;
         if (cancelled) return;
 
@@ -199,16 +329,6 @@ export default function Homework() {
             names[p.id] = p.name || "";
           });
           if (!cancelled) setTeacherNames(names);
-        }
-
-        // Group-level Telegram homework topic — where both "Yangi vazifa topshirish" and
-        // "Qayta yuklash" send the student (mirrors HomeworkSection.tsx's own fallback:
-        // group_module_topics is per-module; groups.homework_topic_url is the general
-        // fallback. The hub isn't scoped to one module, so only the general link applies).
-        const gid = (profRes.data as any)?.group_id || null;
-        if (gid) {
-          const { data: gr } = await supabase.from("groups").select("homework_topic_url").eq("id", gid).maybeSingle();
-          if (!cancelled) setTopicUrl((gr as any)?.homework_topic_url || null);
         }
       } catch (e) {
         if (!cancelled) {
@@ -290,12 +410,151 @@ export default function Homework() {
     };
   }, [selected?.id]);
 
-  const openUploadInstruction = () => {
-    if (topicUrl) {
-      window.open(topicUrl, "_blank", "noopener,noreferrer");
+  // ---- in-app submit flow (item 4) ----
+
+  const resetUploadForm = () => {
+    setFile(null);
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setNote("");
+    setUploadedPath(null);
+  };
+
+  const loadPickerItems = async (preselectAssignmentId?: string) => {
+    setPickerLoading(true);
+    setPickerError(false);
+    try {
+      const { data, error } = await supabase.rpc("student_assignable_homework" as any);
+      if (error) throw error;
+      const rows = ((data as any[]) || []) as AssignableItem[];
+      setPickerItems(rows);
+      if (preselectAssignmentId) {
+        const match = rows.find((r) => r.assignment_id === preselectAssignmentId);
+        if (match) {
+          setPickedItem(match);
+          setStage("upload");
+        }
+      }
+    } catch (e) {
+      console.error("[Homework] picker load failed", e);
+      setPickerError(true);
+    } finally {
+      setPickerLoading(false);
+    }
+  };
+
+  // preselectAssignmentId: used by the "Qayta yuklash" row action (redo state) to jump
+  // straight to that assignment's upload screen instead of the picker list.
+  const openPicker = (preselectAssignmentId?: string) => {
+    setStage("list");
+    setPickedItem(null);
+    resetUploadForm();
+    setPickerOpen(true);
+    void loadPickerItems(preselectAssignmentId);
+  };
+
+  const handlePickerOpenChange = (open: boolean) => {
+    if (!open) {
+      if (submitting) return; // never drop an in-flight submit (close/Esc/overlay tap alike)
+      resetUploadForm();
+      setStage("list");
+      setPickedItem(null);
+    }
+    setPickerOpen(open);
+  };
+
+  const selectPickerItem = (item: AssignableItem) => {
+    resetUploadForm();
+    setPickedItem(item);
+    setStage("upload");
+  };
+
+  const onFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the exact same file later
+    if (!f) return;
+    if (!f.type.startsWith("image/")) {
+      toast.error(t("homework.picker.invalidFile"));
       return;
     }
-    toast(t("homework.uploadNoGroupToast"));
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(f);
+    });
+    setFile(f);
+    setUploadedPath(null); // a new file always needs a fresh upload
+  };
+
+  // Uploads (once) to the private homework_images bucket at "<uid>/<uuid>.<ext>" — the RLS
+  // path shape submit-homework's `image_path.startsWith(userId + "/")` check requires. Cached
+  // via uploadedPath so a submit retry (network blip, or the 409 already-graded confirm) never
+  // re-uploads the same file.
+  const uploadSelectedImage = async (): Promise<string | null> => {
+    if (!user || !file) return null;
+    if (uploadedPath) return uploadedPath;
+    const blob = await compressHomeworkImage(file);
+    const ext = extForBlob(blob, file.name);
+    const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
+    const { error } = await supabase.storage
+      .from("homework_images")
+      .upload(path, blob, { contentType: blob.type || file.type || "image/jpeg" });
+    if (error) {
+      console.error("[Homework] image upload failed", error);
+      return null;
+    }
+    setUploadedPath(path);
+    return path;
+  };
+
+  const submitHomework = async (resubmit: boolean) => {
+    if (!pickedItem || !file || submitting) return;
+    setSubmitting(true);
+    try {
+      const imagePath = await uploadSelectedImage();
+      if (!imagePath) {
+        toast.error(t("homework.picker.uploadFailed"));
+        return;
+      }
+      const body: Record<string, unknown> = { assignment_id: pickedItem.assignment_id, image_path: imagePath };
+      const trimmedNote = note.trim();
+      if (trimmedNote) body.submitted_text = trimmedNote;
+      if (resubmit) body.resubmit = true;
+
+      const { data, error } = await supabase.functions.invoke("submit-homework", { body });
+      if (error) {
+        // On an HTTP error, supabase-js puts the response body in error.context, not `data`
+        // (same pattern as AdminUsers.tsx's admin-impersonate call).
+        let code = "";
+        try {
+          const j = await (error as any).context?.json?.();
+          code = j?.error || "";
+        } catch {
+          // body unreadable — falls through to the generic error message below
+        }
+        if (!resubmit && code === "already_graded") {
+          setConfirmResubmitOpen(true); // the file stays uploaded + selection stays intact
+          return;
+        }
+        toast.error(pickerErrorMessage(code, t));
+        return;
+      }
+
+      toast.success(
+        data?.status === "resubmitted" ? t("homework.picker.resubmitSuccess") : t("homework.picker.submitSuccess"),
+      );
+      setPickerOpen(false);
+      resetUploadForm();
+      setPickedItem(null);
+      setStage("list");
+      setReloadKey((k) => k + 1); // refreshes the read-only hub list underneath
+    } catch (e) {
+      console.error("[Homework] submit failed", e);
+      toast.error(t("homework.picker.errGeneric"));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   if (loading) {
@@ -436,7 +695,7 @@ export default function Homework() {
             title={t("homework.emptyTitle")}
             body={t("homework.emptyBody")}
             cta={
-              <Button variant="primary" block onClick={openUploadInstruction}>
+              <Button variant="primary" block onClick={() => openPicker()}>
                 <Plus className="size-4" />
                 {t("homework.newSubmissionCta")}
               </Button>
@@ -459,7 +718,7 @@ export default function Homework() {
               />
             </div>
 
-            <Button variant="primary" block onClick={openUploadInstruction}>
+            <Button variant="primary" block onClick={() => openPicker()}>
               <Plus className="size-4" />
               {t("homework.newSubmissionCta")}
             </Button>
@@ -493,7 +752,7 @@ export default function Homework() {
                     locale={locale}
                     t={t}
                     onOpen={() => setSelectedId(it.id)}
-                    onResubmit={openUploadInstruction}
+                    onResubmit={() => openPicker(it.assignmentId)}
                   />
                 ))}
               </div>
@@ -501,6 +760,145 @@ export default function Homework() {
           </>
         )}
       </div>
+
+      <Dialog open={pickerOpen} onOpenChange={handlePickerOpenChange}>
+        <DialogContent className="max-w-md gap-4 border-border bg-card p-5 text-foreground">
+          <DialogHeader>
+            <DialogTitle className="text-foreground">
+              {stage === "list" ? t("homework.picker.title") : t("homework.picker.uploadTitle")}
+            </DialogTitle>
+          </DialogHeader>
+
+          {stage === "list" ? (
+            <div className="-mx-1 max-h-[65vh] overflow-y-auto px-1">
+              {pickerLoading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-16 w-full rounded-md" />
+                  <Skeleton className="h-16 w-full rounded-md" />
+                  <Skeleton className="h-16 w-full rounded-md" />
+                </div>
+              ) : pickerError ? (
+                <EmptyState
+                  icon="⚠️"
+                  title={t("common.errorTitle")}
+                  body={t("homework.picker.loadError")}
+                  cta={
+                    <Button variant="secondary" size="sm" onClick={() => void loadPickerItems()}>
+                      {t("common.retry")}
+                    </Button>
+                  }
+                />
+              ) : pickerItems.length === 0 ? (
+                <EmptyState icon="🎉" title={t("homework.picker.emptyTitle")} body={t("homework.picker.emptyBody")} />
+              ) : (
+                <PickerList items={pickerItems} onSelect={selectPickerItem} t={t} locale={locale} />
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <button
+                type="button"
+                onClick={() => setStage("list")}
+                className="inline-flex items-center gap-1 text-[12.5px] font-bold text-muted-foreground"
+              >
+                <ArrowLeft className="size-3.5" />
+                {t("homework.picker.backToPicker")}
+              </button>
+
+              <Card className="flex items-center gap-3">
+                <div className="grid size-[42px] flex-none place-items-center rounded-md bg-primary text-primary-foreground">
+                  <ClipboardCheck className="size-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13.5px] font-bold text-foreground">{pickedItem?.title}</div>
+                  <div className="truncate text-xs font-semibold text-muted-foreground">
+                    {pickedItem?.module_title}
+                    {pickedItem
+                      ? ` · ${t("homework.picker.maxScoreLabel", { max: formatXp(pickedItem.max_score, locale) })}`
+                      : ""}
+                  </div>
+                </div>
+              </Card>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={onFileChange}
+              />
+
+              {previewUrl ? (
+                <div className="relative">
+                  <img
+                    src={previewUrl}
+                    alt=""
+                    className="max-h-64 w-full rounded-lg border border-border object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="absolute bottom-2 right-2 rounded-full bg-card/90 px-3 py-1.5 text-[11.5px] font-bold text-foreground shadow-soft"
+                  >
+                    {t("homework.picker.changePhoto")}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex w-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border bg-surface-2 py-8 text-center"
+                >
+                  <ImagePlus className="size-6 text-muted-foreground" />
+                  <span className="text-[13px] font-bold text-foreground">{t("homework.picker.pickPhoto")}</span>
+                  <span className="text-[11.5px] font-semibold text-muted-foreground">
+                    {t("homework.picker.pickPhotoHint")}
+                  </span>
+                </button>
+              )}
+
+              <div>
+                <label className="mb-1.5 block text-[12.5px] font-bold text-foreground">
+                  {t("homework.picker.noteLabel")}
+                </label>
+                <textarea
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder={t("homework.picker.notePlaceholder")}
+                  rows={3}
+                  className="w-full resize-none rounded-lg border border-border bg-card p-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+
+              <Button variant="primary" block disabled={!file || submitting} onClick={() => void submitHomework(false)}>
+                {submitting ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+                {submitting ? t("homework.picker.submitting") : t("homework.picker.submitCta")}
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={confirmResubmitOpen} onOpenChange={setConfirmResubmitOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("homework.picker.alreadyGradedTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("homework.picker.alreadyGradedBody")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmResubmitOpen(false);
+                void submitHomework(true);
+              }}
+            >
+              {t("homework.picker.resubmitConfirmCta")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </PageShell>
   );
 }
@@ -575,4 +973,81 @@ function HwListRow({
       {clickable && <ChevronRight className="size-4 flex-none text-muted-foreground" />}
     </Card>
   );
+}
+
+// Picker list — grouped by module (rows already arrive module-ordered from the RPC, so a
+// SectionHeader is inserted whenever module_id changes rather than pre-grouping into a map).
+function PickerList({
+  items,
+  onSelect,
+  t,
+  locale,
+}: {
+  items: AssignableItem[];
+  onSelect: (item: AssignableItem) => void;
+  t: TFunction;
+  locale: string;
+}) {
+  let lastModuleId: string | null = null;
+  return (
+    <div>
+      {items.map((item, idx) => {
+        const showHeader = item.module_id !== lastModuleId;
+        lastModuleId = item.module_id;
+        return (
+          <Fragment key={item.assignment_id}>
+            {showHeader && (
+              <SectionHeader
+                title={t("homework.picker.moduleHeader", { n: item.module_number, title: item.module_title })}
+                className={idx === 0 ? "mt-0" : undefined}
+              />
+            )}
+            <Card
+              onClick={() => onSelect(item)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSelect(item);
+                }
+              }}
+              className="mb-2 flex cursor-pointer items-center gap-3 p-[11px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              <div className="grid size-9 flex-none place-items-center rounded-md bg-tint text-[11px] font-extrabold text-foreground">
+                V{item.step_number}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[13.5px] font-bold text-foreground">{item.title}</div>
+                <div className="truncate text-[11.5px] font-semibold text-muted-foreground">{item.module_title}</div>
+              </div>
+              {renderPickerStateChip(item, t, locale)}
+              <ChevronRight className="size-4 flex-none text-muted-foreground" />
+            </Card>
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+function renderPickerStateChip(item: AssignableItem, t: TFunction, locale: string) {
+  switch (item.state) {
+    case "graded":
+      return (
+        <StatusChip
+          kind="ok"
+          label={t("homework.picker.stateGraded", {
+            score: formatXp(item.score ?? 0, locale),
+            max: formatXp(item.max_score, locale),
+          })}
+        />
+      );
+    case "needs_redo":
+      return <StatusChip kind="redo" label={t("homework.statusRedo")} />;
+    case "pending":
+      return <StatusChip kind="wait" label={t("homework.statusWaiting")} />;
+    default:
+      return <StatusChip kind="none" label={t("homework.picker.stateNone")} />;
+  }
 }
