@@ -150,7 +150,7 @@
     "modulesProgress": "{{pct}}% complete",
     "moduleDone": "{{completed}} / {{total}} lessons · completed",
     "moduleActive": "{{completed}} / {{total}} lessons · in progress",
-    "moduleLockedSequential": "🔒 Finish module {{n}}",
+    "moduleAvailable": "{{completed}} / {{total}} lessons",
     "moduleLockedTier": "🔒 Not included in your plan",
     "lessonMeta": "{{minutes}} min",
     "lessonHereMeta": "{{minutes}} min · +{{xp}} XP",

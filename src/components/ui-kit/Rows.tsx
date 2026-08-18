@@ -5,7 +5,9 @@ import { cn } from "@/lib/utils";
 import { glossShadowStyle, glossSurfaceClass } from "./shared";
 
 // Mockup: .mod / .mod.done / .mod.active / .mod.lock — a module in the course tree.
-export type ModuleRowState = "done" | "active" | "locked";
+// `available` (no mockup modifier class — the plain `.mod .n` base styling) is a within-tier-cap
+// module the student simply hasn't started yet: openable like `done`, just no checkmark/lock.
+export type ModuleRowState = "done" | "active" | "locked" | "available";
 
 export interface ModuleRowProps {
   state: ModuleRowState;
@@ -52,10 +54,11 @@ const ModuleRow = React.forwardRef<HTMLDivElement, ModuleRowProps>(
             state === "done" && "bg-good/16 text-good",
             state === "active" && "bg-accent text-accent-foreground",
             state === "locked" && "bg-tint text-muted-foreground",
+            state === "available" && "bg-tint text-primary",
           )}
         >
           {state === "done" ? <Check className="size-4" strokeWidth={3} /> : null}
-          {state === "active" ? n : null}
+          {state === "active" || state === "available" ? n : null}
           {state === "locked" ? <Lock className="size-3.5" /> : null}
         </div>
         <div className="min-w-0 flex-1">

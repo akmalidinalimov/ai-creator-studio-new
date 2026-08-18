@@ -150,7 +150,7 @@
     "modulesProgress": "{{pct}}% yakunlandi",
     "moduleDone": "{{completed}} / {{total}} dars · yakunlandi",
     "moduleActive": "{{completed}} / {{total}} dars · davom etmoqda",
-    "moduleLockedSequential": "🔒 {{n}}-modulni tugating",
+    "moduleAvailable": "{{completed}} / {{total}} dars",
     "moduleLockedTier": "🔒 Bu modul tarifingizga kirmaydi",
     "lessonMeta": "{{minutes}} daqiqa",
     "lessonHereMeta": "{{minutes}} daqiqa · +{{xp}} XP",

@@ -283,18 +283,24 @@ export default function Lessons() {
               const doneCount = m.lessons.filter((l) => completed.has(l.id)).length;
               const fullyDone = total > 0 && doneCount === total;
               const isActive = !capped && m.id === activeModuleId;
-              const state: ModuleRowState = capped ? "locked" : fullyDone ? "done" : isActive ? "active" : "locked";
-              const isOpen = state === "active" || (state === "done" && expanded.has(m.id));
+              // Real access model (has_module_access / is_module_tier_locked, migration
+              // 20260615030000_tier_lock_rank_fix.sql): gates PURELY on rank vs module_limit —
+              // there is no sequential "finish-in-order" gate, and CoursePage.tsx already lets a
+              // student open any within-cap module's lessons regardless of completion order. So
+              // "within cap, not yet started" is `available` (openable), NOT `locked` — only a
+              // rank beyond `module_limit` is truly `locked`.
+              const state: ModuleRowState = capped ? "locked" : fullyDone ? "done" : isActive ? "active" : "available";
+              const isOpen = state === "active" || ((state === "done" || state === "available") && expanded.has(m.id));
 
               let meta: string | undefined;
               let lockReason: string | undefined;
               if (state === "done") meta = t("darslar.moduleDone", { completed: formatXp(doneCount, i18n.language), total: formatXp(total, i18n.language) });
               else if (state === "active") meta = t("darslar.moduleActive", { completed: formatXp(doneCount, i18n.language), total: formatXp(total, i18n.language) });
-              else if (capped) lockReason = t("darslar.moduleLockedTier");
-              else lockReason = t("darslar.moduleLockedSequential", { n: formatXp(Math.max(1, rank - 1), i18n.language) });
+              else if (state === "available") meta = t("darslar.moduleAvailable", { completed: formatXp(doneCount, i18n.language), total: formatXp(total, i18n.language) });
+              else lockReason = t("darslar.moduleLockedTier"); // state === "locked" is always the tier-cap case now
 
               const handleModuleClick =
-                state === "done"
+                state === "done" || state === "available"
                   ? () => toggleExpanded(m.id)
                   : state === "locked"
                     ? () => toast(lockReason)

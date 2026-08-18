@@ -150,7 +150,7 @@
     "modulesProgress": "Завершено {{pct}}%",
     "moduleDone": "{{completed}} / {{total}} уроков · завершено",
     "moduleActive": "{{completed}} / {{total}} уроков · в процессе",
-    "moduleLockedSequential": "🔒 Завершите модуль {{n}}",
+    "moduleAvailable": "{{completed}} / {{total}} уроков",
     "moduleLockedTier": "🔒 Этот модуль не входит в ваш тариф",
     "lessonMeta": "{{minutes}} мин",
     "lessonHereMeta": "{{minutes}} мин · +{{xp}} XP",
