@@ -31,6 +31,8 @@ export interface TgWebApp {
   isVersionAtLeast(version: string): boolean;
   disableVerticalSwipes?(): void;
   enableVerticalSwipes?(): void;
+  setHeaderColor?(c: string): void;
+  setBackgroundColor?(c: string): void;
   onEvent(event: string, cb: () => void): void;
   offEvent(event: string, cb: () => void): void;
 }

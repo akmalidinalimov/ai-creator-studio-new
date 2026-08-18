@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useMiniApp } from "./MiniAppContext";
 import { applyTelegramTheme } from "./theme";
+import { applyTelegramChrome } from "./appShell";
 import { useTelegramViewport } from "./useTelegramViewport";
 import { useTelegramBackButton } from "./useTelegramBackButton";
 import TgNotLinked from "@/pages/TgNotLinked";
@@ -57,7 +58,11 @@ export function TelegramGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!webApp) return;
     applyTelegramTheme(webApp);
-    const onThemeChanged = () => applyTelegramTheme(webApp);
+    applyTelegramChrome(webApp);
+    const onThemeChanged = () => {
+      applyTelegramTheme(webApp);
+      applyTelegramChrome(webApp);
+    };
     webApp.onEvent("themeChanged", onThemeChanged);
     return () => webApp.offEvent("themeChanged", onThemeChanged);
   }, [webApp]);

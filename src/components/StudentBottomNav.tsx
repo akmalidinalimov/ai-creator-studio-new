@@ -1,17 +1,25 @@
 import { Link, useLocation } from "react-router-dom";
-import { Home, Trophy, User, Award, BarChart3 } from "lucide-react";
+import { Home, Trophy, User, BookOpen, ClipboardCheck } from "lucide-react";
+import { usePendingHomework } from "@/hooks/usePendingHomework";
 
 export function StudentBottomNav() {
   const loc = useLocation();
+  const pendingHomework = usePendingHomework();
   // Hide on lesson pages so the video has more room (and avoids overlap with sticky next-lesson CTA).
   if (loc.pathname.startsWith("/lesson/")) return null;
 
   const tabs = [
-    { to: "/dashboard", label: "Dars", icon: Home, match: (p: string) => p === "/dashboard" },
-    { to: "/activity", label: "Statistika", icon: BarChart3, match: (p: string) => p.startsWith("/activity") },
-    { to: "/badges", label: "Nishon", icon: Award, match: (p: string) => p.startsWith("/badges") },
+    { to: "/dashboard", label: "Bosh", icon: Home, match: (p: string) => p === "/dashboard" },
+    { to: "/lessons", label: "Darslar", icon: BookOpen, match: (p: string) => p.startsWith("/lessons") },
+    { to: "/homework", label: "Vazifa", icon: ClipboardCheck, match: (p: string) => p.startsWith("/homework"), dot: pendingHomework },
     { to: "/leaderboard", label: "Reyting", icon: Trophy, match: (p: string) => p.startsWith("/leaderboard") },
-    { to: "/profile", label: "Profil", icon: User, match: (p: string) => p.startsWith("/profile") || p.startsWith("/settings") },
+    {
+      to: "/profile",
+      label: "Profil",
+      icon: User,
+      match: (p: string) =>
+        p.startsWith("/profile") || p.startsWith("/settings") || p.startsWith("/badges") || p.startsWith("/activity"),
+    },
   ];
 
   return (
@@ -33,7 +41,15 @@ export function StudentBottomNav() {
               }`}
               aria-current={active ? "page" : undefined}
             >
-              <Icon className="h-6 w-6" aria-hidden />
+              <span className="relative inline-flex">
+                <Icon className="h-6 w-6" aria-hidden />
+                {t.dot && (
+                  <span
+                    className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary ring-2 ring-background"
+                    aria-hidden
+                  />
+                )}
+              </span>
               <span>{t.label}</span>
             </Link>
           );

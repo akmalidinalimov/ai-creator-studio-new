@@ -1,4 +1,5 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap');
+@font-face{font-family:'Onest';src:url('/fonts/Onest[wght].ttf') format('truetype');font-weight:100 900;font-style:normal;font-display:swap}
+@font-face{font-family:'Unbounded';src:url('/fonts/Unbounded[wght].ttf') format('truetype');font-weight:100 900;font-style:normal;font-display:swap}
 
 @tailwind base;
 @tailwind components;
@@ -6,27 +7,30 @@
 
 @layer base {
   :root {
-    /* Samarkand Teal — light mint + Persian teal (owner: light, premium, dotted) */
-    --background: 160 32% 96%;           /* #F0F7F4 light mint */
-    --foreground: 180 50% 11%;           /* #0E2A2A deep teal-black */
+    /* Graphite & Emerald — light (owner: graphite surfaces + emerald primary, premium redesign) */
+    --background: 150 8% 95%;            /* #F2F4F3 */
+    --foreground: 175 52% 10%;           /* #0C2624 */
 
     --card: 0 0% 100%;
-    --card-foreground: 180 50% 11%;
+    --card-foreground: 175 52% 10%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 180 50% 11%;
+    --popover-foreground: 175 52% 10%;
 
-    --primary: 174 78% 26%;              /* #0F766E Samarkand teal */
+    --primary: 175 77% 26%;              /* #0F766E deep teal on light */
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 42 24% 92%;             /* #F2EEE5 */
-    --secondary-foreground: 180 50% 11%;
+    --secondary: 140 9% 94%;             /* #EDF0EE */
+    --secondary-foreground: 175 52% 10%;
 
-    --muted: 42 24% 92%;
-    --muted-foreground: 180 6% 45%;      /* #6B7B7B */
+    --muted: 140 9% 94%;
+    --muted-foreground: 171 10% 41%;     /* #5E7370 */
 
-    --accent: 173 38% 84%;               /* #C7E5E1 soft teal tint */
+    --accent: 173 38% 84%;               /* #C7E5E1 soft teal tint (restored) */
     --accent-foreground: 174 78% 26%;
+
+    --cta: 10 100% 65%;                  /* #FF6A4D coral CTA */
+    --cta-foreground: 0 0% 100%;
 
     --destructive: 17 60% 44%;           /* #B5512D warm clay */
     --destructive-foreground: 0 0% 100%;
@@ -34,14 +38,25 @@
     --success: 142 71% 38%;
     --success-foreground: 0 0% 100%;
 
-    --warning: 43 89% 38%;               /* saffron */
+    --warning: 40 73% 56%;               /* #E0A83C */
     --warning-foreground: 0 0% 100%;
 
-    --border: 160 22% 87%;               /* mint-tinted border (matches light-mint bg) */
-    --input: 160 22% 87%;
-    --ring: 174 78% 26%;
+    --border: 160 21% 89%;               /* #DDE9E5 */
+    --input: 160 21% 89%;
+    --ring: 175 77% 26%;
 
-    --gold: 43 89% 38%;                  /* #B8860B deep saffron */
+    --gold: 40 73% 56%;                  /* #E0A83C */
+
+    /* Redesign additions — Graphite & Emerald */
+    --surface-2: 140 18% 97%;            /* #F5F8F6 */
+    --tint: 163 17% 92%;                 /* #E7EEEC */
+    --accent-soft: 13 100% 94%;          /* #FFE6DF */
+    --good: 159 83% 34%;                 /* #0F9D6B */
+    --danger: 15 62% 46%;                /* #C0512D */
+    --accent-2: 9 71% 46%;               /* #C93B22 */
+    --gold-2: 40 80% 31%;                /* #8F6410 */
+    --good-2: 160 85% 26%;               /* #0A7A55 */
+    --danger-2: 13 68% 38%;              /* #A53D1F */
 
     --radius: 0.75rem;
 
@@ -50,8 +65,9 @@
     --brand-paper: 42 32% 97%;
     --brand-deep: 178 60% 5%;            /* #08100F deep teal-black */
 
-    /* Soft teal-tinted shadows */
-    --shadow-soft: 0 1px 2px hsl(180 50% 11% / 0.04), 0 4px 12px hsl(174 78% 26% / 0.06);
+    /* Shadows — Graphite & Emerald */
+    --shadow-soft: 0 1px 2px hsl(180 50% 11% / .05), 0 10px 30px hsl(174 40% 20% / .08);
+    --shadow-gloss: inset 0 1px 0 #00000000;
     --shadow-elevated: 0 1px 2px hsl(180 50% 11% / 0.06), 0 12px 32px hsl(174 78% 26% / 0.10);
 
     --gradient-brand: linear-gradient(135deg, hsl(174 78% 26%) 0%, hsl(180 50% 11%) 100%);
@@ -70,31 +86,44 @@
   /* Global dark theme — same Samarkand dark-teal palette as the lesson page,
      applied app-wide via the `dark` class on <html> (toggle + system pref). */
   .dark {
-    --background: 178 60% 5%;
-    --foreground: 174 16% 95%;
-    --card: 178 28% 8%;
-    --card-foreground: 174 16% 95%;
-    --popover: 178 28% 8%;
-    --popover-foreground: 174 16% 95%;
-    --primary: 172 66% 50%;
-    --primary-foreground: 178 60% 5%;
-    --secondary: 178 22% 10%;
-    --secondary-foreground: 174 16% 95%;
-    --muted: 178 22% 10%;
-    --muted-foreground: 174 9% 58%;
-    --accent: 174 41% 21%;
+    /* Graphite & Emerald — dark (the premium look) */
+    --background: 200 12% 9%;            /* #15191B */
+    --foreground: 165 12% 94%;           /* #EDF1F0 */
+    --card: 200 12% 15%;                 /* #22282B */
+    --card-foreground: 165 12% 94%;
+    --popover: 200 12% 15%;
+    --popover-foreground: 165 12% 94%;
+    --primary: 164 74% 53%;              /* #2FE0B0 emerald accent */
+    --primary-foreground: 166 72% 8%;    /* #06251E */
+    --secondary: 202 13% 17%;            /* #262D31 */
+    --secondary-foreground: 165 12% 94%;
+    --muted: 202 13% 17%;
+    --muted-foreground: 164 6% 63%;      /* #9AA5A2 */
+    --accent: 174 41% 21%;               /* deep teal hover (restored) */
     --accent-foreground: 172 66% 50%;
+    --cta: 10 100% 65%;                  /* #FF6A4D coral CTA */
+    --cta-foreground: 0 0% 100%;
     --destructive: 14 100% 64%;
     --destructive-foreground: 178 60% 5%;
     --success: 142 66% 46%;
     --success-foreground: 178 60% 5%;
-    --warning: 43 92% 52%;
+    --warning: 44 69% 68%;               /* #E6C877 */
     --warning-foreground: 178 60% 5%;
-    --border: 174 19% 15%;
-    --input: 174 19% 15%;
-    --ring: 172 66% 50%;
-    --gold: 43 92% 52%;
-    --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 12px rgb(0 0 0 / 0.3);
+    --border: 205 12% 19%;               /* #2B3237 */
+    --input: 205 12% 19%;
+    --ring: 164 74% 53%;                 /* #2FE0B0 */
+    --gold: 44 69% 68%;                  /* #E6C877 */
+    --surface-2: 202 13% 17%;            /* #262D31 */
+    --tint: 198 12% 16%;                 /* #242B2E */
+    --accent-soft: 11 51% 15%;           /* #3A1A13 */
+    --good: 158 64% 52%;                 /* #34D399 */
+    --danger: 13 100% 71%;               /* #FF8C6B */
+    --accent-2: 11 100% 74%;             /* #FF9178 */
+    --gold-2: 42 82% 68%;                /* #F0C869 */
+    --good-2: 158 64% 52%;               /* #34D399 */
+    --danger-2: 13 100% 71%;             /* #FF8C6B */
+    --shadow-soft: 0 1px 2px #00000066, 0 18px 44px #00000073;
+    --shadow-gloss: inset 0 1px 0 #ffffff12;
     --shadow-elevated: 0 1px 2px rgb(0 0 0 / 0.5), 0 12px 32px rgb(0 0 0 / 0.4);
     --sidebar-background: 178 28% 8%;
     --sidebar-foreground: 174 16% 95%;
@@ -108,35 +137,39 @@
 
   /* Dark teal scope — applied via .lesson-dark on the lesson page root */
   .lesson-dark {
-    --background: 178 60% 5%;            /* #08100F */
-    --foreground: 174 16% 95%;           /* #F0F5F4 */
+    /* Aligned to Graphite & Emerald dark, same as .dark, for one consistent look */
+    --background: 200 12% 9%;            /* #15191B */
+    --foreground: 165 12% 94%;           /* #EDF1F0 */
 
-    --card: 178 28% 8%;                  /* #0E1816 */
-    --card-foreground: 174 16% 95%;
+    --card: 200 12% 15%;                 /* #22282B */
+    --card-foreground: 165 12% 94%;
 
-    --popover: 178 28% 8%;
-    --popover-foreground: 174 16% 95%;
+    --popover: 200 12% 15%;
+    --popover-foreground: 165 12% 94%;
 
-    --primary: 172 66% 50%;              /* #2DD4BF bright teal */
-    --primary-foreground: 178 60% 5%;
+    --primary: 164 74% 53%;              /* #2FE0B0 emerald accent */
+    --primary-foreground: 166 72% 8%;    /* #06251E */
 
-    --secondary: 178 22% 10%;            /* #131F1D */
-    --secondary-foreground: 174 16% 95%;
+    --secondary: 202 13% 17%;            /* #262D31 */
+    --secondary-foreground: 165 12% 94%;
 
-    --muted: 178 22% 10%;
-    --muted-foreground: 174 9% 58%;      /* #8A9F9C */
+    --muted: 202 13% 17%;
+    --muted-foreground: 164 6% 63%;      /* #9AA5A2 */
 
-    --accent: 174 41% 21%;               /* #1F4A45 deep teal hover */
+    --accent: 174 41% 21%;               /* #1F4A45 deep teal hover (restored) */
     --accent-foreground: 172 66% 50%;
+
+    --cta: 10 100% 65%;                  /* #FF6A4D coral CTA */
+    --cta-foreground: 0 0% 100%;
 
     --destructive: 14 100% 64%;          /* #FF6B47 */
     --destructive-foreground: 178 60% 5%;
 
-    --border: 174 19% 15%;               /* #1F2D2A */
-    --input: 174 19% 15%;
-    --ring: 172 66% 50%;
+    --border: 205 12% 19%;               /* #2B3237 */
+    --input: 205 12% 19%;
+    --ring: 164 74% 53%;                 /* #2FE0B0 */
 
-    --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 12px rgb(0 0 0 / 0.3);
+    --shadow-soft: 0 1px 2px #00000066, 0 18px 44px #00000073;
     --shadow-elevated: 0 1px 2px rgb(0 0 0 / 0.5), 0 12px 32px rgb(0 0 0 / 0.4);
   }
 }
@@ -153,7 +186,7 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PT Sans", sans-serif;
+    font-family: 'Onest', system-ui, sans-serif;
     font-feature-settings: "cv11", "ss01";
     -webkit-tap-highlight-color: transparent;
     overflow-x: hidden;
@@ -202,7 +235,7 @@
 }
 
 /* Brand type utilities (landing) */
-.font-display { font-family: 'Clash Display', ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.02em; }
+.font-display { font-family: 'Unbounded', 'Onest', ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.02em; }
 .font-brandbody { font-family: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif; }
 
 /* hero entrance */
@@ -239,6 +272,8 @@
   --muted-foreground: 165 12% 66%;
   --accent: 170 32% 16%;
   --accent-foreground: 168 70% 72%;
+  --cta: 10 100% 65%;                  /* #FF6A4D coral CTA */
+  --cta-foreground: 0 0% 100%;
   --destructive: 17 62% 50%;
   --destructive-foreground: 0 0% 100%;
   --success: 150 55% 48%;

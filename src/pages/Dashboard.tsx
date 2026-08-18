@@ -1,34 +1,119 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { Zap, TrendingUp, Trophy, Award, ClipboardCheck, ChevronRight } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
-import { Flame, PlayCircle, BookOpen, ArrowRight, Sparkles } from "lucide-react";
-import { Skeleton } from "@/components/ui/skeleton";
-import { StudentAnalytics } from "@/components/dashboard/StudentAnalytics";
-import { EngagementTiles } from "@/components/dashboard/EngagementTiles";
 import { ModuleCelebrationModal } from "@/components/ModuleCelebrationModal";
-import { ProgressRing } from "@/components/dashboard/ProgressRing";
+import { tierFor, formatXp, type TierKey } from "@/lib/xp";
+import {
+  Hero,
+  StatTile,
+  ProgressRing,
+  TierBadge,
+  StreakChip,
+  Card,
+  SectionHeader,
+  Button,
+  EmptyState,
+  Skeleton,
+  Celebrate,
+} from "@/components/ui-kit";
+
+// Per-tier emoji for the tier-up Celebrate overlay — mirrors the DB-side ladder config
+// (platform_settings.xp_tiers in 20260814124130_xp_reward_tiers.sql: 🥉🥈🥇💎👑). Not imported
+// from ui-kit/shared.ts's TIER_NAMES on purpose — that file is an internal ui-kit helper, not
+// part of the public barrel (see its own header comment).
+const TIER_EMOJI: Record<TierKey, string> = { bronze: "🥉", silver: "🥈", gold: "🥇", platinum: "💎", diamond: "👑" };
+
+type CelebrationEvent =
+  | { kind: "level"; level: number }
+  | { kind: "tier"; tierKey: TierKey; tierName: string };
+
+/** Full-screen celebration overlay (Task 2.7) — wraps ui-kit's `Celebrate` block in a dismissible
+ *  backdrop. Not a ui-kit primitive itself (kept local/inline per the task's "create nothing new"
+ *  scope); duplicated in LessonPage.tsx for the same reason. Entrance is `motion-safe:` only
+ *  (see Celebrate.tsx) — under prefers-reduced-motion the overlay simply appears, no fade/scale. */
+function CelebrationOverlay({
+  emoji, title, body, xp, locale, onDismiss, closeLabel,
+}: { emoji: string; title: string; body: string; xp?: number; locale: string; onDismiss: () => void; closeLabel: string }) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="motion-safe:animate-fade-in fixed inset-0 z-50 grid place-items-center bg-background/80 p-4 backdrop-blur-sm"
+      onClick={onDismiss}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl border border-border bg-card shadow-elevated"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <Celebrate emoji={emoji} title={title} body={body} xp={xp} locale={locale} />
+        <div className="px-2.5 pb-4">
+          <Button variant="ghost" block onClick={onDismiss}>
+            {closeLabel}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Weekly-XP ring target — spec (§7) pins the metric (xp_events, Tashkent-Monday reset) but not
+// the target. RULING (xp-data-sources.md, 2026-08-18): hardcode a launch default here rather than
+// invent a new platform_settings key. OWNER-ATTENTION: revisit this value / consider moving it to
+// platform_settings later for no-deploy tuning.
+const WEEKLY_XP_GOAL = 150;
+
+/** Start (00:00) of the current week, Monday-anchored, in Asia/Tashkent (fixed UTC+5, no DST),
+ *  returned as a UTC ISO string for use in a `.gte("created_at", …)` filter. Mirrors the server's
+ *  `date_trunc('week', now() at time zone 'Asia/Tashkent')` convention (see xp-data-sources.md). */
+function tashkentWeekStartIso(): string {
+  const TASHKENT_OFFSET_MS = 5 * 60 * 60 * 1000;
+  const shifted = new Date(Date.now() + TASHKENT_OFFSET_MS);
+  const dow = shifted.getUTCDay(); // 0=Sun..6=Sat, in Tashkent-shifted terms
+  const daysSinceMonday = (dow + 6) % 7;
+  const mondayShiftedMs = Date.UTC(
+    shifted.getUTCFullYear(),
+    shifted.getUTCMonth(),
+    shifted.getUTCDate() - daysSinceMonday,
+    0, 0, 0, 0,
+  );
+  return new Date(mondayShiftedMs - TASHKENT_OFFSET_MS).toISOString();
+}
 
 interface CourseRow {
   id: string; title: string; tagline: string | null; cover_url: string | null; duration_hours: number | null;
   total: number; completed: number; nextLessonId?: string; nextCourseId?: string;
+  nextLessonTitle?: string; nextLessonDurationSec?: number | null;
+  nextModuleTitle?: string; nextModuleRank?: number; nextLessonPositionInModule?: number;
+  modulesTotal: number; modulesCompleted: number;
   lastActivityMs: number; // most-recent lesson activity in this course (0 = never touched)
+}
+
+interface StatsRow {
+  totalXp: number; level: number; groupRank: number | null; badges: number; streak: number;
 }
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
   const [courses, setCourses] = useState<CourseRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
-  const [streak, setStreak] = useState(0);
   const [displayName, setDisplayName] = useState("");
+  const [stats, setStats] = useState<StatsRow | null>(null);
+  const [weeklyXp, setWeeklyXp] = useState(0);
+  const [dailyRemaining, setDailyRemaining] = useState(0);
+  const [hwPendingCount, setHwPendingCount] = useState(0);
+  const [hwGradedCount, setHwGradedCount] = useState(0);
+  const [hwAvgScore, setHwAvgScore] = useState<number | null>(null);
+  const [celebration, setCelebration] = useState<CelebrationEvent | null>(null);
+  const celebrationQueueRef = useRef<CelebrationEvent[]>([]);
+  const dismissCelebration = () => setCelebration(celebrationQueueRef.current.shift() ?? null);
 
   useEffect(() => {
     if (!user) return;
@@ -37,18 +122,83 @@ export default function Dashboard() {
     setError(false);
     (async () => {
      try {
-      const [profRes, streakRes, enrollRes] = await Promise.all([
+      const weekStartIso = tashkentWeekStartIso();
+      const [profRes, statsRes, enrollRes, weekXpRes, dailyRes, hwRes] = await Promise.all([
         supabase.from("profiles").select("name, last_name").eq("id", user.id).maybeSingle(),
-        supabase.from("streaks").select("current_streak").eq("user_id", user.id).maybeSingle(),
+        // profile_stats(uid): total_xp/level/group_rank/badges_earned/current_streak are the SAME
+        // underlying reads xp-data-sources.md pins (user_xp.total_xp, user_group_rating_xp-based
+        // rank, badges ∩ catalog join) — already secured + used by Profile.tsx/Leaderboard's
+        // sibling RPCs. One round trip instead of four separate queries for the same numbers.
+        supabase.rpc("profile_stats" as any, { uid: user.id }),
         supabase.from("enrollments").select("course_id, tier_id, courses(*), course_tiers(module_limit)").eq("user_id", user.id),
+        // Haftalik XP: CONFIRMED source per xp-data-sources.md — sum xp_events.amount over the
+        // current Tashkent-Monday week. NOT user_group_rating_xp (leaderboard-only).
+        supabase.from("xp_events" as any).select("amount").eq("user_id", user.id).gte("created_at", weekStartIso),
+        supabase.rpc("daily_goal_progress", { uid: user.id }),
+        supabase.from("homework_submissions").select("score").eq("user_id", user.id),
       ]);
       if (enrollRes.error) throw enrollRes.error;
-      const profile = profRes.data; const streakRow = streakRes.data; const enrollments = enrollRes.data;
+      const profile = profRes.data; const enrollments = enrollRes.data;
       const first = (profile?.name || "").trim();
       const last = ((profile as any)?.last_name || "").trim();
       const full = [first, last].filter(Boolean).join(" ");
       setDisplayName(full || first || t("dashboard.there"));
-      setStreak(streakRow?.current_streak || 0);
+
+      const sRow: any = Array.isArray(statsRes.data) ? statsRes.data[0] : statsRes.data;
+      const freshTotalXp = sRow?.total_xp ?? 0;
+      const freshLevel = sRow?.level ?? 1;
+      setStats({
+        totalXp: freshTotalXp,
+        level: freshLevel,
+        groupRank: sRow?.group_rank ?? null,
+        badges: sRow?.badges_earned ?? 0,
+        streak: sRow?.current_streak ?? 0,
+      });
+
+      // Level-up / tier-up celebration detection. Mirrors the (now-orphaned, see
+      // src/components/dashboard/EngagementTiles.tsx) pre-redesign tier-up toast's localStorage
+      // pattern, ported here because that component is no longer mounted anywhere post-redesign
+      // (Dashboard.tsx recomputes tier client-side via lib/xp.ts's tierFor). Fixed the old
+      // pattern's sentinel bug: it used "0" as both "never recorded" AND a legitimate index-0
+      // value, so a bronze→silver jump on a user's very first-ever recorded tier silently never
+      // fired. Using `localStorage.getItem` returning `null` (never recorded) — distinguishable
+      // from a stored "0" — avoids that. Scoped per user id (the old flat "seen_tier" key would
+      // leak a celebration across accounts on a shared/kiosk device).
+      if (user) {
+        const levelKey = `aic_seen_level:${user.id}`;
+        const tierKey = `aic_seen_tier:${user.id}`;
+        const storedLevel = localStorage.getItem(levelKey);
+        const storedTierMin = localStorage.getItem(tierKey);
+        const freshTier = tierFor(freshTotalXp);
+        const events: CelebrationEvent[] = [];
+        if (storedLevel !== null && freshLevel > Number(storedLevel)) {
+          events.push({ kind: "level", level: freshLevel });
+        }
+        // Tier ladder min-XP thresholds (0/300/600/1000/1500) are strictly increasing, so the
+        // tier's own `min` doubles as a stable ordinal — no separate tier-index table needed.
+        if (storedTierMin !== null && freshTier.min > Number(storedTierMin)) {
+          events.push({ kind: "tier", tierKey: freshTier.key, tierName: freshTier.name });
+        }
+        localStorage.setItem(levelKey, String(freshLevel));
+        localStorage.setItem(tierKey, String(freshTier.min));
+        if (events.length) {
+          const [first, ...rest] = events;
+          celebrationQueueRef.current = rest;
+          setCelebration(first);
+        }
+      }
+
+      const weekAmt = (((weekXpRes.data as any[]) || [])).reduce((sum, e) => sum + (e.amount || 0), 0);
+      setWeeklyXp(weekAmt);
+
+      const dailyRow: any = Array.isArray(dailyRes.data) ? dailyRes.data[0] : dailyRes.data;
+      setDailyRemaining(Math.max((dailyRow?.target ?? 0) - (dailyRow?.done ?? 0), 0));
+
+      const hwRows = ((hwRes.data as any[]) || []);
+      const graded = hwRows.filter((r) => r.score != null);
+      setHwPendingCount(hwRows.filter((r) => r.score == null).length);
+      setHwGradedCount(graded.length);
+      setHwAvgScore(graded.length ? graded.reduce((s, r) => s + Number(r.score), 0) / graded.length : null);
 
       const rows: CourseRow[] = [];
       for (const e of enrollments || []) {
@@ -57,18 +207,21 @@ export default function Dashboard() {
         // Tier cap: null = unlimited. Modules are ranked by position (matching
         // has_module_access); only the first `limit` modules are accessible.
         const limit: number | null = (e as any).course_tiers?.module_limit ?? null;
-        const { data: lessons } = await supabase
+        const { data: lessonsData } = await supabase
           .from("lessons")
-          .select("id, position, modules!inner(id, course_id, position)")
+          .select("id, position, title, duration_seconds, modules!inner(id, course_id, position, title)")
           .eq("modules.course_id", c.id);
-        const raw = (lessons || []).map((l: any) => ({
-          id: l.id, lp: l.position ?? 0, mid: l.modules?.id, mp: l.modules?.position ?? 0,
+        const raw = (lessonsData || []).map((l: any) => ({
+          id: l.id, lp: l.position ?? 0, title: l.title as string, dur: l.duration_seconds as number | null,
+          mid: l.modules?.id, mp: l.modules?.position ?? 0, mtitle: l.modules?.title as string,
         }));
         // Rank modules by position so the cap matches the backend's rank logic.
         const modRank = new Map<string, number>();
         Array.from(new Map(raw.map((l) => [l.mid, l.mp])).entries())
           .sort((a, b) => a[1] - b[1])
           .forEach(([mid], i) => modRank.set(mid, i + 1));
+        const modTitleByMid = new Map<string, string>();
+        raw.forEach((l) => { if (!modTitleByMid.has(l.mid)) modTitleByMid.set(l.mid, l.mtitle); });
         let ordered = raw
           .sort((a, b) => (modRank.get(a.mid)! - modRank.get(b.mid)!) || a.lp - b.lp);
         if (limit != null) ordered = ordered.filter((l) => (modRank.get(l.mid) ?? 1e9) <= limit);
@@ -85,10 +238,33 @@ export default function Dashboard() {
           return ts > mx ? ts : mx;
         }, 0);
         const next = ordered.find((l) => !completedSet.has(l.id));
+        const nextPositionInModule = next
+          ? ordered.filter((l) => l.mid === next.mid).findIndex((l) => l.id === next.id) + 1
+          : undefined;
+
+        // Module completion (accessible modules only) for the compact "Kursim" card's
+        // "N / M modul tugallandi" line — a module counts as done when every one of its
+        // (tier-accessible) lessons is completed.
+        const moduleLessonIds = new Map<string, string[]>();
+        ordered.forEach((l) => {
+          const arr = moduleLessonIds.get(l.mid) || [];
+          arr.push(l.id);
+          moduleLessonIds.set(l.mid, arr);
+        });
+        const modulesTotal = moduleLessonIds.size;
+        const modulesCompleted = Array.from(moduleLessonIds.values())
+          .filter((ids) => ids.length > 0 && ids.every((id) => completedSet.has(id))).length;
+
         rows.push({
           id: c.id, title: c.title, tagline: c.tagline, cover_url: c.cover_url, duration_hours: c.duration_hours,
           total, completed: completedSet.size,
-          nextLessonId: next?.id, nextCourseId: c.id, lastActivityMs,
+          nextLessonId: next?.id, nextCourseId: c.id,
+          nextLessonTitle: next?.title, nextLessonDurationSec: next?.dur,
+          nextModuleTitle: next ? modTitleByMid.get(next.mid) : undefined,
+          nextModuleRank: next ? modRank.get(next.mid) : undefined,
+          nextLessonPositionInModule: nextPositionInModule,
+          modulesTotal, modulesCompleted,
+          lastActivityMs,
         });
       }
       if (cancelled) return;
@@ -107,105 +283,213 @@ export default function Dashboard() {
     return () => { cancelled = true; };
   }, [user, reloadKey]);
 
+  const resume = courses.find((c) => c.nextLessonId && c.completed < c.total) || courses.find((c) => c.nextLessonId);
+  const hasAnyProgress = courses.some((c) => c.completed > 0);
+  const totalXp = stats?.totalXp ?? 0;
+  // First-run/empty per brief: 0 progress = no XP AND no completed lessons anywhere.
+  const isFirstRun = !loading && !error && courses.length > 0 && totalXp === 0 && !hasAnyProgress;
+  const tierInfo = stats ? tierFor(totalXp) : null;
+  const weeklyPct = WEEKLY_XP_GOAL > 0 ? Math.round((weeklyXp / WEEKLY_XP_GOAL) * 100) : 0;
+  const weeklyRemaining = Math.max(WEEKLY_XP_GOAL - weeklyXp, 0);
+
+  const greetingSubtitle = isFirstRun && resume
+    ? t("home.greetingSubtitleWelcome", { course: resume.title })
+    : dailyRemaining > 0
+      ? t("home.greetingSubtitle", { n: dailyRemaining })
+      : t("home.greetingSubtitleDone");
+
+  const offline = typeof navigator !== "undefined" && !navigator.onLine;
+
   return (
     <PageShell>
       <ModuleCelebrationModal />
-      <div className="space-y-8">
-        <div className="flex items-end justify-between flex-wrap gap-4">
-          <div>
-            <h1 className="text-3xl font-semibold tracking-tight">{t("dashboard.welcome", { name: displayName })}</h1>
-            <p className="text-muted-foreground mt-1">{t("dashboard.pickUp")}</p>
-          </div>
-          <div className="flex items-center gap-2 px-4 py-2 rounded-lg border bg-card shadow-soft">
-            <Flame className="h-4 w-4 text-orange-500" />
-            <span className="font-semibold tabular-nums">{streak}</span>
-            <span className="text-sm text-muted-foreground">{t("dashboard.dayStreak")}</span>
-          </div>
-        </div>
-
-        {(() => {
-          if (loading || error || courses.length === 0) return null;
-          const resume = courses.find((c) => c.nextLessonId && c.completed < c.total) || courses.find((c) => c.nextLessonId);
-          if (!resume?.nextLessonId) return null;
-          const pct = resume.total > 0 ? Math.round((resume.completed / resume.total) * 100) : 0;
-          const fresh = resume.completed === 0;
-          return (
-            <Card className="relative overflow-hidden p-0 border-primary/20 shadow-soft">
-              <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.06] to-transparent pointer-events-none" />
-              <div className="relative flex flex-col sm:flex-row items-start sm:items-center gap-5 p-6">
-                <ProgressRing value={pct} size={72} stroke={6} className="shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5 text-xs font-medium text-primary uppercase tracking-wide">
-                    <Sparkles className="h-3.5 w-3.5" /> {fresh ? t("dashboard.startTitle", "Start here") : t("dashboard.resumeTitle", "Continue where you left off")}
-                  </div>
-                  <h2 className="text-xl font-semibold tracking-tight mt-1 truncate">{resume.title}</h2>
-                  <p className="text-sm text-muted-foreground mt-0.5">{resume.completed}/{resume.total} {t("dashboard.lessons")} · {pct}% {t("dashboard.complete")}</p>
-                </div>
-                <Button asChild size="lg" className="w-full sm:w-auto shrink-0">
-                  <Link to={`/lesson/${resume.id}/${resume.nextLessonId}`}>
-                    <PlayCircle className="h-5 w-5" /> {fresh ? t("dashboard.startCourse") : t("dashboard.continueLearning")}
-                  </Link>
-                </Button>
-              </div>
-            </Card>
-          );
-        })()}
-
-        <EngagementTiles />
-
-        <div className="flex justify-end">
-          <Button asChild variant="outline" size="sm">
-            <Link to="/activity">{t("dashboard.viewFullHistory")} <ArrowRight className="h-4 w-4" /></Link>
-          </Button>
-        </div>
-
+      {celebration && (
+        <CelebrationOverlay
+          emoji={celebration.kind === "level" ? "⭐" : TIER_EMOJI[celebration.tierKey]}
+          title={celebration.kind === "level" ? t("home.levelUpTitle") : t("home.tierUpTitle")}
+          body={
+            celebration.kind === "level"
+              ? t("home.levelUpBody", { level: formatXp(celebration.level, i18n.language) })
+              : t("home.tierUpBody", { tier: celebration.tierName })
+          }
+          locale={i18n.language}
+          onDismiss={dismissCelebration}
+          closeLabel={t("common.continue")}
+        />
+      )}
+      <div className="max-w-2xl mx-auto space-y-4">
         {loading ? (
-          <div className="grid md:grid-cols-2 gap-4">
-            {[0, 1].map((i) => <Skeleton key={i} className="h-48 rounded-xl" />)}
-          </div>
+          // Hero + 4 stat tiles shape — matches the populated layout below so a cold start
+          // never flashes blank/janky content.
+          <>
+            <Skeleton className="h-8 w-48" />
+            <Skeleton className="h-5 w-64" />
+            <Skeleton className="h-[150px] w-full rounded-lg" />
+            <div className="grid grid-cols-4 gap-2">
+              {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-24 rounded-md" />)}
+            </div>
+            <Skeleton className="h-20 w-full rounded-lg" />
+            <Skeleton className="h-20 w-full rounded-lg" />
+          </>
         ) : error ? (
-          <Card className="p-10 text-center">
-            <p className="text-muted-foreground">{t("dashboard.loadError", "Kurslarni yuklab bo'lmadi.")}</p>
-            <Button variant="outline" size="sm" className="mt-4" onClick={() => setReloadKey((k) => k + 1)}>
-              {t("common.retry", "Qayta urinish")}
-            </Button>
-          </Card>
+          <EmptyState
+            icon={offline ? "📡" : "⚠️"}
+            title={offline ? t("common.offlineTitle") : t("common.errorTitle")}
+            body={offline ? t("common.offlineBody") : t("dashboard.loadError")}
+            cta={
+              <Button variant="secondary" size="sm" onClick={() => setReloadKey((k) => k + 1)}>
+                {t("common.retry")}
+              </Button>
+            }
+          />
         ) : courses.length === 0 ? (
-          <Card className="p-10 text-center"><p className="text-muted-foreground">{t("dashboard.noCourses")}</p></Card>
+          <Card className="p-10 text-center"><p className="text-sm text-muted-foreground">{t("dashboard.noCourses")}</p></Card>
         ) : (
           <>
-            <div className="grid md:grid-cols-2 gap-5">
-              {courses.map((c) => {
-                const pct = c.total > 0 ? Math.round((c.completed / c.total) * 100) : 0;
-                return (
-                  <Card key={c.id} className="p-6 shadow-soft hover:shadow-elevated transition-shadow duration-200">
-                    <div className="flex items-start gap-4">
-                      <ProgressRing value={pct} size={60} stroke={5} className="shrink-0 mt-0.5" />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1.5">
-                          <BookOpen className="h-3.5 w-3.5" />
-                          <span>{c.duration_hours}h • {c.total} {t("dashboard.lessons")}</span>
-                        </div>
-                        <h3 className="text-lg font-semibold tracking-tight leading-snug">{c.title}</h3>
-                        <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{c.tagline}</p>
-                      </div>
-                    </div>
-                    <div className="mt-5 flex items-center justify-between gap-3">
-                      <Button asChild variant="default" size="sm">
-                        <Link to={c.nextLessonId ? `/lesson/${c.id}/${c.nextLessonId}` : `/course/${c.id}`}>
-                          <PlayCircle className="h-4 w-4" />
-                          {c.completed === 0 ? t("dashboard.startCourse") : pct === 100 ? t("dashboard.review") : t("dashboard.continueLearning")}
-                        </Link>
-                      </Button>
-                      <Button asChild variant="ghost" size="sm">
-                        <Link to={`/course/${c.id}`}>{t("dashboard.coursePage")} <ArrowRight className="h-4 w-4" /></Link>
-                      </Button>
-                    </div>
-                  </Card>
-                );
-              })}
+            <div className="space-y-1">
+              <h1 className="text-2xl font-extrabold tracking-tight text-foreground">
+                {t("home.greeting", { name: displayName })}
+              </h1>
+              <p className="text-sm font-semibold text-muted-foreground">{greetingSubtitle}</p>
             </div>
-            {user && <StudentAnalytics userId={user.id} courseId={courses[0]?.id} />}
+
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <StreakChip days={stats?.streak ?? 0} />
+              {tierInfo && <TierBadge tier={tierInfo.key} />}
+            </div>
+
+            {isFirstRun ? (
+              <>
+                <EmptyState
+                  icon="🚀"
+                  title={t("home.emptyTitle")}
+                  body={t("home.emptyBody")}
+                  cta={
+                    <Button
+                      variant="primary"
+                      block
+                      disabled={!resume?.nextLessonId}
+                      onClick={() => resume?.nextLessonId && navigate(`/lesson/${resume.id}/${resume.nextLessonId}`)}
+                    >
+                      {t("home.emptyCta")}
+                    </Button>
+                  }
+                />
+                <Card className="flex items-center gap-3">
+                  <ProgressRing pct={0} size={52} />
+                  <div>
+                    <div className="text-sm font-extrabold text-foreground">
+                      {t("home.emptyStatusLine", { xp: formatXp(0, i18n.language), level: formatXp(1, i18n.language) })}
+                    </div>
+                    <div className="text-xs font-semibold text-muted-foreground">
+                      {t("home.emptyTierHint", { tier: tierFor(0).name })}
+                    </div>
+                  </div>
+                </Card>
+              </>
+            ) : (
+              <>
+                {resume?.nextLessonId && (
+                  <Hero
+                    coverLabel={
+                      resume.nextModuleRank != null
+                        ? t("home.heroModuleLabel", { n: formatXp(resume.nextModuleRank, i18n.language), title: resume.nextModuleTitle })
+                        : undefined
+                    }
+                    title={resume.nextLessonTitle || resume.title}
+                    meta={
+                      resume.nextLessonDurationSec
+                        ? t("home.heroMeta", {
+                            step: formatXp(resume.nextLessonPositionInModule ?? 1, i18n.language),
+                            minutes: formatXp(Math.max(1, Math.round(resume.nextLessonDurationSec / 60)), i18n.language),
+                          })
+                        : t("home.heroMetaNoDuration", { step: formatXp(resume.nextLessonPositionInModule ?? 1, i18n.language) })
+                    }
+                    progress={resume.total > 0 ? Math.round((resume.completed / resume.total) * 100) : 0}
+                    ctaLabel={resume.completed === 0 ? t("home.startCourseCta") : t("home.continueCta")}
+                    onCtaClick={() => navigate(`/lesson/${resume.id}/${resume.nextLessonId}`)}
+                    onPlayClick={() => navigate(`/lesson/${resume.id}/${resume.nextLessonId}`)}
+                  />
+                )}
+
+                <div className="grid grid-cols-4 gap-2">
+                  <StatTile icon={<Zap />} label={t("home.statXp")} value={formatXp(totalXp, i18n.language)} highlight />
+                  <StatTile icon={<TrendingUp />} label={t("home.statLevel")} value={formatXp(stats?.level ?? 1, i18n.language)} />
+                  <StatTile
+                    icon={<Trophy />}
+                    label={t("home.statRank")}
+                    value={stats?.groupRank != null ? `#${formatXp(stats.groupRank, i18n.language)}` : "—"}
+                  />
+                  <StatTile icon={<Award />} label={t("home.statBadges")} value={formatXp(stats?.badges ?? 0, i18n.language)} />
+                </div>
+
+                <SectionHeader title={t("home.weeklyGoalTitle")} />
+                <Card className="flex items-center gap-4">
+                  <ProgressRing pct={weeklyPct} size={56} />
+                  <div>
+                    <div className="text-sm font-extrabold text-foreground">
+                      {formatXp(weeklyXp, i18n.language)} / {formatXp(WEEKLY_XP_GOAL, i18n.language)} XP
+                    </div>
+                    <div className="text-xs font-semibold text-muted-foreground">
+                      {weeklyRemaining > 0
+                        ? t("home.weeklyGoalSubtitle", { xp: formatXp(weeklyRemaining, i18n.language) })
+                        : t("home.weeklyGoalReached")}
+                    </div>
+                  </div>
+                </Card>
+
+                {(hwPendingCount > 0 || hwGradedCount > 0) && (
+                  <>
+                    <SectionHeader title={t("home.homeworkTitle")} action={<Link to="/homework">{t("home.homeworkAction")}</Link>} />
+                    <Link to="/homework" className="block">
+                      <Card className="flex items-center gap-3 cursor-pointer hover:bg-tint/40 transition-colors">
+                        <div className="grid size-[42px] flex-none place-items-center rounded-md bg-primary text-primary-foreground">
+                          <ClipboardCheck className="size-[22px]" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[14.5px] font-extrabold text-foreground">
+                            {hwPendingCount > 0
+                              ? t("home.homeworkPending", { count: formatXp(hwPendingCount, i18n.language) })
+                              : t("home.homeworkAllGraded")}
+                          </div>
+                          <div className="text-xs font-semibold text-muted-foreground">
+                            {hwAvgScore != null
+                              ? t("home.homeworkAvg", {
+                                  avg: formatXp(Math.round(hwAvgScore * 10) / 10, i18n.language),
+                                  count: formatXp(hwGradedCount, i18n.language),
+                                })
+                              : t("home.homeworkNoneGraded")}
+                          </div>
+                        </div>
+                        <ChevronRight className="size-[18px] flex-none text-muted-foreground" />
+                      </Card>
+                    </Link>
+                  </>
+                )}
+
+                {resume && (
+                  <>
+                    <SectionHeader title={t("home.myCourseTitle")} action={<Link to="/lessons">{t("home.myCourseAction")}</Link>} />
+                    <Link to="/lessons" className="block">
+                      <Card className="flex items-center gap-3 cursor-pointer hover:bg-tint/40 transition-colors">
+                        <ProgressRing pct={resume.total > 0 ? Math.round((resume.completed / resume.total) * 100) : 0} size={48} />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-extrabold text-foreground truncate">{resume.title}</div>
+                          <div className="text-xs font-semibold text-muted-foreground">
+                            {t("home.myCourseMeta", {
+                              moduleRank: formatXp(resume.nextModuleRank ?? 1, i18n.language),
+                              completed: formatXp(resume.modulesCompleted, i18n.language),
+                              total: formatXp(resume.modulesTotal, i18n.language),
+                            })}
+                          </div>
+                        </div>
+                        <ChevronRight className="size-[18px] flex-none text-muted-foreground" />
+                      </Card>
+                    </Link>
+                  </>
+                )}
+              </>
+            )}
           </>
         )}
       </div>

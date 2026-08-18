@@ -35,14 +35,14 @@ import { Privacy, Terms } from "./pages/Legal";
 
 // Lazy-load the authenticated pages so they stay out of the initial bundle.
 const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Lessons = lazy(() => import("./pages/Lessons"));
 const CoursePage = lazy(() => import("./pages/CoursePage"));
 const LessonPage = lazy(() => import("./pages/LessonPage"));
 const QuizPage = lazy(() => import("./pages/QuizPage"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Leaderboard = lazy(() => import("./pages/Leaderboard"));
-const Badges = lazy(() => import("./pages/Badges"));
-const MyActivity = lazy(() => import("./pages/MyActivity"));
 const Profile = lazy(() => import("./pages/Profile"));
+const Homework = lazy(() => import("./pages/Homework"));
 
 
 // Lazy-load admin pages (code-split)
@@ -115,13 +115,17 @@ const App = () => (
             <Route path="/terms" element={<Terms />} />
 
             <Route path="/dashboard" element={<RequireAuth><StudentOrStaffRedirect><Dashboard /></StudentOrStaffRedirect></RequireAuth>} />
+            <Route path="/lessons" element={<RequireAuth><Lessons /></RequireAuth>} />
             <Route path="/course/:courseId" element={<RequireAuth><CoursePage /></RequireAuth>} />
             <Route path="/lesson/:courseId/:lessonId" element={<RequireAuth><LessonPage /></RequireAuth>} />
             <Route path="/quiz/:moduleId" element={<RequireAuth><QuizPage /></RequireAuth>} />
             <Route path="/settings" element={<RequireAuth><Settings /></RequireAuth>} />
             <Route path="/leaderboard" element={<RequireAuth><Leaderboard /></RequireAuth>} />
-            <Route path="/badges" element={<RequireAuth><Badges /></RequireAuth>} />
-            <Route path="/activity" element={<RequireAuth><MyActivity /></RequireAuth>} />
+            <Route path="/homework" element={<RequireAuth><Homework /></RequireAuth>} />
+            {/* Folded into Profil (Task 2.5) — the 5-tab nav's Profil tab already treats these
+                paths as Profil (see StudentBottomNav). */}
+            <Route path="/badges" element={<Navigate to="/profile" replace />} />
+            <Route path="/activity" element={<Navigate to="/profile" replace />} />
             <Route path="/profile" element={<RequireAuth><Profile /></RequireAuth>} />
 
             <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
