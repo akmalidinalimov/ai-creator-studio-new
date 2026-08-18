@@ -145,3 +145,10 @@ verify_jwt = false
 # service-role client. See supabase/functions/submit-homework/index.ts for the full contract.
 [functions.submit-homework]
 verify_jwt = true
+
+# hw-image-url: resolve a homework submission's viewable image URL for the teacher Mini App (C2
+# blocker). Requires a logged-in teacher/admin Supabase session JWT (verify_jwt=true) — resolves the
+# caller via auth.getUser(jwt), enforces junction-aware RBAC (is_group_teacher ∪ admin), then returns
+# a signed storage URL or a Telegram getFile proxy URL. See supabase/functions/hw-image-url/index.ts.
+[functions.hw-image-url]
+verify_jwt = true
