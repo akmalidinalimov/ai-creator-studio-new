@@ -1430,7 +1430,11 @@ async function loadTeacherMiniAppEnabled(admin: any): Promise<boolean> {
   try {
     const { data } = await admin.from("platform_settings").select("value").eq("key", "teacher_miniapp").maybeSingle();
     if (data) on = (data.value as any)?.enabled === true; // present row: only literal true enables
-  } catch (_e) { /* read failed → keep the enabled default */ }
+  } catch (e) {
+    // Health signal: a persistent read failure keeps the enabled default (fail-open) — log so a
+    // systemic platform_settings/DB problem is visible instead of silently masked.
+    console.error("teacher-miniapp: kill-switch read failed", e);
+  }
   __teacherMiniAppEnabled = { on, at: Date.now() };
   return on;
 }
@@ -1438,19 +1442,23 @@ async function loadTeacherMiniAppEnabled(admin: any): Promise<boolean> {
 // Per-teacher ☰ menu button → Mini App home (enabled) or reset to default (kill-switch off).
 // Best-effort + in-memory throttled (1h per chat+state) so we never hit the Telegram API on every DM.
 // Never throws; on failure the state isn't cached, so it retries on the teacher's next interaction.
-const __teacherMenuBtn = new Map<number, { on: boolean; at: number }>();
-async function syncTeacherMenuButton(chatId: number, enabled: boolean) {
+const __teacherMenuBtn = new Map<number, { on: boolean; locale: Locale; at: number }>();
+async function syncTeacherMenuButton(chatId: number, enabled: boolean, locale: Locale) {
   const prev = __teacherMenuBtn.get(chatId);
-  if (prev && prev.on === enabled && Date.now() - prev.at < 3_600_000) return;
+  if (prev && prev.on === enabled && prev.locale === locale && Date.now() - prev.at < 3_600_000) return;
   try {
     await tgApi("setChatMenuButton", {
       chat_id: chatId,
       menu_button: enabled
-        ? { type: "web_app", text: "📝 Ustoz", web_app: { url: `${MINIAPP_BASE}/tg/teacher` } }
+        ? { type: "web_app", text: `📝 ${PROF_T[locale].profTeacher}`, web_app: { url: `${MINIAPP_BASE}/tg/teacher` } }
         : { type: "default" },
     });
-    __teacherMenuBtn.set(chatId, { on: enabled, at: Date.now() });
-  } catch (_e) { /* best-effort; retried on the next interaction */ }
+    __teacherMenuBtn.set(chatId, { on: enabled, locale, at: Date.now() });
+  } catch (e) {
+    // Health signal: a systemic failure (e.g. domain not registered, API change) would otherwise be
+    // invisible. Best-effort — never rethrows; state isn't cached, so it retries next interaction.
+    console.error("teacher-miniapp: setChatMenuButton failed", e);
+  }
 }
 
 function getTeacherKeyboard(locale: Locale, pendingCount?: number) {
@@ -7419,7 +7427,7 @@ Deno.serve(async (req) => {
       // reset to default (off). Staff-only (teacher/admin) + private-chat only — students never get it.
       // Throttled 1h/chat; wrapped so it can never block or break the teacher's actual interaction.
       if (isPrivateChat && (persona === "teacher" || persona === "admin")) {
-        try { await syncTeacherMenuButton(msg.chat.id, __teacherMiniAppEnabled?.on === true); } catch (_e) { /* best-effort */ }
+        try { await syncTeacherMenuButton(msg.chat.id, __teacherMiniAppEnabled?.on === true, locale); } catch (_e) { /* best-effort */ }
       }
 
       // U1: students WILL try DMing homework media to the bot. Point them to their group's
