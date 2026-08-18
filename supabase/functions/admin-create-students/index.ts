@@ -412,7 +412,7 @@ Deno.serve(async (req) => {
           }
         }
         if (incomingRole === "teacher") {
-          const { error: rErr } = await admin.from("user_roles").upsert({ user_id: existingId, role: "teacher" } as any, { onConflict: "user_id,role" });
+          const { error: rErr } = await admin.from("user_roles").upsert({ user_id: existingId, role: "teacher", ...(actorId ? { created_by: actorId } : {}) } as any, { onConflict: "user_id,role" });
           if (rErr) {
             results.push({ email, status: "role_conflict", error: rErr.message, userId: existingId, row_index, identifier_used });
             auditLog(row_index, identifier_used, "role_conflict_db", rErr.message);
@@ -424,7 +424,7 @@ Deno.serve(async (req) => {
           // platform (the admin UI) — that sticks. Applies to all 3 teacher-assign paths below.
           if (resolvedGroupId) await admin.from("groups").update({ teacher_id: existingId }).eq("id", resolvedGroupId).is("teacher_id", null);
         } else if (incomingRole === "admin") {
-          await admin.from("user_roles").upsert({ user_id: existingId, role: "admin" } as any, { onConflict: "user_id,role" });
+          await admin.from("user_roles").upsert({ user_id: existingId, role: "admin", ...(actorId ? { created_by: actorId } : {}) } as any, { onConflict: "user_id,role" });
         }
         results.push({ email, status: "updated", userId: existingId, row_index, identifier_used });
         auditLog(row_index, identifier_used, "matched");
@@ -458,10 +458,10 @@ Deno.serve(async (req) => {
             if (resolvedGroupId && s.role !== "teacher" && s.role !== "admin") profilePatch.group_id = resolvedGroupId;
             await admin.from("profiles").update(profilePatch).eq("id", foundId);
             if (s.role === "teacher") {
-              await admin.from("user_roles").upsert({ user_id: foundId, role: "teacher" } as any, { onConflict: "user_id,role" });
+              await admin.from("user_roles").upsert({ user_id: foundId, role: "teacher", ...(actorId ? { created_by: actorId } : {}) } as any, { onConflict: "user_id,role" });
               if (resolvedGroupId) await admin.from("groups").update({ teacher_id: foundId }).eq("id", resolvedGroupId).is("teacher_id", null); // never clobber an existing teacher
             } else if (s.role === "admin") {
-              await admin.from("user_roles").upsert({ user_id: foundId, role: "admin" } as any, { onConflict: "user_id,role" });
+              await admin.from("user_roles").upsert({ user_id: foundId, role: "admin", ...(actorId ? { created_by: actorId } : {}) } as any, { onConflict: "user_id,role" });
             }
             for (const cid of courseIds) {
               await admin.from("enrollments").upsert({ user_id: foundId, course_id: cid }, { onConflict: "user_id,course_id" });
@@ -505,9 +505,9 @@ Deno.serve(async (req) => {
       }
 
       if (s.role === "admin") {
-        await admin.from("user_roles").insert({ user_id: userId, role: "admin" });
+        await admin.from("user_roles").insert({ user_id: userId, role: "admin", ...(actorId ? { created_by: actorId } : {}) } as any);
       } else if (s.role === "teacher") {
-        await admin.from("user_roles").insert({ user_id: userId, role: "teacher" });
+        await admin.from("user_roles").insert({ user_id: userId, role: "teacher", ...(actorId ? { created_by: actorId } : {}) } as any);
         if (resolvedGroupId) {
           await admin.from("groups").update({ teacher_id: userId }).eq("id", resolvedGroupId).is("teacher_id", null); // never clobber an existing teacher
         }

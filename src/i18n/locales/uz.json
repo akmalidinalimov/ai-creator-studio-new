@@ -901,7 +901,8 @@
         "role": "Rol",
         "status": "Holat",
         "courses": "Kurslar",
-        "lastLogin": "Oxirgi kirish"
+        "lastLogin": "Oxirgi kirish",
+        "createdBy": "Yaratdi"
       },
       "loading": "Yuklanmoqda…",
       "empty": "Foydalanuvchi topilmadi",

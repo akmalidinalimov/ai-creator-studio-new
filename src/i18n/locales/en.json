@@ -901,7 +901,8 @@
         "role": "Role",
         "status": "Status",
         "courses": "Courses",
-        "lastLogin": "Last login"
+        "lastLogin": "Last login",
+        "createdBy": "Created by"
       },
       "loading": "Loading…",
       "empty": "No users found",
