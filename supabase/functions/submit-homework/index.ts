@@ -23,6 +23,12 @@
 //     mirroring notifyTeachersOfSubmission (index.ts:6015-6160). The existing
 //     notify-homework-submission cron (runs every minute) drains it; this function does not send
 //     the Telegram DM itself, so delivery is never duplicated.
+//
+// ERROR-HANDLING RULE (2026-08-18 review fix, class A): supabase-js v2 never throws on a Postgres
+// error by itself — every `{ data, error }` result MUST be checked. Every privileged write in
+// this file either checks its `error` and returns/throws, or (inside enqueueTeacherDm) throws so
+// the outer try/catch turns it into a `notify_enqueue_failed` DB-visible health signal instead of
+// a silently-successful 200 with no teacher ever notified.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -40,6 +46,8 @@ function json(body: unknown, status = 200) {
 
 // Incident doctrine (CLAUDE.md): this path must be DB-visible, not log-only. One row per attempt,
 // success or failure, so a detector/reconciler can query admin_actions for this action family.
+// This write itself is intentionally best-effort (never let the health SIGNAL break the actual
+// response) — but its failure is still logged to console so it isn't a silent double-swallow.
 async function logOutcome(
   admin: any,
   ok: boolean,
@@ -48,7 +56,7 @@ async function logOutcome(
   targetResourceId?: string | null,
 ) {
   try {
-    await admin.from("admin_actions").insert({
+    const { error } = await admin.from("admin_actions").insert({
       actor_user_id: actorUserId,
       action: ok ? "miniapp_homework_submitted" : "miniapp_homework_submit_failed",
       target_user_id: null,
@@ -56,13 +64,26 @@ async function logOutcome(
       target_resource_id: targetResourceId ?? null,
       details,
     });
-  } catch (_e) { /* best-effort: never let the health signal itself break the response */ }
+    if (error) console.error("submit-homework logOutcome insert failed", error.message);
+  } catch (e) { console.error("submit-homework logOutcome threw", String(e)); }
+}
+
+async function resolveGroupId(admin: any, userId: string): Promise<string | null> {
+  const { data, error } = await admin.from("profiles").select("group_id").eq("id", userId).maybeSingle();
+  if (error) throw error; // a masked failure here would misclassify as "student has no group"
+  return data?.group_id ?? null;
 }
 
 // Mirrors notifyTeachersOfSubmission (telegram-bot-webhook/index.ts:6015-6160), minus the
 // immediate-send half: this only ENQUEUES. The every-minute notify-homework-submission cron
 // (supabase/functions/notify-homework-submission/index.ts) is the sole sender, so delivery is
 // never duplicated between the two code paths.
+//
+// Every await below that can return `{ error }` is checked and THROWS on failure — this function
+// has no immediate-send fallback (unlike the bot's in-webhook path, which sends right away outside
+// quiet hours), so a swallowed error here means the teacher is silently never notified, forever,
+// with no queue row for any reconciler to find. The caller wraps this whole call in try/catch and
+// turns a thrown error into the notify_enqueue_failed health signal (class A fix).
 async function enqueueTeacherDm(
   admin: any,
   args: {
@@ -79,27 +100,30 @@ async function enqueueTeacherDm(
 ) {
   const { studentId, groupId, moduleId, moduleNumber, stepNumber, assignmentId, assignmentTitle, submissionId, attemptNumber } = args;
   if (!groupId) {
-    await admin.from("admin_actions").insert({
+    const { error } = await admin.from("admin_actions").insert({
       actor_user_id: studentId,
       action: "homework_submission_dm_sent",
       target_user_id: null,
       target_resource_type: "homework_submission",
       target_resource_id: submissionId,
       details: { reason: "no_group", student_id: studentId, source: "miniapp", queued: false },
-    }).then(() => {}, () => {});
+    });
+    if (error) throw error;
     return;
   }
-  const { data: g } = await admin.from("groups").select("teacher_id").eq("id", groupId).maybeSingle();
+  const { data: g, error: gErr } = await admin.from("groups").select("teacher_id").eq("id", groupId).maybeSingle();
+  if (gErr) throw gErr; // a masked failure here would misclassify as "group has no teacher"
   const teacherId = g?.teacher_id;
   if (!teacherId) {
-    await admin.from("admin_actions").insert({
+    const { error } = await admin.from("admin_actions").insert({
       actor_user_id: studentId,
       action: "homework_submission_dm_sent",
       target_user_id: null,
       target_resource_type: "homework_submission",
       target_resource_id: submissionId,
       details: { reason: "no_teacher", student_id: studentId, group_id: groupId, module_id: moduleId, source: "miniapp", queued: false },
-    }).then(() => {}, () => {});
+    });
+    if (error) throw error;
     return;
   }
 
@@ -113,14 +137,16 @@ async function enqueueTeacherDm(
   // accidental tap just falls through to the standard help keyboard (index.ts:7333-7335), never an
   // error. It also varies per (submission_id, attempt_number), which the dedupe check needs: a
   // resubmission MUST always queue a fresh DM (see the comment at index.ts:6057-6059) even though
-  // it reuses the same submission_id.
+  // it reuses the same submission_id. The reconciler (20260818170000_*.sql) builds this SAME URL
+  // shape when it has to resurrect a missing row — keep the two in sync if this ever changes.
   const botUsername = (Deno.env.get("TELEGRAM_BOT_USERNAME") || "").replace(/^@/, "");
   const messageUrl = botUsername
     ? `https://t.me/${botUsername}?start=hw_${submissionId}_${attemptNumber}`
     : `https://t.me/?start=hw_${submissionId}_${attemptNumber}`; // degraded but still a syntactically valid https URL
 
-  const { data: recent } = await admin.from("homework_teacher_dm_queue")
+  const { data: recent, error: recentErr } = await admin.from("homework_teacher_dm_queue")
     .select("id, message_url").eq("submission_id", submissionId).limit(5);
+  if (recentErr) throw recentErr; // a masked failure here could either skip a legit dedupe or (worse) look like success
   if (recent && recent.some((r: any) => r.message_url === messageUrl)) return; // defends a double-tap/retry of this same attempt
 
   const now = new Date();
@@ -136,12 +162,17 @@ async function enqueueTeacherDm(
   }
   const quiet = tashHour >= 22 || tashHour < 8;
 
-  const { data: prof } = await admin.from("profiles")
+  const { data: prof, error: profErr } = await admin.from("profiles")
     .select("name, last_name, telegram_username").eq("id", studentId).maybeSingle();
+  if (profErr) throw profErr;
   const uname = (prof?.telegram_username || "").toString().trim().replace(/^@/, "");
   const studentName = ([prof?.name, prof?.last_name].filter(Boolean).join(" ") || "—") + (uname ? ` (@${uname})` : "");
 
-  await admin.from("homework_teacher_dm_queue").insert({
+  // THE core class-A bug: this insert's result used to be discarded entirely (`const { data:
+  // queued } = await ...insert(...)`, `error` never named). supabase-js does not throw on a
+  // Postgres error — a failed insert here used to resolve silently, the function would report a
+  // clean 200 to the student, and the teacher would never be notified with no trace anywhere.
+  const { error: qErr } = await admin.from("homework_teacher_dm_queue").insert({
     submission_id: submissionId,
     teacher_id: teacherId,
     student_id: studentId,
@@ -156,8 +187,55 @@ async function enqueueTeacherDm(
     scheduled_for: scheduled.toISOString(),
     queued_for_quiet_hours: quiet,
   });
+  if (qErr) throw qErr;
   // No immediate send here on purpose — the every-minute notify-homework-submission cron drains
   // this row. Sending here too would duplicate delivery.
+}
+
+// Resubmission: bumps attempt_number (and, only when a score already existed, archives it into
+// previous_attempts + flags score_is_stale=true while keeping the old score visible — hybrid
+// retention, unified with the bot's own null-score resubmit path via the `state` computation in
+// student_assignable_homework()) via the SAME RPC the website's "🔁 Qayta topshirish" button calls
+// (HomeworkSection.tsx:178), then writes ONLY the new content columns. Deliberately does not touch
+// score / score_feedback / scored_by / scored_at / score_is_stale / attempt_number /
+// previous_attempts here — those were already correctly set by the RPC; touching attempt_number
+// again would double-bump it, and touching score would fight homework_submissions_guard for no
+// reason since we are keeping the RPC's stale-but-visible score, not nulling it.
+async function applyResubmission(
+  userClient: any,
+  admin: any,
+  userId: string,
+  assignmentId: string,
+  targetId: string,
+  submittedText: string,
+  imagePath: string,
+  mediaItem: Record<string, string>,
+  nowIso: string,
+): Promise<{ submissionId: string; attemptNumber: number } | { errorResponse: Response }> {
+  const { data: resub, error: resubErr } = await userClient.rpc("start_homework_resubmission", { p_submission_id: targetId });
+  if (resubErr || !resub) {
+    await logOutcome(admin, false, userId, { reason: "resubmit_rpc_failed", assignment_id: assignmentId, submission_id: targetId, error: resubErr?.message }, targetId);
+    return { errorResponse: json({ error: "resubmit_failed" }, 500) };
+  }
+  const attemptNumber = (resub as any).attempt_number ?? 1;
+  // Carry previous_score too (index.ts:5121/5891 pattern) for any consumer still reading the
+  // scalar column unconditionally — score_is_stale + score already cover teacher-facing display
+  // (index.ts:4042-4045), so this is defense-in-depth, not the primary signal.
+  const previousScoreToCarry: number | null = (resub as any).score ?? null;
+
+  const { error: updErr } = await admin.from("homework_submissions").update({
+    submitted_text: submittedText,
+    submitted_image_url: imagePath,
+    media: [mediaItem],
+    source: "miniapp",
+    submitted_at: nowIso,
+    previous_score: previousScoreToCarry,
+  }).eq("id", targetId);
+  if (updErr) {
+    await logOutcome(admin, false, userId, { reason: "write_failed", assignment_id: assignmentId, submission_id: targetId, error: updErr.message }, targetId);
+    return { errorResponse: json({ error: "internal_error" }, 500) };
+  }
+  return { submissionId: targetId, attemptNumber };
 }
 
 Deno.serve(async (req) => {
@@ -235,9 +313,15 @@ Deno.serve(async (req) => {
 
   // --- 4. Already-graded guard + resubmission. Fresh read under admin (bypasses RLS, avoids
   // trusting the RPC snapshot from a moment ago) is the actual gate for the write. ---
-  const { data: prior } = await admin.from("homework_submissions")
+  const { data: prior, error: priorErr } = await admin.from("homework_submissions")
     .select("id, score, score_is_stale")
     .eq("user_id", userId).eq("assignment_id", assignmentId).maybeSingle();
+  if (priorErr) {
+    // A masked failure here would fall through as "no prior submission" and could attempt to
+    // re-INSERT over an already-graded row — must not be silently treated as "nothing exists yet".
+    await logOutcome(admin, false, userId, { reason: "prior_lookup_failed", assignment_id: assignmentId, error: priorErr.message });
+    return json({ error: "internal_error" }, 500);
+  }
 
   const lockedGraded = !!prior && prior.score != null && !prior.score_is_stale;
   if (lockedGraded && !resubmitConfirmed) {
@@ -253,50 +337,24 @@ Deno.serve(async (req) => {
 
   if (prior) {
     status = "resubmitted";
-    // start_homework_resubmission (20260705150000_resubmission_teacher_scope.sql) is the SAME
-    // RPC the website's own "🔁 Qayta topshirish" button calls (HomeworkSection.tsx:178) — called
-    // here via userClient so its ownership check (caller === row.user_id) passes naturally. It
-    // bumps attempt_number, and — only when a score already existed — archives the attempt into
-    // previous_attempts and sets score_is_stale=true while KEEPING the old score visible (hybrid
-    // retention; unified with the bot's own null-score resubmit path via the `state` computation
-    // in student_assignable_homework()). When score was already null it just bumps attempt_number
-    // and re-stamps submitted_at — safe to call unconditionally whenever a prior row exists.
-    const { data: resub, error: resubErr } = await userClient.rpc("start_homework_resubmission", { p_submission_id: prior.id });
-    if (resubErr || !resub) {
-      await logOutcome(admin, false, userId, { reason: "resubmit_rpc_failed", assignment_id: assignmentId, submission_id: prior.id, error: resubErr?.message }, prior.id);
-      return json({ error: "resubmit_failed" }, 500);
-    }
-    submissionId = prior.id;
-    attemptNumber = (resub as any).attempt_number ?? 1;
-    // Carry previous_score too (index.ts:5121/5891 pattern) for any consumer still reading the
-    // scalar column unconditionally — score_is_stale + score already cover teacher-facing display
-    // (index.ts:4042-4045), so this is defense-in-depth, not the primary signal.
-    const previousScoreToCarry: number | null = (resub as any).score ?? null;
-
-    // Content-only update: score / score_feedback / scored_by / scored_at / score_is_stale /
-    // attempt_number / previous_attempts were already correctly set by the RPC above and must
-    // NOT be touched here (touching attempt_number again would double-bump it; touching score
-    // would fight homework_submissions_guard's OLD-graded/NEW-null check for no reason since we
-    // are deliberately keeping the RPC's stale-but-visible score, not nulling it).
-    const { error: updErr } = await admin.from("homework_submissions").update({
-      submitted_text: submittedText,
-      submitted_image_url: imagePath,
-      media: [mediaItem],
-      source: "miniapp",
-      submitted_at: nowIso,
-      previous_score: previousScoreToCarry,
-    }).eq("id", prior.id);
-    if (updErr) {
-      await logOutcome(admin, false, userId, { reason: "write_failed", assignment_id: assignmentId, submission_id: prior.id, error: updErr.message }, prior.id);
-      return json({ error: "internal_error" }, 500);
-    }
+    const r = await applyResubmission(userClient, admin, userId, assignmentId, prior.id, submittedText, imagePath, mediaItem, nowIso);
+    if ("errorResponse" in r) return r.errorResponse;
+    submissionId = r.submissionId;
+    attemptNumber = r.attemptNumber;
   } else {
-    status = "submitted";
     // Fresh row: mirrors the bot's own upsert shape (index.ts:5895-5921) minus the
     // Telegram-specific columns, which stay NULL for a miniapp-sourced row (the teacher grading
     // screen already renders submitted_image_url via a signed URL for non-Telegram submissions —
     // index.ts:4057-4063 "Legacy web-source submission").
-    const { data: inserted, error: insErr } = await admin.from("homework_submissions").upsert({
+    //
+    // XP-WARN fix: plain INSERT, not upsert. A same-instant double-tap where both requests read
+    // `prior = null` used to race an upsert — the loser's UPDATE-on-conflict would force-write
+    // attempt_number=1 / previous_score=null / score_is_stale=false over a row the winner may have
+    // already turned into an in-progress resubmission of an already-graded assignment (the guard
+    // trigger only protects `score` itself, not that other bookkeeping). A plain INSERT instead
+    // fails with 23505 on the loser, which is handled below by re-reading the row and funneling
+    // through the SAME resubmission path used everywhere else in this file — one path, not a race.
+    const { data: inserted, error: insErr } = await admin.from("homework_submissions").insert({
       user_id: userId,
       assignment_id: assignmentId,
       submitted_text: submittedText,
@@ -312,13 +370,28 @@ Deno.serve(async (req) => {
       scored_at: null,
       score_is_stale: false,
       is_late: false,
-    }, { onConflict: "user_id,assignment_id" }).select("id, attempt_number").maybeSingle();
-    if (insErr || !inserted?.id) {
+    }).select("id, attempt_number").maybeSingle();
+
+    if (insErr && (insErr as any).code === "23505") {
+      const { data: raced, error: racedErr } = await admin.from("homework_submissions")
+        .select("id").eq("user_id", userId).eq("assignment_id", assignmentId).maybeSingle();
+      if (racedErr || !raced?.id) {
+        await logOutcome(admin, false, userId, { reason: "race_reread_failed", assignment_id: assignmentId, error: racedErr?.message });
+        return json({ error: "internal_error" }, 500);
+      }
+      status = "resubmitted";
+      const r = await applyResubmission(userClient, admin, userId, assignmentId, raced.id, submittedText, imagePath, mediaItem, nowIso);
+      if ("errorResponse" in r) return r.errorResponse;
+      submissionId = r.submissionId;
+      attemptNumber = r.attemptNumber;
+    } else if (insErr || !inserted?.id) {
       await logOutcome(admin, false, userId, { reason: "write_failed", assignment_id: assignmentId, error: insErr?.message });
       return json({ error: "internal_error" }, 500);
+    } else {
+      status = "submitted";
+      submissionId = inserted.id;
+      attemptNumber = inserted.attempt_number ?? 1;
     }
-    submissionId = inserted.id;
-    attemptNumber = inserted.attempt_number ?? 1;
   }
 
   // --- 6. Teacher notification: enqueue only, never send from here (see enqueueTeacherDm doc). ---
@@ -337,8 +410,11 @@ Deno.serve(async (req) => {
     });
   } catch (e) {
     // Never fail the submission itself over the notification leg — mirrors
-    // notifyTeachersOfSubmission's own top-level try/catch (index.ts:6151-6153).
-    await logOutcome(admin, false, userId, { reason: "notify_enqueue_failed", assignment_id: assignmentId, submission_id: submissionId, error: String(e) }, submissionId);
+    // notifyTeachersOfSubmission's own top-level try/catch (index.ts:6151-6153). Class-A fix:
+    // every write inside resolveGroupId/enqueueTeacherDm now throws on error instead of silently
+    // continuing with undefined data, so this catch is reliably reached on a real failure instead
+    // of the function reporting a clean 200 with no queue row and no trace.
+    await logOutcome(admin, false, userId, { reason: "notify_enqueue_failed", assignment_id: assignmentId, submission_id: submissionId, error: String((e as any)?.message ?? e) }, submissionId);
   }
 
   // --- 7. Success health signal (source='miniapp' on the row is also a queryable marker). ---
@@ -346,8 +422,3 @@ Deno.serve(async (req) => {
 
   return json({ submission_id: submissionId, status, attempt_number: attemptNumber });
 });
-
-async function resolveGroupId(admin: any, userId: string): Promise<string | null> {
-  const { data } = await admin.from("profiles").select("group_id").eq("id", userId).maybeSingle();
-  return data?.group_id ?? null;
-}

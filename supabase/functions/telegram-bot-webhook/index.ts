@@ -6087,7 +6087,7 @@ async function notifyTeachersOfSubmission(
     const studentName = ([studentProfile.name, studentProfile.last_name].filter(Boolean).join(" ") || "—")
       + (_uname ? ` (@${_uname})` : "");
 
-    const { data: queued } = await admin.from("homework_teacher_dm_queue").insert({
+    const { data: queued, error: queueErr } = await admin.from("homework_teacher_dm_queue").insert({
       submission_id: submissionId,
       teacher_id: teacherId,
       student_id: studentProfile.id,
@@ -6102,6 +6102,25 @@ async function notifyTeachersOfSubmission(
       scheduled_for: scheduled.toISOString(),
       queued_for_quiet_hours: quiet,
     }).select("id").maybeSingle();
+    if (queueErr) {
+      // Class-A/C fix (2026-08-18 review): this insert's error used to be silently discarded
+      // (`const { data: queued } = ...`, error never named) — supabase-js does not throw on a
+      // Postgres error. Outside quiet hours the immediate-send block below still fires regardless
+      // (unchanged — no `queued` gate on it), so the teacher is usually still notified; DURING
+      // quiet hours there is no fallback at all, so a masked failure here meant a permanently,
+      // invisibly missed teacher DM with no cron row to ever deliver it. Make it DB-visible.
+      console.error("hw:teacher-dm-queue-insert-failed", JSON.stringify({ submission_id: submissionId, err: queueErr.message }));
+      try {
+        await admin.from("admin_actions").insert({
+          actor_user_id: studentProfile.id,
+          action: "homework_submission_dm_sent",
+          target_user_id: null,
+          target_resource_type: "homework_submission",
+          target_resource_id: submissionId,
+          details: { reason: "enqueue_failed", student_id: studentProfile.id, group_id: groupId, module_id: moduleId, message_url: messageUrl, queued: false, error: queueErr.message },
+        });
+      } catch (_e) { /* best-effort health signal; already console.error'd above */ }
+    }
 
     // Immediate teacher DM (skip during quiet hours so cron delivers at 08:00)
     if (!quiet) {

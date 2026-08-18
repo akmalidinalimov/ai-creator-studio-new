@@ -70,6 +70,20 @@ jobs:
           if [ "$misconfig" != "0" ]; then
             echo "::warning::${misconfig} active-course group(s) with students but NO homework topic configured — capture is degraded there"
           fi
+          # Item 4 (2026-08-18): the Mini App in-app submission path (submit-homework) writes its
+          # own admin_actions health signal on every failure — surfaced here via hw_dm_health_stats
+          # so a systemic miniapp issue trips this same out-of-band verifier, not just logs.
+          # Warning-level (not fail): reconcile_teacher_dm_queue() already self-heals a miniapp
+          # submission missing its queue row on its next 15-min run (mirrors resurrected_24h/
+          # fallback_24h below, which are also warn-only self-healed classes).
+          miniapp_enqueue_failed=$(jq -r '.miniapp_enqueue_failed_24h // 0' <<<"$HEALTH_JSON")
+          if [ "$miniapp_enqueue_failed" != "0" ]; then
+            echo "::warning::${miniapp_enqueue_failed} miniapp homework submission(s) failed to enqueue a teacher DM in the last 24h (self-heals via reconcile_teacher_dm_queue, but check admin_actions reason=notify_enqueue_failed if it recurs)"
+          fi
+          miniapp_submit_failed=$(jq -r '.miniapp_submit_failed_24h // 0' <<<"$HEALTH_JSON")
+          if [ "$miniapp_submit_failed" != "0" ]; then
+            echo "::warning::${miniapp_submit_failed} miniapp homework submission attempt(s) failed in the last 24h (any reason — action=miniapp_homework_submit_failed in admin_actions)"
+          fi
           exit $fail
 
       - name: Credential expiry countdown

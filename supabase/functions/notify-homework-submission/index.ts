@@ -131,8 +131,20 @@ Deno.serve(async (req) => {
         ? "\n\n⚠️ <b>Auto-assigned</b> — the task was guessed. If it's wrong, fix it with ✏️."
         : "\n\n⚠️ <b>Avto-belgilangan</b> — vazifa taxminan tanlandi. Noto'g'ri bo'lsa ✏️ bilan to'g'rilang.";
     }
+    // Class F fix (2026-08-18 review): a miniapp-sourced row's message_url is a bot deep-link
+    // placeholder (https://t.me/<bot>?start=hw_<id>_<attempt> — see submit-homework/index.ts and
+    // the reconcile_teacher_dm_queue() migration that mirrors it), not a real group-topic post —
+    // tapping "Open post" for one just opens the bot chat, a dead end. Real topic links always
+    // look like https://t.me/c/<chat>/<thread>/<message> (buildMessageLink, telegram-bot-webhook/
+    // index.ts:4679-4683) and never carry a "?start=" query string, so this check is unambiguous
+    // without needing a schema change or extra join. "🎯 Grade" already renders the image via a
+    // signed URL for miniapp submissions (telegram-bot-webhook/index.ts:4057-4063), so it alone is
+    // still a complete, working action for those rows.
+    const isRealTopicLink = /^https:\/\/t\.me\/c\//.test(row.message_url || "");
     const buttons = [
-      { text: loc === "ru" ? "📂 Открыть пост" : loc === "en" ? "📂 View post" : "📂 Topshirgan postni ko'rish", url: row.message_url },
+      ...(isRealTopicLink
+        ? [{ text: loc === "ru" ? "📂 Открыть пост" : loc === "en" ? "📂 View post" : "📂 Topshirgan postni ko'rish", url: row.message_url }]
+        : []),
       { text: loc === "ru" ? "🎯 Оценить" : loc === "en" ? "🎯 Grade" : "🎯 Baholash", callback_data: `gs:open:${row.submission_id}` },
     ];
     const retagRow = guessed
