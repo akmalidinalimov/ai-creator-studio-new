@@ -320,15 +320,20 @@ export default function Homework() {
   }
 
   if (error) {
+    const offline = typeof navigator !== "undefined" && !navigator.onLine;
     return (
       <PageShell>
         <div className="mx-auto max-w-2xl">
-          <Card className="p-10 text-center">
-            <p className="mb-4 text-sm text-muted-foreground">{t("homework.loadError")}</p>
-            <Button variant="secondary" size="sm" onClick={() => setReloadKey((k) => k + 1)}>
-              {t("common.retry")}
-            </Button>
-          </Card>
+          <EmptyState
+            icon={offline ? "📡" : "⚠️"}
+            title={offline ? t("common.offlineTitle") : t("common.errorTitle")}
+            body={offline ? t("common.offlineBody") : t("homework.loadError")}
+            cta={
+              <Button variant="secondary" size="sm" onClick={() => setReloadKey((k) => k + 1)}>
+                {t("common.retry")}
+              </Button>
+            }
+          />
         </div>
       </PageShell>
     );

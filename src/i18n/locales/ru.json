@@ -21,7 +21,11 @@
     "search": "Поиск",
     "language": "Язык",
     "retry": "Повторить",
-    "more": "ещё"
+    "more": "ещё",
+    "continue": "Продолжить",
+    "errorTitle": "Произошла ошибка",
+    "offlineTitle": "Нет подключения к интернету",
+    "offlineBody": "Проверьте подключение и повторите попытку."
   },
   "nav": {
     "dashboard": "Главная",
@@ -106,7 +110,8 @@
     "review": "Повторить",
     "coursePage": "Страница курса",
     "there": "друг",
-    "viewFullHistory": "Посмотреть историю"
+    "viewFullHistory": "Посмотреть историю",
+    "loadError": "Не удалось загрузить курсы."
   },
   "home": {
     "greeting": "Привет, {{name}} 👋",
@@ -139,7 +144,11 @@
     "emptyBody": "Откройте первый урок — за каждый урок вы получаете XP и начинаете свою серию.",
     "emptyCta": "Начать первый урок",
     "emptyStatusLine": "{{xp}} XP · {{level}} уровень",
-    "emptyTierHint": "Вы начинаете с уровня «{{tier}}» 🥉"
+    "emptyTierHint": "Вы начинаете с уровня «{{tier}}» 🥉",
+    "levelUpTitle": "Новый уровень!",
+    "levelUpBody": "Вы достигли {{level}} уровня!",
+    "tierUpTitle": "Новый статус!",
+    "tierUpBody": "Вы достигли уровня «{{tier}}»!"
   },
   "darslar": {
     "title": "Мои уроки",
@@ -249,6 +258,9 @@
     "allModules": "Все модули",
     "markedCompleteToast": "Урок отмечен как пройденный",
     "watchMoreToComplete": "Посмотрите хотя бы половину урока, прежде чем отмечать его пройденным.",
+    "loadError": "Не удалось загрузить урок.",
+    "completeCelebrateTitle": "Урок завершён!",
+    "completeCelebrateBody": "Отличная работа! Продолжайте в том же духе.",
     "caption": "Модуль {{moduleN}} · {{moduleTitle}} · Урок {{lessonN}}/{{total}}",
     "durationMinutes": "{{minutes}} мин",
     "xpChip": "+{{xp}} XP",

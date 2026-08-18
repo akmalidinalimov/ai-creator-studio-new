@@ -21,7 +21,11 @@
     "search": "Qidirish",
     "language": "Til",
     "retry": "Qayta urinish",
-    "more": "yana"
+    "more": "yana",
+    "continue": "Davom etish",
+    "errorTitle": "Xatolik yuz berdi",
+    "offlineTitle": "Internet aloqasi yo'q",
+    "offlineBody": "Internetga ulaning va qayta urinib ko'ring."
   },
   "nav": {
     "dashboard": "Bosh sahifa",
@@ -106,7 +110,8 @@
     "review": "Ko'rib chiqish",
     "coursePage": "Kurs sahifasi",
     "there": "do'stim",
-    "viewFullHistory": "Tarixni ko'rish"
+    "viewFullHistory": "Tarixni ko'rish",
+    "loadError": "Kurslarni yuklab bo'lmadi."
   },
   "home": {
     "greeting": "Salom, {{name}} 👋",
@@ -139,7 +144,11 @@
     "emptyBody": "Birinchi darsni oching — har bir dars uchun XP yig'asiz va seriyangizni boshlaysiz.",
     "emptyCta": "Birinchi darsni boshlash",
     "emptyStatusLine": "{{xp}} XP · {{level}}-daraja",
-    "emptyTierHint": "{{tier}} darajadan boshlaysiz 🥉"
+    "emptyTierHint": "{{tier}} darajadan boshlaysiz 🥉",
+    "levelUpTitle": "Yangi daraja!",
+    "levelUpBody": "Siz {{level}}-darajaga yetdingiz!",
+    "tierUpTitle": "Yangi bosqich!",
+    "tierUpBody": "Siz {{tier}} darajasiga yetdingiz!"
   },
   "darslar": {
     "title": "Darslarim",
@@ -249,6 +258,9 @@
     "allModules": "Barcha modullar",
     "markedCompleteToast": "Dars tugatildi deb belgilandi",
     "watchMoreToComplete": "Tugatildi deb belgilashdan oldin darsning kamida yarmini ko'ring.",
+    "loadError": "Darsni yuklab bo'lmadi.",
+    "completeCelebrateTitle": "Dars tugallandi!",
+    "completeCelebrateBody": "Ajoyib ish! Shunday davom eting.",
     "caption": "{{moduleN}}-modul · {{moduleTitle}} · {{lessonN}}/{{total}}-dars",
     "durationMinutes": "{{minutes}} daqiqa",
     "xpChip": "+{{xp}} XP",

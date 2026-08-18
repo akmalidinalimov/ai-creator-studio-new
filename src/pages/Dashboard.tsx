@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Zap, TrendingUp, Trophy, Award, ClipboardCheck, ChevronRight } from "lucide-react";
@@ -6,7 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { ModuleCelebrationModal } from "@/components/ModuleCelebrationModal";
-import { tierFor, formatXp } from "@/lib/xp";
+import { tierFor, formatXp, type TierKey } from "@/lib/xp";
 import {
   Hero,
   StatTile,
@@ -18,7 +18,47 @@ import {
   Button,
   EmptyState,
   Skeleton,
+  Celebrate,
 } from "@/components/ui-kit";
+
+// Per-tier emoji for the tier-up Celebrate overlay — mirrors the DB-side ladder config
+// (platform_settings.xp_tiers in 20260814124130_xp_reward_tiers.sql: 🥉🥈🥇💎👑). Not imported
+// from ui-kit/shared.ts's TIER_NAMES on purpose — that file is an internal ui-kit helper, not
+// part of the public barrel (see its own header comment).
+const TIER_EMOJI: Record<TierKey, string> = { bronze: "🥉", silver: "🥈", gold: "🥇", platinum: "💎", diamond: "👑" };
+
+type CelebrationEvent =
+  | { kind: "level"; level: number }
+  | { kind: "tier"; tierKey: TierKey; tierName: string };
+
+/** Full-screen celebration overlay (Task 2.7) — wraps ui-kit's `Celebrate` block in a dismissible
+ *  backdrop. Not a ui-kit primitive itself (kept local/inline per the task's "create nothing new"
+ *  scope); duplicated in LessonPage.tsx for the same reason. Entrance is `motion-safe:` only
+ *  (see Celebrate.tsx) — under prefers-reduced-motion the overlay simply appears, no fade/scale. */
+function CelebrationOverlay({
+  emoji, title, body, xp, locale, onDismiss, closeLabel,
+}: { emoji: string; title: string; body: string; xp?: number; locale: string; onDismiss: () => void; closeLabel: string }) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="motion-safe:animate-fade-in fixed inset-0 z-50 grid place-items-center bg-background/80 p-4 backdrop-blur-sm"
+      onClick={onDismiss}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl border border-border bg-card shadow-elevated"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <Celebrate emoji={emoji} title={title} body={body} xp={xp} locale={locale} />
+        <div className="px-2.5 pb-4">
+          <Button variant="ghost" block onClick={onDismiss}>
+            {closeLabel}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // Weekly-XP ring target — spec (§7) pins the metric (xp_events, Tashkent-Monday reset) but not
 // the target. RULING (xp-data-sources.md, 2026-08-18): hardcode a launch default here rather than
@@ -71,6 +111,9 @@ export default function Dashboard() {
   const [hwPendingCount, setHwPendingCount] = useState(0);
   const [hwGradedCount, setHwGradedCount] = useState(0);
   const [hwAvgScore, setHwAvgScore] = useState<number | null>(null);
+  const [celebration, setCelebration] = useState<CelebrationEvent | null>(null);
+  const celebrationQueueRef = useRef<CelebrationEvent[]>([]);
+  const dismissCelebration = () => setCelebration(celebrationQueueRef.current.shift() ?? null);
 
   useEffect(() => {
     if (!user) return;
@@ -102,13 +145,48 @@ export default function Dashboard() {
       setDisplayName(full || first || t("dashboard.there"));
 
       const sRow: any = Array.isArray(statsRes.data) ? statsRes.data[0] : statsRes.data;
+      const freshTotalXp = sRow?.total_xp ?? 0;
+      const freshLevel = sRow?.level ?? 1;
       setStats({
-        totalXp: sRow?.total_xp ?? 0,
-        level: sRow?.level ?? 1,
+        totalXp: freshTotalXp,
+        level: freshLevel,
         groupRank: sRow?.group_rank ?? null,
         badges: sRow?.badges_earned ?? 0,
         streak: sRow?.current_streak ?? 0,
       });
+
+      // Level-up / tier-up celebration detection. Mirrors the (now-orphaned, see
+      // src/components/dashboard/EngagementTiles.tsx) pre-redesign tier-up toast's localStorage
+      // pattern, ported here because that component is no longer mounted anywhere post-redesign
+      // (Dashboard.tsx recomputes tier client-side via lib/xp.ts's tierFor). Fixed the old
+      // pattern's sentinel bug: it used "0" as both "never recorded" AND a legitimate index-0
+      // value, so a bronze→silver jump on a user's very first-ever recorded tier silently never
+      // fired. Using `localStorage.getItem` returning `null` (never recorded) — distinguishable
+      // from a stored "0" — avoids that. Scoped per user id (the old flat "seen_tier" key would
+      // leak a celebration across accounts on a shared/kiosk device).
+      if (user) {
+        const levelKey = `aic_seen_level:${user.id}`;
+        const tierKey = `aic_seen_tier:${user.id}`;
+        const storedLevel = localStorage.getItem(levelKey);
+        const storedTierMin = localStorage.getItem(tierKey);
+        const freshTier = tierFor(freshTotalXp);
+        const events: CelebrationEvent[] = [];
+        if (storedLevel !== null && freshLevel > Number(storedLevel)) {
+          events.push({ kind: "level", level: freshLevel });
+        }
+        // Tier ladder min-XP thresholds (0/300/600/1000/1500) are strictly increasing, so the
+        // tier's own `min` doubles as a stable ordinal — no separate tier-index table needed.
+        if (storedTierMin !== null && freshTier.min > Number(storedTierMin)) {
+          events.push({ kind: "tier", tierKey: freshTier.key, tierName: freshTier.name });
+        }
+        localStorage.setItem(levelKey, String(freshLevel));
+        localStorage.setItem(tierKey, String(freshTier.min));
+        if (events.length) {
+          const [first, ...rest] = events;
+          celebrationQueueRef.current = rest;
+          setCelebration(first);
+        }
+      }
 
       const weekAmt = (((weekXpRes.data as any[]) || [])).reduce((sum, e) => sum + (e.amount || 0), 0);
       setWeeklyXp(weekAmt);
@@ -220,11 +298,29 @@ export default function Dashboard() {
       ? t("home.greetingSubtitle", { n: dailyRemaining })
       : t("home.greetingSubtitleDone");
 
+  const offline = typeof navigator !== "undefined" && !navigator.onLine;
+
   return (
     <PageShell>
       <ModuleCelebrationModal />
+      {celebration && (
+        <CelebrationOverlay
+          emoji={celebration.kind === "level" ? "⭐" : TIER_EMOJI[celebration.tierKey]}
+          title={celebration.kind === "level" ? t("home.levelUpTitle") : t("home.tierUpTitle")}
+          body={
+            celebration.kind === "level"
+              ? t("home.levelUpBody", { level: formatXp(celebration.level, i18n.language) })
+              : t("home.tierUpBody", { tier: celebration.tierName })
+          }
+          locale={i18n.language}
+          onDismiss={dismissCelebration}
+          closeLabel={t("common.continue")}
+        />
+      )}
       <div className="max-w-2xl mx-auto space-y-4">
         {loading ? (
+          // Hero + 4 stat tiles shape — matches the populated layout below so a cold start
+          // never flashes blank/janky content.
           <>
             <Skeleton className="h-8 w-48" />
             <Skeleton className="h-5 w-64" />
@@ -236,12 +332,16 @@ export default function Dashboard() {
             <Skeleton className="h-20 w-full rounded-lg" />
           </>
         ) : error ? (
-          <Card className="p-10 text-center">
-            <p className="text-sm text-muted-foreground mb-4">{t("dashboard.loadError", "Kurslarni yuklab bo'lmadi.")}</p>
-            <Button variant="secondary" size="sm" onClick={() => setReloadKey((k) => k + 1)}>
-              {t("common.retry")}
-            </Button>
-          </Card>
+          <EmptyState
+            icon={offline ? "📡" : "⚠️"}
+            title={offline ? t("common.offlineTitle") : t("common.errorTitle")}
+            body={offline ? t("common.offlineBody") : t("dashboard.loadError")}
+            cta={
+              <Button variant="secondary" size="sm" onClick={() => setReloadKey((k) => k + 1)}>
+                {t("common.retry")}
+              </Button>
+            }
+          />
         ) : courses.length === 0 ? (
           <Card className="p-10 text-center"><p className="text-sm text-muted-foreground">{t("dashboard.noCourses")}</p></Card>
         ) : (

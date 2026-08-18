@@ -205,6 +205,7 @@ export default function Leaderboard() {
   }, [user, reloadKey]);
 
   const locale = i18n.language;
+  const offline = typeof navigator !== "undefined" && !navigator.onLine;
   const displayed = board === "weekly" ? weekly : allTime;
   const me = displayed.find((r) => r.is_me);
   const myAllTimeRow = allTime.find((r) => r.is_me);
@@ -244,12 +245,16 @@ export default function Leaderboard() {
             <Skeleton className="h-16 w-full rounded-lg" />
           </>
         ) : error ? (
-          <Card className="p-10 text-center">
-            <p className="mb-4 text-sm text-muted-foreground">{t("leaderboard.loadError")}</p>
-            <Button variant="secondary" size="sm" onClick={() => setReloadKey((k) => k + 1)}>
-              {t("common.retry")}
-            </Button>
-          </Card>
+          <EmptyState
+            icon={offline ? "📡" : "⚠️"}
+            title={offline ? t("common.offlineTitle") : t("common.errorTitle")}
+            body={offline ? t("common.offlineBody") : t("leaderboard.loadError")}
+            cta={
+              <Button variant="secondary" size="sm" onClick={() => setReloadKey((k) => k + 1)}>
+                {t("common.retry")}
+              </Button>
+            }
+          />
         ) : allTime.length === 0 ? (
           <EmptyState icon="🏆" title={t("leaderboard.noGroupTitle")} body={t("profile.noGroup")} />
         ) : (

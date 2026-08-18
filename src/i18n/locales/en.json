@@ -21,7 +21,11 @@
     "search": "Search",
     "language": "Language",
     "retry": "Retry",
-    "more": "more"
+    "more": "more",
+    "continue": "Continue",
+    "errorTitle": "Something went wrong",
+    "offlineTitle": "No internet connection",
+    "offlineBody": "Check your connection and try again."
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -106,7 +110,8 @@
     "review": "Review",
     "coursePage": "Course page",
     "there": "there",
-    "viewFullHistory": "View full history"
+    "viewFullHistory": "View full history",
+    "loadError": "Couldn't load your courses."
   },
   "home": {
     "greeting": "Hi, {{name}} 👋",
@@ -139,7 +144,11 @@
     "emptyBody": "Open your first lesson — earn XP for every lesson and start your streak.",
     "emptyCta": "Start first lesson",
     "emptyStatusLine": "{{xp}} XP · Level {{level}}",
-    "emptyTierHint": "You're starting at {{tier}} tier 🥉"
+    "emptyTierHint": "You're starting at {{tier}} tier 🥉",
+    "levelUpTitle": "New level!",
+    "levelUpBody": "You've reached level {{level}}!",
+    "tierUpTitle": "New tier!",
+    "tierUpBody": "You've reached {{tier}} tier!"
   },
   "darslar": {
     "title": "My lessons",
@@ -249,6 +258,9 @@
     "allModules": "All modules",
     "markedCompleteToast": "Lesson marked complete",
     "watchMoreToComplete": "Watch at least half of the lesson before marking it complete.",
+    "loadError": "Couldn't load the lesson.",
+    "completeCelebrateTitle": "Lesson complete!",
+    "completeCelebrateBody": "Great work! Keep it up.",
     "caption": "Module {{moduleN}} · {{moduleTitle}} · Lesson {{lessonN}}/{{total}}",
     "durationMinutes": "{{minutes}} min",
     "xpChip": "+{{xp}} XP",

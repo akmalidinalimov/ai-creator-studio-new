@@ -207,15 +207,20 @@ function StudentProfile({ userId }: { userId: string | null }) {
   }
 
   if (error) {
+    const offline = typeof navigator !== "undefined" && !navigator.onLine;
     return (
       <PageShell>
         <div className="max-w-2xl mx-auto">
-          <Card className="p-10 text-center">
-            <p className="text-sm text-muted-foreground mb-4">{t("profile.loadError")}</p>
-            <Button variant="secondary" size="sm" onClick={() => setReloadKey((k) => k + 1)}>
-              {t("common.retry")}
-            </Button>
-          </Card>
+          <EmptyState
+            icon={offline ? "📡" : "⚠️"}
+            title={offline ? t("common.offlineTitle") : t("common.errorTitle")}
+            body={offline ? t("common.offlineBody") : t("profile.loadError")}
+            cta={
+              <Button variant="secondary" size="sm" onClick={() => setReloadKey((k) => k + 1)}>
+                {t("common.retry")}
+              </Button>
+            }
+          />
         </div>
       </PageShell>
     );

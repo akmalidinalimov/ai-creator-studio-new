@@ -10,7 +10,6 @@ import { formatXp } from "@/lib/xp";
 import { cn } from "@/lib/utils";
 import {
   ProgressRing,
-  Card,
   SectionHeader,
   Button,
   EmptyState,
@@ -182,6 +181,8 @@ export default function Lessons() {
   const activeModuleId = activeModuleIndex >= 0 ? modules[activeModuleIndex].id : null;
   const activeModuleRank = activeModuleIndex >= 0 ? activeModuleIndex + 1 : null;
 
+  const offline = typeof navigator !== "undefined" && !navigator.onLine;
+
   const toggleExpanded = (moduleId: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -208,12 +209,16 @@ export default function Lessons() {
             <Skeleton className="h-14 w-full rounded-md" />
           </>
         ) : error ? (
-          <Card className="p-10 text-center">
-            <p className="text-sm text-muted-foreground mb-4">{t("darslar.loadError")}</p>
-            <Button variant="secondary" size="sm" onClick={() => setReloadKey((k) => k + 1)}>
-              {t("common.retry")}
-            </Button>
-          </Card>
+          <EmptyState
+            icon={offline ? "📡" : "⚠️"}
+            title={offline ? t("common.offlineTitle") : t("common.errorTitle")}
+            body={offline ? t("common.offlineBody") : t("darslar.loadError")}
+            cta={
+              <Button variant="secondary" size="sm" onClick={() => setReloadKey((k) => k + 1)}>
+                {t("common.retry")}
+              </Button>
+            }
+          />
         ) : !enrolled ? (
           <EmptyState icon="📚" title={t("darslar.emptyTitle")} body={t("darslar.emptyBody")} />
         ) : trial ? (

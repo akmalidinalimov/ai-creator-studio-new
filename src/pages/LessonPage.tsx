@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { Input } from "@/components/ui/input";
-import { Button, Card, RewardChip } from "@/components/ui-kit";
+import { Button, Card, RewardChip, Skeleton, EmptyState, Celebrate } from "@/components/ui-kit";
 import { formatXp } from "@/lib/xp";
 import { cn } from "@/lib/utils";
 
@@ -14,6 +14,35 @@ import { toast } from "sonner";
 import { ProtectedVideo } from "@/components/lesson/ProtectedVideo";
 import { BunnyVideoPlayer } from "@/components/BunnyVideoPlayer";
 import { HomeworkSection } from "@/components/lesson/HomeworkSection";
+
+/** Full-screen celebration overlay (Task 2.7) — same pattern as Dashboard.tsx's local
+ *  CelebrationOverlay (duplicated rather than shared: ui-kit's `Celebrate` is a content block,
+ *  not a dialog, and this task's scope is "modify the five screens, create nothing new"). Entrance
+ *  is `motion-safe:` only (see Celebrate.tsx) — under prefers-reduced-motion it just appears. */
+function CelebrationOverlay({
+  emoji, title, body, xp, locale, onDismiss, closeLabel,
+}: { emoji: string; title: string; body: string; xp?: number; locale: string; onDismiss: () => void; closeLabel: string }) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="motion-safe:animate-fade-in fixed inset-0 z-50 grid place-items-center bg-background/80 p-4 backdrop-blur-sm"
+      onClick={onDismiss}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl border border-border bg-card shadow-elevated"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <Celebrate emoji={emoji} title={title} body={body} xp={xp} locale={locale} />
+        <div className="px-2.5 pb-4">
+          <Button variant="ghost" block onClick={onDismiss}>
+            {closeLabel}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface Msg { role: "user" | "assistant"; content: string }
 
@@ -37,6 +66,9 @@ export default function LessonPage() {
 
   const [lesson, setLesson] = useState<any>(null);
   const [notFound, setNotFound] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [showCelebrate, setShowCelebrate] = useState(false);
   const [modules, setModules] = useState<any[]>([]);
   const [completed, setCompleted] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState<{ last_position_seconds: number } | null>(null);
@@ -83,48 +115,61 @@ export default function LessonPage() {
   // Load
   useEffect(() => {
     if (!lessonId || !user || !courseId) return;
+    let cancelled = false;
+    setLoadError(false);
     (async () => {
-      const { data: l } = await supabase.from("lessons")
-        .select("id, title, description, module_id, position, published, video_provider, duration_seconds, modules(course_id)")
-        .eq("id", lessonId).maybeSingle();
-      // A lesson that was unpublished/deleted (or a stale bot/bookmark deeplink)
-      // returns null; without this the page span forever on the loading spinner.
-      if (!l) { setNotFound(true); return; }
-      setLesson(l);
-      const { data: ms } = await supabase
-        .from("modules")
-        .select("*, lessons(id, title, position)")
-        .eq("course_id", courseId)
-        .order("position", { ascending: true });
-      (ms || []).forEach((m: any) => m.lessons.sort((a: any, b: any) => a.position - b.position));
-      setModules(ms || []);
+      try {
+        const { data: l, error: lErr } = await supabase.from("lessons")
+          .select("id, title, description, module_id, position, published, video_provider, duration_seconds, modules(course_id)")
+          .eq("id", lessonId).maybeSingle();
+        if (lErr) throw lErr;
+        if (cancelled) return;
+        // A lesson that was unpublished/deleted (or a stale bot/bookmark deeplink)
+        // returns null; without this the page span forever on the loading spinner.
+        if (!l) { setNotFound(true); return; }
+        setLesson(l);
+        const { data: ms, error: mErr } = await supabase
+          .from("modules")
+          .select("*, lessons(id, title, position)")
+          .eq("course_id", courseId)
+          .order("position", { ascending: true });
+        if (mErr) throw mErr;
+        if (cancelled) return;
+        (ms || []).forEach((m: any) => m.lessons.sort((a: any, b: any) => a.position - b.position));
+        setModules(ms || []);
 
-      // Tier lock (Phase 2): a direct URL into a module beyond the student's tier →
-      // bounce to the course page. Mirrors CoursePage's lock (index >= moduleLimit).
-      // NULL limit (every 4.0 student / admin / teacher) → never locked.
-      const { data: lim } = await supabase.rpc("my_module_limit" as any, { _course_id: courseId });
-      const moduleLimit = typeof lim === "number" ? lim : null;
-      const moduleIdx = (ms || []).findIndex((m: any) => m.id === (l as any)?.module_id);
-      if (moduleLimit != null && moduleIdx >= 0 && moduleIdx >= moduleLimit) {
-        toast.error(t("lesson.tierLocked", { defaultValue: "Bu modul sizning tarifingizda mavjud emas." }));
-        navigate(`/course/${courseId}`, { replace: true });
-        return;
+        // Tier lock (Phase 2): a direct URL into a module beyond the student's tier →
+        // bounce to the course page. Mirrors CoursePage's lock (index >= moduleLimit).
+        // NULL limit (every 4.0 student / admin / teacher) → never locked.
+        const { data: lim } = await supabase.rpc("my_module_limit" as any, { _course_id: courseId });
+        const moduleLimit = typeof lim === "number" ? lim : null;
+        const moduleIdx = (ms || []).findIndex((m: any) => m.id === (l as any)?.module_id);
+        if (moduleLimit != null && moduleIdx >= 0 && moduleIdx >= moduleLimit) {
+          toast.error(t("lesson.tierLocked", { defaultValue: "Bu modul sizning tarifingizda mavjud emas." }));
+          navigate(`/course/${courseId}`, { replace: true });
+          return;
+        }
+
+        const lessonIds = (ms || []).flatMap((m: any) => m.lessons.map((x: any) => x.id));
+        const { data: prog } = await supabase.from("lesson_progress").select("lesson_id, completed_at, last_position_seconds, max_position_seconds, duration_seconds_v2")
+          .eq("user_id", user.id).in("lesson_id", lessonIds.length ? lessonIds : ["00000000-0000-0000-0000-000000000000"]);
+        if (cancelled) return;
+        setCompleted(new Set((prog || []).filter((p: any) => p.completed_at).map((p: any) => p.lesson_id)));
+        const cur = (prog || []).find((p: any) => p.lesson_id === lessonId);
+        setProgress(cur ? { last_position_seconds: cur.last_position_seconds ?? 0 } : null);
+        // Seed the watch-gate from previously stored progress for this lesson.
+        watchMaxPosRef.current = Math.max(Number(cur?.max_position_seconds) || 0, Number(cur?.last_position_seconds) || 0);
+        watchDurRef.current = Number(cur?.duration_seconds_v2) || 0;
+
+        const { data: hist } = await supabase.from("ai_chat_messages").select("role, content").eq("user_id", user.id).eq("lesson_id", lessonId).order("created_at").limit(50);
+        if (cancelled) return;
+        setChatHistory((hist || []) as Msg[]);
+      } catch (e) {
+        if (!cancelled) { console.error("[LessonPage] load failed", e); setLoadError(true); }
       }
-
-      const lessonIds = (ms || []).flatMap((m: any) => m.lessons.map((x: any) => x.id));
-      const { data: prog } = await supabase.from("lesson_progress").select("lesson_id, completed_at, last_position_seconds, max_position_seconds, duration_seconds_v2")
-        .eq("user_id", user.id).in("lesson_id", lessonIds.length ? lessonIds : ["00000000-0000-0000-0000-000000000000"]);
-      setCompleted(new Set((prog || []).filter((p: any) => p.completed_at).map((p: any) => p.lesson_id)));
-      const cur = (prog || []).find((p: any) => p.lesson_id === lessonId);
-      setProgress(cur ? { last_position_seconds: cur.last_position_seconds ?? 0 } : null);
-      // Seed the watch-gate from previously stored progress for this lesson.
-      watchMaxPosRef.current = Math.max(Number(cur?.max_position_seconds) || 0, Number(cur?.last_position_seconds) || 0);
-      watchDurRef.current = Number(cur?.duration_seconds_v2) || 0;
-
-      const { data: hist } = await supabase.from("ai_chat_messages").select("role, content").eq("user_id", user.id).eq("lesson_id", lessonId).order("created_at").limit(50);
-      setChatHistory((hist || []) as Msg[]);
     })();
-  }, [lessonId, courseId, user]);
+    return () => { cancelled = true; };
+  }, [lessonId, courseId, user, reloadKey]);
 
   // Resume position is passed into the player via props (Bunny ?t=, native HTML5 below).
   useEffect(() => {
@@ -226,8 +271,12 @@ export default function LessonPage() {
       toast.error(t("lesson.watchMoreToComplete"));
       return;
     }
+    // Celebrate only a genuinely NEW completion (the clickable "watch" step is only reachable
+    // while !isCompleted, so this is effectively always true via the UI — kept explicit in case
+    // markComplete is ever called again, e.g. a stale keyboard event, so it can't re-celebrate).
+    const isNewCompletion = !completed.has(lessonId);
     await writeComplete();
-    toast.success(t("lesson.markedCompleteToast"));
+    if (isNewCompletion) setShowCelebrate(true);
   };
 
   const flat = modules.flatMap((m) => m.lessons.map((l: any) => ({ ...l, moduleTitle: m.title })));
@@ -338,7 +387,48 @@ export default function LessonPage() {
       </div>
     </PageShell>
   );
-  if (!lesson) return <PageShell><div className="text-muted-foreground">{t("lesson.loading")}</div></PageShell>;
+  if (loadError) {
+    const offline = typeof navigator !== "undefined" && !navigator.onLine;
+    return (
+      <PageShell>
+        <div className="max-w-2xl mx-auto">
+          <EmptyState
+            icon={offline ? "📡" : "⚠️"}
+            title={offline ? t("common.offlineTitle") : t("common.errorTitle")}
+            body={offline ? t("common.offlineBody") : t("lesson.loadError")}
+            cta={
+              <Button variant="secondary" size="sm" onClick={() => setReloadKey((k) => k + 1)}>
+                {t("common.retry")}
+              </Button>
+            }
+          />
+        </div>
+      </PageShell>
+    );
+  }
+
+  if (!lesson) {
+    // Video + title + steps shape — matches the populated layout below so a cold start into a
+    // lesson deep-link never flashes blank/janky content.
+    return (
+      <PageShell>
+        <div className="max-w-2xl mx-auto space-y-4">
+          <Skeleton className="h-3 w-40" />
+          <Skeleton className="aspect-video w-full rounded-lg" />
+          <div className="space-y-3">
+            <Skeleton className="h-6 w-3/4" />
+            <Skeleton className="h-4 w-32" />
+            <div className="space-y-2 pt-1">
+              <Skeleton className="h-14 w-full rounded-xl" />
+              <Skeleton className="h-14 w-full rounded-xl" />
+              <Skeleton className="h-14 w-full rounded-xl" />
+            </div>
+            <Skeleton className="h-11 w-full rounded-lg" />
+          </div>
+        </div>
+      </PageShell>
+    );
+  }
 
   const renderPlayer = () => {
     if (videoData?.locked) {
@@ -414,6 +504,17 @@ export default function LessonPage() {
 
   return (
     <PageShell>
+      {showCelebrate && (
+        <CelebrationOverlay
+          emoji="🎉"
+          title={t("lesson.completeCelebrateTitle")}
+          body={t("lesson.completeCelebrateBody")}
+          xp={LESSON_XP}
+          locale={i18n.language}
+          onDismiss={() => setShowCelebrate(false)}
+          closeLabel={t("common.continue")}
+        />
+      )}
       <div className="max-w-2xl mx-auto space-y-4">
         {moduleRank > 0 && lessonRankInModule > 0 && (
           // Normal caption weight — NOT font-display (contains digits; see the title's comment below).
