@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import type { TgWebApp } from "./types";
 
 // Screens that are "home" — the native back button is hidden here (nowhere to go back to).
-const ROOT_PATHS = new Set<string>(["/", "/dashboard", "/admin/dashboard"]);
+const ROOT_PATHS = new Set<string>(["/", "/dashboard", "/admin/dashboard", "/tg/teacher"]);
 
 /**
  * Wire Telegram's native header BackButton to the router: show it on any non-root screen and
