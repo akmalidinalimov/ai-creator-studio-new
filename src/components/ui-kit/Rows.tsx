@@ -52,7 +52,7 @@ const ModuleRow = React.forwardRef<HTMLDivElement, ModuleRowProps>(
           className={cn(
             "grid size-[34px] flex-none place-items-center rounded-md font-extrabold",
             state === "done" && "bg-good/16 text-good",
-            state === "active" && "bg-accent text-accent-foreground",
+            state === "active" && "bg-cta text-cta-foreground",
             state === "locked" && "bg-tint text-muted-foreground",
             state === "available" && "bg-tint text-primary",
           )}
@@ -113,7 +113,7 @@ const LessonRow = React.forwardRef<HTMLDivElement, LessonRowProps>(
         }
         className={cn(
           "ml-11 mb-1.5 flex items-center gap-2.5 rounded-md border border-border bg-surface-2 px-[11px] py-2.5",
-          here && "border-accent/50 bg-accent-soft",
+          here && "border-cta/50 bg-accent-soft",
           clickable &&
             "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
           className,
@@ -123,7 +123,7 @@ const LessonRow = React.forwardRef<HTMLDivElement, LessonRowProps>(
           className={cn(
             "grid size-[26px] flex-none place-items-center rounded-sm bg-card text-xs font-extrabold text-muted-foreground",
             state === "done" && "text-good",
-            here && "bg-accent text-accent-foreground",
+            here && "bg-cta text-cta-foreground",
           )}
         >
           {here ? <Play className="size-3" fill="currentColor" strokeWidth={0} /> : null}
@@ -135,7 +135,7 @@ const LessonRow = React.forwardRef<HTMLDivElement, LessonRowProps>(
           {meta ? <span className="block text-[11px] font-semibold text-muted-foreground">{meta}</span> : null}
         </div>
         {here ? (
-          <span className="flex-none whitespace-nowrap rounded-full bg-accent px-2 py-1 text-[10px] font-extrabold text-accent-foreground">
+          <span className="flex-none whitespace-nowrap rounded-full bg-cta px-2 py-1 text-[10px] font-extrabold text-cta-foreground">
             Shu yerda
           </span>
         ) : null}

@@ -17,12 +17,12 @@ const RewardChip = React.forwardRef<HTMLSpanElement, RewardChipProps>(
     <span
       ref={ref}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border border-accent/45 bg-accent-soft px-3 py-1.5 text-[13px] font-extrabold text-foreground",
+        "inline-flex items-center gap-1.5 rounded-full border border-cta/45 bg-accent-soft px-3 py-1.5 text-[13px] font-extrabold text-foreground",
         className,
       )}
       {...props}
     >
-      <span className="text-accent [&_svg]:size-3.5">{icon ?? <Zap fill="currentColor" strokeWidth={0} />}</span>
+      <span className="text-cta [&_svg]:size-3.5">{icon ?? <Zap fill="currentColor" strokeWidth={0} />}</span>
       {children}
     </span>
   ),
@@ -38,12 +38,12 @@ const StreakChip = React.forwardRef<HTMLSpanElement, StreakChipProps>(({ days, c
   <span
     ref={ref}
     className={cn(
-      "inline-flex items-center gap-1.5 rounded-full border border-accent/45 bg-accent-soft py-1.5 pl-2 pr-2.5 text-[13px] font-extrabold text-foreground",
+      "inline-flex items-center gap-1.5 rounded-full border border-cta/45 bg-accent-soft py-1.5 pl-2 pr-2.5 text-[13px] font-extrabold text-foreground",
       className,
     )}
     {...props}
   >
-    <Flame className="size-[15px] text-accent" fill="currentColor" strokeWidth={0} />
+    <Flame className="size-[15px] text-cta" fill="currentColor" strokeWidth={0} />
     {days} kunlik seriya
   </span>
 ));
@@ -73,12 +73,12 @@ const XpPill = React.forwardRef<HTMLSpanElement, XpPillProps>(({ xp, locale = "u
     // NOT font-display: Unbounded's ss01 stylistic set renders digits as circled numerals
     // under this app's global `cv11,ss01` font-feature-settings (verified against /kit).
     className={cn(
-      "inline-flex items-center gap-1.5 rounded-full border border-accent/45 bg-accent-soft px-4 py-2.5 text-base font-extrabold text-foreground",
+      "inline-flex items-center gap-1.5 rounded-full border border-cta/45 bg-accent-soft px-4 py-2.5 text-base font-extrabold text-foreground",
       className,
     )}
     {...props}
   >
-    <Zap className="size-4 text-accent" fill="currentColor" strokeWidth={0} />+{formatXp(xp, locale)} XP
+    <Zap className="size-4 text-cta" fill="currentColor" strokeWidth={0} />+{formatXp(xp, locale)} XP
   </span>
 ));
 XpPill.displayName = "XpPill";

@@ -576,27 +576,27 @@ export default function LessonPage() {
                   className={cn(
                     "flex items-center gap-3 rounded-xl border p-3 text-[13.5px] font-bold text-foreground shadow-soft",
                     clickable
-                      ? "border-accent/45 bg-accent-soft cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      ? "border-cta/45 bg-accent-soft cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                       : "border-border bg-card",
                   )}
                 >
                   {/* Clickable (incomplete, watch step) = empty checkbox ring, no number — a clear
                       "tap to check off" affordance distinct from the plain numbered decorative rows
-                      below it. Done = filled accent circle + check. Otherwise = plain numbered circle. */}
+                      below it. Done = filled cta circle + check. Otherwise = plain numbered circle. */}
                   <span
                     className={cn(
                       "grid size-6 flex-none place-items-center rounded-full text-xs font-extrabold",
                       step.done
-                        ? "bg-accent text-accent-foreground"
+                        ? "bg-cta text-cta-foreground"
                         : clickable
-                          ? "border-2 border-accent bg-transparent text-accent"
+                          ? "border-2 border-cta bg-transparent text-cta"
                           : "bg-tint text-muted-foreground",
                     )}
                   >
                     {step.done ? <Check className="size-3.5" strokeWidth={3} /> : clickable ? null : i + 1}
                   </span>
                   <span className="flex-1">{step.label}</span>
-                  {clickable && <ChevronRight className="size-4 flex-none text-accent" />}
+                  {clickable && <ChevronRight className="size-4 flex-none text-cta" />}
                 </div>
               );
             })}

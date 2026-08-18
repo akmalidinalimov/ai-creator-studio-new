@@ -19,7 +19,7 @@ function Celebrate({ emoji, title, body, xp, locale, className }: CelebrateProps
   return (
     <div className={cn("motion-safe:animate-fade-in px-2.5 pb-1.5 pt-5 text-center", className)}>
       <div
-        className="mx-auto mb-4 grid size-[92px] place-items-center rounded-lg bg-accent text-[42px] text-accent-foreground shadow-elevated"
+        className="mx-auto mb-4 grid size-[92px] place-items-center rounded-lg bg-cta text-[42px] text-cta-foreground shadow-elevated"
         aria-hidden
       >
         {emoji}

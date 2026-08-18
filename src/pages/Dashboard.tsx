@@ -347,7 +347,7 @@ export default function Dashboard() {
         ) : (
           <>
             <div className="space-y-1">
-              <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground">
+              <h1 className="text-2xl font-extrabold tracking-tight text-foreground">
                 {t("home.greeting", { name: displayName })}
               </h1>
               <p className="text-sm font-semibold text-muted-foreground">{greetingSubtitle}</p>
@@ -443,7 +443,7 @@ export default function Dashboard() {
                     <SectionHeader title={t("home.homeworkTitle")} action={<Link to="/homework">{t("home.homeworkAction")}</Link>} />
                     <Link to="/homework" className="block">
                       <Card className="flex items-center gap-3 cursor-pointer hover:bg-tint/40 transition-colors">
-                        <div className="grid size-[42px] flex-none place-items-center rounded-md bg-accent text-accent-foreground">
+                        <div className="grid size-[42px] flex-none place-items-center rounded-md bg-primary text-primary-foreground">
                           <ClipboardCheck className="size-[22px]" />
                         </div>
                         <div className="flex-1 min-w-0">

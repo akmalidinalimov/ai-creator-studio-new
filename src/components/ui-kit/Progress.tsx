@@ -6,7 +6,7 @@ function clampPct(n: number): number {
   return Math.min(100, Math.max(0, n));
 }
 
-// Mockup: .prog / .prog i — track + accent→primary gradient fill.
+// Mockup: .prog / .prog i — track + cta→primary gradient fill.
 export interface ProgressBarProps extends React.HTMLAttributes<HTMLDivElement> {
   value: number;
 }
@@ -15,7 +15,7 @@ const ProgressBar = React.forwardRef<HTMLDivElement, ProgressBarProps>(
   ({ value, className, ...props }, ref) => (
     <div ref={ref} className={cn("h-2 flex-1 overflow-hidden rounded-full bg-tint", className)} {...props}>
       <div
-        className="h-full rounded-full bg-gradient-to-r from-accent to-primary"
+        className="h-full rounded-full bg-gradient-to-r from-cta to-primary"
         style={{ width: `${clampPct(value)}%` }}
       />
     </div>
@@ -39,7 +39,7 @@ function ProgressRing({ pct, size = 62, className }: ProgressRingProps) {
       style={{
         width: size,
         height: size,
-        background: `conic-gradient(hsl(var(--accent)) 0% ${clamped}%, hsl(var(--tint)) ${clamped}% 100%)`,
+        background: `conic-gradient(hsl(var(--cta)) 0% ${clamped}%, hsl(var(--tint)) ${clamped}% 100%)`,
       }}
     >
       {/* NOT font-display: Unbounded's ss01 stylistic set renders digits as circled
@@ -55,7 +55,7 @@ function ProgressRing({ pct, size = 62, className }: ProgressRingProps) {
   );
 }
 
-// Mockup: .tierbar / .tierbar i — track + gold→accent gradient fill (tier progress).
+// Mockup: .tierbar / .tierbar i — track + gold→cta gradient fill (tier progress).
 export interface TierBarProps extends React.HTMLAttributes<HTMLDivElement> {
   pct: number;
 }
@@ -63,7 +63,7 @@ export interface TierBarProps extends React.HTMLAttributes<HTMLDivElement> {
 const TierBar = React.forwardRef<HTMLDivElement, TierBarProps>(({ pct, className, ...props }, ref) => (
   <div ref={ref} className={cn("h-2.5 overflow-hidden rounded-full bg-tint", className)} {...props}>
     <div
-      className="h-full rounded-full bg-gradient-to-r from-gold to-accent"
+      className="h-full rounded-full bg-gradient-to-r from-gold to-cta"
       style={{ width: `${clampPct(pct)}%` }}
     />
   </div>

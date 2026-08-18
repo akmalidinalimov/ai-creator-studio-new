@@ -26,8 +26,11 @@
     --muted: 140 9% 94%;
     --muted-foreground: 171 10% 41%;     /* #5E7370 */
 
-    --accent: 10 100% 65%;               /* #FF6A4D coral CTA */
-    --accent-foreground: 0 0% 100%;
+    --accent: 173 38% 84%;               /* #C7E5E1 soft teal tint (restored) */
+    --accent-foreground: 174 78% 26%;
+
+    --cta: 10 100% 65%;                  /* #FF6A4D coral CTA */
+    --cta-foreground: 0 0% 100%;
 
     --destructive: 17 60% 44%;           /* #B5512D warm clay */
     --destructive-foreground: 0 0% 100%;
@@ -96,8 +99,10 @@
     --secondary-foreground: 165 12% 94%;
     --muted: 202 13% 17%;
     --muted-foreground: 164 6% 63%;      /* #9AA5A2 */
-    --accent: 10 100% 65%;               /* #FF6A4D */
-    --accent-foreground: 0 0% 100%;
+    --accent: 174 41% 21%;               /* deep teal hover (restored) */
+    --accent-foreground: 172 66% 50%;
+    --cta: 10 100% 65%;                  /* #FF6A4D coral CTA */
+    --cta-foreground: 0 0% 100%;
     --destructive: 14 100% 64%;
     --destructive-foreground: 178 60% 5%;
     --success: 142 66% 46%;
@@ -151,8 +156,11 @@
     --muted: 202 13% 17%;
     --muted-foreground: 164 6% 63%;      /* #9AA5A2 */
 
-    --accent: 10 100% 65%;               /* #FF6A4D */
-    --accent-foreground: 0 0% 100%;
+    --accent: 174 41% 21%;               /* #1F4A45 deep teal hover (restored) */
+    --accent-foreground: 172 66% 50%;
+
+    --cta: 10 100% 65%;                  /* #FF6A4D coral CTA */
+    --cta-foreground: 0 0% 100%;
 
     --destructive: 14 100% 64%;          /* #FF6B47 */
     --destructive-foreground: 178 60% 5%;
@@ -264,6 +272,8 @@
   --muted-foreground: 165 12% 66%;
   --accent: 170 32% 16%;
   --accent-foreground: 168 70% 72%;
+  --cta: 10 100% 65%;                  /* #FF6A4D coral CTA */
+  --cta-foreground: 0 0% 100%;
   --destructive: 17 62% 50%;
   --destructive-foreground: 0 0% 100%;
   --success: 150 55% 48%;

@@ -30,7 +30,7 @@ function Hero({ coverLabel, title, meta, progress, ctaLabel, onCtaClick, onPlayC
         <div
           className="pointer-events-none absolute inset-0"
           aria-hidden
-          style={{ background: "radial-gradient(120px 90px at 82% 20%, hsl(var(--accent) / 0.55), transparent 70%)" }}
+          style={{ background: "radial-gradient(120px 90px at 82% 20%, hsl(var(--cta) / 0.55), transparent 70%)" }}
         />
         {coverLabel ? (
           <span className="relative z-10 rounded-full border border-white/30 bg-white/15 px-2.5 py-1.5 text-[11.5px] font-bold tracking-wide text-white backdrop-blur-sm">
@@ -42,7 +42,7 @@ function Hero({ coverLabel, title, meta, progress, ctaLabel, onCtaClick, onPlayC
             type="button"
             onClick={onPlayClick}
             aria-label="Play"
-            className="absolute left-1/2 top-1/2 grid size-[54px] -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-accent text-accent-foreground shadow-elevated"
+            className="absolute left-1/2 top-1/2 grid size-[54px] -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-cta text-cta-foreground shadow-elevated"
           >
             <Play className="size-5" fill="currentColor" strokeWidth={0} />
           </button>

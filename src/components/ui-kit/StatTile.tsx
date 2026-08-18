@@ -23,7 +23,7 @@ const StatTile = React.forwardRef<HTMLDivElement, StatTileProps>(
       style={{ ...glossShadowStyle, ...style }}
       {...props}
     >
-      <div className={cn("mx-auto mb-1.5 size-[22px] [&_svg]:size-full", highlight ? "text-accent" : "text-primary")}>
+      <div className={cn("mx-auto mb-1.5 size-[22px] [&_svg]:size-full", highlight ? "text-cta" : "text-primary")}>
         {icon}
       </div>
       {/* NOT font-display: Unbounded's ss01 stylistic set renders digits as circled

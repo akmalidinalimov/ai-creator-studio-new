@@ -1,14 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { cn } from "@/lib/utils";
-import { tierFor, formatXp } from "@/lib/xp";
+import { formatXp } from "@/lib/xp";
 import {
   Card,
   SectionHeader,
-  TierBadge,
   XpPill,
   RewardChip,
   Button,
@@ -87,8 +86,8 @@ function PodiumSlot({ row, locale, youLabel }: { row: Row; locale: string; youLa
           )}
           style={{
             background:
-              "conic-gradient(from 200deg, hsl(var(--primary)), color-mix(in srgb, hsl(var(--accent)) 70%, hsl(var(--primary))))",
-            boxShadow: isFirst ? "0 0 0 3px hsl(var(--accent))" : undefined,
+              "conic-gradient(from 200deg, hsl(var(--primary)), color-mix(in srgb, hsl(var(--cta)) 70%, hsl(var(--primary))))",
+            boxShadow: isFirst ? "0 0 0 3px hsl(var(--cta))" : undefined,
           }}
         >
           {initialOf(row.first_name)}
@@ -105,13 +104,13 @@ function PodiumSlot({ row, locale, youLabel }: { row: Row; locale: string; youLa
 }
 
 function LeaderboardRow({
-  row, locale, youLabel, tierName, elevated,
-}: { row: Row; locale: string; youLabel: string; tierName: string; elevated?: boolean }) {
+  row, locale, youLabel, elevated,
+}: { row: Row; locale: string; youLabel: string; elevated?: boolean }) {
   return (
     <Card
       className={cn(
         "mb-2 flex items-center gap-3 p-3",
-        row.is_me && "border-accent/50 bg-accent-soft",
+        row.is_me && "border-cta/50 bg-accent-soft",
         elevated && "shadow-elevated",
       )}
     >
@@ -125,7 +124,6 @@ function LeaderboardRow({
         <div className="truncate text-[13.5px] font-bold text-foreground">
           {row.first_name}{row.last_initial ? ` ${row.last_initial}.` : ""}{row.is_me ? ` (${youLabel})` : ""}
         </div>
-        {tierName && <div className="truncate text-[11px] font-semibold text-muted-foreground">{tierName}</div>}
       </div>
       <span className="flex-none text-[13.5px] font-extrabold tabular-nums text-foreground">
         {formatXp(row.total_xp, locale)}
@@ -208,16 +206,6 @@ export default function Leaderboard() {
   const offline = typeof navigator !== "undefined" && !navigator.onLine;
   const displayed = board === "weekly" ? weekly : allTime;
   const me = displayed.find((r) => r.is_me);
-  const myAllTimeRow = allTime.find((r) => r.is_me);
-  // Tier badges always reflect each user's all-time group-rating XP (tierFor on TOTAL XP per the
-  // brief) regardless of which board is toggled — so a student's tier never "changes" just because
-  // they're looking at the weekly race.
-  const tierMap = useMemo(
-    () => new Map(allTime.map((r) => [r.user_id, tierFor(r.total_xp)])),
-    [allTime],
-  );
-  const myTier = myAllTimeRow ? tierFor(myAllTimeRow.total_xp) : null;
-
   const podiumCount = Math.min(3, displayed.length);
   const podium = displayed.slice(0, podiumCount);
   const listRows = displayed.slice(podiumCount, VISIBLE_LIMIT);
@@ -271,7 +259,6 @@ export default function Leaderboard() {
               </div>
               <div className="flex flex-none flex-col items-end gap-1.5">
                 {me && <RewardChip>#{formatXp(me.rank, locale)}</RewardChip>}
-                {myTier && <TierBadge tier={myTier.key} />}
               </div>
             </div>
 
@@ -325,7 +312,6 @@ export default function Leaderboard() {
                           row={r}
                           locale={locale}
                           youLabel={t("profile.you")}
-                          tierName={tierMap.get(r.user_id)?.name ?? ""}
                         />
                       ))}
                     </div>
@@ -333,7 +319,7 @@ export default function Leaderboard() {
                 )}
 
                 {showNudge && (
-                  <Card className="flex flex-wrap items-center gap-2 border-accent/40 bg-accent-soft">
+                  <Card className="flex flex-wrap items-center gap-2 border-cta/40 bg-accent-soft">
                     <span className="text-[13px] font-bold text-foreground">{t("leaderboard.nudgeToTop3")}</span>
                     <XpPill xp={xpGapToTop3} locale={locale} />
                   </Card>
@@ -350,7 +336,6 @@ export default function Leaderboard() {
             row={stickyMe}
             locale={locale}
             youLabel={t("profile.you")}
-            tierName={tierMap.get(stickyMe.user_id)?.name ?? ""}
             elevated
           />
         </div>
