@@ -39,6 +39,7 @@ interface UserRow {
   group_id?: string | null;
   archived_at?: string | null;
   account_type?: "provisional" | "paid";
+  created_by?: string | null;
 }
 
 interface CsvRow {
@@ -218,6 +219,8 @@ export default function AdminUsers() {
       const grpNameMap: Record<string, string | null> = {};
       const atMap: Record<string, string | null> = {};
       const rolesMap: Record<string, string[]> = {};
+      // user_id -> role -> created_by (uuid of the admin who assigned that role, or null for legacy/system).
+      const createdByMap: Record<string, Record<string, string | null>> = {};
       const PAGE = 300;
       const profPromises: Promise<any>[] = [];
       const rolePromises: Promise<any>[] = [];
@@ -227,7 +230,7 @@ export default function AdminUsers() {
           Promise.resolve(supabase.from("profiles").select("id, last_name, group_id, account_type, groups:group_id(name)").in("id", slice))
         );
         rolePromises.push(
-          Promise.resolve(supabase.from("user_roles").select("user_id, role").in("user_id", slice))
+          Promise.resolve(supabase.from("user_roles" as any).select("user_id, role, created_by").in("user_id", slice))
         );
       }
       const profResults = await Promise.all(profPromises);
@@ -241,7 +244,10 @@ export default function AdminUsers() {
         });
       });
       roleResults.forEach(({ data }) => {
-        (data || []).forEach((r: any) => { (rolesMap[r.user_id] ||= []).push(r.role); });
+        (data || []).forEach((r: any) => {
+          (rolesMap[r.user_id] ||= []).push(r.role);
+          (createdByMap[r.user_id] ||= {})[r.role] = r.created_by ?? null;
+        });
       });
       const rank: Record<string, number> = { superadmin: 1, admin: 2, teacher: 3, student: 4 };
       rows.forEach((u) => {
@@ -252,6 +258,9 @@ export default function AdminUsers() {
         const list = rolesMap[u.id] || [];
         const top = list.sort((a, b) => (rank[a] || 99) - (rank[b] || 99))[0] as RoleName | undefined;
         u.role_name = (top || "student") as RoleName;
+        // created_by attribution follows the primary (top) role — that's the row admin_change_role /
+        // admin-create-students stamped. Null = legacy/unknown or a system/sheet-sync import.
+        u.created_by = top ? (createdByMap[u.id]?.[top] ?? null) : null;
       });
     }
     setUsers(rows as UserRow[]);
@@ -333,6 +342,16 @@ export default function AdminUsers() {
       if (u.role_name === "teacher") {
         m.set(u.id, [u.name, u.last_name].filter(Boolean).join(" ") || u.email);
       }
+    });
+    return m;
+  }, [users]);
+
+  // Every loaded user's id -> display name, used to resolve "Created by" (the creator is
+  // usually an admin, not a teacher, so this spans all roles). Unknown ids fall back to "—".
+  const nameById = useMemo(() => {
+    const m = new Map<string, string>();
+    users.forEach((u) => {
+      m.set(u.id, [u.name, u.last_name].filter(Boolean).join(" ") || u.email);
     });
     return m;
   }, [users]);
@@ -1183,6 +1202,11 @@ export default function AdminUsers() {
                   {u.group_id && (
                     <div className="text-xs mt-1"><Badge variant="secondary">{(u as any).group_name || groupNameById.get(u.group_id) || "—"}</Badge></div>
                   )}
+                  {u.created_by && (
+                    <div className="text-[11px] text-muted-foreground mt-1">
+                      {t("admin.users.headers.createdBy", { defaultValue: "Created by" })}: {nameById.get(u.created_by) || "—"}
+                    </div>
+                  )}
                   <div className="flex items-center justify-between mt-2 gap-2">
                     <div className="flex items-center gap-2 text-[11px]">
                       <span className={`px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : u.status === "archived" ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-destructive/10 text-destructive"}`}>
@@ -1225,12 +1249,13 @@ export default function AdminUsers() {
                   <th className="text-left p-3">{t("admin.users.headers.status")}</th>
                   <th className="text-left p-3">{t("admin.users.headers.courses")}</th>
                   <th className="text-left p-3">{t("admin.users.headers.lastLogin")}</th>
+                  <th className="text-left p-3">{t("admin.users.headers.createdBy", { defaultValue: "Created by" })}</th>
                   <th className="p-3"></th>
                 </tr>
               </thead>
               <tbody>
-                {loading && <tr><td colSpan={11} className="p-6 text-center text-muted-foreground">{t("admin.users.loading")}</td></tr>}
-                {!loading && filtered.length === 0 && <tr><td colSpan={11} className="p-6 text-center text-muted-foreground">{t("admin.users.empty")}</td></tr>}
+                {loading && <tr><td colSpan={12} className="p-6 text-center text-muted-foreground">{t("admin.users.loading")}</td></tr>}
+                {!loading && filtered.length === 0 && <tr><td colSpan={12} className="p-6 text-center text-muted-foreground">{t("admin.users.empty")}</td></tr>}
                 {filtered.map((u) => (
                   <tr key={u.id} className="border-t hover:bg-muted/20">
                     <td className="p-3"><Checkbox checked={selected.has(u.id)} onCheckedChange={() => toggleSelect(u.id)} /></td>
@@ -1278,6 +1303,7 @@ export default function AdminUsers() {
                     <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : u.status === "archived" ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-destructive/10 text-destructive"}`}>{u.status === "active" ? t("admin.users.active") : u.status === "archived" ? "Arxiv" : t("admin.users.inactive")}</span></td>
                     <td className="p-3 text-xs text-muted-foreground">{(enrollMap[u.id]?.size) || 0}</td>
                     <td className="p-3 text-xs text-muted-foreground">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}</td>
+                    <td className="p-3 text-xs text-muted-foreground">{u.created_by ? (nameById.get(u.created_by) || "—") : "—"}</td>
                     <td className="p-3">
                       <div className="flex items-center justify-end gap-1">
                         <Button asChild variant="ghost" size="sm" className="gap-1" title="Statistika">
