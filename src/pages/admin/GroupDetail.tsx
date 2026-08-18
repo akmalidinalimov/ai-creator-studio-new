@@ -87,6 +87,14 @@ export default function GroupDetail() {
   const [pendingTeacher, setPendingTeacher] = useState<string>("");
   const [pendingCourse, setPendingCourse] = useState<string>("");
 
+  // co-teachers (multiple-teachers-per-group Stage C): primary (is_primary=true, managed by the
+  // Teacher field + DB trigger) + co-teachers (is_primary=false, managed HERE via group_teachers).
+  type CoTeacher = { teacher_id: string; is_primary: boolean; created_at: string; name: string; assigned_by_name: string | null };
+  const [coTeachers, setCoTeachers] = useState<CoTeacher[]>([]);
+  const [openAddCoTeacher, setOpenAddCoTeacher] = useState(false);
+  const [pendingCoTeacher, setPendingCoTeacher] = useState<string>("");
+  const [removeCoTeacher, setRemoveCoTeacher] = useState<{ teacher_id: string; name: string } | null>(null);
+
   // edit name / tier
   const [editName, setEditName] = useState(false);
   const [pendingName, setPendingName] = useState<string>("");
@@ -154,6 +162,41 @@ export default function GroupDetail() {
       }))
       .sort((a, b) => a.position - b.position);
     setModuleSubs(mods);
+
+    // co-teachers (Stage C): load junction rows for THIS group + hydrate teacher/assigner names.
+    // Cast `.from("group_teachers" as any)` — the table is new so generated types don't include it.
+    const { data: gtRows } = await supabase
+      .from("group_teachers" as any)
+      .select("teacher_id, is_primary, created_at, created_by")
+      .eq("group_id", id);
+    const gtList = (gtRows as any[]) || [];
+    const nameIds = Array.from(
+      new Set(gtList.flatMap((r: any) => [r.teacher_id, r.created_by]).filter(Boolean))
+    );
+    const nameMap = new Map<string, string>();
+    if (nameIds.length) {
+      const { data: profs } = await supabase
+        .from("profiles")
+        .select("id, name, last_name, email")
+        .in("id", nameIds as string[]);
+      for (const p of (profs as any[]) || []) {
+        nameMap.set(p.id, [p.name, p.last_name].filter(Boolean).join(" ") || p.email || "—");
+      }
+    }
+    const cts: CoTeacher[] = gtList
+      .map((r: any) => ({
+        teacher_id: r.teacher_id,
+        is_primary: !!r.is_primary,
+        created_at: r.created_at,
+        name: nameMap.get(r.teacher_id) || "—",
+        assigned_by_name: r.created_by ? nameMap.get(r.created_by) ?? null : null,
+      }))
+      .sort((a, b) => {
+        if (a.is_primary !== b.is_primary) return a.is_primary ? -1 : 1; // primary first
+        return (a.created_at || "").localeCompare(b.created_at || "");
+      });
+    setCoTeachers(cts);
+
     setLoading(false);
   };
 
@@ -187,6 +230,42 @@ export default function GroupDetail() {
     if (error) { toast.error(error.message); return; }
     toast.success("Teacher updated");
     setEditTeacher(false);
+    reload();
+  };
+
+  // ---- Co-teachers (Stage C) ---- NEVER touches the primary: the primary is managed only by the
+  // Teacher field (saveTeacher) + the DB primary-sync trigger. This UI only adds/removes is_primary=false rows.
+  const addCoTeacher = async () => {
+    if (!id || !pendingCoTeacher || pendingCoTeacher === "__none__") return;
+    // Guard: never (re)add someone already assigned (primary or an existing co-teacher). The PK would
+    // reject a dup anyway, but fail friendly and keep the primary uncloneable.
+    if (coTeachers.some((c) => c.teacher_id === pendingCoTeacher)) {
+      toast.error("Bu ustoz allaqachon biriktirilgan");
+      return;
+    }
+    const { error } = await supabase.from("group_teachers" as any).insert({
+      group_id: id,
+      teacher_id: pendingCoTeacher,
+      is_primary: false,
+      created_by: session?.user?.id ?? null,
+    });
+    if (error) { toast.error(error.message); return; }
+    toast.success("Yordamchi ustoz qo'shildi");
+    setPendingCoTeacher("");
+    setOpenAddCoTeacher(false);
+    reload();
+  };
+
+  const handleRemoveCoTeacher = async () => {
+    if (!id || !removeCoTeacher) return;
+    const { error } = await supabase
+      .from("group_teachers" as any)
+      .delete()
+      .eq("group_id", id)
+      .eq("teacher_id", removeCoTeacher.teacher_id);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Yordamchi ustoz olib tashlandi");
+    setRemoveCoTeacher(null);
     reload();
   };
 
@@ -520,6 +599,55 @@ export default function GroupDetail() {
               <Card className="p-4"><div className="text-xs text-muted-foreground">Avg score</div><div className="text-2xl font-semibold">{overview.avg_score_pct}%</div></Card>
               <Card className="p-4"><div className="text-xs text-muted-foreground">Active 7d %</div><div className="text-2xl font-semibold">{overview.total_students > 0 ? Math.round((overview.active_7d / overview.total_students) * 100) : 0}%</div></Card>
             </div>
+
+            {/* Ustozlar (teachers): primary (Asosiy) + co-teachers, with assigner + date */}
+            <Card className="p-4 space-y-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <h2 className="text-base font-semibold">👩‍🏫 Ustozlar</h2>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() => { setPendingCoTeacher(""); setOpenAddCoTeacher(true); }}
+                >
+                  <Plus className="h-4 w-4" /> Yordamchi ustoz qo'shish
+                </Button>
+              </div>
+              {coTeachers.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Ustoz biriktirilmagan. Asosiy ustozni yuqoridagi "Teacher" maydonidan tanlang.
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {coTeachers.map((c) => (
+                    <div key={c.teacher_id} className="flex items-center justify-between gap-2 rounded-md border p-2.5">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-medium truncate">{c.name}</span>
+                          {c.is_primary && <Badge variant="secondary">Asosiy</Badge>}
+                        </div>
+                        {!c.is_primary && (
+                          <div className="text-xs text-muted-foreground">
+                            · qo'shdi: {c.assigned_by_name || "—"} · {localeDate(c.created_at)}
+                          </div>
+                        )}
+                      </div>
+                      {!c.is_primary && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 shrink-0"
+                          title="Yordamchi ustozni olib tashlash"
+                          onClick={() => setRemoveCoTeacher({ teacher_id: c.teacher_id, name: c.name })}
+                        >
+                          <UserMinus className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
 
             {/* Telegram topics */}
             <GroupTopicsSection groupId={id!} />
@@ -876,6 +1004,55 @@ export default function GroupDetail() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Add co-teacher dialog — picker lists only teachers NOT already assigned (excludes primary + co-teachers) */}
+        <Dialog open={openAddCoTeacher} onOpenChange={setOpenAddCoTeacher}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Yordamchi ustoz qo'shish</DialogTitle>
+              <DialogDescription>
+                Bu guruhga qo'shimcha ustoz biriktiriladi. Asosiy ustoz "Teacher" maydonidan boshqariladi.
+              </DialogDescription>
+            </DialogHeader>
+            {(() => {
+              const available = teachers.filter((t) => !coTeachers.some((c) => c.teacher_id === t.id));
+              return (
+                <Select value={pendingCoTeacher} onValueChange={setPendingCoTeacher}>
+                  <SelectTrigger><SelectValue placeholder="Ustozni tanlang" /></SelectTrigger>
+                  <SelectContent>
+                    {available.length === 0 ? (
+                      <SelectItem value="__none__" disabled>Barcha ustozlar biriktirilgan</SelectItem>
+                    ) : available.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>{t.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              );
+            })()}
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setOpenAddCoTeacher(false)}>Cancel</Button>
+              <Button onClick={addCoTeacher} disabled={!pendingCoTeacher || pendingCoTeacher === "__none__"}>Qo'shish</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Remove co-teacher confirm — only reachable for is_primary=false rows */}
+        <AlertDialog open={!!removeCoTeacher} onOpenChange={(o) => !o && setRemoveCoTeacher(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Yordamchi ustozni olib tashlash?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {removeCoTeacher
+                  ? `${removeCoTeacher.name} bu guruhdan olib tashlanadi. U bu guruhda baholash, DM va ko'rish huquqlarini yo'qotadi.`
+                  : ""}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={handleRemoveCoTeacher}>Olib tashlash</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Remove confirm */}
         <AlertDialog open={!!removeMember} onOpenChange={(o) => !o && setRemoveMember(null)}>
