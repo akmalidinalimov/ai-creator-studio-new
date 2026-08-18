@@ -43,6 +43,7 @@ const Settings = lazy(() => import("./pages/Settings"));
 const Leaderboard = lazy(() => import("./pages/Leaderboard"));
 const Profile = lazy(() => import("./pages/Profile"));
 const Homework = lazy(() => import("./pages/Homework"));
+const ModuleHomework = lazy(() => import("./pages/ModuleHomework"));
 
 
 // Lazy-load admin pages (code-split)
@@ -122,6 +123,9 @@ const App = () => (
             <Route path="/settings" element={<RequireAuth><Settings /></RequireAuth>} />
             <Route path="/leaderboard" element={<RequireAuth><Leaderboard /></RequireAuth>} />
             <Route path="/homework" element={<RequireAuth><Homework /></RequireAuth>} />
+            {/* Module-end homework (Darslar → module's "Uy vazifasi" step row) — module-homework
+                feature, 2026-08-18. Complements (does not replace) the Vazifa tab above. */}
+            <Route path="/homework/module/:moduleId" element={<RequireAuth><ModuleHomework /></RequireAuth>} />
             {/* Folded into Profil (Task 2.5) — the 5-tab nav's Profil tab already treats these
                 paths as Profil (see StudentBottomNav). */}
             <Route path="/badges" element={<Navigate to="/profile" replace />} />

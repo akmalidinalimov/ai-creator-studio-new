@@ -169,7 +169,15 @@
     "trialContact": "Contact an administrator to complete payment.",
     "emptyTitle": "You're not enrolled in a course yet",
     "emptyBody": "Once you enroll in a course, your lessons will appear here.",
-    "loadError": "Couldn't load lessons."
+    "loadError": "Couldn't load lessons.",
+    "homeworkStepLabel": "Homework"
+  },
+  "moduleHomework": {
+    "backToLessons": "Back to lessons",
+    "title": "Homework",
+    "loadError": "Couldn't load the homework.",
+    "emptyTitle": "No homework in this module",
+    "emptyBody": "No homework has been assigned for this module yet."
   },
   "leaderboard": {
     "title": "Leaderboard",
