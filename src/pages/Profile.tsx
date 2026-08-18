@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { Camera, Zap, TrendingUp, Trophy, Award, Globe, Bell, Eye, ChevronRight } from "lucide-react";
+import { Camera, Zap, TrendingUp, Flame, Award, Globe, Bell, Eye, ChevronRight } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
@@ -17,7 +17,6 @@ import {
   TierBadge,
   SectionHeader,
   Button,
-  StreakChip,
   EmptyState,
   Skeleton,
 } from "@/components/ui-kit";
@@ -264,18 +263,15 @@ function StudentProfile({ userId }: { userId: string | null }) {
               {groupName ? <span className="uppercase">{groupName}</span> : null}
             </div>
           )}
-          <StreakChip days={stats?.current_streak ?? 0} className="mt-2" />
         </Card>
 
-        {/* 4 stat tiles — same fields/labels as Home */}
+        {/* 4 stat tiles — matches the mockup's Profil stat grid exactly: XP / Daraja / Seriya /
+            Nishon. NOT the Home tiles (Home swaps Seriya for Reyting/rank — rank lives on the
+            Reyting screen only, per review). */}
         <div className="grid grid-cols-4 gap-2">
           <StatTile icon={<Zap />} label={t("home.statXp")} value={formatXp(totalXp, locale)} highlight />
           <StatTile icon={<TrendingUp />} label={t("home.statLevel")} value={formatXp(stats?.level ?? 1, locale)} />
-          <StatTile
-            icon={<Trophy />}
-            label={t("home.statRank")}
-            value={stats?.group_rank != null ? `#${formatXp(stats.group_rank, locale)}` : "—"}
-          />
+          <StatTile icon={<Flame />} label={t("home.statStreak")} value={formatXp(stats?.current_streak ?? 0, locale)} />
           <StatTile icon={<Award />} label={t("home.statBadges")} value={formatXp(stats?.badges_earned ?? 0, locale)} />
         </div>
 

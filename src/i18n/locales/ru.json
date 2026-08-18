@@ -122,6 +122,7 @@
     "statLevel": "Уровень",
     "statRank": "Рейтинг",
     "statBadges": "Значки",
+    "statStreak": "Серия",
     "weeklyGoalTitle": "Недельная цель",
     "weeklyGoalSubtitle": "Недельная цель · ещё {{xp}} XP",
     "weeklyGoalReached": "Недельная цель выполнена! 🎉",

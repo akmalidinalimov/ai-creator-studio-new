@@ -122,6 +122,7 @@
     "statLevel": "Level",
     "statRank": "Rank",
     "statBadges": "Badges",
+    "statStreak": "Streak",
     "weeklyGoalTitle": "Weekly goal",
     "weeklyGoalSubtitle": "Weekly goal · {{xp}} XP to go",
     "weeklyGoalReached": "Weekly goal reached! 🎉",
