@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Link, useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Button, Card, RewardChip } from "@/components/ui-kit";
+import { formatXp } from "@/lib/xp";
+import { cn } from "@/lib/utils";
 
-import { CheckCircle2, ChevronRight, ChevronLeft, Send, Sparkles, LayoutList } from "lucide-react";
+import { Check, ChevronRight, Send, Sparkles, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { ProtectedVideo } from "@/components/lesson/ProtectedVideo";
 import { BunnyVideoPlayer } from "@/components/BunnyVideoPlayer";
@@ -21,6 +22,11 @@ function normalizeAssistantLang(code?: string | null): "uz" | "ru" | "en" {
   const c = (code || "").toLowerCase().split("-")[0];
   return (SUPPORTED_ASSISTANT_LANGS as readonly string[]).includes(c) ? (c as any) : "uz";
 }
+
+// Fixed lesson-completion XP award — supabase/migrations/20260706090000_profile_gamification_phase1.sql
+// xp_on_lesson_complete() awards a flat +20 per lesson_progress.completed_at (ref-key idempotent,
+// reconciled by reconcile_all_xp()). Same constant as src/pages/Lessons.tsx (Darslar).
+const LESSON_XP = 20;
 
 export default function LessonPage() {
   const { courseId, lessonId } = useParams();
@@ -79,7 +85,7 @@ export default function LessonPage() {
     if (!lessonId || !user || !courseId) return;
     (async () => {
       const { data: l } = await supabase.from("lessons")
-        .select("id, title, description, module_id, position, published, video_provider, modules(course_id)")
+        .select("id, title, description, module_id, position, published, video_provider, duration_seconds, modules(course_id)")
         .eq("id", lessonId).maybeSingle();
       // A lesson that was unpublished/deleted (or a stale bot/bookmark deeplink)
       // returns null; without this the page span forever on the loading spinner.
@@ -226,7 +232,6 @@ export default function LessonPage() {
 
   const flat = modules.flatMap((m) => m.lessons.map((l: any) => ({ ...l, moduleTitle: m.title })));
   const idx = flat.findIndex((l: any) => l.id === lessonId);
-  const prev = idx > 0 ? flat[idx - 1] : null;
   const next = idx >= 0 && idx < flat.length - 1 ? flat[idx + 1] : null;
 
   const goNext = async () => {
@@ -325,9 +330,11 @@ export default function LessonPage() {
     <PageShell>
       <div className="max-w-md mx-auto text-center py-16 space-y-4">
         <div className="text-4xl">📭</div>
-        <h1 className="text-xl font-semibold">{t("lesson.unavailableTitle", { defaultValue: "Dars mavjud emas" })}</h1>
-        <p className="text-muted-foreground">{t("lesson.unavailableBody", { defaultValue: "Bu dars o'chirilgan yoki hozircha mavjud emas." })}</p>
-        <Button asChild><Link to={courseId ? `/course/${courseId}` : "/dashboard"}>{t("lesson.backToCourse", { defaultValue: "Kursga qaytish" })}</Link></Button>
+        <h1 className="font-display text-xl font-extrabold text-foreground">{t("lesson.unavailableTitle", { defaultValue: "Dars mavjud emas" })}</h1>
+        <p className="text-sm text-muted-foreground">{t("lesson.unavailableBody", { defaultValue: "Bu dars o'chirilgan yoki hozircha mavjud emas." })}</p>
+        <Button variant="secondary" onClick={() => navigate(courseId ? `/course/${courseId}` : "/dashboard")}>
+          {t("lesson.backToCourse", { defaultValue: "Kursga qaytish" })}
+        </Button>
       </div>
     </PageShell>
   );
@@ -384,52 +391,118 @@ export default function LessonPage() {
     );
   };
 
+  // Caption ("N-modul · N-dars") — derived from the already-loaded module tree, no fabricated data.
+  const currentModule = modules.find((m) => m.id === lesson.module_id);
+  const moduleRank = currentModule ? modules.findIndex((m) => m.id === currentModule.id) + 1 : 0;
+  const lessonRankInModule = currentModule
+    ? currentModule.lessons.findIndex((l: any) => l.id === lessonId) + 1
+    : 0;
+  const isCompleted = lessonId ? completed.has(lessonId) : false;
+  const durationMinutes = lesson.duration_seconds ? Math.max(1, Math.round(lesson.duration_seconds / 60)) : null;
+
+  // Fallback "watch → practice → submit" checklist (no per-lesson step data in the schema).
+  // Only the first item reflects real state (lesson_progress.completed_at) and is the manual
+  // completion affordance — the sole path to complete an iframe-provider lesson (no time-update
+  // tracking is wired for that provider kind; see renderPlayer above).
+  const steps = [
+    { key: "watch", label: t("lesson.steps.watch"), done: isCompleted },
+    { key: "practice", label: t("lesson.steps.practice"), done: false },
+    { key: "submit", label: t("lesson.steps.submit"), done: false },
+  ];
+
   return (
     <PageShell>
-      <div className="space-y-5 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-xs text-muted-foreground">
-          <Link to={`/course/${courseId}`} className="hover:text-foreground">AI Creators</Link>
-          <span className="mx-2">/</span>
-          <span>{lesson.title}</span>
-        </div>
+      <div className="max-w-2xl mx-auto space-y-4">
+        {moduleRank > 0 && lessonRankInModule > 0 && (
+          <div className="px-0.5 text-[12px] font-extrabold uppercase tracking-wide text-muted-foreground">
+            {t("lesson.caption", {
+              moduleN: formatXp(moduleRank, i18n.language),
+              lessonN: formatXp(lessonRankInModule, i18n.language),
+            })}
+          </div>
+        )}
 
-        <Card className="overflow-hidden bg-black shadow-elevated">
+        <Card className="overflow-hidden bg-black p-0 shadow-elevated">
           {renderPlayer()}
         </Card>
 
-        <div className="space-y-4">
-          <div className="min-w-0">
-            <h1 className="text-2xl md:text-3xl font-semibold tracking-tight break-words">{lesson.title}</h1>
-          </div>
-          <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
-            {prev && (
-              <Button variant="outline" size="sm" asChild className="w-full sm:w-auto min-h-[44px] sm:min-h-0">
-                <Link to={`/lesson/${courseId}/${prev.id}`}><ChevronLeft className="h-4 w-4" />{t("lesson.prev")}</Link>
-              </Button>
+        <div className="space-y-3">
+          <h1 className="font-display text-[21px] font-extrabold tracking-tight text-foreground break-words">
+            {lesson.title}
+          </h1>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {durationMinutes != null && (
+              <span className="text-[13px] font-semibold text-muted-foreground">
+                {t("lesson.durationMinutes", { minutes: formatXp(durationMinutes, i18n.language) })}
+              </span>
             )}
-            <Button variant="outline" size="sm" asChild className="w-full sm:w-auto min-h-[44px] sm:min-h-0">
-              <Link to={`/course/${courseId}`}><LayoutList className="h-4 w-4" />{t("lesson.allModules")}</Link>
-            </Button>
-            <Button variant="outline" size="sm" onClick={markComplete} className="w-full sm:w-auto min-h-[44px] sm:min-h-0">
-              <CheckCircle2 className="h-4 w-4" />{t("lesson.markComplete")}
+            <RewardChip>{t("lesson.xpChip", { xp: formatXp(LESSON_XP, i18n.language) })}</RewardChip>
+          </div>
+
+          {lesson.description && (
+            <p className="text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap break-words">
+              {lesson.description}
+            </p>
+          )}
+
+          <div className="space-y-2 pt-1">
+            {steps.map((step, i) => {
+              const clickable = i === 0 && !isCompleted;
+              return (
+                <div
+                  key={step.key}
+                  role={clickable ? "button" : undefined}
+                  tabIndex={clickable ? 0 : undefined}
+                  onClick={clickable ? markComplete : undefined}
+                  onKeyDown={
+                    clickable
+                      ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); markComplete(); }
+                        }
+                      : undefined
+                  }
+                  title={clickable ? t("lesson.markComplete") : undefined}
+                  className={cn(
+                    "flex items-center gap-3 rounded-xl border border-border bg-card p-3 text-[13.5px] font-bold text-foreground shadow-soft",
+                    clickable &&
+                      "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "grid size-6 flex-none place-items-center rounded-full text-xs font-extrabold",
+                      step.done ? "bg-accent text-accent-foreground" : "bg-tint text-muted-foreground",
+                    )}
+                  >
+                    {step.done ? <Check className="size-3.5" strokeWidth={3} /> : i + 1}
+                  </span>
+                  {step.label}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="grid gap-2 pt-1">
+            <Button variant="primary" block onClick={() => navigate("/homework")}>
+              <Upload className="size-4" />
+              {t("lesson.submitHomeworkCta")}
             </Button>
             {next && (
-              <Button size="sm" onClick={goNext} className="w-full sm:w-auto min-h-[44px] sm:min-h-0">
-                {t("lesson.next")}<ChevronRight className="h-4 w-4" />
+              <Button variant="ghost" block onClick={goNext}>
+                {t("lesson.nextCta", { title: next.title })}
+                <ChevronRight className="size-4" />
               </Button>
             )}
           </div>
-          {lesson.description && (
-            <Card className="p-5 text-sm leading-relaxed whitespace-pre-wrap">{lesson.description}</Card>
-          )}
         </div>
 
         {lessonId && <HomeworkSection lessonId={lessonId} />}
 
-        <Card className="shadow-soft flex flex-col" style={{ minHeight: 320 }}>
-          <div className="px-4 py-3 border-b flex items-center gap-2 flex-wrap">
-            <Sparkles className="h-4 w-4" />
-            <span className="text-sm font-medium">{t("lesson.ai.title")}</span>
+        <Card className="flex flex-col p-0" style={{ minHeight: 320 }}>
+          <div className="flex items-center gap-2 border-b px-4 py-3">
+            <Sparkles className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-bold text-foreground">{t("lesson.ai.title")}</span>
           </div>
           <div className="flex-1 max-h-[400px] overflow-y-auto p-3 space-y-3 scrollbar-thin">
             {chatHistory.length === 0 && (
@@ -438,7 +511,7 @@ export default function LessonPage() {
               </div>
             )}
             {chatHistory.map((m, i) => (
-              <div key={i} className={`text-sm rounded-lg px-3 py-2 ${m.role === "user" ? "bg-foreground text-background ml-6" : "bg-muted mr-6"}`}>
+              <div key={i} className={`text-sm rounded-lg px-3 py-2 ${m.role === "user" ? "bg-foreground text-background ml-6" : "bg-tint text-foreground mr-6"}`}>
                 <div className="prose-tight whitespace-pre-wrap">{m.content || (chatLoading && i === chatHistory.length - 1 ? "…" : "")}</div>
               </div>
             ))}
@@ -451,12 +524,12 @@ export default function LessonPage() {
                 { key: "summarize", label: t("lesson.ai.chips.summarize") },
                 { key: "stuck", label: t("lesson.ai.chips.stuck") },
               ].map((q) => (
-                <button key={q.key} onClick={() => sendChat(q.label)} disabled={chatLoading} className="text-[11px] px-2 py-1 rounded-full border hover:bg-muted disabled:opacity-50">{q.label}</button>
+                <button key={q.key} onClick={() => sendChat(q.label)} disabled={chatLoading} className="text-[11px] px-2 py-1 rounded-full border border-border hover:bg-tint disabled:opacity-50">{q.label}</button>
               ))}
             </div>
             <form onSubmit={(e) => { e.preventDefault(); sendChat(chatInput); }} className="flex gap-2">
               <Input value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder={t("lesson.ai.placeholder")} disabled={chatLoading} className="min-h-[44px]" />
-              <Button type="submit" size="icon" disabled={chatLoading || !chatInput.trim()} className="h-11 w-11 shrink-0"><Send className="h-4 w-4" /></Button>
+              <Button type="submit" variant="secondary" disabled={chatLoading || !chatInput.trim()} className="w-11 shrink-0 px-0"><Send className="h-4 w-4" /></Button>
             </form>
           </div>
         </Card>

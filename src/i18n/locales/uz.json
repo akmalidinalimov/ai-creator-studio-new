@@ -207,6 +207,16 @@
     "allModules": "Barcha modullar",
     "markedCompleteToast": "Dars tugatildi deb belgilandi",
     "watchMoreToComplete": "Tugatildi deb belgilashdan oldin darsning kamida yarmini ko'ring.",
+    "caption": "{{moduleN}}-modul · {{lessonN}}-dars",
+    "durationMinutes": "{{minutes}} daqiqa",
+    "xpChip": "+{{xp}} XP",
+    "submitHomeworkCta": "Uy vazifasini topshirish",
+    "nextCta": "Keyingi dars: {{title}}",
+    "steps": {
+      "watch": "Darsni tomosha qilish",
+      "practice": "Amaliyot qiling",
+      "submit": "Uy vazifasini topshiring"
+    },
     "video": {
       "unavailable": "Bu dars uchun video mavjud emas."
     },

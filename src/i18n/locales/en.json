@@ -207,6 +207,16 @@
     "allModules": "All modules",
     "markedCompleteToast": "Lesson marked complete",
     "watchMoreToComplete": "Watch at least half of the lesson before marking it complete.",
+    "caption": "Module {{moduleN}} · Lesson {{lessonN}}",
+    "durationMinutes": "{{minutes}} min",
+    "xpChip": "+{{xp}} XP",
+    "submitHomeworkCta": "Submit homework",
+    "nextCta": "Next lesson: {{title}}",
+    "steps": {
+      "watch": "Watch the lesson",
+      "practice": "Practice",
+      "submit": "Submit your homework"
+    },
     "video": {
       "unavailable": "Video is not available for this lesson."
     },

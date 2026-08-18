@@ -207,6 +207,16 @@
     "allModules": "Все модули",
     "markedCompleteToast": "Урок отмечен как пройденный",
     "watchMoreToComplete": "Посмотрите хотя бы половину урока, прежде чем отмечать его пройденным.",
+    "caption": "Модуль {{moduleN}} · Урок {{lessonN}}",
+    "durationMinutes": "{{minutes}} мин",
+    "xpChip": "+{{xp}} XP",
+    "submitHomeworkCta": "Сдать домашнее задание",
+    "nextCta": "Следующий урок: {{title}}",
+    "steps": {
+      "watch": "Посмотреть урок",
+      "practice": "Потренироваться",
+      "submit": "Сдать домашнее задание"
+    },
     "video": {
       "unavailable": "Видео недоступно для этого урока."
     },
