@@ -3021,7 +3021,24 @@ async function handleAdminCommand(
 }
 
 async function teacherGroups(admin: any, teacherId: string): Promise<{ id: string; name: string }[]> {
-  const { data } = await admin.from("groups").select("id, name").eq("teacher_id", teacherId);
+  // Feature 2 Stage B: junction-aware. A group's teachers = groups.teacher_id (primary) ∪
+  // group_teachers.teacher_id (co-teachers). This is the single read-side primitive that
+  // gradingScopeIds / teacherStudentIds / resolveActiveGroup all funnel through, so a co-teacher's
+  // grading scope, student visibility, and group picker all become junction-aware from this one edit.
+  // Read both tables directly (rather than the teacher_group_ids() RPC) so this stays uniform with
+  // notifyTeachersOfSubmission's direct read and carries no dependency on the RPC's setof-uuid wire
+  // shape. Primary ∪ junction is kept explicit (not junction-only) so it is correct even before the
+  // backfill/primary-sync trigger has mirrored a primary into group_teachers.
+  const [{ data: prim }, { data: gt }] = await Promise.all([
+    admin.from("groups").select("id").eq("teacher_id", teacherId),
+    admin.from("group_teachers").select("group_id").eq("teacher_id", teacherId),
+  ]);
+  const ids = Array.from(new Set([
+    ...((prim || []) as any[]).map((g: any) => g.id),
+    ...((gt || []) as any[]).map((r: any) => r.group_id),
+  ]));
+  if (!ids.length) return [];
+  const { data } = await admin.from("groups").select("id, name").in("id", ids);
   return (data || []) as any[];
 }
 
@@ -6038,9 +6055,18 @@ async function notifyTeachersOfSubmission(
       } catch { /* ignore */ }
       return;
     }
-    const { data: g } = await admin.from("groups").select("teacher_id").eq("id", groupId).maybeSingle();
-    const teacherId = g?.teacher_id;
-    if (!teacherId) {
+    // Feature 2 Stage B: fan out to EVERY teacher of the group — primary (groups.teacher_id) ∪
+    // co-teachers (group_teachers) — so a co-teacher is notified IMMEDIATELY (not only via the 15-min
+    // reconciler). Attribution/analytics elsewhere (anon-admin, teacher-stats) stay primary-only.
+    const [{ data: g }, { data: gt }] = await Promise.all([
+      admin.from("groups").select("teacher_id").eq("id", groupId).maybeSingle(),
+      admin.from("group_teachers").select("teacher_id").eq("group_id", groupId),
+    ]);
+    const teacherIds = Array.from(new Set([
+      ...(g?.teacher_id ? [g.teacher_id] : []),
+      ...((gt || []) as any[]).map((r: any) => r.teacher_id),
+    ]));
+    if (teacherIds.length === 0) {
       try {
         await admin.from("admin_actions").insert({
           actor_user_id: studentProfile.id,
@@ -6056,15 +6082,16 @@ async function notifyTeachersOfSubmission(
 
     // Throttle: only dedupe DMs for the EXACT same submission row (e.g. webhook retries).
     // Resubmissions reuse the submission row but get a fresh telegram_message_url + reset score,
-    // so they must always queue a new DM — see plan v3.14.38.
+    // so they must always queue a new DM — see plan v3.14.38. Now keyed PER-TEACHER (teacher_id in
+    // the select) so one teacher's existing row never dedupes another co-teacher's DM. No .limit()
+    // here: with N co-teachers a submission legitimately has up to N rows per message_url, so a small
+    // cap could truncate the set and let a dup slip through — the row set per submission is tiny.
     const { data: recent } = await admin
       .from("homework_teacher_dm_queue")
-      .select("id, message_url")
-      .eq("submission_id", submissionId)
-      .limit(5);
-    if (recent && recent.some((r: any) => r.message_url === messageUrl)) return;
+      .select("id, teacher_id, message_url")
+      .eq("submission_id", submissionId);
 
-    // Quiet hours 22:00–08:00 Tashkent
+    // Quiet hours 22:00–08:00 Tashkent (teacher-independent — computed ONCE before the fan-out loop)
     const now = new Date();
     const tashHour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Tashkent", hour: "2-digit", hour12: false }).format(now));
     let scheduled = now;
@@ -6082,88 +6109,109 @@ async function notifyTeachersOfSubmission(
 
     // Name + @username: teachers recognize students by handle at least as often as by name.
     // Baked into student_name so BOTH delivery paths (immediate DM + quiet-hours queue cron)
-    // show it without touching the queue schema or the cron renderer.
+    // show it without touching the queue schema or the cron renderer. Teacher-independent.
     const _uname = (studentProfile.telegram_username || "").toString().trim().replace(/^@/, "");
     const studentName = ([studentProfile.name, studentProfile.last_name].filter(Boolean).join(" ") || "—")
       + (_uname ? ` (@${_uname})` : "");
 
-    const { data: queued, error: queueErr } = await admin.from("homework_teacher_dm_queue").insert({
-      submission_id: submissionId,
-      teacher_id: teacherId,
-      student_id: studentProfile.id,
-      group_id: groupId,
-      module_id: moduleId,
-      assignment_id: assignmentId,
-      module_number: mn,
-      task_number: tn,
-      assignment_title: aTitle,
-      student_name: studentName,
-      message_url: messageUrl,
-      scheduled_for: scheduled.toISOString(),
-      queued_for_quiet_hours: quiet,
-    }).select("id").maybeSingle();
-    if (queueErr) {
-      // Class-A/C fix (2026-08-18 review): this insert's error used to be silently discarded
-      // (`const { data: queued } = ...`, error never named) — supabase-js does not throw on a
-      // Postgres error. Outside quiet hours the immediate-send block below still fires regardless
-      // (unchanged — no `queued` gate on it), so the teacher is usually still notified; DURING
-      // quiet hours there is no fallback at all, so a masked failure here meant a permanently,
-      // invisibly missed teacher DM with no cron row to ever deliver it. Make it DB-visible.
-      console.error("hw:teacher-dm-queue-insert-failed", JSON.stringify({ submission_id: submissionId, err: queueErr.message }));
-      try {
-        await admin.from("admin_actions").insert({
-          actor_user_id: studentProfile.id,
-          action: "homework_submission_dm_sent",
-          target_user_id: null,
-          target_resource_type: "homework_submission",
-          target_resource_id: submissionId,
-          details: { reason: "enqueue_failed", student_id: studentProfile.id, group_id: groupId, module_id: moduleId, message_url: messageUrl, queued: false, error: queueErr.message },
-        });
-      } catch (_e) { /* best-effort health signal; already console.error'd above */ }
-    }
+    // Immediate-DM body + inline keyboard are teacher-independent too → build ONCE, reuse per teacher.
+    const { data: grp } = await admin.from("groups").select("name").eq("id", groupId).maybeSingle();
+    // A3: the step is shown here (tn is sap-aware) so the teacher sees "Modul 3 · Vazifa 1".
+    const moduleName = `Modul ${mn} · Vazifa ${tn}`;
+    // A4: an auto-GUESSED attribution (student ignored the picker) carries the "(taxminiy)" marker
+    // on aTitle. Make it loud + give the teacher a one-tap ✏️ retag right on the notification.
+    const guessed = /\(taxminiy\)/.test(aTitle || "");
+    const body = hwTeacherBody(studentName, grp?.name || "—", moduleName, aTitle || "")
+      + (guessed ? "\n\n⚠️ <b>Avto-belgilangan</b> — vazifa taxminan tanlandi. Noto'g'ri bo'lsa ✏️ bilan to'g'rilang." : "");
+    // grade:open:<submissionId> = 47 bytes; hwmv:<submissionId> = 41 bytes. Both under Telegram's
+    // 64-byte callback_data cap (the previous grade_task:<assignmentId>:<studentId> was 84 → BUTTON_DATA_INVALID).
+    const inlineKb = [
+      [{ text: "🎯 Baholash", callback_data: `grade:open:${submissionId}` }],
+      ...(guessed ? [[{ text: "✏️ Vazifani o'zgartirish", callback_data: `hwmv:${submissionId}` }]] : []),
+      [{ text: "📌 Topikga o'tish", url: messageUrl }],
+    ];
 
-    // Immediate teacher DM (skip during quiet hours so cron delivers at 08:00)
-    if (!quiet) {
-      const { data: teacher } = await admin
-        .from("profiles")
-        .select("id, telegram_id, notifications_enabled, name, last_name")
-        .eq("id", teacherId)
-        .maybeSingle();
-      if (!teacher?.telegram_id || teacher.notifications_enabled === false) {
-        console.log("hw:group:teacher-skip", JSON.stringify({ teacher_id: teacherId, has_tg: !!teacher?.telegram_id, notif: teacher?.notifications_enabled }));
-      } else {
-        const { data: grp } = await admin.from("groups").select("name").eq("id", groupId).maybeSingle();
-        // A3: the step is now shown here too (tn is sap-aware) so the teacher sees "Modul 3 · Vazifa 1".
-        const moduleName = `Modul ${mn} · Vazifa ${tn}`;
-        // A4: an auto-GUESSED attribution (student ignored the picker) carries the "(taxminiy)" marker
-        // on aTitle. Make it loud + give the teacher a one-tap ✏️ retag right on the notification.
-        const guessed = /\(taxminiy\)/.test(aTitle || "");
-        const body = hwTeacherBody(studentName, grp?.name || "—", moduleName, aTitle || "")
-          + (guessed ? "\n\n⚠️ <b>Avto-belgilangan</b> — vazifa taxminan tanlandi. Noto'g'ri bo'lsa ✏️ bilan to'g'rilang." : "");
-        // grade:open:<submissionId> = 47 bytes; hwmv:<submissionId> = 41 bytes. Both under Telegram's
-        // 64-byte callback_data cap (the previous grade_task:<assignmentId>:<studentId> was 84 → BUTTON_DATA_INVALID).
-        const inlineKb = [
-          [{ text: "🎯 Baholash", callback_data: `grade:open:${submissionId}` }],
-          ...(guessed ? [[{ text: "✏️ Vazifani o'zgartirish", callback_data: `hwmv:${submissionId}` }]] : []),
-          [{ text: "📌 Topikga o'tish", url: messageUrl }],
-        ];
+    // Fan out: one queue row + one immediate DM per teacher (primary ∪ co-teachers).
+    for (const teacherId of teacherIds) {
+      // Per-teacher webhook-retry dedupe: THIS teacher already has a row for THIS exact message_url.
+      if ((recent || []).some((r: any) => r.teacher_id === teacherId && r.message_url === messageUrl)) continue;
+
+      // NOTE on the enqueue mechanism: the spec asked for
+      //   .upsert(row, { onConflict: "submission_id,teacher_id,message_url", ignoreDuplicates: true })
+      // to be race-safe against the reconciler's uq_dm_submission_teacher_msg unique index. That index
+      // is PARTIAL (`... WHERE message_url IS NOT NULL`), and PostgREST's on_conflict emits the TARGETED
+      // form `ON CONFLICT (cols)` with no predicate → Postgres cannot infer a partial index and raises
+      // 42P10 on EVERY insert (verified via EXPLAIN on prod). That would break enqueue outright and,
+      // during quiet hours, permanently lose the DM. The DB-side reconciler avoids this by using the
+      // TARGET-LESS `on conflict do nothing`, which supabase-js cannot express. So we faithfully realize
+      // the SAME intent with .insert() + app-level dedupe (above) + treating the benign unique-violation
+      // (23505) from a genuine concurrent writer as a no-op — NOT a health-signal failure. Any OTHER
+      // error still trips the load-bearing enqueue_failed signal below (byte-for-byte with before).
+      const { data: queued, error: queueErr } = await admin.from("homework_teacher_dm_queue").insert({
+        submission_id: submissionId,
+        teacher_id: teacherId,
+        student_id: studentProfile.id,
+        group_id: groupId,
+        module_id: moduleId,
+        assignment_id: assignmentId,
+        module_number: mn,
+        task_number: tn,
+        assignment_title: aTitle,
+        student_name: studentName,
+        message_url: messageUrl,
+        scheduled_for: scheduled.toISOString(),
+        queued_for_quiet_hours: quiet,
+      }).select("id").maybeSingle();
+      if (queueErr && queueErr.code !== "23505") {
+        // Class-A/C fix (2026-08-18 review): this insert's error used to be silently discarded
+        // (`const { data: queued } = ...`, error never named) — supabase-js does not throw on a
+        // Postgres error. Outside quiet hours the immediate-send block below still fires regardless
+        // (unchanged — no `queued` gate on it), so the teacher is usually still notified; DURING
+        // quiet hours there is no fallback at all, so a masked failure here meant a permanently,
+        // invisibly missed teacher DM with no cron row to ever deliver it. Make it DB-visible.
+        // (23505 = a concurrent writer already inserted this exact row → benign no-op, per above.)
+        console.error("hw:teacher-dm-queue-insert-failed", JSON.stringify({ submission_id: submissionId, teacher_id: teacherId, err: queueErr.message }));
         try {
-          const resp = await sendMessage(Number(teacher.telegram_id), body, { inline_keyboard: inlineKb });
-          let okBody: any = null;
-          try { okBody = await resp.clone().json(); } catch { /* ignore */ }
-          if (resp.ok && okBody?.ok) {
-            if (queued?.id) {
-              await admin.from("homework_teacher_dm_queue").update({ sent_at: new Date().toISOString() }).eq("id", queued.id);
+          await admin.from("admin_actions").insert({
+            actor_user_id: studentProfile.id,
+            action: "homework_submission_dm_sent",
+            target_user_id: null,
+            target_resource_type: "homework_submission",
+            target_resource_id: submissionId,
+            details: { reason: "enqueue_failed", student_id: studentProfile.id, teacher_id: teacherId, group_id: groupId, module_id: moduleId, message_url: messageUrl, queued: false, error: queueErr.message },
+          });
+        } catch (_e) { /* best-effort health signal; already console.error'd above */ }
+      }
+
+      // Immediate teacher DM (skip during quiet hours so cron delivers at 08:00). Per-send try/catch
+      // keeps one teacher's send failure from aborting the fan-out to the others.
+      if (!quiet) {
+        const { data: teacher } = await admin
+          .from("profiles")
+          .select("id, telegram_id, notifications_enabled, name, last_name")
+          .eq("id", teacherId)
+          .maybeSingle();
+        if (!teacher?.telegram_id || teacher.notifications_enabled === false) {
+          console.log("hw:group:teacher-skip", JSON.stringify({ teacher_id: teacherId, has_tg: !!teacher?.telegram_id, notif: teacher?.notifications_enabled }));
+        } else {
+          try {
+            const resp = await sendMessage(Number(teacher.telegram_id), body, { inline_keyboard: inlineKb });
+            let okBody: any = null;
+            try { okBody = await resp.clone().json(); } catch { /* ignore */ }
+            if (resp.ok && okBody?.ok) {
+              if (queued?.id) {
+                await admin.from("homework_teacher_dm_queue").update({ sent_at: new Date().toISOString() }).eq("id", queued.id);
+              }
+              console.log("hw:group:teacher-dm-ok", JSON.stringify({ teacher_id: teacherId, submission_id: submissionId }));
+            } else {
+              const errTxt = okBody ? JSON.stringify(okBody).slice(0, 200) : await resp.text().catch(() => "");
+              console.error("hw:group:teacher-dm-fail", JSON.stringify({ teacher_id: teacherId, status: resp.status, err: String(errTxt).slice(0, 200) }));
+              // leave queue row unsent so cron retries
             }
-            console.log("hw:group:teacher-dm-ok", JSON.stringify({ teacher_id: teacherId, submission_id: submissionId }));
-          } else {
-            const errTxt = okBody ? JSON.stringify(okBody).slice(0, 200) : await resp.text().catch(() => "");
-            console.error("hw:group:teacher-dm-fail", JSON.stringify({ teacher_id: teacherId, status: resp.status, err: String(errTxt).slice(0, 200) }));
+          } catch (e) {
+            console.log("teacher_dm_immediate_failed", JSON.stringify({ teacher_id: teacherId, err: String(e) }));
             // leave queue row unsent so cron retries
           }
-        } catch (e) {
-          console.log("teacher_dm_immediate_failed", JSON.stringify({ teacher_id: teacherId, err: String(e) }));
-          // leave queue row unsent so cron retries
         }
       }
     }
