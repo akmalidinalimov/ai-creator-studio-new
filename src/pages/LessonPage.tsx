@@ -7,13 +7,11 @@ import { PageShell } from "@/components/Layout";
 import { Input } from "@/components/ui/input";
 import { Button, Card, RewardChip, Skeleton, EmptyState, Celebrate } from "@/components/ui-kit";
 import { formatXp } from "@/lib/xp";
-import { cn } from "@/lib/utils";
 
-import { Check, ChevronLeft, ChevronRight, Send, Sparkles, Upload } from "lucide-react";
+import { BookOpen, Check, ChevronLeft, ChevronRight, Sparkles, Send } from "lucide-react";
 import { toast } from "sonner";
 import { ProtectedVideo } from "@/components/lesson/ProtectedVideo";
 import { BunnyVideoPlayer } from "@/components/BunnyVideoPlayer";
-import { HomeworkSection } from "@/components/lesson/HomeworkSection";
 
 /** Full-screen celebration overlay (Task 2.7) — same pattern as Dashboard.tsx's local
  *  CelebrationOverlay (duplicated rather than shared: ui-kit's `Celebrate` is a content block,
@@ -522,16 +520,6 @@ export default function LessonPage() {
   const isCompleted = lessonId ? completed.has(lessonId) : false;
   const durationMinutes = lesson.duration_seconds ? Math.max(1, Math.round(lesson.duration_seconds / 60)) : null;
 
-  // Fallback "watch → practice → submit" checklist (no per-lesson step data in the schema).
-  // Only the first item reflects real state (lesson_progress.completed_at) and is the manual
-  // completion affordance — the sole path to complete an iframe-provider lesson (no time-update
-  // tracking is wired for that provider kind; see renderPlayer above).
-  const steps = [
-    { key: "watch", label: t("lesson.steps.watch"), done: isCompleted },
-    { key: "practice", label: t("lesson.steps.practice"), done: false },
-    { key: "submit", label: t("lesson.steps.submit"), done: false },
-  ];
-
   return (
     <PageShell>
       {showCelebrate && (
@@ -590,70 +578,49 @@ export default function LessonPage() {
             </p>
           )}
 
-          <div className="space-y-2 pt-1">
-            {steps.map((step, i) => {
-              const clickable = i === 0 && !isCompleted;
-              return (
-                <div
-                  key={step.key}
-                  role={clickable ? "button" : undefined}
-                  tabIndex={clickable ? 0 : undefined}
-                  onClick={clickable ? markComplete : undefined}
-                  onKeyDown={
-                    clickable
-                      ? (e) => {
-                          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); markComplete(); }
-                        }
-                      : undefined
-                  }
-                  title={clickable ? t("lesson.markComplete") : undefined}
-                  aria-label={clickable ? t("lesson.markComplete") : undefined}
-                  className={cn(
-                    "flex items-center gap-3 rounded-xl border p-3 text-[13.5px] font-bold text-foreground shadow-soft",
-                    clickable
-                      ? "border-cta/45 bg-accent-soft cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                      : "border-border bg-card",
-                  )}
-                >
-                  {/* Clickable (incomplete, watch step) = empty checkbox ring, no number — a clear
-                      "tap to check off" affordance distinct from the plain numbered decorative rows
-                      below it. Done = filled cta circle + check. Otherwise = plain numbered circle. */}
-                  <span
-                    className={cn(
-                      "grid size-6 flex-none place-items-center rounded-full text-xs font-extrabold",
-                      step.done
-                        ? "bg-cta text-cta-foreground"
-                        : clickable
-                          ? "border-2 border-cta bg-transparent text-cta"
-                          : "bg-tint text-muted-foreground",
-                    )}
-                  >
-                    {step.done ? <Check className="size-3.5" strokeWidth={3} /> : clickable ? null : i + 1}
-                  </span>
-                  <span className="flex-1">{step.label}</span>
-                  {clickable && <ChevronRight className="size-4 flex-none text-cta" />}
-                </div>
-              );
-            })}
-          </div>
-
+          {/* Three explicit action buttons (replaces the old watch/practice/submit checklist).
+              "Videoni ko'rib bo'ldim" is the ONLY completion affordance for iframe/embed lessons
+              (no time-update tracking is wired for that provider kind; see renderPlayer above) —
+              it must stay wired to the real markComplete/writeComplete + XP path. Coral discipline:
+              exactly one `variant="primary"` (bg-cta) button on screen at a time — the watch button
+              while incomplete, promoted to "Keyingi Darslik" once the lesson is done. Homework has
+              no button here anymore; it lives only in the Vazifa tab (bottom nav). */}
           <div className="grid gap-2 pt-1">
-            <Button variant="primary" block onClick={() => navigate("/homework")}>
-              <Upload className="size-4" />
-              {t("lesson.submitHomeworkCta")}
+            <Button
+              variant={isCompleted ? "ghost" : "primary"}
+              block
+              disabled={isCompleted}
+              onClick={isCompleted ? undefined : markComplete}
+              className={isCompleted ? "text-muted-foreground" : undefined}
+            >
+              {isCompleted ? (
+                t("lesson.watchedAlready")
+              ) : (
+                <>
+                  <Check className="size-4" strokeWidth={3} />
+                  {t("lesson.watchedDone")}
+                </>
+              )}
             </Button>
-            {next && (
-              // min-w-0 on the text span lets it truncate instead of forcing the button (and the
-              // page) wider than the viewport — the title is unbounded student-authored content.
-              <Button variant="ghost" block onClick={goNext}>
-                <span className="min-w-0 truncate">{t("lesson.nextCta", { title: next.title })}</span>
-                <ChevronRight className="size-4" />
-              </Button>
-            )}
+
+            <Button
+              variant={isCompleted ? "primary" : "secondary"}
+              block
+              disabled={!next}
+              onClick={next ? goNext : undefined}
+            >
+              {/* min-w-0 on the text span lets it truncate instead of forcing the button (and the
+                  page) wider than the viewport. */}
+              <span className="min-w-0 truncate">{t("lesson.nextLesson")}</span>
+              <ChevronRight className="size-4 flex-none" />
+            </Button>
+
+            <Button variant="ghost" block onClick={() => navigate("/lessons")}>
+              <BookOpen className="size-4" />
+              {t("lesson.courseModules")}
+            </Button>
           </div>
         </div>
-
-        {lessonId && <HomeworkSection lessonId={lessonId} />}
 
         <Card className="flex flex-col p-0" style={{ minHeight: 320 }}>
           <div className="flex items-center gap-2 border-b px-4 py-3">

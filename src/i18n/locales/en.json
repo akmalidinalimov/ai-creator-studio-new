@@ -292,13 +292,10 @@
     "caption": "Module {{moduleN}} · {{moduleTitle}} · Lesson {{lessonN}}/{{total}}",
     "durationMinutes": "{{minutes}} min",
     "xpChip": "+{{xp}} XP",
-    "submitHomeworkCta": "Submit homework",
-    "nextCta": "Next lesson: {{title}}",
-    "steps": {
-      "watch": "Watch the lesson",
-      "practice": "Practice",
-      "submit": "Submit your homework"
-    },
+    "watchedDone": "I've watched the video",
+    "watchedAlready": "✓ Watched",
+    "nextLesson": "Next lesson",
+    "courseModules": "Course modules",
     "video": {
       "unavailable": "Video is not available for this lesson."
     },

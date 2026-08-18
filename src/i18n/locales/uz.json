@@ -292,13 +292,10 @@
     "caption": "{{moduleN}}-modul · {{moduleTitle}} · {{lessonN}}/{{total}}-dars",
     "durationMinutes": "{{minutes}} daqiqa",
     "xpChip": "+{{xp}} XP",
-    "submitHomeworkCta": "Uy vazifasini topshirish",
-    "nextCta": "Keyingi dars: {{title}}",
-    "steps": {
-      "watch": "Darsni tomosha qilish",
-      "practice": "Amaliyot qiling",
-      "submit": "Uy vazifasini topshiring"
-    },
+    "watchedDone": "Videoni ko'rib bo'ldim",
+    "watchedAlready": "✓ Ko'rildi",
+    "nextLesson": "Keyingi Darslik",
+    "courseModules": "Kurs Modullari",
     "video": {
       "unavailable": "Bu dars uchun video mavjud emas."
     },

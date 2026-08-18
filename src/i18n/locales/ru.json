@@ -292,13 +292,10 @@
     "caption": "Модуль {{moduleN}} · {{moduleTitle}} · Урок {{lessonN}}/{{total}}",
     "durationMinutes": "{{minutes}} мин",
     "xpChip": "+{{xp}} XP",
-    "submitHomeworkCta": "Сдать домашнее задание",
-    "nextCta": "Следующий урок: {{title}}",
-    "steps": {
-      "watch": "Посмотреть урок",
-      "practice": "Потренироваться",
-      "submit": "Сдать домашнее задание"
-    },
+    "watchedDone": "Я посмотрел видео",
+    "watchedAlready": "✓ Просмотрено",
+    "nextLesson": "Следующий урок",
+    "courseModules": "Модули курса",
     "video": {
       "unavailable": "Видео недоступно для этого урока."
     },
