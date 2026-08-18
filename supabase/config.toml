@@ -139,3 +139,9 @@ verify_jwt = false
 # (CLAUDE_AGENT_SECRET env) — NOT a user session. Dormant until that secret is set. heartbeat/claim/report.
 [functions.claude-agent]
 verify_jwt = false
+
+# submit-homework: Mini App in-app homework submission. Requires a logged-in student's Supabase
+# session JWT (verify_jwt=true) — resolves the caller via auth.getUser(jwt), then writes with the
+# service-role client. See supabase/functions/submit-homework/index.ts for the full contract.
+[functions.submit-homework]
+verify_jwt = true
