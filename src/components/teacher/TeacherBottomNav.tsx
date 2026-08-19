@@ -8,9 +8,9 @@ import { usePendingGrading } from "@/hooks/usePendingGrading";
  * `env(safe-area-inset-bottom)` padding, `grid grid-cols-4 h-14`, and active-route styling
  * (`text-primary font-semibold`). Uzbek labels.
  *
- * Bosh + Baholash are live in Phase 1; Guruhlar + Statistika are Phase 2 → rendered DISABLED
- * (non-navigable, dimmed, "tez orada"). Baholash carries a coral (`bg-cta`) count badge fed by
- * `usePendingGrading().count`.
+ * Bosh + Baholash are live in Phase 1; Guruhlar went live in Phase 2 (Task 1). Statistika is still
+ * Phase 2 (Task 3) → rendered DISABLED (non-navigable, dimmed, "tez orada"). Baholash carries a
+ * coral (`bg-cta`) count badge fed by `usePendingGrading().count`.
  *
  * NOTE: unlike `StudentBottomNav` this is NOT `md:hidden` — the teacher shell has no other nav,
  * so the bar must stay visible at every width (the shell is mobile-first / `max-w-2xl` anyway).
@@ -37,7 +37,12 @@ export function TeacherBottomNav() {
       match: (p) => p.startsWith("/tg/teacher/grade"),
       badge: count,
     },
-    { to: "/tg/teacher/groups", label: "Guruhlar", icon: Users, match: () => false, disabled: true },
+    {
+      to: "/tg/teacher/groups",
+      label: "Guruhlar",
+      icon: Users,
+      match: (p) => p.startsWith("/tg/teacher/groups"),
+    },
     { to: "/tg/teacher/stats", label: "Statistika", icon: BarChart3, match: () => false, disabled: true },
   ];
 
