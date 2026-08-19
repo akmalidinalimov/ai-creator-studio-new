@@ -12,6 +12,7 @@ import ImpersonationBanner from "@/components/ImpersonationBanner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { MiniAppProvider } from "@/lib/telegram/MiniAppContext";
 import { TelegramGate } from "@/lib/telegram/TelegramGate";
+import { TeacherShell } from "@/components/teacher/TeacherShell";
 
 const StudentOrStaffRedirect = ({ children }: { children: JSX.Element }) => {
   const { role } = useAuth();
@@ -64,6 +65,9 @@ const AdminNotifications = lazy(() => import("./pages/admin/AdminNotifications")
 const AdminBroadcast = lazy(() => import("./pages/admin/AdminBroadcast"));
 const TgBroadcast = lazy(() => import("./pages/TgBroadcast"));
 const TgGroupBoard = lazy(() => import("./pages/TgGroupBoard"));
+// Teacher Mini App (/tg/teacher/*) — staff-only mobile shell (Phase 1).
+const TeacherHome = lazy(() => import("./pages/teacher/TeacherHome"));
+const TeacherGrade = lazy(() => import("./pages/teacher/TeacherGrade"));
 const AdminGroups = lazy(() => import("./pages/admin/AdminGroups"));
 const GroupDetail = lazy(() => import("./pages/admin/GroupDetail"));
 const AdminHomework = lazy(() => import("./pages/admin/AdminHomework"));
@@ -112,6 +116,10 @@ const App = () => (
             <Route path="/intake" element={<SalesIntake />} />
             <Route path="/tg/broadcast" element={<Suspense fallback={<AdminFallback />}><TgBroadcast /></Suspense>} />
             <Route path="/tg/group-board" element={<Suspense fallback={<AdminFallback />}><TgGroupBoard /></Suspense>} />
+            {/* Teacher Mini App (staff-only). RequireAuth staffOnly bounces students to /dashboard
+                before TeacherShell renders. TeacherShell + pages fleshed out in Tasks 4/5/6. */}
+            <Route path="/tg/teacher" element={<RequireAuth staffOnly><TeacherShell><Suspense fallback={<AdminFallback />}><TeacherHome /></Suspense></TeacherShell></RequireAuth>} />
+            <Route path="/tg/teacher/grade" element={<RequireAuth staffOnly><TeacherShell><Suspense fallback={<AdminFallback />}><TeacherGrade /></Suspense></TeacherShell></RequireAuth>} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/terms" element={<Terms />} />
 

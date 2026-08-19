@@ -1333,6 +1333,10 @@ async function runMigrationBroadcast(admin: any, mode: "test" | "all") {
   const BATCH = 100;
   const batch = pending.slice(0, BATCH);
 
+  // This path is reached via the internal ops branch, which bypasses the top-level priming — prime
+  // the Mini App kill-switch here so the persistent teacher keyboards sent below reflect it too.
+  try { await loadTeacherMiniAppEnabled(admin); } catch (_e) { /* best-effort */ }
+
   let ok = 0, fail = 0;
   const failures: string[] = [];
   for (const p of batch) {
@@ -1409,15 +1413,68 @@ function getAdminKeyboard(locale: Locale) {
   };
 }
 
+// ── Teacher Mini App entry wiring (Phase 1, Task 7) ───────────────────────────────────────────
+// Web-app buttons must point at the BotFather-registered https domain — NOT the getSiteUrl
+// clean-domain override (which may not be registered for Mini Apps). Mirror the admin /tg/broadcast
+// web_app button (which hardcodes this same canonical domain).
+const MINIAPP_BASE = SITE_URL || "https://www.aicreator.academy";
+
+// Kill-switch: platform_settings.teacher_miniapp = {"enabled": bool} (Task-1 migration seeds true).
+// An ABSENT row defaults to ENABLED (matches the seed); a PRESENT row enables ONLY on literal true,
+// so any false/malformed value disables the Mini App entry (📝 Baholash + ☰ fall back to the plain
+// bot command). Cached ~60s; primed once per request so every teacher-keyboard render reflects state.
+let __teacherMiniAppEnabled: { on: boolean; at: number } | null = null;
+async function loadTeacherMiniAppEnabled(admin: any): Promise<boolean> {
+  if (__teacherMiniAppEnabled && Date.now() - __teacherMiniAppEnabled.at < 60_000) return __teacherMiniAppEnabled.on;
+  let on = true; // absent row → enabled (seed is {"enabled": true})
+  try {
+    const { data } = await admin.from("platform_settings").select("value").eq("key", "teacher_miniapp").maybeSingle();
+    if (data) on = (data.value as any)?.enabled === true; // present row: only literal true enables
+  } catch (e) {
+    // Health signal: a persistent read failure keeps the enabled default (fail-open) — log so a
+    // systemic platform_settings/DB problem is visible instead of silently masked.
+    console.error("teacher-miniapp: kill-switch read failed", e);
+  }
+  __teacherMiniAppEnabled = { on, at: Date.now() };
+  return on;
+}
+
+// Per-teacher ☰ menu button → Mini App home (enabled) or reset to default (kill-switch off).
+// Best-effort + in-memory throttled (1h per chat+state) so we never hit the Telegram API on every DM.
+// Never throws; on failure the state isn't cached, so it retries on the teacher's next interaction.
+const __teacherMenuBtn = new Map<number, { on: boolean; locale: Locale; at: number }>();
+async function syncTeacherMenuButton(chatId: number, enabled: boolean, locale: Locale) {
+  const prev = __teacherMenuBtn.get(chatId);
+  if (prev && prev.on === enabled && prev.locale === locale && Date.now() - prev.at < 3_600_000) return;
+  try {
+    await tgApi("setChatMenuButton", {
+      chat_id: chatId,
+      menu_button: enabled
+        ? { type: "web_app", text: `📝 ${PROF_T[locale].profTeacher}`, web_app: { url: `${MINIAPP_BASE}/tg/teacher` } }
+        : { type: "default" },
+    });
+    __teacherMenuBtn.set(chatId, { on: enabled, locale, at: Date.now() });
+  } catch (e) {
+    // Health signal: a systemic failure (e.g. domain not registered, API change) would otherwise be
+    // invisible. Best-effort — never rethrows; state isn't cached, so it retries next interaction.
+    console.error("teacher-miniapp: setChatMenuButton failed", e);
+  }
+}
+
 function getTeacherKeyboard(locale: Locale, pendingCount?: number) {
   const t = T[locale] as any;
   // "Data-Six" layout — ranked by 2 months of real taps (Baholash 848 ≫
   // Statistika 148 > Vazifalar 73 > Talabalarim 38 > Xabar 15). Occasional
   // items (TOP, Faolsizlar, Sozlamalar, Til, group switching) live in 👤 Profil.
   const grade = pendingCount && pendingCount > 0 ? `${t.tKbGrade} (${pendingCount})` : t.tKbGrade;
+  // Mini App entry (kill-switch above): enabled → 📝 Baholash opens the mobile grading Mini App;
+  // disabled → plain text button (maps to /baholash, the existing bot grading flow — unchanged).
+  const gradeBtn = __teacherMiniAppEnabled?.on
+    ? { text: grade, web_app: { url: `${MINIAPP_BASE}/tg/teacher/grade` } }
+    : { text: grade };
   return {
     keyboard: [
-      [{ text: grade }],
+      [gradeBtn],
       [{ text: t.tKbStats }, { text: t.tKbHomework }],
       [{ text: t.tKbStudents }, { text: t.tKbBroadcast }],
       [{ text: PROF_T[locale].kbProfil }],
@@ -7241,6 +7298,11 @@ Deno.serve(async (req) => {
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
+  // Prime the teacher Mini App kill-switch (60s-cached) so every teacher-keyboard render in this
+  // invocation reflects the current state. Best-effort — on failure the keyboard falls back to the
+  // plain bot command.
+  try { await loadTeacherMiniAppEnabled(admin); } catch (_e) { /* best-effort */ }
+
   // Diagnostic: log every incoming update shape (top-level keys + chat type/thread)
   try {
     const topKeys = Object.keys(update).filter((k) => k !== "update_id");
@@ -7360,6 +7422,13 @@ Deno.serve(async (req) => {
 
       const persona: Persona = profileForLocale ? await getPersona(admin, profileForLocale.id) : "student";
       const adminFlag = persona === "admin";
+
+      // Teacher Mini App (Task 7): best-effort set the ☰ menu button → Mini App (kill-switch on) or
+      // reset to default (off). Staff-only (teacher/admin) + private-chat only — students never get it.
+      // Throttled 1h/chat; wrapped so it can never block or break the teacher's actual interaction.
+      if (isPrivateChat && (persona === "teacher" || persona === "admin")) {
+        try { await syncTeacherMenuButton(msg.chat.id, __teacherMiniAppEnabled?.on === true, locale); } catch (_e) { /* best-effort */ }
+      }
 
       // U1: students WILL try DMing homework media to the bot. Point them to their group's
       // homework topic instead of ignoring them (rate-limited 15 min).

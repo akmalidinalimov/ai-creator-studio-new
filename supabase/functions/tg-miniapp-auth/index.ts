@@ -74,13 +74,17 @@ async function cachedIsMember(chatId: number, tgId: number): Promise<boolean | n
   return v;
 }
 
-function targetPath(startParam?: string): string {
+// Where the Mini App lands after auth. An explicit `start_param` deep-link always wins (student
+// paths), so a teacher who followed e.g. a ?startapp=hw link still reaches homework. Only the
+// DEFAULT (no/unknown start_param) is role-aware: staff land on the teacher Mini App, students on
+// their dashboard (unchanged).
+function targetPath(startParam: string | undefined, isStaff: boolean): string {
   switch (startParam) {
     case "hw":
     case "homework": return "/homework";
     case "leaderboard": return "/leaderboard";
     case "profile": return "/profile";
-    default: return "/dashboard";
+    default: return isStaff ? "/tg/teacher" : "/dashboard";
   }
 }
 
@@ -195,5 +199,14 @@ Deno.serve(async (req) => {
     details: { profile_id: outcome.profileId, backfilled: outcome.backfilled, at: new Date().toISOString() },
   }).then(() => {}, () => {});
 
-  return json({ session, target_path: targetPath(v.startParam) });
+  // Role-aware landing: teacher/admin/superadmin default to the teacher Mini App (/tg/teacher).
+  // An explicit student start_param still wins inside targetPath(). Best-effort — a role read
+  // failure falls back to the student default (never blocks sign-in).
+  let isStaff = false;
+  try {
+    const { data: roleRows } = await admin.from("user_roles").select("role").eq("user_id", outcome.profileId);
+    isStaff = (roleRows || []).some((r: { role: string }) => r.role === "teacher" || r.role === "admin" || r.role === "superadmin");
+  } catch { /* fall back to student default */ }
+
+  return json({ session, target_path: targetPath(v.startParam, isStaff) });
 });

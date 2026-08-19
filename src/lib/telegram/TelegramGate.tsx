@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -43,6 +43,7 @@ async function functionErrorCode(error: unknown, data: unknown): Promise<string 
 export function TelegramGate({ children }: { children: ReactNode }) {
   const { webApp, initData } = useMiniApp();
   const navigate = useNavigate();
+  const location = useLocation();
   const { t } = useTranslation();
   const [phase, setPhase] = useState<Phase>("loading");
   const [retryTick, setRetryTick] = useState(0);
@@ -102,8 +103,13 @@ export function TelegramGate({ children }: { children: ReactNode }) {
         });
         if (cancelled) return;
 
-        const target = (data as { target_path?: string }).target_path || "/dashboard";
-        navigate(target, { replace: true });
+        // A direct deep-link open under /tg/* (e.g. /tg/teacher, /tg/teacher/grade) must survive
+        // the gate — honor the already-requested path instead of clobbering it with the default
+        // target_path. Only redirect when we landed on the app root (the normal Mini App open).
+        if (!location.pathname.startsWith("/tg/")) {
+          const target = (data as { target_path?: string }).target_path || "/dashboard";
+          navigate(target, { replace: true });
+        }
         setPhase("ready");
       } catch {
         if (!cancelled) setPhase("error");

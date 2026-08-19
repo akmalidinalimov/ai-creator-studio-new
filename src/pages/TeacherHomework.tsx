@@ -53,7 +53,19 @@ export default function TeacherHomework() {
     (async () => {
       if (!user) return;
       let q = supabase.from("groups").select("id, name, course_id").order("name");
-      if (!isAdmin) q = q.eq("teacher_id", user.id);
+      if (!isAdmin) {
+        // Junction-aware teacher scope (co-teacher fix): a group's teachers =
+        // groups.teacher_id ∪ group_teachers (helper `teacher_group_ids`, live since #86).
+        // The old `.eq("teacher_id")` filter showed a PURE co-teacher (a group_teachers row
+        // but no groups.teacher_id) NOTHING on this page, even though RLS already lets them
+        // grade those students everywhere else. Widen the READ to their junction group ids.
+        // Cast the RPC name (`as any`) per the frontend-typecheck-verify convention; the fn
+        // returns `setof uuid` → a plain string[]. Nothing downstream re-narrows to teacher_id.
+        const { data: gidRows } = await supabase.rpc("teacher_group_ids" as any, { _uid: user.id });
+        const gids = (gidRows as string[] | null) || [];
+        if (!gids.length) { setGroups([]); setGroupNameMap(new Map()); return; }
+        q = q.in("id", gids);
+      }
       const { data } = await q;
       const gs = (data || []) as Group[];
       setGroups(gs);
