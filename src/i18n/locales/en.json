@@ -1360,6 +1360,7 @@
     "tSend": "Send",
     "tUndo": "Undo",
     "tUndone": "Grade undone — back in the queue",
+    "tReopened": "Reopened to re-grade",
     "tNudge": "Nudge",
     "tNudgeTitle": "Send a warm reminder via the bot (once a day)",
     "tNudgeSent": "Reminder sent to {{name}} 👋",

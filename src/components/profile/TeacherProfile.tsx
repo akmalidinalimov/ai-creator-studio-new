@@ -175,15 +175,19 @@ export default function TeacherProfile() {
     toast.success(`${item.student} — ${score}/${item.max_score} ✓`, {
       duration: 6000,
       action: {
+        // "Undo" RE-OPENS this item to CORRECT the score — purely client-side, NO DB write here.
+        // The grade stays committed (safe: identical to having no undo) until the teacher re-grades
+        // with a corrected value, which is a guard-allowed score CHANGE (non-null→non-null) reusing the
+        // idempotent hw_score:<assignment_id> XP ref-key. There is NO score→null clear anywhere:
+        // clearing score→null WITHOUT bumping attempt_number trips homework_submissions_guard, which
+        // reverts NEW.score := OLD.score but leaves scored_by/scored_at NULL — orphaning the row (it
+        // vanishes from every grading queue AND keeps its +25 XP forever). Mirror of the #88 Mini App
+        // fix (TeacherGrade.tsx); the grade_orphan_watchdog guards against any regression.
         label: t("profile.tUndo"),
-        onClick: async () => {
-          const { error: uErr } = await supabase.from("homework_submissions")
-            .update({ score: null, score_feedback: null, scored_by: null, scored_at: null } as any)
-            .eq("id", item.id);
-          if (uErr) { toast.error(t("profile.tGradeFailed")); return; }
-          setQueue((q) => [item, ...q].sort((a, b) => a.submitted_at.localeCompare(b.submitted_at)));
+        onClick: () => {
+          setQueue((q) => [item, ...q.filter((x) => x.id !== item.id)].sort((a, b) => a.submitted_at.localeCompare(b.submitted_at)));
           bump(1);
-          toast.info(t("profile.tUndone"));
+          toast.info(t("profile.tReopened"));
         },
       },
     });

@@ -1360,6 +1360,7 @@
     "tSend": "Yuborish",
     "tUndo": "Bekor qilish",
     "tUndone": "Baho bekor qilindi — vazifa navbatga qaytdi",
+    "tReopened": "Qayta baholash uchun ochildi",
     "tNudge": "Chaqirish",
     "tNudgeTitle": "Botda iliq eslatma yuborish (kuniga 1 marta)",
     "tNudgeSent": "{{name}} ga eslatma yuborildi 👋",
