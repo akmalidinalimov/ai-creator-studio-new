@@ -67,6 +67,9 @@ export default function TeacherStats() {
   const [dataLoading, setDataLoading] = useState(false);
   const [dataError, setDataError] = useState(false);
   const [dataReloadKey, setDataReloadKey] = useState(0);
+  // Which group the currently-held overview/rows belong to. Until this equals the selected `groupId`,
+  // the data area renders the Skeleton (never the previous group's data or a premature empty state).
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const [board, setBoard] = useState<Board>("weekly"); // weekly first — the fresh race, like the board.
 
   const selectedGroup = groups.find((g) => g.id === groupId) ?? null;
@@ -79,6 +82,10 @@ export default function TeacherStats() {
       return;
     }
     let cancelled = false;
+    // Drop the prior group's data SYNCHRONOUSLY so a switch (or the initial mount) never flashes stale
+    // tiles/leaderboard — or a premature empty state — for a frame before the Skeleton takes over.
+    setOverview(null);
+    setRows([]);
     setDataLoading(true);
     setDataError(false);
     (async () => {
@@ -110,7 +117,12 @@ export default function TeacherStats() {
           setDataError(true);
         }
       } finally {
-        if (!cancelled) setDataLoading(false);
+        // Mark this group's load as settled (success OR error) so the render can leave the Skeleton and
+        // show content/empty/error. Guarded by `cancelled` so a superseded run never claims the new id.
+        if (!cancelled) {
+          setDataLoading(false);
+          setLoadedFor(groupId);
+        }
       }
     })();
     return () => {
@@ -176,6 +188,11 @@ export default function TeacherStats() {
 
   const hasSwitcher = groups.length > 1;
 
+  // The data area shows the Skeleton whenever the held overview/rows aren't (yet) for the selected
+  // group: the in-flight load, AND the gap between `groupId` resolving/switching and the effect
+  // committing new data. Content/empty/error only render once `loadedFor === groupId`.
+  const dataPending = dataLoading || (!!groupId && loadedFor !== groupId);
+
   return (
     <div className="space-y-4">
       {/* Header + group context. With one group we name it here; with many the switcher shows names. */}
@@ -214,7 +231,7 @@ export default function TeacherStats() {
         </div>
       )}
 
-      {dataLoading ? (
+      {dataPending ? (
         <>
           <div className="grid grid-cols-4 gap-2">
             {[0, 1, 2, 3].map((i) => (
