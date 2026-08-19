@@ -71,6 +71,7 @@ const TeacherGrade = lazy(() => import("./pages/teacher/TeacherGrade"));
 const TeacherGroups = lazy(() => import("./pages/teacher/TeacherGroups"));
 const TeacherStudentDetail = lazy(() => import("./pages/teacher/TeacherStudentDetail"));
 const TeacherStats = lazy(() => import("./pages/teacher/TeacherStats"));
+const TeacherBroadcast = lazy(() => import("./pages/teacher/TeacherBroadcast"));
 const AdminGroups = lazy(() => import("./pages/admin/AdminGroups"));
 const GroupDetail = lazy(() => import("./pages/admin/GroupDetail"));
 const AdminHomework = lazy(() => import("./pages/admin/AdminHomework"));
@@ -126,6 +127,7 @@ const App = () => (
             <Route path="/tg/teacher/groups" element={<RequireAuth staffOnly><TeacherShell><Suspense fallback={<AdminFallback />}><TeacherGroups /></Suspense></TeacherShell></RequireAuth>} />
             <Route path="/tg/teacher/groups/student/:studentId" element={<RequireAuth staffOnly><TeacherShell><Suspense fallback={<AdminFallback />}><TeacherStudentDetail /></Suspense></TeacherShell></RequireAuth>} />
             <Route path="/tg/teacher/stats" element={<RequireAuth staffOnly><TeacherShell><Suspense fallback={<AdminFallback />}><TeacherStats /></Suspense></TeacherShell></RequireAuth>} />
+            <Route path="/tg/teacher/broadcast" element={<RequireAuth staffOnly><TeacherShell><Suspense fallback={<AdminFallback />}><TeacherBroadcast /></Suspense></TeacherShell></RequireAuth>} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/terms" element={<Terms />} />
 
