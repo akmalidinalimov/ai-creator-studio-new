@@ -29,11 +29,18 @@ export function TeacherLoginAnalytics() {
     if (!user || role !== "teacher") { setLoading(false); return; }
     (async () => {
       setLoading(true);
-      const { data: gs } = await supabase.from("groups").select("id, name").eq("teacher_id", user.id).order("name");
-      const gList = ((gs as any[]) || []) as Group[];
+      // Groups RLS is admin-only — a direct groups read returns ZERO rows for a teacher (this
+      // component is teacher-only), which falsely showed "no group assigned". Use the junction-aware
+      // teacher_groups RPC (primary ∪ co-teacher) and map group_id/group_name → id/name.
+      const { data: gs } = await supabase.rpc("teacher_groups" as any, { uid: user.id });
+      const gList = (((gs as any[]) || []).map((r: any) => ({ id: r.group_id as string, name: r.group_name as string }))) as Group[];
       setGroups(gList);
       if (gList.length) {
-        const { data: ls } = await supabase.rpc("admin_group_login_stats" as any);
+        // "admin_group_login_stats" was DROPPED (migration 20260506142751, renamed to
+        // admin_group_engagement_stats) — the dead call silently returned null → every card showed
+        // 0/0/0. Use the live RPC (SECURITY DEFINER, gated to admin|teacher); {p_window_days} picks
+        // the 3-arg overload unambiguously. total_active + logged_in_count feed Jami/Kirgan/Hech qachon.
+        const { data: ls } = await supabase.rpc("admin_group_engagement_stats" as any, { p_window_days: 7 });
         const map: Record<string, Stat> = {};
         ((ls as any[]) || []).forEach((r) => { map[r.group_id] = r as Stat; });
         setStats(map);
