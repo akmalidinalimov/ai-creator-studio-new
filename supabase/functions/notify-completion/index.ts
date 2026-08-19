@@ -74,6 +74,7 @@ async function loadTemplate(admin: any, key: string, locale: Locale): Promise<{ 
 function interpolate(s: string, vars: Record<string, string | number>): string {
   return s.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => String(vars[k] ?? ""));
 }
+const escHtml = (s: string = "") => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -140,7 +141,11 @@ Deno.serve(async (req) => {
       const fullName = [profile.name, profile.last_name].filter(Boolean).join(" ") || firstName || "Student";
       const { data: course } = await admin.from("courses").select("title").eq("id", module.course_id).maybeSingle();
       const tpl = await loadTemplate(admin, "course_complete", locale);
-      const text = interpolate(tpl.body, { first_name: firstName || fullName, full_name: fullName, course_title: course?.title || "AI Creators" });
+      const text = interpolate(tpl.body, {
+        first_name: escHtml(firstName || fullName),
+        full_name: escHtml(fullName),
+        course_title: escHtml(course?.title || "AI Creators"),
+      });
       await tg("sendMessage", { chat_id: chatId, text, parse_mode: "HTML" });
       await logNotif(admin, user_id, "course_complete", { lesson_id, course_id: module.course_id });
       return new Response("ok", { status: 200, headers: corsHeaders });
@@ -154,7 +159,7 @@ Deno.serve(async (req) => {
       const minutes = Math.round((moduleProgress || []).reduce((s: number, r: any) => s + Number(r.watch_seconds_total || 0), 0) / 60);
       const tpl = await loadTemplate(admin, "module_complete", locale);
       const text = interpolate(tpl.body, {
-        first_name: firstName,
+        first_name: escHtml(firstName),
         module_number: module.position + 1,
         lessons_done: completedInModule,
         lessons_total: moduleLessonIds.length,
@@ -217,7 +222,11 @@ Deno.serve(async (req) => {
       nextUrl = await magicLink(admin, user_id, `/lesson/${module.course_id}/${nextLesson.id}`);
     }
     const tpl = await loadTemplate(admin, "lesson_complete", locale);
-    const text = interpolate(tpl.body, { first_name: firstName, lesson_title: lesson.title, next_lesson_title: nextTitle });
+    const text = interpolate(tpl.body, {
+      first_name: escHtml(firstName),
+      lesson_title: escHtml(lesson.title),
+      next_lesson_title: escHtml(nextTitle),
+    });
     await tg("sendMessage", {
       chat_id: chatId, text, parse_mode: "HTML",
       reply_markup: nextUrl && tpl.button_label ? { inline_keyboard: [[{ text: tpl.button_label, url: nextUrl }]] } : undefined,

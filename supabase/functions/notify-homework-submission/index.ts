@@ -10,6 +10,8 @@ const corsHeaders = {
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 
+const escHtml = (s: string = "") => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 function tg(method: string, body: unknown) {
   return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
     method: "POST",
@@ -129,7 +131,7 @@ Deno.serve(async (req) => {
     // one-tap ✏️ retag so a wrong guess is cheap to fix (the row.task_number here is already the
     // sap-aware step written by the fixed queue insert, so "Vazifa 1/2/3" now renders correctly).
     const guessed = /\(taxminiy\)/.test(row.assignment_title || "");
-    let text = (MSG as any)[loc](row.student_name || "—", row.module_number, row.task_number, row.assignment_title || "");
+    let text = (MSG as any)[loc](escHtml(row.student_name || "—"), row.module_number, row.task_number, escHtml(row.assignment_title || ""));
     if (guessed) {
       text += loc === "ru"
         ? "\n\n⚠️ <b>Авто-назначено</b> — задание выбрано примерно. Если неверно — исправьте ✏️."

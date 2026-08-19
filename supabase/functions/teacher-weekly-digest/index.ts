@@ -13,6 +13,8 @@ const corsHeaders = {
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 const SITE_URL = Deno.env.get("SITE_URL") || "https://aicreator.academy";
 
+const escHtml = (s: string = "") => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 function randomToken(len = 32): string {
   const b = new Uint8Array(len / 2);
   crypto.getRandomValues(b);
@@ -53,7 +55,7 @@ Deno.serve(async (req) => {
         .order("last_inactive_warning_day", { ascending: false })
         .limit(6);
       const names = ((stubborn || []) as any[])
-        .map((s) => `${s.name || ""} ${s.last_name ? s.last_name[0] + "." : ""}`.trim() + ` (${s.last_inactive_warning_day}k)`)
+        .map((s) => escHtml(`${s.name || ""} ${s.last_name ? s.last_name[0] + "." : ""}`.trim()) + ` (${s.last_inactive_warning_day}k)`)
         .filter((n) => n.length > 4);
 
       // ---- Impact recap (the RCT-winning mechanic: personalized "your cohort this week") ----
@@ -94,9 +96,10 @@ Deno.serve(async (req) => {
         en: ["Rising teacher", "Teacher", "Senior teacher", "Expert teacher", "Top teacher"],
       };
       const lvlName = LVL[loc][Math.min(tLevel, LVL[loc].length) - 1] || `Lv ${tLevel}`;
+      const tchName = escHtml(tch.name || "");
       const L: Record<string, any> = {
         uz: {
-          title: `🗞 <b>Haftalik xulosa</b> — ${tch.name || ""}`,
+          title: `🗞 <b>Haftalik xulosa</b> — ${tchName}`,
           impactTitle: "📊 Bu hafta guruhlaringizda:",
           active: (a: number, t: number) => `👥 Faol talabalar: <b>${a}/${t}</b> (7 kun)`,
           completion: (p: number) => `✅ O'rtacha tugallanish: <b>${p}%</b>`,
@@ -108,7 +111,7 @@ Deno.serve(async (req) => {
           hint: "Profil → Talabalarim → 😴 filtri → «Barchasiga eslatma»", btn: "👤 Profilni ochish",
         },
         ru: {
-          title: `🗞 <b>Итоги недели</b> — ${tch.name || ""}`,
+          title: `🗞 <b>Итоги недели</b> — ${tchName}`,
           impactTitle: "📊 На этой неделе в ваших группах:",
           active: (a: number, t: number) => `👥 Активных студентов: <b>${a}/${t}</b> (7 дн.)`,
           completion: (p: number) => `✅ Средн. завершение: <b>${p}%</b>`,
@@ -120,7 +123,7 @@ Deno.serve(async (req) => {
           hint: "Профиль → Студенты → фильтр 😴 → «Напомнить всем»", btn: "👤 Открыть профиль",
         },
         en: {
-          title: `🗞 <b>Weekly summary</b> — ${tch.name || ""}`,
+          title: `🗞 <b>Weekly summary</b> — ${tchName}`,
           impactTitle: "📊 This week in your groups:",
           active: (a: number, t: number) => `👥 Active students: <b>${a}/${t}</b> (7d)`,
           completion: (p: number) => `✅ Avg. completion: <b>${p}%</b>`,

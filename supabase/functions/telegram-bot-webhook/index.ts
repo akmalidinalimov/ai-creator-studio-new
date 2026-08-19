@@ -2416,7 +2416,7 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
       lines.push(t.statsGroupTitle);
       for (const r of groupRows) {
         const medal = r.group_rank === 1 ? "🥇" : r.group_rank === 2 ? "🥈" : r.group_rank === 3 ? "🥉" : `${r.group_rank}.`;
-        const nm = `${r.first_name}${r.last_initial ? " " + r.last_initial + "." : ""}`;
+        const nm = csvEscapeHtml(`${r.first_name}${r.last_initial ? " " + r.last_initial + "." : ""}`);
         if (r.is_me) lines.push(t.statsGroupRowMe(medal, r.score));
         else lines.push(t.statsGroupRow(medal, nm, r.score));
       }
@@ -2431,7 +2431,7 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
         const { data: starRows } = await admin.rpc("current_group_star", { uid: userId });
         const star = ((starRows || []) as any[])[0];
         if (star) {
-          const sname = `${star.first_name}${star.last_initial ? " " + star.last_initial + "." : ""}`;
+          const sname = csvEscapeHtml(`${star.first_name}${star.last_initial ? " " + star.last_initial + "." : ""}`);
           lines.push(star.is_me ? t.statsStarMe : t.statsStar(sname));
         }
       } catch (_e) { /* best-effort */ }
@@ -2450,8 +2450,8 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     lines.push(t.statsBadgesShowcase(earnedIcons, earnedBadges.length, allBadges.length));
     if (lockedBadges.length > 0) {
       const nb = lockedBadges[0];
-      const nm = nb["name_" + locale] || nb.name_uz || "";
-      const ds = nb["description_" + locale] || nb.description_uz || "";
+      const nm = csvEscapeHtml(nb["name_" + locale] || nb.name_uz || "");
+      const ds = csvEscapeHtml(nb["description_" + locale] || nb.description_uz || "");
       lines.push(t.statsNextBadge(nm, ds));
     } else {
       lines.push(t.statsBadgesAllDone);
@@ -4364,7 +4364,7 @@ async function handleTeacherSession(admin: any, msg: any, profileId: string, loc
     await sendWithKeyboard(msg.chat.id, t.teacherBroadcastEmpty, locale, false, "teacher");
     return true;
   }
-  const body = `${t.teacherFromTeacher(groupName || "—")}${csvEscapeHtml(text)}`;
+  const body = `${t.teacherFromTeacher(csvEscapeHtml(groupName || "—"))}${csvEscapeHtml(text)}`;
   let sent = 0;
   for (const r of recipients) {
     try {
@@ -4614,7 +4614,7 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
           const lastP = np.name_prompt_last_at ? new Date(np.name_prompt_last_at).getTime() : 0;
           if (Date.now() - lastP > 3 * 86400_000) {
             await admin.from("profiles").update({ name_prompt_last_at: new Date().toISOString() }).eq("id", profile.id);
-            const disp = `${profile.name || ""} ${profile.last_name || ""}`.trim() || "—";
+            const disp = csvEscapeHtml(`${profile.name || ""} ${profile.last_name || ""}`.trim() || "—");
             await sendMessage(chatId, t.namePrompt(disp), { inline_keyboard: [[
               { text: t.nameBtnOk, callback_data: "name:ok" },
               { text: t.nameBtnEdit, callback_data: "name:edit" },
@@ -5515,7 +5515,7 @@ async function autoRegisterProvisionalPoster(
         const kb = botU ? { inline_keyboard: [[{ text: t.pkWelcomeBtn, url: `https://t.me/${botU}` }]] } : undefined;
         await tgApi("sendMessage", {
           chat_id: chatId, message_thread_id: threadId, reply_to_message_id: msg.message_id,
-          text: t.pkWelcome((from.first_name || from.username || "do'st").slice(0, 40)),
+          text: t.pkWelcome(csvEscapeHtml((from.first_name || from.username || "do'st").slice(0, 40))),
           parse_mode: "HTML", disable_web_page_preview: true,
           ...(kb ? { reply_markup: kb } : {}),
         });
@@ -7483,7 +7483,7 @@ Deno.serve(async (req) => {
             const { data: pg } = await admin.rpc("teacher_groups", { uid: profileForLocale.id });
             pend = ((pg || []) as any[]).reduce((s, g) => s + (g.pending_homework || 0), 0);
           } catch (_e) { /* best-effort */ }
-          const nm = profileForLocale.name || "";
+          const nm = csvEscapeHtml(profileForLocale.name || "");
           const greet = {
             uz: `Salom, ${nm}! 🧑‍🏫\n${pend > 0 ? `📝 <b>${pend} ta vazifa</b> baholashni kutmoqda.` : "✅ Baholanmagan vazifalar yo'q."}\n\nTOP talabalar, faolsizlar, guruh almashtirish va sozlamalar — 👤 Profil ichida.`,
             ru: `Салом, ${nm}! 🧑‍🏫\n${pend > 0 ? `📝 <b>${pend} заданий</b> ждут проверки.` : "✅ Непроверенных заданий нет."}\n\nТОП, неактивные, смена группы и настройки — внутри 👤 Профиль.`,

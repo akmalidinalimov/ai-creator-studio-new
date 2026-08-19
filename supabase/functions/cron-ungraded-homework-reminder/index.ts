@@ -12,6 +12,8 @@ const corsHeaders = {
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 
+const escHtml = (s: string = "") => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 function tg(method: string, body: unknown) {
   return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
     method: "POST",
@@ -162,8 +164,8 @@ Deno.serve(async (req) => {
       if (!student) { skipped++; continue; }
       const assignment = assignMap.get(s.assignment_id);
       const mod = assignment?.module_id ? moduleMap.get(assignment.module_id) : null;
-      const taskTitle = [mod?.title, assignment?.title].filter(Boolean).join(" · ") || "—";
-      const studentName = fullName(student);
+      const taskTitle = escHtml([mod?.title, assignment?.title].filter(Boolean).join(" · ") || "—");
+      const studentName = escHtml(fullName(student));
       const hours = Math.floor((Date.now() - new Date(s.submitted_at).getTime()) / 3600000);
 
       const grp = student.group_id ? groupMap.get(student.group_id) : null;
