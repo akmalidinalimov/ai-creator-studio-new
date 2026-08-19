@@ -266,11 +266,21 @@ export default function AdminUsers() {
     setUsers(rows as UserRow[]);
     const [{ data: cs }, { data: gs }, { data: ts }] = await Promise.all([
       supabase.from("courses").select("id, title").order("title"),
-      supabase.from("groups").select("id, name, teacher_id, course_id").order("name"),
+      // Groups RLS is admin-only → a direct groups read returns ZERO rows for a teacher, leaving the
+      // group filter/assignment dropdown empty (the user list itself works via staff_list_students).
+      // Teachers go through the junction-aware teacher_groups RPC (primary ∪ co-teacher) and map
+      // group_id/group_name → id/name; admins keep the direct read (they can read groups).
+      isTeacher
+        ? supabase.rpc("teacher_groups" as any, { uid: session?.user?.id })
+        : supabase.from("groups").select("id, name, teacher_id, course_id").order("name"),
       supabase.from("course_tiers" as any).select("id, course_id, name, module_limit").order("position"),
     ]);
     setCourses(cs || []);
-    setGroups(gs || []);
+    setGroups(
+      isTeacher
+        ? (((gs as any[]) || []).map((g: any) => ({ id: g.group_id as string, name: g.group_name as string })))
+        : ((gs as any[]) || [])
+    );
     setAllTiers((ts as any[]) || []);
     const { data: enrolls } = await supabase.from("enrollments").select("user_id, course_id, tier_id");
     const m: Record<string, Set<string>> = {};
