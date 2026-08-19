@@ -43,14 +43,14 @@ interface TeacherGroupRow {
   active_7d: number;
 }
 
-// Home action tiles the spec lists (Guruhlar / Statistika / Xabar / Nudge). Guruhlar/Statistika stay
-// DISABLED ghost tiles ("tez orada") — never coral. Xabar went LIVE in Phase 3 Task 2 (routes to the
-// Broadcast screen); Nudge went LIVE in Task 3 (routes to the Nudge screen) — an entry with `to`
-// renders as a live ghost button (still never coral: only ONE `variant="primary"` per screen, owned by
-// the Hero above).
+// Home action tiles the spec lists (Guruhlar / Statistika / Xabar / Nudge). All four are LIVE: Guruhlar
+// + Statistika shipped in Phase 2 (reachable via the bottom nav too), Xabar went live in Phase 3 Task 2
+// (routes to the Broadcast screen), Nudge went live in Task 3 (routes to the Nudge screen). An entry
+// with `to` renders as a live ghost button (still never coral: only ONE `variant="primary"` per screen,
+// owned by the Hero above).
 const HOME_ACTIONS: { icon: LucideIcon; label: string; to?: string }[] = [
-  { icon: Users, label: "Guruhlar" },
-  { icon: BarChart3, label: "Statistika" },
+  { icon: Users, label: "Guruhlar", to: "/tg/teacher/groups" },
+  { icon: BarChart3, label: "Statistika", to: "/tg/teacher/stats" },
   { icon: Send, label: "Xabar", to: "/tg/teacher/broadcast" },
   { icon: BellRing, label: "Nudge", to: "/tg/teacher/nudges" },
 ];
@@ -199,8 +199,10 @@ export default function TeacherHome() {
             <StatTile icon={<Activity />} label="Faol" value={studentsTotal > 0 ? `${activePct}%` : "—"} />
           </div>
 
-          {/* Action tiles — ghost, never coral (the single primary above is the Hero's). Live tiles
-              (`to` set) navigate; the rest stay disabled "tez orada" until their phase lands. */}
+          {/* Action tiles — ghost, never coral (the single primary above is the Hero's). All four
+              `HOME_ACTIONS` entries carry `to` now (Guruhlar/Statistika since Phase 2, Xabar/Nudge
+              since Phase 3) and navigate on tap. The disabled "tez orada" branch below is kept as the
+              template for a FUTURE tile that ships without a route yet — nothing renders it today. */}
           <SectionHeader title="Boshqa amallar" />
           <div className="grid grid-cols-2 gap-2">
             {HOME_ACTIONS.map(({ icon: Icon, label, to }) =>

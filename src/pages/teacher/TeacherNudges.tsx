@@ -83,7 +83,15 @@ export default function TeacherNudges() {
     useSelectedGroup();
 
   const [roster, setRoster] = useState<RosterMember[]>([]);
-  const [rosterLoading, setRosterLoading] = useState(false);
+  // Starts true (not false): `useSelectedGroup()` resolves `groupsLoading:false` + `groupId` together
+  // in one batched render, and this roster-load effect only fires AFTER that render commits. Starting
+  // `rosterLoading` false left a one-frame window where `loading` (below) was already false but `roster`
+  // was still its initial `[]` — long enough for the no-inactive "🎉 Hamma faol" EmptyState to flash
+  // before the roster skeleton, since an empty roster and a genuinely-all-active roster are indistinguishable
+  // by `inactive.length === 0` alone. Starting true keeps `loading` true through that gap; harmless when
+  // there's no group at all (`loading` only consults `rosterLoading` when `!!groupId`, so a no-groups
+  // teacher never gets stuck on the skeleton).
+  const [rosterLoading, setRosterLoading] = useState(true);
   const [rosterError, setRosterError] = useState(false);
   const [rosterReloadKey, setRosterReloadKey] = useState(0);
 
