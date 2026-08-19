@@ -152,3 +152,11 @@ verify_jwt = true
 # a signed storage URL or a Telegram getFile proxy URL. See supabase/functions/hw-image-url/index.ts.
 [functions.hw-image-url]
 verify_jwt = true
+
+# teacher-broadcast-group: Mini App API for a teacher to DM-broadcast a message to every student in
+# one of their groups (mirrors the bot-chat /tbroadcast flow exactly — a DM fan-out, NOT a post into
+# the supergroup). Requires a logged-in teacher/admin Supabase session JWT (verify_jwt=true) —
+# junction-aware RBAC (is_group_teacher ∪ admin/superadmin), 300-char cap, 1/hour teacher rate limit.
+# See supabase/functions/teacher-broadcast-group/index.ts.
+[functions.teacher-broadcast-group]
+verify_jwt = true

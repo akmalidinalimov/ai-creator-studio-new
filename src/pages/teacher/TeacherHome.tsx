@@ -43,13 +43,16 @@ interface TeacherGroupRow {
   active_7d: number;
 }
 
-// Phase-2 destinations, rendered as DISABLED ghost tiles ("tez orada") — never coral. These are the
-// Home action tiles the spec lists (Guruhlar / Statistika / Xabar / Nudge); wired up in later phases.
-const COMING_SOON: { icon: LucideIcon; label: string }[] = [
-  { icon: Users, label: "Guruhlar" },
-  { icon: BarChart3, label: "Statistika" },
-  { icon: Send, label: "Xabar" },
-  { icon: BellRing, label: "Nudge" },
+// Home action tiles the spec lists (Guruhlar / Statistika / Xabar / Nudge). All four are LIVE: Guruhlar
+// + Statistika shipped in Phase 2 (reachable via the bottom nav too), Xabar went live in Phase 3 Task 2
+// (routes to the Broadcast screen), Nudge went live in Task 3 (routes to the Nudge screen). An entry
+// with `to` renders as a live ghost button (still never coral: only ONE `variant="primary"` per screen,
+// owned by the Hero above).
+const HOME_ACTIONS: { icon: LucideIcon; label: string; to?: string }[] = [
+  { icon: Users, label: "Guruhlar", to: "/tg/teacher/groups" },
+  { icon: BarChart3, label: "Statistika", to: "/tg/teacher/stats" },
+  { icon: Send, label: "Xabar", to: "/tg/teacher/broadcast" },
+  { icon: BellRing, label: "Nudge", to: "/tg/teacher/nudges" },
 ];
 
 export default function TeacherHome() {
@@ -196,23 +199,38 @@ export default function TeacherHome() {
             <StatTile icon={<Activity />} label="Faol" value={studentsTotal > 0 ? `${activePct}%` : "—"} />
           </div>
 
-          {/* Phase-2 actions — DISABLED ghost tiles ("tez orada"), never coral. */}
+          {/* Action tiles — ghost, never coral (the single primary above is the Hero's). All four
+              `HOME_ACTIONS` entries carry `to` now (Guruhlar/Statistika since Phase 2, Xabar/Nudge
+              since Phase 3) and navigate on tap. The disabled "tez orada" branch below is kept as the
+              template for a FUTURE tile that ships without a route yet — nothing renders it today. */}
           <SectionHeader title="Boshqa amallar" />
           <div className="grid grid-cols-2 gap-2">
-            {COMING_SOON.map(({ icon: Icon, label }) => (
-              <Button
-                key={label}
-                variant="ghost"
-                disabled
-                className="h-auto flex-col gap-1 py-3"
-                aria-disabled="true"
-                title="Tez orada"
-              >
-                <Icon />
-                <span className="text-[13px] font-bold">{label}</span>
-                <span className="text-[9px] font-semibold uppercase tracking-wide opacity-70">tez orada</span>
-              </Button>
-            ))}
+            {HOME_ACTIONS.map(({ icon: Icon, label, to }) =>
+              to ? (
+                <Button
+                  key={label}
+                  variant="ghost"
+                  className="h-auto flex-col gap-1 py-3"
+                  onClick={() => navigate(to)}
+                >
+                  <Icon />
+                  <span className="text-[13px] font-bold">{label}</span>
+                </Button>
+              ) : (
+                <Button
+                  key={label}
+                  variant="ghost"
+                  disabled
+                  className="h-auto flex-col gap-1 py-3"
+                  aria-disabled="true"
+                  title="Tez orada"
+                >
+                  <Icon />
+                  <span className="text-[13px] font-bold">{label}</span>
+                  <span className="text-[9px] font-semibold uppercase tracking-wide opacity-70">tez orada</span>
+                </Button>
+              ),
+            )}
           </div>
         </>
       )}
