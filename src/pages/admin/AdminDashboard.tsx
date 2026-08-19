@@ -107,12 +107,12 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (!isTeacher || !user) return;
     (async () => {
-      const { data: gs } = await supabase
-        .from("groups")
-        .select("id, name")
-        .eq("teacher_id", user.id)
-        .order("name");
-      const list = (gs as any[] || []) as { id: string; name: string }[];
+      // Groups RLS is admin-only ("groups admin all") — a direct groups read returns ZERO rows for
+      // a teacher, which produced the false "no groups assigned" screen. Route through the
+      // junction-aware SECURITY DEFINER RPC (primary teacher ∪ group_teachers co-teachers) instead.
+      const { data: tgRows } = await supabase.rpc("teacher_groups" as any, { uid: user.id });
+      const rows = ((tgRows as any[]) || []);
+      const list = rows.map((r: any) => ({ id: r.group_id as string, name: r.group_name as string }));
       setTeacherGroups(list);
       setTeacherGroupsLoaded(true);
       if (list.length === 1 && !groupParam) {
@@ -131,40 +131,27 @@ export default function AdminDashboard() {
           .eq("id", user.id)
           .then(() => {}, () => {});
       }
-      // Card-grid stats: per-group total + logged + ungraded
+      // Card-grid stats: per-group total + logged + ungraded. `total_students` and
+      // `pending_homework` (= ungraded) come straight from the junction-aware teacher_groups rows
+      // above (RLS-bypassing). The old direct homework_submissions + profiles reads were RLS-blocked
+      // for teachers (the profiles join returned zero → ungraded was always 0). The "logged" count
+      // comes from admin_group_engagement_stats (SECURITY DEFINER, gated to admin|teacher). NOTE:
+      // the previous "admin_group_login_stats" name was DROPPED in migration 20260506142751 (renamed
+      // to admin_group_engagement_stats) — that dead call silently returned null → logged was always 0.
+      // Passing {p_window_days} selects the 3-arg overload unambiguously.
       if (list.length >= 2 && !groupParam) {
         const ids = list.map((g) => g.id);
-        const { data: ls } = await supabase.rpc("admin_group_login_stats" as any);
-        const lmap: Record<string, { logged: number; total: number }> = {};
+        const { data: ls } = await supabase.rpc("admin_group_engagement_stats" as any, { p_window_days: 7 });
+        const lmap: Record<string, number> = {};
         ((ls as any[]) || []).forEach((r: any) => {
-          if (ids.includes(r.group_id)) lmap[r.group_id] = { logged: r.logged_in_count || 0, total: r.total_active || 0 };
-        });
-        // Ungraded per group
-        const { data: ung } = await supabase
-          .from("homework_submissions")
-          .select("user_id, score")
-          .is("score", null)
-          .limit(5000);
-        const userIds = Array.from(new Set(((ung as any[]) || []).map((s: any) => s.user_id)));
-        const userToGroup: Record<string, string> = {};
-        if (userIds.length) {
-          const { data: profs } = await supabase
-            .from("profiles")
-            .select("id, group_id")
-            .in("id", userIds);
-          ((profs as any[]) || []).forEach((p: any) => { if (p.group_id) userToGroup[p.id] = p.group_id; });
-        }
-        const ugMap: Record<string, number> = {};
-        ((ung as any[]) || []).forEach((s: any) => {
-          const g = userToGroup[s.user_id];
-          if (g && ids.includes(g)) ugMap[g] = (ugMap[g] || 0) + 1;
+          if (ids.includes(r.group_id)) lmap[r.group_id] = r.logged_in_count || 0;
         });
         const out: Record<string, { total: number; logged: number; ungraded: number }> = {};
-        list.forEach((g) => {
-          out[g.id] = {
-            total: lmap[g.id]?.total || 0,
-            logged: lmap[g.id]?.logged || 0,
-            ungraded: ugMap[g.id] || 0,
+        rows.forEach((r: any) => {
+          out[r.group_id] = {
+            total: Number(r.total_students) || 0,
+            logged: lmap[r.group_id] || 0,
+            ungraded: Number(r.pending_homework) || 0,
           };
         });
         setTeacherGroupCardStats(out);
@@ -181,14 +168,13 @@ export default function AdminDashboard() {
       // Resolve visible student scope (admins → all, teachers → their groups' students)
       const { data: visIdsData } = await supabase.rpc("get_visible_student_ids");
       let visibleIds: string[] = ((visIdsData || []) as any[]).map((r: any) => r.id);
-      // If teacher is viewing a single group, narrow scope to that group's members
+      // If teacher is viewing a single group, narrow scope to that group's members. The direct
+      // profiles read here is RLS-blocked for teachers (→ zero students, empty group view); use the
+      // junction-gated staff_group_members RPC and intersect its ids with the visible scope.
       if (isTeacher && groupParam && visibleIds.length) {
-        const { data: gMembers } = await supabase
-          .from("profiles")
-          .select("id")
-          .eq("group_id", groupParam)
-          .in("id", visibleIds);
-        visibleIds = ((gMembers as any[]) || []).map((p: any) => p.id);
+        const { data: gMembers } = await supabase.rpc("staff_group_members" as any, { _group_id: groupParam });
+        const memberIds = new Set(((gMembers as any[]) || []).map((m: any) => m.id));
+        visibleIds = visibleIds.filter((id) => memberIds.has(id));
       }
       const visibleSet = new Set(visibleIds);
       setScopedIds(visibleIds);
@@ -479,11 +465,21 @@ export default function AdminDashboard() {
       if (stuckUserIds.length) {
         const userIds = stuckUserIds.map((s) => s.user_id);
         const lessonIds = Array.from(new Set(stuckUserIds.map((s) => s.lesson_id)));
-        const [{ data: profs }, { data: lessonRows }] = await Promise.all([
-          supabase.from("profiles").select("id, name, email").in("id", userIds),
-          supabase.from("lessons").select("id, title").in("id", lessonIds),
-        ]);
-        const pmap = new Map((profs || []).map((p: any) => [p.id, p]));
+        // Teachers can't read profiles directly (RLS) → the direct read returned zero and names
+        // rendered as "—". Reuse the already-fetched staff_list_students rows (scoped to the teacher,
+        // carrying id/name/last_name/email) to build the name map; the admin path keeps the direct read.
+        const { data: lessonRows } = await supabase.from("lessons").select("id, title").in("id", lessonIds);
+        let pmap: Map<string, any>;
+        if (isTeacher) {
+          pmap = new Map((studentsAll as any[]).map((u: any) => [u.id, {
+            id: u.id,
+            name: [u.name, u.last_name].filter(Boolean).join(" ") || u.email || "",
+            email: u.email || "",
+          }]));
+        } else {
+          const { data: profs } = await supabase.from("profiles").select("id, name, email").in("id", userIds);
+          pmap = new Map((profs || []).map((p: any) => [p.id, p]));
+        }
         const lmap = new Map((lessonRows || []).map((l: any) => [l.id, l.title]));
         const enriched = stuckUserIds
           .map((s) => ({

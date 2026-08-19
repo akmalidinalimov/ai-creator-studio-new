@@ -582,7 +582,10 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
       });
     }
     setStudents(list);
-    const { data: ls } = await supabase.rpc("admin_group_login_stats" as any);
+    // admin_group_login_stats was DROPPED (migration 20260506142751 → admin_group_engagement_stats);
+    // the dead call silently returned null → login stats showed 0/0. Use the live RPC, scoped to this
+    // group; passing {p_window_days} selects the 3-arg overload unambiguously.
+    const { data: ls } = await supabase.rpc("admin_group_engagement_stats" as any, { p_window_days: 7, p_group_id: group.id });
     const row = ((ls as any[]) || []).find((r: any) => r.group_id === group.id);
     setLoginStats({ logged: row?.logged_in_count || 0, total: row?.total_active || 0 });
     setLoading(false);

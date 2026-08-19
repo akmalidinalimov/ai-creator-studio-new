@@ -52,22 +52,20 @@ export default function TeacherHomework() {
   useEffect(() => {
     (async () => {
       if (!user) return;
-      let q = supabase.from("groups").select("id, name, course_id").order("name");
-      if (!isAdmin) {
-        // Junction-aware teacher scope (co-teacher fix): a group's teachers =
-        // groups.teacher_id ∪ group_teachers (helper `teacher_group_ids`, live since #86).
-        // The old `.eq("teacher_id")` filter showed a PURE co-teacher (a group_teachers row
-        // but no groups.teacher_id) NOTHING on this page, even though RLS already lets them
-        // grade those students everywhere else. Widen the READ to their junction group ids.
-        // Cast the RPC name (`as any`) per the frontend-typecheck-verify convention; the fn
-        // returns `setof uuid` → a plain string[]. Nothing downstream re-narrows to teacher_id.
-        const { data: gidRows } = await supabase.rpc("teacher_group_ids" as any, { _uid: user.id });
-        const gids = (gidRows as string[] | null) || [];
-        if (!gids.length) { setGroups([]); setGroupNameMap(new Map()); return; }
-        q = q.in("id", gids);
+      // Groups RLS is admin-only ("groups admin all"), so a direct groups read returns ZERO rows
+      // for a teacher — even filtered by id — leaving the group picker empty. Admins read groups
+      // directly; teachers go through the junction-aware teacher_groups RPC (primary ∪ co-teacher).
+      // teacher_groups carries no course_id; it's resolved lazily per selected group below.
+      let gs: Group[] = [];
+      if (isAdmin) {
+        const { data } = await supabase.from("groups").select("id, name, course_id").order("name");
+        gs = (data || []) as Group[];
+      } else {
+        const { data: tgRows } = await supabase.rpc("teacher_groups" as any, { uid: user.id });
+        gs = (((tgRows as any[]) || []).map((r: any) => ({
+          id: r.group_id as string, name: r.group_name as string, course_id: null,
+        }))) as Group[];
       }
-      const { data } = await q;
-      const gs = (data || []) as Group[];
       setGroups(gs);
       setGroupNameMap(new Map(gs.map((g) => [g.id, g.name])));
       if (gs.length && !selectedGroup) setSelectedGroup(isAdmin ? ALL : gs[0].id);
@@ -114,7 +112,15 @@ export default function TeacherHomework() {
       let courseIds: string[] | null = null;
       if (selectedGroup && selectedGroup !== ALL) {
         const g = groups.find((x) => x.id === selectedGroup);
-        if (g?.course_id) courseIds = [g.course_id];
+        let cid = g?.course_id ?? null;
+        if (!cid && !isAdmin) {
+          // Teacher groups (from teacher_groups RPC) carry no course_id — resolve the selected
+          // group's course via the junction-gated staff_group_overview RPC (a direct groups read
+          // is RLS-blocked for teachers). Without this, modules would load across ALL courses.
+          const { data: ov } = await supabase.rpc("staff_group_overview" as any, { _group_id: selectedGroup });
+          cid = ((ov as any[]) || [])[0]?.course_id ?? null;
+        }
+        if (cid) courseIds = [cid];
       } else if (selectedCourse) {
         courseIds = [selectedCourse];
       }
@@ -131,7 +137,7 @@ export default function TeacherHomework() {
         .eq("is_active", true);
       setAssignments((asgns || []) as Assignment[]);
     })();
-  }, [selectedGroup, groups, selectedCourse]);
+  }, [selectedGroup, groups, selectedCourse, isAdmin]);
 
   const load = async () => {
     if (scopeIds === null) return;
