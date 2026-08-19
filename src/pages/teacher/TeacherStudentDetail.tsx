@@ -27,12 +27,16 @@
 // streak are omitted, not invented: no cheap teacher-visible read exists for them.
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { BellRing, BookOpen, ChevronLeft, ClipboardCheck, Star } from "lucide-react";
+import { BellRing, BookOpen, ChevronLeft, ClipboardCheck, Loader2, Star } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useSelectedGroup } from "@/hooks/useSelectedGroup";
 import { effectiveLeafGrades } from "@/lib/homeworkStats";
 import { formatXp } from "@/lib/xp";
 import { Card, SectionHeader, StatTile, StatusChip, Button, EmptyState, Skeleton } from "@/components/ui-kit";
+
+// Terminal/in-flight states for the one-tap nudge action below (identical contract + mapping to
+// TeacherNudges.tsx — see that file's header for the full state-machine rationale).
+type NudgeState = "sending" | "sent" | "already" | "no_telegram";
 
 // A `homework_submissions` row (+ embedded assignment/module) as read via the "hws own select" RLS policy.
 interface SubmissionRaw {
@@ -65,18 +69,21 @@ interface HwItem {
 }
 
 // A `staff_group_members(_group_id)` row (columns per 20260502225517_...:163, cited in TeacherGroups).
+// `telegram_id` added here (Task 3) so the nudge button can pre-empt the fn's `no_telegram` state.
 interface RosterMember {
   id: string;
   name: string | null;
   last_name: string | null;
   completed_lessons: number | null;
   avg_score: number | null;
+  telegram_id: number | null;
 }
 
 interface Basics {
   fullName: string;
   groupName: string | null;
   completedLessons: number;
+  telegramId: number | null;
 }
 
 const offlineNow = () => typeof navigator !== "undefined" && !navigator.onLine;
@@ -206,6 +213,7 @@ export default function TeacherStudentDetail() {
               fullName: fullNameOf(m),
               groupName: g.name,
               completedLessons: m.completed_lessons ?? 0,
+              telegramId: m.telegram_id ?? null,
             });
             setBasicsResolved(true);
             return;
@@ -242,18 +250,84 @@ export default function TeacherStudentDetail() {
 
   const loading = hwLoading || groupsLoading || !basicsResolved;
 
+  // ── One-tap nudge (Task 3): identical invoke + state mapping to TeacherNudges.tsx, scoped to this
+  //    one student. `error.context` carries the fn's error body on a non-2xx status — same pattern as
+  //    src/components/homework/HomeworkSubmit.tsx:207-215 / TeacherBroadcast.tsx. ─────────────────────
+  const [nudgeState, setNudgeState] = useState<NudgeState | undefined>(undefined);
+  const [nudgeError, setNudgeError] = useState<string | null>(null);
+
+  const handleNudge = async () => {
+    if (!studentId || nudgeState) return; // one-tap only — a terminal or in-flight state never re-invokes
+    setNudgeState("sending");
+    setNudgeError(null);
+    try {
+      const { error } = await supabase.functions.invoke("teacher-nudge-student", {
+        body: { student_id: studentId },
+      });
+      if (error) {
+        let code = "";
+        try {
+          const j = await (error as any).context?.json?.();
+          code = j?.error || "";
+        } catch {
+          // body unreadable — falls through to the generic error message below
+        }
+        if (code === "already_nudged_today") {
+          setNudgeState("already");
+          return;
+        }
+        if (code === "no_telegram") {
+          setNudgeState("no_telegram");
+          return;
+        }
+        console.error("[TeacherStudentDetail] nudge failed", code || error);
+        // Not terminal — the generic copy itself says "qayta urining" (try again).
+        setNudgeState(undefined);
+        setNudgeError(code === "forbidden" ? "Ruxsat yo'q" : "Xatolik — qayta urining");
+        return;
+      }
+      setNudgeState("sent");
+    } catch (e) {
+      console.error("[TeacherStudentDetail] nudge threw", e);
+      setNudgeState(undefined);
+      setNudgeError("Xatolik — qayta urining");
+    }
+  };
+
   const BackRow = (
-    <div className="flex items-center justify-between gap-2">
-      <Button variant="ghost" size="sm" onClick={() => navigate(-1)} aria-label="Orqaga">
-        <ChevronLeft className="size-4" />
-        Orqaga
-      </Button>
-      {/* Nudge is Phase 3 — a disabled "tez orada" stub (no coral; read screen). */}
-      <Button variant="ghost" size="sm" disabled aria-disabled="true" title="Tez orada" className="gap-1.5">
-        <BellRing className="size-4" />
-        Eslatma
-        <span className="text-[9px] font-semibold uppercase tracking-wide opacity-70">tez orada</span>
-      </Button>
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <Button variant="ghost" size="sm" onClick={() => navigate(-1)} aria-label="Orqaga">
+          <ChevronLeft className="size-4" />
+          Orqaga
+        </Button>
+        {!basicsResolved || !basics ? (
+          // Basics (incl. telegram_id) not resolved yet — a calm disabled placeholder, never clickable.
+          <Button variant="ghost" size="sm" disabled aria-disabled="true" className="gap-1.5">
+            <BellRing className="size-4" />
+            Eslatma
+          </Button>
+        ) : !basics.telegramId || nudgeState === "no_telegram" ? (
+          // Pre-empt the fn's `no_telegram` state — no point sending a request that can only fail.
+          <StatusChip kind="none" label="Telegram ulanmagan" />
+        ) : nudgeState === "sent" ? (
+          <StatusChip kind="ok" label="✅ Yuborildi" />
+        ) : nudgeState === "already" ? (
+          <StatusChip kind="wait" label="Bugun yuborilgan" />
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={nudgeState === "sending"}
+            onClick={handleNudge}
+            className="gap-1.5"
+          >
+            {nudgeState === "sending" ? <Loader2 className="size-4 animate-spin" /> : <BellRing className="size-4" />}
+            Eslatma
+          </Button>
+        )}
+      </div>
+      {nudgeError && <p className="text-right text-[11.5px] font-semibold text-danger-2">{nudgeError}</p>}
     </div>
   );
 

@@ -43,15 +43,16 @@ interface TeacherGroupRow {
   active_7d: number;
 }
 
-// Home action tiles the spec lists (Guruhlar / Statistika / Xabar / Nudge). Guruhlar/Statistika/Nudge
-// stay DISABLED ghost tiles ("tez orada") — never coral. Xabar went LIVE in Phase 3 Task 2 (routes to
-// the Broadcast screen); Nudge is Task 3's turn next — an entry with `to` renders as a live ghost
-// button (still never coral: only ONE `variant="primary"` per screen, owned by the Hero above).
+// Home action tiles the spec lists (Guruhlar / Statistika / Xabar / Nudge). Guruhlar/Statistika stay
+// DISABLED ghost tiles ("tez orada") — never coral. Xabar went LIVE in Phase 3 Task 2 (routes to the
+// Broadcast screen); Nudge went LIVE in Task 3 (routes to the Nudge screen) — an entry with `to`
+// renders as a live ghost button (still never coral: only ONE `variant="primary"` per screen, owned by
+// the Hero above).
 const HOME_ACTIONS: { icon: LucideIcon; label: string; to?: string }[] = [
   { icon: Users, label: "Guruhlar" },
   { icon: BarChart3, label: "Statistika" },
   { icon: Send, label: "Xabar", to: "/tg/teacher/broadcast" },
-  { icon: BellRing, label: "Nudge" },
+  { icon: BellRing, label: "Nudge", to: "/tg/teacher/nudges" },
 ];
 
 export default function TeacherHome() {
