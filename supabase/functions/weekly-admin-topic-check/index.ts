@@ -9,6 +9,8 @@ const corsHeaders = {
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 
+const escHtml = (s: string = "") => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 let __sec: string | null = null;
 async function __internalSecret(): Promise<string> {
@@ -60,7 +62,7 @@ Deno.serve(async (req) => {
         const hasPerModule = tset.has(`${g.id}::${m.id}`);
         const hasShared = !!sharedByGroup.get(g.id);
         if (!hasPerModule && !hasShared) {
-          missing.push({ groupName: g.name, moduleTitle: m.title, modulePos: m.position });
+          missing.push({ groupName: escHtml(g.name), moduleTitle: escHtml(m.title), modulePos: m.position });
         }
       }
     }

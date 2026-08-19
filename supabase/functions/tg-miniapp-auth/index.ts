@@ -24,6 +24,8 @@ const corsHeaders = {
 };
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 
+const escHtml = (s: string = "") => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 // Freshness window for initData's `auth_date`. The HMAC is the real authenticity proof; this only
 // bounds replay of a captured payload. Telegram clients REUSE one launch initData for the whole
 // lifetime of the open Mini App (auth_date = first launch, not per-request), so a tight window
@@ -141,7 +143,7 @@ function makeDeps(admin: SupabaseClient): ResolveDeps {
     alertFirstLink: async (profileId, tgId, username) => {
       try {
         const { data: p } = await admin.from("profiles").select("name, last_name").eq("id", profileId).maybeSingle();
-        const nm = [p?.name, p?.last_name].filter(Boolean).join(" ") || "Talaba";
+        const nm = escHtml([p?.name, p?.last_name].filter(Boolean).join(" ") || "Talaba");
         const { data: staff } = await admin.from("user_roles").select("user_id").in("role", ["admin", "superadmin"]);
         const ids = (staff || []).map((r: { user_id: string }) => r.user_id);
         if (!ids.length) return;
