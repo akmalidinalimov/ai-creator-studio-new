@@ -3244,7 +3244,13 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
     try {
       let logged = 0;
       let total = 0;
-      const { data: stats, error: rpcErr } = await admin.rpc("admin_group_login_stats", { p_caller_profile_id: teacherId });
+      // admin_group_login_stats was DROPPED (migration 20260506142751, renamed to
+      // admin_group_engagement_stats) — the dead call silently returned null → /thealth showed 0/0.
+      // p_window_days picks the 3-arg overload unambiguously (both overloads share p_caller_profile_id,
+      // so p_caller_profile_id alone is ambiguous); the DM reads only total_active + logged_in_count
+      // (window-independent) so the value is display-irrelevant. p_caller_profile_id stays explicit —
+      // the webhook runs service-role, so auth.uid() is null and the default would not resolve.
+      const { data: stats, error: rpcErr } = await admin.rpc("admin_group_engagement_stats", { p_window_days: 7, p_caller_profile_id: teacherId });
       if (rpcErr) throw rpcErr;
       const row = ((stats || []) as any[]).find((r) => r.group_id === g.id);
       if (row) {
