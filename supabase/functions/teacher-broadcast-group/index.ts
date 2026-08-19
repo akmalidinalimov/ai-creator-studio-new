@@ -5,7 +5,7 @@
 // screen) is the consumer.
 //
 // POST { group_id: uuid, message: string } (Authorization: Bearer <session jwt>)
-//   -> { ok: true, sent: number, total: number, skipped_no_telegram: number }  (200)
+//   -> { ok: true, sent: number, failed: number, total: number, skipped_no_telegram: number }  (200)
 //   -> { error: "unauthorized" }                    (401 — no/invalid session)
 //   -> { error: "group_id and message required" }   (400 — missing/blank input)
 //   -> { error: "message_too_long" }                (400 — trimmed message > 300 chars)
@@ -78,13 +78,17 @@ async function logError(
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
-  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-  const admin = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  const anon = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_ANON_KEY")!, {
-    global: { headers: { Authorization: req.headers.get("Authorization") || "" } },
-  });
-
+  // admin is declared here (outside the try) so the catch-all below can still use it for logError —
+  // but its construction now happens INSIDE the try (moved down), so a synchronous throw from
+  // createClient still returns the JSON error contract instead of an unhandled rejection.
+  let admin: any;
   try {
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+    admin = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const anon = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_ANON_KEY")!, {
+      global: { headers: { Authorization: req.headers.get("Authorization") || "" } },
+    });
+
     const { data: who } = await anon.auth.getUser();
     if (!who?.user) return json({ error: "unauthorized" }, 401);
 
@@ -113,10 +117,11 @@ Deno.serve(async (req) => {
       .eq("actor_user_id", who.user.id).eq("scope", "teacher").gte("created_at", since);
     if ((recentTeacherSends || 0) >= 1) return json({ error: "rate_limited" }, 429);
 
-    // --- Resolve the group name + recipients (students with a telegram_id). ---
+    // --- Resolve the group name + recipients (students with a telegram_id). Only id/telegram_id are
+    // needed per-student — locale for the DM prefix comes from the TEACHER's own profile below. ---
     const [{ data: group }, { data: rows }] = await Promise.all([
       admin.from("groups").select("name").eq("id", group_id).maybeSingle(),
-      admin.from("profiles").select("id, telegram_id, preferred_locale, name").eq("group_id", group_id),
+      admin.from("profiles").select("id, telegram_id").eq("group_id", group_id),
     ]);
     const allRows = (rows || []) as any[];
     const recipients = allRows.filter((r) => r.telegram_id);
@@ -124,21 +129,35 @@ Deno.serve(async (req) => {
     const skipped_no_telegram = allRows.length - recipients.length;
     if (total === 0) return json({ error: "no_recipients" }, 400);
 
-    // --- Build the DM body: locale-appropriate "message from teacher" prefix + escaped text. ---
+    // --- Build the DM body: locale-appropriate "message from teacher" prefix + escaped text. The
+    // group NAME is teacher-editable free text too, so it must be HTML-escaped exactly like the
+    // message body — an unescaped "&"/"<"/">" in the group name would make Telegram reject every
+    // sendMessage in the fan-out ("can't parse entities"). ---
     const { data: teacherProfile } = await admin.from("profiles")
       .select("preferred_locale").eq("id", who.user.id).maybeSingle();
     const locale = ["uz", "ru", "en"].includes(teacherProfile?.preferred_locale)
       ? (teacherProfile!.preferred_locale as string) : "uz";
     const groupName = group?.name || "—";
-    const body = `${TEACHER_FROM_TEACHER[locale](groupName)}${csvEscapeHtml(trimmed)}`;
+    const body = `${TEACHER_FROM_TEACHER[locale](csvEscapeHtml(groupName))}${csvEscapeHtml(trimmed)}`;
 
-    // --- Fan out. A thrown exception (network fault) is logged DB-visibly and skipped; a Telegram-side
-    // "blocked bot" ok:false response does NOT throw and is counted as sent, matching the bot flow. ---
+    // --- Claim the teacher-scope rate row BEFORE the fan-out (not after). This shrinks — does not
+    // eliminate — the TOCTOU race where two concurrent POSTs (Mini App double-tap / retry-on-timeout)
+    // both pass the count check above and double-broadcast: the window is now the few ms between the
+    // SELECT and this INSERT, instead of the whole fan-out loop. A fully atomic claim needs a unique
+    // index (e.g. one teacher-scope row per actor per hour) — that's a migration, out of scope here. ---
+    await admin.from("bot_broadcast_rate").insert({ actor_user_id: who.user.id, scope: "teacher" });
+
+    // --- Fan out. A thrown exception (network fault) is a real delivery fault -> logError + failed++.
+    // A Telegram-side non-ok response (bot blocked / chat not found / bad entities etc.) does NOT throw
+    // — it must be read from the response body, or every failed send would be silently counted as
+    // delivered. Mirrors the proven pattern in telegram-bot-webhook's notifyTeachersOfSubmission
+    // (index.ts ~6254-6267). Per-recipient try/catch: one failure never aborts the rest of the fan-out. ---
     const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
     let sent = 0;
+    let failed = 0;
     for (const r of recipients) {
       try {
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        const resp = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -146,20 +165,29 @@ Deno.serve(async (req) => {
             parse_mode: "HTML", disable_web_page_preview: true,
           }),
         });
-        await admin.from("bot_broadcast_rate").insert({
-          actor_user_id: who.user.id, recipient_user_id: r.id, scope: "recipient",
-        });
-        sent++;
+        const j = await resp.json().catch(() => ({}) as any);
+        if (resp.ok && j?.ok) {
+          await admin.from("bot_broadcast_rate").insert({
+            actor_user_id: who.user.id, recipient_user_id: r.id, scope: "recipient",
+          });
+          sent++;
+        } else {
+          failed++;
+          await logError(admin, "teacher-broadcast-group", new Error(j?.description || "send_failed"), {
+            action: "teacher_broadcast_miniapp_send", user_id: r.id, telegram_id: Number(r.telegram_id),
+          });
+        }
       } catch (e) {
+        failed++;
         await logError(admin, "teacher-broadcast-group", e, {
-          action: "teacher_broadcast_miniapp_send", user_id: r.id,
+          action: "teacher_broadcast_miniapp_send", user_id: r.id, telegram_id: Number(r.telegram_id),
         });
       }
     }
 
-    // --- Stamp the teacher-scope rate row + a DB-visible health/audit row (incident doctrine: new
-    // features must emit DB-visible health signals). ---
-    await admin.from("bot_broadcast_rate").insert({ actor_user_id: who.user.id, scope: "teacher" });
+    // --- DB-visible health/audit row (incident doctrine: new features must emit DB-visible health
+    // signals) — now includes `failed` so a real delivery-failure rate is visible to the health layer,
+    // not just an aggregate "sent" count that silently absorbed blocked/invalid recipients. ---
     try {
       await admin.from("admin_actions").insert({
         actor_user_id: who.user.id,
@@ -167,11 +195,11 @@ Deno.serve(async (req) => {
         target_user_id: null,
         target_resource_type: "group",
         target_resource_id: group_id,
-        details: { group_id, sent, total, skipped_no_telegram },
+        details: { group_id, sent, failed, total, skipped_no_telegram },
       });
     } catch (_e) { /* audit best-effort, never blocks the response */ }
 
-    return json({ ok: true, sent, total, skipped_no_telegram });
+    return json({ ok: true, sent, failed, total, skipped_no_telegram });
   } catch (e) {
     await logError(admin, "teacher-broadcast-group", e, { action: "teacher_broadcast_miniapp_unhandled" });
     return json({ error: "unknown" }, 500);
