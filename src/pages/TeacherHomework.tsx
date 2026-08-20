@@ -208,14 +208,19 @@ export default function TeacherHomework() {
   // `voicePath` (Task 3, voice-homework-feedback) is additive: Drawer resolves it BEFORE calling
   // (uploads a new recording first, or carries forward the unchanged/cleared existing path) and it
   // lands in the SAME update as the untouched score/score_feedback/scored_by/scored_at/score_is_stale
-  // columns. `score_feedback_voice_path` isn't in the generated types yet → `as any` on the payload.
+  // columns. "undefined = preserve" (fix round 1, consistency with submitScore): Drawer always
+  // resolves and passes a defined value (it loads the existing path), but the column is only
+  // written when voicePath !== undefined. `score_feedback_voice_path` isn't in the generated types
+  // yet → `as any` on the payload.
   const saveScore = async (id: string, score: number, feedback: string, voicePath?: string | null) => {
     const max = open?.max_score || 10;
     if (!Number.isFinite(score) || score < 0 || score > max) { toast.error(`Bal 0–${max} bo'lishi kerak`); return; }
-    const { error } = await supabase.from("homework_submissions").update({
+    const update: Record<string, unknown> = {
       score, score_feedback: feedback || null, scored_by: user?.id, scored_at: new Date().toISOString(),
-      score_is_stale: false, score_feedback_voice_path: voicePath ?? null,
-    } as any).eq("id", id);
+      score_is_stale: false,
+    };
+    if (voicePath !== undefined) update.score_feedback_voice_path = voicePath;
+    const { error } = await supabase.from("homework_submissions").update(update as any).eq("id", id);
     if (error) toast.error(error.message);
     else { toast.success("Baholandi"); setOpen(null); setDrawerRows(null); load(); }
   };

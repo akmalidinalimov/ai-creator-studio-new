@@ -191,7 +191,11 @@ export default function TeacherGrade() {
     const blob = voiceBlob;
     setSubmitting(true);
     try {
-      let voicePath: string | null = null;
+      // Fix round 1 (Important A): default to `undefined`, NOT null. The RPC backing this queue
+      // (teacher_pending_submissions) never returns any existing score_feedback_voice_path, so this
+      // screen has no way to know whether one already exists — leaving voicePath undefined tells
+      // submitScore to preserve whatever is already on the row instead of clobbering it with null.
+      let voicePath: string | null | undefined = undefined;
       if (blob) {
         try {
           voicePath = await uploadFeedbackVoice(item.user_id, item.submission_id, blob);
@@ -201,9 +205,10 @@ export default function TeacherGrade() {
           return;
         }
       } else if (lastVoiceUploadRef.current?.submissionId === item.submission_id) {
-        // The teacher deleted a note that was already uploaded earlier this round (e.g. after an
-        // undo re-opened this item with a restored note) — best-effort clean up the now-orphaned
-        // object; the write below already carries voicePath=null.
+        // The teacher deleted a note that WE uploaded earlier this round (e.g. after an undo
+        // re-opened this item with a restored note) — we know about this one, so explicitly clear
+        // it (not just "preserve") and best-effort clean up the now-orphaned object.
+        voicePath = null;
         void removeFeedbackVoice(item.user_id, item.submission_id);
         lastVoiceUploadRef.current = null;
       }

@@ -14,15 +14,19 @@
 -- 3) storage.objects RLS for `homework-audio`: four policies mirroring the live
 --    `homework_images` policies (confirmed via pg_policies immediately before writing this
 --    migration) — same SELECT shape (self OR admin OR teacher-of-the-student's-group,
---    junction-aware via is_group_teacher) and same DELETE shape (self OR admin) — WITH ONE
---    DELIBERATE, CONTROLLER-RULED EXTENSION: unlike homework_images (where the STUDENT uploads
---    their own submission photo into their own folder, so INSERT/UPDATE are self-folder-only),
---    for voice feedback it is the TEACHER who uploads/replaces audio inside the STUDENT's
---    <student_uid>/ folder. A self-folder-only INSERT/UPDATE would 403 the teacher. So INSERT
---    and UPDATE here additionally grant the teacher-of-group branch (the identical predicate
---    the SELECT policy already uses), on top of self-folder and admin. DELETE is left
---    self-or-admin only, matching homework_images exactly — deleting a voice note is not a
---    teacher-write path required by this feature.
+--    junction-aware via is_group_teacher) — WITH TWO DELIBERATE EXTENSIONS over homework_images:
+--    unlike homework_images (where the STUDENT uploads their own submission photo into their own
+--    folder, so INSERT/UPDATE are self-folder-only), for voice feedback it is the TEACHER who
+--    uploads/replaces audio inside the STUDENT's <student_uid>/ folder. A self-folder-only
+--    INSERT/UPDATE would 403 the teacher. So INSERT and UPDATE here additionally grant the
+--    teacher-of-group branch (the identical predicate the SELECT policy already uses), on top of
+--    self-folder and admin.
+--    DELETE (fix round 1, 2026-08-20): initially shipped self-or-admin only, matching
+--    homework_images exactly. Task 3's grading screens need to best-effort delete a student's
+--    voice object when a teacher removes a note without recording a replacement
+--    (src/lib/homeworkAudio.ts#removeFeedbackVoice) — a self-or-admin-only DELETE policy denies
+--    every teacher attempt, silently orphaning the object forever. DELETE now carries the SAME
+--    teacher-of-group branch as INSERT/UPDATE, for the same reason.
 
 alter table public.homework_submissions
   add column if not exists score_feedback_voice_path text;
@@ -91,13 +95,24 @@ create policy "hwaudio user update own" on storage.objects for update to authent
     )
   );
 
--- DELETE: self OR admin only. Byte-identical shape to the live "hwimg user delete own" policy
--- on homework_images (bucket id swapped only) — no teacher-write extension for delete.
+-- DELETE (fix round 1): same three-branch predicate as INSERT/UPDATE. A teacher must be able to
+-- delete a student's feedback audio object when removing a voice note without recording a
+-- replacement — a self-or-admin-only DELETE (the original shape here) always denied the teacher,
+-- so removeFeedbackVoice's best-effort delete silently failed on every call, accumulating
+-- orphaned objects forever. Byte-identical branch to INSERT/UPDATE's teacher-of-group predicate.
 drop policy if exists "hwaudio user delete own" on storage.objects;
 create policy "hwaudio user delete own" on storage.objects for delete to authenticated
   using (
     bucket_id = 'homework-audio' and (
       (auth.uid())::text = (storage.foldername(storage.objects.name))[1]
       or public.has_role(auth.uid(), 'admin'::public.app_role)
+      or (
+        public.has_role(auth.uid(), 'teacher'::public.app_role)
+        and exists (
+          select 1 from public.profiles p
+          where p.id::text = (storage.foldername(storage.objects.name))[1]
+            and public.is_group_teacher(p.group_id, auth.uid())
+        )
+      )
     )
   );

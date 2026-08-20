@@ -83,10 +83,12 @@ export type SubmitResult =
  * Write a grade. Mirrors TeacherHomework.saveScore's columns EXACTLY (score, score_feedback,
  * scored_by=auth.uid(), scored_at=now(), score_is_stale=false) so XP + the guard trigger behave
  * identically — see the file header. `voicePath` (Task 3, voice-homework-feedback) is purely
- * ADDITIVE: the caller resolves it before calling (upload a new recording via
- * `src/lib/homeworkAudio.ts#uploadFeedbackVoice`, or pass the unchanged/null path) and it's
- * written into `score_feedback_voice_path` in the SAME update — it changes nothing about the
- * five columns above, the ownership guard below, or the undo semantics.
+ * ADDITIVE, with "undefined = preserve" semantics (fix round 1): pass the newly-uploaded path to
+ * SET it, `null` to explicitly CLEAR it, or omit the argument entirely to leave whatever
+ * `score_feedback_voice_path` already has untouched. This matters because the Mini App caller
+ * (TeacherGrade.tsx) never loads the existing path — its RPC doesn't return it — so a plain
+ * regrade without touching voice must NOT silently null out a note from an earlier round. It
+ * changes nothing about the five columns above, the ownership guard below, or the undo semantics.
  *
  * Concurrent-claim guard (member-forgiveness / "boshqa ustoz baholadi"): a fresh pre-read detects
  * whether ANOTHER teacher graded this submission between load and now. "Already graded by another"
@@ -115,20 +117,24 @@ export async function submitScore(
   }
 
   const trimmed = feedback.trim();
+  const update: Record<string, unknown> = {
+    score,
+    score_feedback: trimmed ? trimmed : null,
+    scored_by: uid,
+    scored_at: new Date().toISOString(),
+    score_is_stale: false,
+  };
+  // Fix round 1 (Important A): only touch the voice column when the caller actually provided a
+  // value. `voicePath === undefined` (the Mini App's default when it didn't record/replace a note
+  // this round) means "leave score_feedback_voice_path exactly as it is" — a plain regrade must
+  // never silently null out a note from an earlier round just because this caller can't see it.
+  if (voicePath !== undefined) update.score_feedback_voice_path = voicePath;
+
   const { error } = await supabase
     .from("homework_submissions")
-    .update({
-      score,
-      score_feedback: trimmed ? trimmed : null,
-      scored_by: uid,
-      scored_at: new Date().toISOString(),
-      score_is_stale: false,
-      // Additive (Task 3, voice-homework-feedback): the caller resolves voicePath BEFORE calling
-      // submitScore — uploads a new blob first, or passes null to clear a removed note. Voice is
-      // independent of text feedback; this column is not in the generated types yet (Task 1's
-      // migration), hence the `as any` cast on the whole payload below.
-      score_feedback_voice_path: voicePath ?? null,
-    } as any)
+    // score_feedback_voice_path is not in the generated types yet (Task 1's migration), hence the
+    // `as any` cast on the whole payload.
+    .update(update as any)
     .eq("id", submissionId);
   if (error) return { status: "error", message: error.message };
   return { status: "ok" };

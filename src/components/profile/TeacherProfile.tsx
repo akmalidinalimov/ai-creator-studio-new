@@ -172,14 +172,18 @@ export default function TeacherProfile() {
   /* One-tap grading with a 6-second undo (safety net for fat fingers). `voicePath` (Task 3,
      voice-homework-feedback) is additive: the caller (QueueCard) uploads a new recording FIRST
      and resolves the value to write (new path / unchanged existing path / null if cleared) — this
-     never changes score/score_feedback/scored_by/scored_at/score_is_stale or their semantics. */
+     never changes score/score_feedback/scored_by/scored_at/score_is_stale or their semantics.
+     "undefined = preserve" (fix round 1, for consistency with submitScore): QueueCard always
+     resolves and passes a defined value here (it loads the existing path), but the column is only
+     written when voicePath !== undefined so a future caller that omits it can't clobber it either. */
   const grade = async (item: QueueItem, score: number, feedback?: string, voicePath?: string | null) => {
+    const update: Record<string, unknown> = {
+      score, score_feedback: feedback?.trim() || null,
+      scored_by: user!.id, scored_at: new Date().toISOString(), score_is_stale: false,
+    };
+    if (voicePath !== undefined) update.score_feedback_voice_path = voicePath;
     const { error } = await supabase.from("homework_submissions")
-      .update({
-        score, score_feedback: feedback?.trim() || null,
-        scored_by: user!.id, scored_at: new Date().toISOString(), score_is_stale: false,
-        score_feedback_voice_path: voicePath ?? null,
-      } as any)
+      .update(update as any)
       .eq("id", item.id);
     if (error) { toast.error(t("profile.tGradeFailed")); return; }
     const bump = (delta: number) =>
