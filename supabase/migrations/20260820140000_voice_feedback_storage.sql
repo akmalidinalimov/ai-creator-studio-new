@@ -27,8 +27,8 @@
 alter table public.homework_submissions
   add column if not exists score_feedback_voice_path text;
 
-insert into storage.buckets (id, name, public)
-values ('homework-audio', 'homework-audio', false)
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('homework-audio', 'homework-audio', false, 4194304, array['audio/mpeg'])
 on conflict (id) do nothing;
 
 -- SELECT: self OR admin OR teacher-of-the-student's-group. Byte-identical shape to the live
