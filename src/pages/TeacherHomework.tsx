@@ -12,6 +12,9 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
+import { VoiceRecorder } from "@/components/homework/VoiceRecorder";
+import { uploadFeedbackVoice, removeFeedbackVoice } from "@/lib/homeworkAudio";
+import { notifyGradeVoice } from "@/lib/teacherApi";
 
 interface Row {
   id: string; assignment_id: string; user_id: string;
@@ -19,6 +22,9 @@ interface Row {
   submitted_at: string; score: number | null; score_feedback: string | null; is_late: boolean;
   scored_at: string | null;
   user_name: string; user_group: string | null; assignment_title: string; max_score: number;
+  // Task 3 (voice-homework-feedback): populated by `load()`'s `select("*")` once the column exists
+  // (no query change needed there); optional since older in-flight rows may predate the column.
+  score_feedback_voice_path?: string | null;
 }
 
 interface Group { id: string; name: string; course_id: string | null; }
@@ -200,15 +206,34 @@ export default function TeacherHomework() {
   };
   useEffect(() => { load(); }, [scopeIds]);
 
-  const saveScore = async (id: string, score: number, feedback: string) => {
+  // `voicePath` (Task 3, voice-homework-feedback) is additive: Drawer resolves it BEFORE calling
+  // (uploads a new recording first, or carries forward the unchanged/cleared existing path) and it
+  // lands in the SAME update as the untouched score/score_feedback/scored_by/scored_at/score_is_stale
+  // columns. "undefined = preserve" (fix round 1, consistency with submitScore): Drawer always
+  // resolves and passes a defined value (it loads the existing path), but the column is only
+  // written when voicePath !== undefined. `score_feedback_voice_path` isn't in the generated types
+  // yet → `as any` on the payload.
+  // `voiceJustUploaded` (Task 6, voice-homework-feedback): true only when the Drawer uploaded a
+  // BRAND NEW recording this round (not a preserved-existing or cleared-to-null path) — gates the
+  // fire-and-forget Telegram push below so a plain regrade / voice-removal never re-sends a DM.
+  const saveScore = async (
+    id: string, score: number, feedback: string, voicePath?: string | null, voiceJustUploaded?: boolean,
+  ) => {
     const max = open?.max_score || 10;
     if (!Number.isFinite(score) || score < 0 || score > max) { toast.error(`Bal 0–${max} bo'lishi kerak`); return; }
-    const { error } = await supabase.from("homework_submissions").update({
+    const update: Record<string, unknown> = {
       score, score_feedback: feedback || null, scored_by: user?.id, scored_at: new Date().toISOString(),
       score_is_stale: false,
-    }).eq("id", id);
+    };
+    if (voicePath !== undefined) update.score_feedback_voice_path = voicePath;
+    const { error } = await supabase.from("homework_submissions").update(update as any).eq("id", id);
     if (error) toast.error(error.message);
-    else { toast.success("Baholandi"); setOpen(null); setDrawerRows(null); load(); }
+    else {
+      // Fire-and-forget: never awaited, never allowed to affect the save UX (notifyGradeVoice
+      // swallows its own errors; the edge fn itself is fully graceful on no-telegram/blocked-bot).
+      if (voiceJustUploaded) notifyGradeVoice(id);
+      toast.success("Baholandi"); setOpen(null); setDrawerRows(null); load();
+    }
   };
 
   const reset = async (id: string) => {
@@ -503,10 +528,23 @@ function FlatTable({ rows, onOpen, scored }: { rows: Row[]; onOpen: (r: Row) => 
   );
 }
 
-function Drawer({ row, onSave, onReset }: { row: Row; onSave: (id: string, s: number, f: string) => void; onReset: (id: string) => void }) {
+function Drawer({
+  row, onSave, onReset,
+}: {
+  row: Row;
+  onSave: (id: string, s: number, f: string, voicePath?: string | null, voiceJustUploaded?: boolean) => void;
+  onReset: (id: string) => void;
+}) {
   const [score, setScore] = useState<string>(row.score?.toString() || "");
   const [fb, setFb] = useState(row.score_feedback || "");
   const [imgUrl, setImgUrl] = useState<string | null>(null);
+  // Task 3 (voice-homework-feedback): `voiceBlob` = a freshly-recorded note pending upload.
+  // `existingPath` starts at the row's current column (this Drawer opens for BOTH pending and
+  // already-graded rows) and becomes null the moment the teacher removes it; handleSave resolves
+  // the final value to write from these two, mirroring how `fb` already pre-fills-then-overwrites.
+  const [voiceBlob, setVoiceBlob] = useState<Blob | null>(null);
+  const [existingPath, setExistingPath] = useState<string | null>(row.score_feedback_voice_path ?? null);
+  const [saving, setSaving] = useState(false);
   useEffect(() => {
     (async () => {
       if (!row.submitted_image_url) { setImgUrl(null); return; }
@@ -514,6 +552,38 @@ function Drawer({ row, onSave, onReset }: { row: Row; onSave: (id: string, s: nu
       setImgUrl(data?.signedUrl || null);
     })();
   }, [row.id]);
+  useEffect(() => {
+    setVoiceBlob(null);
+    setExistingPath(row.score_feedback_voice_path ?? null);
+  }, [row.id, row.score_feedback_voice_path]);
+
+  const handleSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      // Captured BEFORE the upload: true only when this round recorded a brand new note (not a
+      // preserved-existing or cleared-to-null path) — tells saveScore whether to fire the Task 6
+      // Telegram push after the write succeeds.
+      const voiceJustUploaded = !!voiceBlob;
+      let voicePath: string | null = existingPath;
+      if (voiceBlob) {
+        try {
+          voicePath = await uploadFeedbackVoice(row.user_id, row.id, voiceBlob);
+        } catch {
+          toast.error("Ovozli izohni yuklab bo'lmadi. Qayta urinib ko'ring.");
+          return;
+        }
+      } else if (existingPath == null && row.score_feedback_voice_path) {
+        // Teacher removed a prior note without recording a replacement — best-effort clean up the
+        // now-orphaned object (the write carries voicePath=null regardless of this call's outcome).
+        void removeFeedbackVoice(row.user_id, row.id);
+      }
+      onSave(row.id, parseInt(score), fb, voicePath, voiceJustUploaded);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <>
       <SheetHeader><SheetTitle>{row.user_name} — {row.assignment_title}</SheetTitle></SheetHeader>
@@ -533,9 +603,24 @@ function Drawer({ row, onSave, onReset }: { row: Row; onSave: (id: string, s: nu
             <Textarea rows={2} value={fb} onChange={(e) => setFb(e.target.value)} />
           </div>
         </div>
+        <div className="space-y-2">
+          <Label>Ovozli izoh</Label>
+          {/* A retained prior note (e.g. graded earlier, or a resubmission) shows as a compact
+              removable chip; recording a new one overwrites the same deterministic storage key
+              regardless, so no explicit "replace" affordance is needed. */}
+          {existingPath && !voiceBlob && (
+            <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground">
+              <span className="flex-1 truncate">🎤 Saqlangan ovozli izoh mavjud</span>
+              <button type="button" onClick={() => setExistingPath(null)} className="font-medium text-destructive hover:underline">
+                O'chirish
+              </button>
+            </div>
+          )}
+          <VoiceRecorder value={voiceBlob} onChange={setVoiceBlob} disabled={saving} />
+        </div>
         <div className="flex gap-2">
-          <Button onClick={() => onSave(row.id, parseInt(score), fb)}>💾 Saqlash</Button>
-          {row.score != null && <Button variant="outline" onClick={() => onReset(row.id)}>🔓 Talabaga qaytarish</Button>}
+          <Button disabled={saving} onClick={() => void handleSave()}>💾 Saqlash</Button>
+          {row.score != null && <Button variant="outline" disabled={saving} onClick={() => onReset(row.id)}>🔓 Talabaga qaytarish</Button>}
         </div>
       </div>
     </>

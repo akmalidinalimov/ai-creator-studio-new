@@ -8,6 +8,9 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Megaphone, Search, Settings as SettingsIcon, Users } from "lucide-react";
 import { toast } from "sonner";
+import { VoiceRecorder } from "@/components/homework/VoiceRecorder";
+import { uploadFeedbackVoice, removeFeedbackVoice } from "@/lib/homeworkAudio";
+import { notifyGradeVoice } from "@/lib/teacherApi";
 
 /* Mission Control (design A) with the cross-group grading queue (design B).
    Group context is ALWAYS visible as chips; grading is one tap per score. */
@@ -23,6 +26,10 @@ interface QueueItem {
   prompt: string; is_resub: boolean; prev_score: number | null;
   media: Array<{ kind: string; url?: string; msg_url?: string }>; tg_url: string | null;
   student: string; group_name: string;
+  // Task 3 (voice-homework-feedback): a voice note left on a PRIOR grading round of this same
+  // submission row (a resubmission keeps score_feedback_voice_path — start_homework_resubmission
+  // doesn't clear it). Additive/display-only here; grade() resolves the final value to write.
+  voice_path: string | null;
 }
 interface RosterRow {
   id: string; name: string; last_name: string | null; telegram_username: string | null;
@@ -99,7 +106,10 @@ export default function TeacherProfile() {
       const [subsRes, studentsRes] = await Promise.all([
         supabase.from("homework_submissions")
           // Pending = never scored OR resubmitted after grading (stale score).
-          .select("id, user_id, submitted_text, submitted_image_url, submitted_at, score, score_is_stale, previous_attempts, media, telegram_message_url, homework_assignments(max_score, title, description, modules(position, title))")
+          // score_feedback_voice_path (Task 3, voice-homework-feedback): not in the generated
+          // types yet (Task 1's migration), but PostgREST doesn't need a typed column list — the
+          // `as any` cast on the mapped row below covers it.
+          .select("id, user_id, submitted_text, submitted_image_url, submitted_at, score, score_is_stale, previous_attempts, media, telegram_message_url, score_feedback_voice_path, homework_assignments(max_score, title, description, modules(position, title))")
           .or("score.is.null,score_is_stale.eq.true")
           .order("submitted_at", { ascending: true })
           .limit(100),
@@ -130,6 +140,7 @@ export default function TeacherProfile() {
             tg_url: r.telegram_message_url || null,
             student: [st.name, st.last_name ? st.last_name[0] + "." : ""].filter(Boolean).join(" "),
             group_name: groupName(st.group_id),
+            voice_path: r.score_feedback_voice_path ?? null,
           };
         });
       setQueue(items);
@@ -159,15 +170,29 @@ export default function TeacherProfile() {
     if (user) await supabase.from("profiles").update({ active_teacher_group_id: gid } as any).eq("id", user.id);
   };
 
-  /* One-tap grading with a 6-second undo (safety net for fat fingers). */
-  const grade = async (item: QueueItem, score: number, feedback?: string) => {
+  /* One-tap grading with a 6-second undo (safety net for fat fingers). `voicePath` (Task 3,
+     voice-homework-feedback) is additive: the caller (QueueCard) uploads a new recording FIRST
+     and resolves the value to write (new path / unchanged existing path / null if cleared) — this
+     never changes score/score_feedback/scored_by/scored_at/score_is_stale or their semantics.
+     "undefined = preserve" (fix round 1, for consistency with submitScore): QueueCard always
+     resolves and passes a defined value here (it loads the existing path), but the column is only
+     written when voicePath !== undefined so a future caller that omits it can't clobber it either. */
+  const grade = async (
+    item: QueueItem, score: number, feedback?: string, voicePath?: string | null, voiceJustUploaded?: boolean,
+  ) => {
+    const update: Record<string, unknown> = {
+      score, score_feedback: feedback?.trim() || null,
+      scored_by: user!.id, scored_at: new Date().toISOString(), score_is_stale: false,
+    };
+    if (voicePath !== undefined) update.score_feedback_voice_path = voicePath;
     const { error } = await supabase.from("homework_submissions")
-      .update({
-        score, score_feedback: feedback?.trim() || null,
-        scored_by: user!.id, scored_at: new Date().toISOString(), score_is_stale: false,
-      } as any)
+      .update(update as any)
       .eq("id", item.id);
     if (error) { toast.error(t("profile.tGradeFailed")); return; }
+    // Fire-and-forget Telegram push (Task 6, voice-homework-feedback) — only when THIS round
+    // uploaded a brand new note (not a preserved-existing or cleared-to-null path). Never awaited,
+    // never allowed to affect the grade UI (notifyGradeVoice swallows its own errors).
+    if (voiceJustUploaded) notifyGradeVoice(item.id);
     const bump = (delta: number) =>
       setGroups((gs) => gs.map((g) => g.group_name === item.group_name ? { ...g, pending_homework: Math.max(g.pending_homework + delta, 0) } : g));
     setQueue((q) => q.filter((x) => x.id !== item.id));
@@ -590,14 +615,50 @@ function presetsFor(score: number, max: number): string[] {
   return p[band] || [];
 }
 
-function QueueCard({ item, onGrade, t }: { item: QueueItem; onGrade: (i: QueueItem, s: number, f?: string) => void; t: any }) {
+function QueueCard({
+  item, onGrade, t,
+}: {
+  item: QueueItem;
+  onGrade: (i: QueueItem, s: number, f?: string, voicePath?: string | null, voiceJustUploaded?: boolean) => void;
+  t: any;
+}) {
   const [feedback, setFeedback] = useState("");
   const [showFb, setShowFb] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
   const [lightbox, setLightbox] = useState(false);
   const [pick, setPick] = useState<number | null>(null);
+  // Task 3 (voice-homework-feedback): `voiceBlob` = a freshly-recorded note pending upload.
+  // `existingPath` starts at whatever this submission already carries (a resubmission can retain a
+  // voice note from an earlier grading round) and becomes null the moment the teacher deletes it —
+  // `send` resolves the final value to write from these two, exactly mirroring how `feedback`
+  // (typed fresh each round, no server pre-fill) already behaves.
+  const [voiceBlob, setVoiceBlob] = useState<Blob | null>(null);
+  const [existingPath, setExistingPath] = useState<string | null>(item.voice_path);
+  const [uploadingVoice, setUploadingVoice] = useState(false);
   const d = daysSince(item.submitted_at) ?? 0;
-  const send = (score: number) => onGrade(item, score, feedback);
+  const send = async (score: number) => {
+    // Captured BEFORE the upload: true only when this round recorded a brand new note (not a
+    // preserved-existing or cleared-to-null path) — tells `grade` whether to fire the Task 6
+    // Telegram push after the write succeeds.
+    const voiceJustUploaded = !!voiceBlob;
+    let voicePath: string | null = existingPath;
+    if (voiceBlob) {
+      setUploadingVoice(true);
+      try {
+        voicePath = await uploadFeedbackVoice(item.user_id, item.id, voiceBlob);
+      } catch {
+        toast.error("Ovozli izohni yuklab bo'lmadi. Qayta urinib ko'ring.");
+        setUploadingVoice(false);
+        return;
+      }
+      setUploadingVoice(false);
+    } else if (existingPath == null && item.voice_path) {
+      // The teacher explicitly deleted a prior note without recording a replacement — best-effort
+      // clean up the now-orphaned object (the write below already carries voicePath=null).
+      void removeFeedbackVoice(item.user_id, item.id);
+    }
+    onGrade(item, score, feedback, voicePath, voiceJustUploaded);
+  };
   return (
     <Card className="p-4">
       <div className="flex items-center gap-2 text-sm flex-wrap">
@@ -657,7 +718,7 @@ function QueueCard({ item, onGrade, t }: { item: QueueItem; onGrade: (i: QueueIt
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {[item.max_score, 8, 6, 4].filter((v, i, a) => a.indexOf(v) === i && v <= item.max_score).map((s) => (
           <Button key={s} size="sm" variant={pick === s ? "default" : "outline"}
-            onClick={() => { setPick(s); if (!showFb) send(s); }}>
+            onClick={() => { setPick(s); if (!showFb) void send(s); }}>
             {s === item.max_score ? `✓ ${s}` : s}
           </Button>
         ))}
@@ -682,8 +743,22 @@ function QueueCard({ item, onGrade, t }: { item: QueueItem; onGrade: (i: QueueIt
           <div className="flex gap-2">
             <input value={feedback} onChange={(e) => setFeedback(e.target.value)} placeholder={t("profile.tFeedbackPh")}
               className="flex-1 rounded-md border bg-background px-3 py-1.5 text-sm" maxLength={500} />
-            <Button size="sm" disabled={pick == null} onClick={() => pick != null && send(pick)}>{t("profile.tSend")}</Button>
+            <Button size="sm" disabled={pick == null || uploadingVoice} onClick={() => pick != null && void send(pick)}>
+              {t("profile.tSend")}
+            </Button>
           </div>
+          {/* Task 3: voice note beside the text field. A retained prior note (resubmission) shows as
+              a compact removable chip; recording a new one overwrites the same deterministic
+              storage key regardless. */}
+          {existingPath && !voiceBlob && (
+            <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground">
+              <span className="flex-1 truncate">🎤 Saqlangan ovozli izoh mavjud</span>
+              <button type="button" onClick={() => setExistingPath(null)} className="font-medium text-destructive hover:underline">
+                O'chirish
+              </button>
+            </div>
+          )}
+          <VoiceRecorder value={voiceBlob} onChange={setVoiceBlob} disabled={uploadingVoice} />
         </div>
       )}
     </Card>

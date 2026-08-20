@@ -12,6 +12,7 @@ import { getHomeworkStateChip, type AssignableItem } from "@/lib/homeworkAssigna
 import { Card, SectionHeader, StatTile, StatusChip, XpPill, Button, EmptyState, Skeleton } from "@/components/ui-kit";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import HomeworkSubmit from "@/components/homework/HomeworkSubmit";
+import { FeedbackVoicePlayer } from "@/components/homework/FeedbackVoicePlayer";
 
 /* Vazifa (homework) hub. Mockup: data-screen="homework" + "hw-detail" + "upload".
  *
@@ -65,6 +66,13 @@ interface SubmissionRaw {
   media: MediaItem[] | null;
   score: number | null;
   score_feedback: string | null;
+  // Voice feedback (2026-08-20 voice-homework-feedback, Task 1/3): not in the generated
+  // Supabase types yet, but PostgREST doesn't need a typed column list — the `as any[]` cast
+  // on subsRes.data below covers it. A resubmission does NOT clear these (mirrors
+  // TeacherProfile.tsx/TeacherHomework.tsx precedent), so — like score_feedback — they read
+  // straight off the live row, never derived through the previous_attempts fallback.
+  score_feedback_voice_path: string | null;
+  score_feedback_voice_file_id: string | null;
   score_is_stale: boolean | null;
   scored_by: string | null;
   scored_at: string | null;
@@ -89,6 +97,7 @@ interface HwItem {
   status: HwStatus;
   effectiveScore: number | null;
   effectiveFeedback: string | null;
+  hasVoiceFeedback: boolean;
   submittedText: string;
   submittedImageUrl: string | null;
   media: MediaItem[];
@@ -151,7 +160,7 @@ export default function Homework() {
         const subsRes = await supabase
           .from("homework_submissions")
           .select(
-            "id, assignment_id, submitted_at, submitted_text, submitted_image_url, media, score, score_feedback, score_is_stale, scored_by, scored_at, previous_attempts, homework_assignments(id, title, max_score, modules(title, position))",
+            "id, assignment_id, submitted_at, submitted_text, submitted_image_url, media, score, score_feedback, score_feedback_voice_path, score_feedback_voice_file_id, score_is_stale, scored_by, scored_at, previous_attempts, homework_assignments(id, title, max_score, modules(title, position))",
           )
           .eq("user_id", user.id)
           .order("submitted_at", { ascending: false });
@@ -204,6 +213,7 @@ export default function Homework() {
             status,
             effectiveScore: eff?.effective_score ?? null,
             effectiveFeedback: eff?.effective_feedback ?? null,
+            hasVoiceFeedback: !!(r.score_feedback_voice_path || r.score_feedback_voice_file_id),
             submittedText: r.submitted_text || "",
             submittedImageUrl: r.submitted_image_url,
             media: Array.isArray(r.media) ? r.media : [],
@@ -458,7 +468,7 @@ export default function Homework() {
             <p className="text-xs font-semibold text-muted-foreground">{t("homework.imageUnavailable")}</p>
           ) : null}
 
-          {selected.effectiveFeedback && (
+          {(selected.effectiveFeedback || selected.hasVoiceFeedback) && (
             <div className="rounded-lg border border-border bg-surface-2 p-3.5">
               <div className="mb-2 flex items-center gap-2">
                 <div className="grid size-[30px] flex-none place-items-center rounded-md bg-primary text-[12px] font-extrabold text-primary-foreground">
@@ -469,9 +479,16 @@ export default function Homework() {
                   <div className="text-[11px] font-semibold text-muted-foreground">{t("homework.feedbackTitle")}</div>
                 </div>
               </div>
-              <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-foreground/90">
-                {selected.effectiveFeedback}
-              </p>
+              {selected.effectiveFeedback && (
+                <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-foreground/90">
+                  {selected.effectiveFeedback}
+                </p>
+              )}
+              {selected.hasVoiceFeedback && (
+                <div className={cn("min-w-0", selected.effectiveFeedback && "mt-2.5")}>
+                  <FeedbackVoicePlayer submissionId={selected.id} />
+                </div>
+              )}
             </div>
           )}
 

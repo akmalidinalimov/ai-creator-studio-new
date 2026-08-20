@@ -82,7 +82,13 @@ export type SubmitResult =
 /**
  * Write a grade. Mirrors TeacherHomework.saveScore's columns EXACTLY (score, score_feedback,
  * scored_by=auth.uid(), scored_at=now(), score_is_stale=false) so XP + the guard trigger behave
- * identically — see the file header.
+ * identically — see the file header. `voicePath` (Task 3, voice-homework-feedback) is purely
+ * ADDITIVE, with "undefined = preserve" semantics (fix round 1): pass the newly-uploaded path to
+ * SET it, `null` to explicitly CLEAR it, or omit the argument entirely to leave whatever
+ * `score_feedback_voice_path` already has untouched. This matters because the Mini App caller
+ * (TeacherGrade.tsx) never loads the existing path — its RPC doesn't return it — so a plain
+ * regrade without touching voice must NOT silently null out a note from an earlier round. It
+ * changes nothing about the five columns above, the ownership guard below, or the undo semantics.
  *
  * Concurrent-claim guard (member-forgiveness / "boshqa ustoz baholadi"): a fresh pre-read detects
  * whether ANOTHER teacher graded this submission between load and now. "Already graded by another"
@@ -95,6 +101,7 @@ export async function submitScore(
   submissionId: string,
   score: number,
   feedback: string,
+  voicePath?: string | null,
 ): Promise<SubmitResult> {
   const { data: authData } = await supabase.auth.getUser();
   const uid = authData?.user?.id ?? null;
@@ -110,18 +117,43 @@ export async function submitScore(
   }
 
   const trimmed = feedback.trim();
+  const update: Record<string, unknown> = {
+    score,
+    score_feedback: trimmed ? trimmed : null,
+    scored_by: uid,
+    scored_at: new Date().toISOString(),
+    score_is_stale: false,
+  };
+  // Fix round 1 (Important A): only touch the voice column when the caller actually provided a
+  // value. `voicePath === undefined` (the Mini App's default when it didn't record/replace a note
+  // this round) means "leave score_feedback_voice_path exactly as it is" — a plain regrade must
+  // never silently null out a note from an earlier round just because this caller can't see it.
+  if (voicePath !== undefined) update.score_feedback_voice_path = voicePath;
+
   const { error } = await supabase
     .from("homework_submissions")
-    .update({
-      score,
-      score_feedback: trimmed ? trimmed : null,
-      scored_by: uid,
-      scored_at: new Date().toISOString(),
-      score_is_stale: false,
-    } as any)
+    // score_feedback_voice_path is not in the generated types yet (Task 1's migration), hence the
+    // `as any` cast on the whole payload.
+    .update(update as any)
     .eq("id", submissionId);
   if (error) return { status: "error", message: error.message };
   return { status: "ok" };
+}
+
+/**
+ * Fire-and-forget push of a Telegram audio DM for a voice feedback note JUST uploaded this grading
+ * round (Task 6, voice-homework-feedback). Called from all three grading surfaces (TeacherGrade,
+ * TeacherHomework, TeacherProfile) right after their grade-write succeeds — NEVER awaited, NEVER
+ * allowed to fail the grade: the notify-grade-voice edge fn itself is fully graceful (a student with
+ * no telegram_id, a blocked bot, or a Telegram hiccup all resolve to `{ok:true, sent:false}` there),
+ * and this wrapper swallows any transport error on top of that so a network blip can't even surface
+ * a console warning mid-grading-flow. The in-app player (Task 5 / hw-audio-url) is the durable
+ * delivery path for every student regardless of whether this push lands.
+ */
+export function notifyGradeVoice(submissionId: string): void {
+  void supabase.functions
+    .invoke("notify-grade-voice", { body: { submission_id: submissionId } })
+    .catch(() => {});
 }
 
 // NOTE: there is deliberately NO `undoScore` that clears score→null. The homework_submissions_guard

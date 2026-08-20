@@ -10,6 +10,7 @@ import {
   leavesFromAssignments,
   type LeafEffective,
 } from "@/lib/homeworkStats";
+import { FeedbackVoicePlayer } from "@/components/homework/FeedbackVoicePlayer";
 
 interface ModuleAgg {
   module_id: string;
@@ -28,6 +29,13 @@ interface ModuleAgg {
     score: number | null;
     feedback: string | null;
     is_stale: boolean;
+    // Voice feedback (2026-08-20 voice-homework-feedback, Task 5): submissionId is the LIVE
+    // submission row's id (not the assignment id) — FeedbackVoicePlayer resolves audio by
+    // submission_id. hasVoice mirrors `feedback` in reading straight off the live row
+    // (resubmission doesn't clear score_feedback_voice_path — TeacherProfile.tsx precedent),
+    // not through the effective/previous_attempts fallback.
+    submissionId: string | null;
+    hasVoice: boolean;
   }[];
 }
 
@@ -54,7 +62,9 @@ export function HomeworkProfileSection() {
 
       const { data: subs } = await supabase
         .from("homework_submissions")
-        .select("id, assignment_id, score, score_feedback, scored_at, score_is_stale, previous_attempts")
+        .select(
+          "id, assignment_id, score, score_feedback, score_feedback_voice_path, score_feedback_voice_file_id, scored_at, score_is_stale, previous_attempts",
+        )
         .eq("user_id", user.id);
 
       let assignsQuery = supabase
@@ -102,6 +112,8 @@ export function HomeworkProfileSection() {
           score: eff.effective_score,
           feedback: eff.effective_feedback,
           is_stale: !!liveSub?.score_is_stale,
+          submissionId: liveSub?.id ?? null,
+          hasVoice: !!(liveSub?.score_feedback_voice_path || liveSub?.score_feedback_voice_file_id),
         });
         if (eff.effective_score != null) {
           agg.scored_tasks++;
@@ -174,6 +186,11 @@ export function HomeworkProfileSection() {
                       <div className="flex-1 min-w-0">
                         <div className="truncate">{t.title}</div>
                         {t.feedback && <div className="text-xs text-muted-foreground italic mt-0.5">"{t.feedback}"</div>}
+                        {t.hasVoice && t.submissionId && (
+                          <div className="mt-1 min-w-0">
+                            <FeedbackVoicePlayer submissionId={t.submissionId} />
+                          </div>
+                        )}
                         {t.is_stale && t.score != null && (
                           <div className="text-[10px] text-amber-600 mt-0.5">Qayta yuborilgan — yangi baholashni kuting</div>
                         )}
