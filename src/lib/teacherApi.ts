@@ -140,6 +140,22 @@ export async function submitScore(
   return { status: "ok" };
 }
 
+/**
+ * Fire-and-forget push of a Telegram audio DM for a voice feedback note JUST uploaded this grading
+ * round (Task 6, voice-homework-feedback). Called from all three grading surfaces (TeacherGrade,
+ * TeacherHomework, TeacherProfile) right after their grade-write succeeds — NEVER awaited, NEVER
+ * allowed to fail the grade: the notify-grade-voice edge fn itself is fully graceful (a student with
+ * no telegram_id, a blocked bot, or a Telegram hiccup all resolve to `{ok:true, sent:false}` there),
+ * and this wrapper swallows any transport error on top of that so a network blip can't even surface
+ * a console warning mid-grading-flow. The in-app player (Task 5 / hw-audio-url) is the durable
+ * delivery path for every student regardless of whether this push lands.
+ */
+export function notifyGradeVoice(submissionId: string): void {
+  void supabase.functions
+    .invoke("notify-grade-voice", { body: { submission_id: submissionId } })
+    .catch(() => {});
+}
+
 // NOTE: there is deliberately NO `undoScore` that clears score→null. The homework_submissions_guard
 // trigger (20260509085603_...sql) only permits OLD.score→NULL when attempt_number is ALSO bumped (a
 // resubmission); a plain null-clear is SILENTLY reverted (`NEW.score := OLD.score`) while our

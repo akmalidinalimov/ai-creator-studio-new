@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { VoiceRecorder } from "@/components/homework/VoiceRecorder";
 import { uploadFeedbackVoice, removeFeedbackVoice } from "@/lib/homeworkAudio";
+import { notifyGradeVoice } from "@/lib/teacherApi";
 
 interface Row {
   id: string; assignment_id: string; user_id: string;
@@ -212,7 +213,12 @@ export default function TeacherHomework() {
   // resolves and passes a defined value (it loads the existing path), but the column is only
   // written when voicePath !== undefined. `score_feedback_voice_path` isn't in the generated types
   // yet → `as any` on the payload.
-  const saveScore = async (id: string, score: number, feedback: string, voicePath?: string | null) => {
+  // `voiceJustUploaded` (Task 6, voice-homework-feedback): true only when the Drawer uploaded a
+  // BRAND NEW recording this round (not a preserved-existing or cleared-to-null path) — gates the
+  // fire-and-forget Telegram push below so a plain regrade / voice-removal never re-sends a DM.
+  const saveScore = async (
+    id: string, score: number, feedback: string, voicePath?: string | null, voiceJustUploaded?: boolean,
+  ) => {
     const max = open?.max_score || 10;
     if (!Number.isFinite(score) || score < 0 || score > max) { toast.error(`Bal 0–${max} bo'lishi kerak`); return; }
     const update: Record<string, unknown> = {
@@ -222,7 +228,12 @@ export default function TeacherHomework() {
     if (voicePath !== undefined) update.score_feedback_voice_path = voicePath;
     const { error } = await supabase.from("homework_submissions").update(update as any).eq("id", id);
     if (error) toast.error(error.message);
-    else { toast.success("Baholandi"); setOpen(null); setDrawerRows(null); load(); }
+    else {
+      // Fire-and-forget: never awaited, never allowed to affect the save UX (notifyGradeVoice
+      // swallows its own errors; the edge fn itself is fully graceful on no-telegram/blocked-bot).
+      if (voiceJustUploaded) notifyGradeVoice(id);
+      toast.success("Baholandi"); setOpen(null); setDrawerRows(null); load();
+    }
   };
 
   const reset = async (id: string) => {
@@ -521,7 +532,7 @@ function Drawer({
   row, onSave, onReset,
 }: {
   row: Row;
-  onSave: (id: string, s: number, f: string, voicePath?: string | null) => void;
+  onSave: (id: string, s: number, f: string, voicePath?: string | null, voiceJustUploaded?: boolean) => void;
   onReset: (id: string) => void;
 }) {
   const [score, setScore] = useState<string>(row.score?.toString() || "");
@@ -550,6 +561,10 @@ function Drawer({
     if (saving) return;
     setSaving(true);
     try {
+      // Captured BEFORE the upload: true only when this round recorded a brand new note (not a
+      // preserved-existing or cleared-to-null path) — tells saveScore whether to fire the Task 6
+      // Telegram push after the write succeeds.
+      const voiceJustUploaded = !!voiceBlob;
       let voicePath: string | null = existingPath;
       if (voiceBlob) {
         try {
@@ -563,7 +578,7 @@ function Drawer({
         // now-orphaned object (the write carries voicePath=null regardless of this call's outcome).
         void removeFeedbackVoice(row.user_id, row.id);
       }
-      onSave(row.id, parseInt(score), fb, voicePath);
+      onSave(row.id, parseInt(score), fb, voicePath, voiceJustUploaded);
     } finally {
       setSaving(false);
     }

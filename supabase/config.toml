@@ -161,6 +161,16 @@ verify_jwt = true
 [functions.hw-audio-url]
 verify_jwt = true
 
+# notify-grade-voice: push an app-recorded voice feedback note to the student as a Telegram audio DM
+# (Voice homework feedback, Task 6). Requires a logged-in teacher/admin Supabase session JWT
+# (verify_jwt=true) — resolves the caller via auth.getUser(jwt), enforces junction-aware RBAC
+# (is_group_teacher ∪ admin/superadmin, NO student-self branch — this triggers a DM), then signs a
+# `homework-audio` URL and calls Telegram sendAudio server-side. Graceful no-send (200) when the
+# student has no telegram_id or the submission has no voice note. See
+# supabase/functions/notify-grade-voice/index.ts.
+[functions.notify-grade-voice]
+verify_jwt = true
+
 # teacher-broadcast-group: Mini App API for a teacher to DM-broadcast a message to every student in
 # one of their groups (mirrors the bot-chat /tbroadcast flow exactly — a DM fan-out, NOT a post into
 # the supergroup). Requires a logged-in teacher/admin Supabase session JWT (verify_jwt=true) —

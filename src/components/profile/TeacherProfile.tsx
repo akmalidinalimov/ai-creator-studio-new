@@ -10,6 +10,7 @@ import { Megaphone, Search, Settings as SettingsIcon, Users } from "lucide-react
 import { toast } from "sonner";
 import { VoiceRecorder } from "@/components/homework/VoiceRecorder";
 import { uploadFeedbackVoice, removeFeedbackVoice } from "@/lib/homeworkAudio";
+import { notifyGradeVoice } from "@/lib/teacherApi";
 
 /* Mission Control (design A) with the cross-group grading queue (design B).
    Group context is ALWAYS visible as chips; grading is one tap per score. */
@@ -176,7 +177,9 @@ export default function TeacherProfile() {
      "undefined = preserve" (fix round 1, for consistency with submitScore): QueueCard always
      resolves and passes a defined value here (it loads the existing path), but the column is only
      written when voicePath !== undefined so a future caller that omits it can't clobber it either. */
-  const grade = async (item: QueueItem, score: number, feedback?: string, voicePath?: string | null) => {
+  const grade = async (
+    item: QueueItem, score: number, feedback?: string, voicePath?: string | null, voiceJustUploaded?: boolean,
+  ) => {
     const update: Record<string, unknown> = {
       score, score_feedback: feedback?.trim() || null,
       scored_by: user!.id, scored_at: new Date().toISOString(), score_is_stale: false,
@@ -186,6 +189,10 @@ export default function TeacherProfile() {
       .update(update as any)
       .eq("id", item.id);
     if (error) { toast.error(t("profile.tGradeFailed")); return; }
+    // Fire-and-forget Telegram push (Task 6, voice-homework-feedback) — only when THIS round
+    // uploaded a brand new note (not a preserved-existing or cleared-to-null path). Never awaited,
+    // never allowed to affect the grade UI (notifyGradeVoice swallows its own errors).
+    if (voiceJustUploaded) notifyGradeVoice(item.id);
     const bump = (delta: number) =>
       setGroups((gs) => gs.map((g) => g.group_name === item.group_name ? { ...g, pending_homework: Math.max(g.pending_homework + delta, 0) } : g));
     setQueue((q) => q.filter((x) => x.id !== item.id));
@@ -612,7 +619,7 @@ function QueueCard({
   item, onGrade, t,
 }: {
   item: QueueItem;
-  onGrade: (i: QueueItem, s: number, f?: string, voicePath?: string | null) => void;
+  onGrade: (i: QueueItem, s: number, f?: string, voicePath?: string | null, voiceJustUploaded?: boolean) => void;
   t: any;
 }) {
   const [feedback, setFeedback] = useState("");
@@ -630,6 +637,10 @@ function QueueCard({
   const [uploadingVoice, setUploadingVoice] = useState(false);
   const d = daysSince(item.submitted_at) ?? 0;
   const send = async (score: number) => {
+    // Captured BEFORE the upload: true only when this round recorded a brand new note (not a
+    // preserved-existing or cleared-to-null path) — tells `grade` whether to fire the Task 6
+    // Telegram push after the write succeeds.
+    const voiceJustUploaded = !!voiceBlob;
     let voicePath: string | null = existingPath;
     if (voiceBlob) {
       setUploadingVoice(true);
@@ -646,7 +657,7 @@ function QueueCard({
       // clean up the now-orphaned object (the write below already carries voicePath=null).
       void removeFeedbackVoice(item.user_id, item.id);
     }
-    onGrade(item, score, feedback, voicePath);
+    onGrade(item, score, feedback, voicePath, voiceJustUploaded);
   };
   return (
     <Card className="p-4">

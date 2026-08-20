@@ -31,6 +31,7 @@ import {
   fetchPendingQueue,
   submitScore,
   returnForRedo,
+  notifyGradeVoice,
   type PendingSubmission,
 } from "@/lib/teacherApi";
 
@@ -230,7 +231,12 @@ export default function TeacherGrade() {
         return;
       }
 
-      // Success — advance immediately, offer a 6s undo (auto-advance makes a fat-finger unrecoverable).
+      // Success. A NEW voice note recorded THIS round (not a preserved/cleared one) gets pushed to
+      // the student's Telegram DM if they've started the bot — fire-and-forget: never awaited, never
+      // allowed to affect the grade UI (notifyGradeVoice swallows its own errors).
+      if (blob) notifyGradeVoice(item.submission_id);
+
+      // Advance immediately, offer a 6s undo (auto-advance makes a fat-finger unrecoverable).
       processed.current.add(item.submission_id);
       advance();
       invalidateBadge();
