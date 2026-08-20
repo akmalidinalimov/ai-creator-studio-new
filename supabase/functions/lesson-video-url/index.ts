@@ -31,12 +31,11 @@ Deno.serve(async (req) => {
 
     if (!lesson) return new Response(JSON.stringify({ error: "not found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-    const { data: __allowed } = await admin.rpc("has_module_access", { _user_id: who.user.id, _module_id: (lesson as any).module_id });
-    if (!__allowed) {
-      return new Response(JSON.stringify({ error: "module_locked" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    }
-
-    // Authorization: admins bypass; everyone else must be enrolled AND the lesson must be published.
+    // Authorization: admins bypass everything (including unpublished). A teacher of this
+    // lesson's course bypasses the module-limit/tier gate, the provisional check, and the
+    // enrollment check — but still needs a published lesson, same as students (teachers review
+    // a course's published material, not drafts). Everyone else (students) faces every gate
+    // below, unchanged.
     const userId = who.user.id;
     const { data: roleRow } = await admin
       .from("user_roles")
@@ -46,17 +45,48 @@ Deno.serve(async (req) => {
       .maybeSingle();
     const isAdmin = !!roleRow;
 
-    if (!isAdmin) {
+    const courseId = (lesson as any).modules?.course_id ?? null;
+
+    // isTeacherOfCourse: does this user teach a group on this course? Junction-aware
+    // (primary groups.teacher_id ∪ co-teacher group_teachers) via the teacher_group_ids(uid)
+    // RPC (SECURITY DEFINER, junction-aware since #86/#88 "multi-teacher per group").
+    let isTeacherOfCourse = false;
+    if (!isAdmin && courseId) {
+      const { data: teacherGroupIds } = await admin.rpc("teacher_group_ids", { _uid: userId });
+      const groupIds = (teacherGroupIds ?? []) as string[];
+      if (groupIds.length > 0) {
+        const { data: taughtGroup } = await admin
+          .from("groups")
+          .select("id")
+          .eq("course_id", courseId)
+          .in("id", groupIds)
+          .limit(1);
+        isTeacherOfCourse = (taughtGroup?.length ?? 0) > 0;
+      }
+    }
+    const isStaff = isAdmin || isTeacherOfCourse;
+
+    // has_module_access (tier/module-limit gate): enforced for students only. Admins and
+    // teachers-of-course review the whole course, not their students' tier/module limit.
+    if (!isStaff) {
+      const { data: __allowed } = await admin.rpc("has_module_access", { _user_id: userId, _module_id: (lesson as any).module_id });
+      if (!__allowed) {
+        return new Response(JSON.stringify({ error: "module_locked" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
+    // Published: required for every non-admin caller, including a teacher-of-course.
+    if (!isAdmin && !lesson.published) {
+      return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    if (!isStaff) {
       // Provisional (trial) accounts get homework/XP/profile but NO lessons — the real content gate.
-      // Paid accounts (default) pass through. Admins/teachers already bypassed above.
+      // Paid accounts (default) pass through. Admins/teachers-of-course already bypassed above.
       const { data: prof } = await admin.from("profiles").select("account_type").eq("id", userId).maybeSingle();
       if ((prof as any)?.account_type === "provisional") {
         return new Response(JSON.stringify({ error: "provisional_locked" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
-      if (!lesson.published) {
-        return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-      const courseId = (lesson as any).modules?.course_id;
       if (!courseId) {
         return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
