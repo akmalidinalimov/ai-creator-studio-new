@@ -23,19 +23,20 @@
 //   • LESSON PLAYER — a lesson-detail sub-view (back button + video), fetching the URL via
 //     `lesson-video-url` per tap (never the raw table columns — see the moduleIds effect below).
 //
-// IMPORTANT — column-level revoke (Phase 0, 20260622030000_phase0_lesson_media_protection.sql):
-// `video_url`/`provider_video_id`/`video_storage_path` are REVOKEd from the `authenticated` role
-// for EVERY non-admin caller — teachers included, since column-level REVOKE can't distinguish
-// sub-roles of `authenticated` (the migration's own note). Selecting those columns straight from
-// `lessons` would 403 for a teacher. We only ever select the non-sensitive `has_video` (generated
-// boolean) + `video_provider` from the table, and resolve the actual playable URL exclusively
-// through the `lesson-video-url` edge function (service-role, bypasses the column grant) — exactly
-// how `LessonPage.tsx` already does it for students.
+// IMPORTANT — we never select the raw video-source columns (`video_url`/`provider_video_id`/
+// `video_storage_path`) here. We only ever select the non-sensitive `has_video` (generated
+// boolean) + `video_provider` from the table, and fetch the playable URL exclusively through the
+// `lesson-video-url` edge function — which enforces access (the teacher-of-course bypass) and
+// keeps the signed URL server-side rather than exposed via a table select — exactly how
+// `LessonPage.tsx` already does it for students. (Phase 0's column-level REVOKE on those three
+// columns, 20260622030000_phase0_lesson_media_protection.sql, was later superseded by a blanket
+// re-GRANT, so this is a deliberate design choice today, not a privilege requirement.)
 import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { BunnyVideoPlayer } from "@/components/BunnyVideoPlayer";
+import { ProtectedVideo } from "@/components/lesson/ProtectedVideo";
 import {
   Card,
   SectionHeader,
@@ -146,8 +147,8 @@ export default function TeacherLessons() {
         }
 
         // `has_video` is a Phase-0 generated column not in the generated types — cast the table
-        // name (frontend-typecheck-verify convention). See the file header for why
-        // `provider_video_id`/`video_url` are deliberately NOT selected here.
+        // name (frontend-typecheck-verify convention). See the file header for why we still fetch
+        // the playable URL through the edge fn rather than selecting the raw source columns here.
         const { data: lessonsData, error: lessonsErr } = await supabase
           .from("lessons" as any)
           .select("id, module_id, title, position, has_video, video_provider")
@@ -281,7 +282,12 @@ export default function TeacherLessons() {
               allowFullScreen
             />
           ) : (videoData.kind === "hls" || videoData.kind === "mp4") && videoData.url ? (
-            <video className="aspect-video w-full" src={videoData.url} controls playsInline />
+            // `upload`-provider lessons (signed URL, directly downloadable/un-watermarked if left
+            // bare) — route through the same protected player LessonPage.tsx uses at :500-503:
+            // nodownload/no-remote-playback controls, no picture-in-picture, a rotating email
+            // watermark, and context-menu blocking. REVIEW-ONLY still holds: ProtectedVideo has no
+            // progress-write side effects of its own (no `videoRef`/`refreshSrc` passed here).
+            <ProtectedVideo src={videoData.url} watermarkText={user?.email || "teacher"} />
           ) : (
             <div className="flex aspect-video w-full items-center justify-center p-6 text-center text-sm text-white/80">
               Video mavjud emas
