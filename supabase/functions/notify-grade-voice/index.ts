@@ -68,6 +68,15 @@ const CAPTION: Record<Locale, (title: string) => string> = {
   en: (title) => `🎧 New voice feedback on "${title}" — open the app for your score.`,
 };
 
+// Fix round 1 (Minor): a titleless assignment used a hardcoded Uzbek fallback regardless of the
+// student's locale, so a ru/en student could get an Uzbek word inside an otherwise-localized
+// caption. Keyed off the same Locale used for CAPTION so both stay in sync.
+const TITLE_FALLBACK: Record<Locale, string> = {
+  uz: "Uy vazifasi",
+  ru: "Домашнее задание",
+  en: "Homework",
+};
+
 // Incident doctrine (CLAUDE.md #5): failures must be DB-visible, not log-only, so the watchdog layer
 // can see them. Best-effort + non-blocking: a failed health write must never break the actual
 // response, and never carries the bot token or the signed audio URL.
@@ -191,14 +200,16 @@ Deno.serve(async (req) => {
     if (stuErr) throw stuErr;
     const telegramId = student?.telegram_id ?? null;
     if (!telegramId) return json({ ok: true, sent: false, reason: "no_telegram" }); // ~70% never started the bot
+    const locale = normLocale(student?.preferred_locale);
 
-    // --- 5. Assignment title (best-effort — a missing title still lets the DM go out). ---
+    // --- 5. Assignment title (best-effort — a missing title still lets the DM go out, just with a
+    // locale-appropriate fallback word instead of the assignment name). ---
     const { data: assignment } = await admin
       .from("homework_assignments")
       .select("title")
       .eq("id", sub.assignment_id)
       .maybeSingle();
-    const title = (assignment?.title && String(assignment.title).trim()) || "Uy vazifasi";
+    const title = (assignment?.title && String(assignment.title).trim()) || TITLE_FALLBACK[locale];
 
     // --- 6. Sign a short-lived URL for the private homework-audio object; Telegram fetches it. ---
     const { data: signed, error: signErr } = await admin.storage
@@ -218,7 +229,6 @@ Deno.serve(async (req) => {
     // --- 7. Send. A blocked bot / never-started chat is a Telegram-level `ok:false` — graceful, not
     // a hard error (member-forgiveness): the student simply won't get this DM, the in-app player
     // (Task 5) still covers them. ---
-    const locale = normLocale(student?.preferred_locale);
     const caption = CAPTION[locale](title);
     const result = await sendAudio(Number(telegramId), signed.signedUrl, caption, title);
     if (result.ok) {

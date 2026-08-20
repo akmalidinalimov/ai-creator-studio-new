@@ -80,6 +80,14 @@ export default function TeacherGrade() {
   // teacher undoes, deletes the restored note, and re-submits without recording a replacement, we
   // can best-effort clean up the now-orphaned storage object (see handleSubmit).
   const lastVoiceUploadRef = useRef<{ submissionId: string; path: string } | null>(null);
+  // Fix round 1 (Task 6 duplicate-DM bug): true ONLY when the VoiceRecorder itself just delivered a
+  // BRAND NEW recording via onChange (handleVoiceChange below) — NOT when `restoreInputs` puts an
+  // already-uploaded blob back into `voiceBlob` after "Ortga" undo. `voiceBlob` alone can't tell
+  // these apart (both leave it truthy), so gating notifyGradeVoice on `voiceBlob` fired a SECOND
+  // Telegram DM for the exact same note on every undo→fix-score→resubmit. Reset on every
+  // resetInputs() (new card) and explicitly cleared in restoreInputs() (a restore is not a new
+  // recording).
+  const voiceRecordedThisRoundRef = useRef(false);
 
   const current = remaining[0] ?? null;
   const total = doneCount + remaining.length;
@@ -94,6 +102,16 @@ export default function TeacherGrade() {
     setShowFeedback(false);
     setFeedback("");
     setVoiceBlob(null);
+    voiceRecordedThisRoundRef.current = false;
+  }, []);
+
+  // Wraps VoiceRecorder's onChange: a non-null blob here means the recorder JUST finished capturing
+  // + encoding a fresh note (VoiceRecorder only calls onChange from finishRecording/handleDelete/
+  // handleReRecord — never as a reaction to the parent setting `value`), so this is the ONLY place
+  // `voiceRecordedThisRoundRef` may be set true.
+  const handleVoiceChange = useCallback((blob: Blob | null) => {
+    voiceRecordedThisRoundRef.current = blob != null;
+    setVoiceBlob(blob);
   }, []);
 
   // Re-open-to-correct (undo): put an already-entered score + feedback + voice note BACK into the
@@ -113,6 +131,9 @@ export default function TeacherGrade() {
     }
     setFeedback(fb);
     setVoiceBlob(voice);
+    // An undo-restore is NOT a new recording, even though `voice` (the same blob object already
+    // uploaded by the just-undone submit) is truthy — must not re-arm the Telegram-push gate.
+    voiceRecordedThisRoundRef.current = false;
     setShowFeedback(fb.trim() !== "" || voice != null);
   }, []);
 
@@ -231,10 +252,11 @@ export default function TeacherGrade() {
         return;
       }
 
-      // Success. A NEW voice note recorded THIS round (not a preserved/cleared one) gets pushed to
-      // the student's Telegram DM if they've started the bot — fire-and-forget: never awaited, never
+      // Success. A NEW voice note recorded THIS round (gated on voiceRecordedThisRoundRef, NOT on
+      // `blob` — an undo→resubmit still has `blob` truthy but must NOT re-fire) gets pushed to the
+      // student's Telegram DM if they've started the bot — fire-and-forget: never awaited, never
       // allowed to affect the grade UI (notifyGradeVoice swallows its own errors).
-      if (blob) notifyGradeVoice(item.submission_id);
+      if (voiceRecordedThisRoundRef.current) notifyGradeVoice(item.submission_id);
 
       // Advance immediately, offer a 6s undo (auto-advance makes a fat-finger unrecoverable).
       processed.current.add(item.submission_id);
@@ -475,7 +497,7 @@ export default function TeacherGrade() {
               placeholder="Izoh (ixtiyoriy)"
               className="w-full resize-none rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
-            <VoiceRecorder value={voiceBlob} onChange={setVoiceBlob} disabled={submitting || redoing} />
+            <VoiceRecorder value={voiceBlob} onChange={handleVoiceChange} disabled={submitting || redoing} />
           </div>
         ) : (
           <button
