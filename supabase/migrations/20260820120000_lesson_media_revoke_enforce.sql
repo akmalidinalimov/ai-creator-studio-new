@@ -117,7 +117,7 @@ begin
   return 1;
 end;
 $fn$;
-revoke execute on function public.lesson_media_guard_enforce() from public, anon;
+revoke execute on function public.lesson_media_guard_enforce() from public, anon, authenticated;
 grant execute on function public.lesson_media_guard_enforce() to service_role;
 
 -- 4. Schedule the enforcer every ~10 minutes. Guarded so a cron failure can never roll back
