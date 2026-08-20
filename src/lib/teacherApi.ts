@@ -82,7 +82,11 @@ export type SubmitResult =
 /**
  * Write a grade. Mirrors TeacherHomework.saveScore's columns EXACTLY (score, score_feedback,
  * scored_by=auth.uid(), scored_at=now(), score_is_stale=false) so XP + the guard trigger behave
- * identically — see the file header.
+ * identically — see the file header. `voicePath` (Task 3, voice-homework-feedback) is purely
+ * ADDITIVE: the caller resolves it before calling (upload a new recording via
+ * `src/lib/homeworkAudio.ts#uploadFeedbackVoice`, or pass the unchanged/null path) and it's
+ * written into `score_feedback_voice_path` in the SAME update — it changes nothing about the
+ * five columns above, the ownership guard below, or the undo semantics.
  *
  * Concurrent-claim guard (member-forgiveness / "boshqa ustoz baholadi"): a fresh pre-read detects
  * whether ANOTHER teacher graded this submission between load and now. "Already graded by another"
@@ -95,6 +99,7 @@ export async function submitScore(
   submissionId: string,
   score: number,
   feedback: string,
+  voicePath?: string | null,
 ): Promise<SubmitResult> {
   const { data: authData } = await supabase.auth.getUser();
   const uid = authData?.user?.id ?? null;
@@ -118,6 +123,11 @@ export async function submitScore(
       scored_by: uid,
       scored_at: new Date().toISOString(),
       score_is_stale: false,
+      // Additive (Task 3, voice-homework-feedback): the caller resolves voicePath BEFORE calling
+      // submitScore — uploads a new blob first, or passes null to clear a removed note. Voice is
+      // independent of text feedback; this column is not in the generated types yet (Task 1's
+      // migration), hence the `as any` cast on the whole payload below.
+      score_feedback_voice_path: voicePath ?? null,
     } as any)
     .eq("id", submissionId);
   if (error) return { status: "error", message: error.message };

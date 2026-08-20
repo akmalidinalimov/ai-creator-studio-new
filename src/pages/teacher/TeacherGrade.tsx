@@ -25,6 +25,8 @@ import { Loader2, MessageSquarePlus, RotateCcw, SkipForward } from "lucide-react
 import { Card, Button, StatusChip, ProgressBar, EmptyState, Skeleton } from "@/components/ui-kit";
 import { cn } from "@/lib/utils";
 import { GradePhoto } from "@/components/teacher/GradePhoto";
+import { VoiceRecorder } from "@/components/homework/VoiceRecorder";
+import { uploadFeedbackVoice, removeFeedbackVoice } from "@/lib/homeworkAudio";
 import {
   fetchPendingQueue,
   submitScore,
@@ -68,10 +70,15 @@ export default function TeacherGrade() {
   const [custom, setCustom] = useState("");
   const [showFeedback, setShowFeedback] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const [voiceBlob, setVoiceBlob] = useState<Blob | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [redoing, setRedoing] = useState(false);
 
   const processed = useRef<Set<string>>(new Set());
+  // Remembers the last successfully-uploaded voice object for the CURRENT item, so that if the
+  // teacher undoes, deletes the restored note, and re-submits without recording a replacement, we
+  // can best-effort clean up the now-orphaned storage object (see handleSubmit).
+  const lastVoiceUploadRef = useRef<{ submissionId: string; path: string } | null>(null);
 
   const current = remaining[0] ?? null;
   const total = doneCount + remaining.length;
@@ -85,12 +92,15 @@ export default function TeacherGrade() {
     setCustom("");
     setShowFeedback(false);
     setFeedback("");
+    setVoiceBlob(null);
   }, []);
 
-  // Re-open-to-correct (undo): put an already-entered score + feedback BACK into the inputs so the
-  // teacher only has to fix the mis-tap and re-submit. A value matching a preset chip restores the
-  // chip; anything else opens the free "boshqa" entry pre-filled. No DB write — purely local state.
-  const restoreInputs = useCallback((item: PendingSubmission, score: number, fb: string) => {
+  // Re-open-to-correct (undo): put an already-entered score + feedback + voice note BACK into the
+  // inputs so the teacher only has to fix the mis-tap and re-submit. A value matching a preset chip
+  // restores the chip; anything else opens the free "boshqa" entry pre-filled. No DB write — purely
+  // local state (the voice blob is the SAME object already uploaded by the just-undone submit; if
+  // the teacher deletes it before re-submitting, handleSubmit best-effort removes that object).
+  const restoreInputs = useCallback((item: PendingSubmission, score: number, fb: string, voice: Blob | null) => {
     if (chipValuesFor(item.max_score).includes(score)) {
       setChipScore(score);
       setCustomOpen(false);
@@ -101,7 +111,8 @@ export default function TeacherGrade() {
       setCustom(String(score));
     }
     setFeedback(fb);
-    setShowFeedback(fb.trim() !== "");
+    setVoiceBlob(voice);
+    setShowFeedback(fb.trim() !== "" || voice != null);
   }, []);
 
   const advance = useCallback(() => {
@@ -174,9 +185,30 @@ export default function TeacherGrade() {
     const item = current;
     const value = chosen as number;
     const fb = feedback;
+    // The recorder's `disabled` prop can't interrupt an in-progress recording, so we simply take
+    // whatever finalized blob is in state right now — a mid-recording/mid-encode note (still null,
+    // onChange hasn't fired yet) is treated as no-voice-this-round, which is acceptable (T2 note).
+    const blob = voiceBlob;
     setSubmitting(true);
     try {
-      const res = await submitScore(item.submission_id, value, fb);
+      let voicePath: string | null = null;
+      if (blob) {
+        try {
+          voicePath = await uploadFeedbackVoice(item.user_id, item.submission_id, blob);
+          lastVoiceUploadRef.current = { submissionId: item.submission_id, path: voicePath };
+        } catch {
+          toast.error("Ovozli izohni yuklab bo'lmadi. Qayta urinib ko'ring.");
+          return;
+        }
+      } else if (lastVoiceUploadRef.current?.submissionId === item.submission_id) {
+        // The teacher deleted a note that was already uploaded earlier this round (e.g. after an
+        // undo re-opened this item with a restored note) — best-effort clean up the now-orphaned
+        // object; the write below already carries voicePath=null.
+        void removeFeedbackVoice(item.user_id, item.submission_id);
+        lastVoiceUploadRef.current = null;
+      }
+
+      const res = await submitScore(item.submission_id, value, fb, voicePath);
 
       if (res.status === "already_graded") {
         // Member-forgiveness: a co-teacher grabbed it between load and submit. Don't clobber; skip it.
@@ -211,7 +243,7 @@ export default function TeacherGrade() {
             processed.current.delete(item.submission_id);
             setRemaining((prev) => [item, ...prev.filter((p) => p.submission_id !== item.submission_id)]);
             setDoneCount((c) => Math.max(0, c - 1));
-            restoreInputs(item, value, fb);
+            restoreInputs(item, value, fb, blob);
             toast.info("Qayta baholash uchun ochildi");
           },
         },
@@ -421,15 +453,19 @@ export default function TeacherGrade() {
           )}
         </div>
 
-        {/* Feedback kept OUT of the default fold (keyboard would cover the photo/chips/primary). */}
+        {/* Feedback kept OUT of the default fold (keyboard would cover the photo/chips/primary).
+            Voice note lives beside the text field, revealed together. */}
         {showFeedback ? (
-          <textarea
-            value={feedback}
-            onChange={(e) => setFeedback(e.target.value)}
-            rows={3}
-            placeholder="Izoh (ixtiyoriy)"
-            className="w-full resize-none rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
+          <div className="space-y-2">
+            <textarea
+              value={feedback}
+              onChange={(e) => setFeedback(e.target.value)}
+              rows={3}
+              placeholder="Izoh (ixtiyoriy)"
+              className="w-full resize-none rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <VoiceRecorder value={voiceBlob} onChange={setVoiceBlob} disabled={submitting || redoing} />
+          </div>
         ) : (
           <button
             type="button"
@@ -438,7 +474,7 @@ export default function TeacherGrade() {
           >
             <MessageSquarePlus className="size-4" />
             Izoh qo'shish
-            {feedback.trim() !== "" && <span className="text-cta">•</span>}
+            {(feedback.trim() !== "" || voiceBlob) && <span className="text-cta">•</span>}
           </button>
         )}
 
