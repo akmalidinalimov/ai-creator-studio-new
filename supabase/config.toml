@@ -153,6 +153,14 @@ verify_jwt = true
 [functions.hw-image-url]
 verify_jwt = true
 
+# hw-audio-url: resolve a homework submission's voice-feedback into a playable audio URL for the
+# student in-app player (Voice homework feedback, Task 4). Requires a logged-in Supabase session JWT
+# (verify_jwt=true) — resolves the caller via auth.getUser(jwt), enforces RBAC (self-student ∪
+# is_group_teacher ∪ admin), then returns a signed `homework-audio` storage URL or a Telegram
+# getFile proxy URL. See supabase/functions/hw-audio-url/index.ts.
+[functions.hw-audio-url]
+verify_jwt = true
+
 # teacher-broadcast-group: Mini App API for a teacher to DM-broadcast a message to every student in
 # one of their groups (mirrors the bot-chat /tbroadcast flow exactly — a DM fan-out, NOT a post into
 # the supergroup). Requires a logged-in teacher/admin Supabase session JWT (verify_jwt=true) —
