@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { isChunkLoadError, reloadForChunkError, hardReload } from "@/lib/chunkReload";
 
 interface Props {
   children: ReactNode;
@@ -28,6 +29,12 @@ export class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, info: ErrorInfo) {
     // Surface to the console (and any future telemetry) instead of swallowing.
     console.error(`[ErrorBoundary${this.props.label ? `:${this.props.label}` : ""}]`, error, info.componentStack);
+    // Stale-deploy backstop: a lazy-route chunk that 404s after a new build
+    // rethrows here (through <Suspense>). If vite:preloadError didn't already
+    // catch it, force ONE cache-busting reload to fetch the fresh manifest.
+    // Guarded so it can never loop — if we already tried, we fall through to the
+    // manual-recovery fallback below. NEVER auto-reloads a genuine code crash.
+    if (isChunkLoadError(error)) reloadForChunkError();
   }
 
   reset = () => this.setState({ error: null });
@@ -51,11 +58,21 @@ export class ErrorBoundary extends Component<Props, State> {
         </div>
         <button
           type="button"
-          onClick={() => window.location.reload()}
+          // Cache-busting reload (not a plain soft reload) so a stale cached
+          // index.html can't keep serving the same dead chunk and loop.
+          onClick={hardReload}
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
         >
           Yangilash / Обновить / Reload
         </button>
+        {/* Escape hatch: if the reload button keeps returning to this screen, the
+            browser is serving a stale cache — a hard refresh clears it. Without
+            this line a trapped user just taps Reload forever. */}
+        <p className="max-w-sm text-xs text-muted-foreground">
+          Agar takrorlansa: Ctrl+Shift+R bosing (yoki brauzer keshini tozalang). ·
+          Если повторяется: нажмите Ctrl+Shift+R или очистите кэш. ·
+          If it keeps happening: hard-refresh with Ctrl+Shift+R (⌘+Shift+R on Mac) or clear your browser cache.
+        </p>
       </div>
     );
   }
