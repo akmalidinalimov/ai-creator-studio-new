@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
+import { SB_BASE } from "@/lib/supabaseBase";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -67,7 +68,7 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
     try {
       // 1) Init Bunny upload (creates Bunny video, returns TUS auth)
       const { data: sess } = await supabase.auth.getSession();
-      const r = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/bunny-upload-init`, {
+      const r = await fetch(`${SB_BASE}/functions/v1/bunny-upload-init`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -333,7 +334,7 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
                       if (/^[0-9a-f-]{36}$/i.test(v)) {
                         try {
                           const { data: { session } } = await supabase.auth.getSession();
-                          const r = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/bunny-upload-init`, {
+                          const r = await fetch(`${SB_BASE}/functions/v1/bunny-upload-init`, {
                             method: "POST",
                             headers: {
                               "Content-Type": "application/json",

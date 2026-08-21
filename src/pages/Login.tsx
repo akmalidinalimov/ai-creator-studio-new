@@ -3,6 +3,7 @@ import { getSiteUrl } from "@/lib/siteUrl";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
+import { SB_BASE } from "@/lib/supabaseBase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -110,7 +111,7 @@ export default function Login() {
 
   const callGuard = async (action: "check" | "record", body: Record<string, unknown> = {}) => {
     try {
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/login-guard`;
+      const url = `${SB_BASE}/functions/v1/login-guard`;
       const r = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

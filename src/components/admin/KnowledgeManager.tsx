@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, supabaseRealtime } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -128,7 +128,9 @@ export function KnowledgeManager({
 
   // Realtime: keep statuses fresh AND mark indexing jobs done/failed
   useEffect(() => {
-    const channel = supabase
+    // Realtime rides the DIRECT Supabase host (websockets can't ride the /sb
+    // Vercel HTTP rewrite). Admin-only; students never subscribe.
+    const channel = supabaseRealtime
       .channel(`knowledge-${scope}-${courseId ?? "x"}`)
       .on("postgres_changes",
         { event: "*", schema: "public", table: "ai_knowledge_documents" },
@@ -144,7 +146,7 @@ export function KnowledgeManager({
           }));
         })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return () => { supabaseRealtime.removeChannel(channel); };
   }, [load, scope, courseId]);
 
   // Auto-clear completed jobs after a delay

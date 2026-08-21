@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import Papa from "papaparse";
 import { supabase } from "@/integrations/supabase/client";
+import { SB_BASE } from "@/lib/supabaseBase";
 import { useAuth } from "@/contexts/AuthContext";
 import { getSiteUrl } from "@/lib/siteUrl";
 import { PageShell } from "@/components/Layout";
@@ -66,7 +67,7 @@ type Engagement = {
 
 const ENGAGEMENT_WINDOW_DAYS = 3;
 
-const FN_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+const FN_BASE = `${SB_BASE}/functions/v1`;
 
 export default function GroupDetail() {
   const { id } = useParams<{ id: string }>();

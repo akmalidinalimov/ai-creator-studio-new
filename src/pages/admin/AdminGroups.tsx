@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { SB_BASE } from "@/lib/supabaseBase";
 import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,7 +19,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { getSiteUrl } from "@/lib/siteUrl";
 import { toast } from "sonner";
 
-const FN_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+const FN_BASE = `${SB_BASE}/functions/v1`;
 const randPassword = () => Math.random().toString(36).slice(2, 10) + "!A1";
 
 type Group = {
