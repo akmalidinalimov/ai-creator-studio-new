@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
+import { SB_BASE } from "@/lib/supabaseBase";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
@@ -43,7 +44,7 @@ export default function Admin() {
 
   const callCreate = async (rows: { name?: string; email: string; password?: string }[]) => {
     const { data: course } = await supabase.from("courses").select("id").eq("is_default_for_signup", true).maybeSingle();
-    const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-create-students`;
+    const url = `${SB_BASE}/functions/v1/admin-create-students`;
     const r = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { getSiteUrl } from "@/lib/siteUrl";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
+import { SB_BASE } from "@/lib/supabaseBase";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
@@ -69,7 +70,7 @@ Dilnoza,Yusupova,dilnoza@example.com,,,,student,Group B
 Elnur,Aliyev,elnur@example.com,AdminPass456!,555555555,@elnura,admin,
 `;
 
-const FN_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+const FN_BASE = `${SB_BASE}/functions/v1`;
 
 // Engagement deep-link filters (driven by AdminDashboard ?status= links).
 const ENGAGEMENT_VALUES = ["active7d", "active30d", "logged_once", "never_logged_in"];

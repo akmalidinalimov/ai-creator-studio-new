@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
+import { SB_BASE } from "@/lib/supabaseBase";
 import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -44,7 +45,7 @@ export function TelegramDeeplinkButton({ onSuccess }: Props) {
     setStarting(true);
     setExpiredMsg(null);
     try {
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-login-start`;
+      const url = `${SB_BASE}/functions/v1/telegram-login-start`;
       const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
       const data = await r.json();
       if (!r.ok || !data?.token || !data?.deeplink) {
@@ -73,7 +74,7 @@ export function TelegramDeeplinkButton({ onSuccess }: Props) {
       return;
     }
     try {
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-login-status`;
+      const url = `${SB_BASE}/functions/v1/telegram-login-status`;
       const r = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

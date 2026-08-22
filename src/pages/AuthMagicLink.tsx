@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
+import { SB_BASE } from "@/lib/supabaseBase";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -20,7 +21,7 @@ export default function AuthMagicLink() {
     let cancelled = false;
     (async () => {
       try {
-        const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/magic-link-redeem`;
+        const url = `${SB_BASE}/functions/v1/magic-link-redeem`;
         const r = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
