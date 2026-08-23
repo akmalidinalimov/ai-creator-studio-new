@@ -526,6 +526,17 @@ export default function LessonPage() {
   const isCompleted = lessonId ? completed.has(lessonId) : false;
   const durationMinutes = lesson.duration_seconds ? Math.max(1, Math.round(lesson.duration_seconds / 60)) : null;
 
+  // A lesson with no resolvable video source (an "upload" lesson with nothing
+  // uploaded — e.g. a homework / "read the text below" lesson) is a TEXT lesson.
+  // Show its content, not a black "video unavailable" box. Decide only once
+  // videoData has RESOLVED (null = still loading) and it isn't a tier-locked video.
+  const hasPlayableVideo =
+    !!videoData && !videoData.locked && (
+      (videoData.provider === "bunny" && !!videoData.bunny?.lib && !!videoData.bunny?.guid) ||
+      (!!videoData.url && (videoData.kind === "iframe" || videoData.kind === "hls" || videoData.kind === "mp4"))
+    );
+  const isTextLesson = !!videoData && !videoData.locked && !hasPlayableVideo;
+
   return (
     <PageShell>
       {showCelebrate && (
@@ -557,9 +568,11 @@ export default function LessonPage() {
           )}
         </div>
 
-        <Card className="overflow-hidden bg-black p-0 shadow-elevated">
-          {renderPlayer()}
-        </Card>
+        {!isTextLesson && (
+          <Card className="overflow-hidden bg-black p-0 shadow-elevated">
+            {renderPlayer()}
+          </Card>
+        )}
 
         <div className="space-y-3">
           {/* NOT font-display: 121/127 real lesson titles start with digits ("7.2-Modul: …");
@@ -600,11 +613,11 @@ export default function LessonPage() {
               className={isCompleted ? "text-muted-foreground" : undefined}
             >
               {isCompleted ? (
-                t("lesson.watchedAlready")
+                t(isTextLesson ? "lesson.readAlready" : "lesson.watchedAlready")
               ) : (
                 <>
                   <Check className="size-4" strokeWidth={3} />
-                  {t("lesson.watchedDone")}
+                  {t(isTextLesson ? "lesson.readDone" : "lesson.watchedDone")}
                 </>
               )}
             </Button>
