@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, ReactNode } fro
 import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { AppRole, resolveRole, hasSuperadmin } from "@/lib/roles";
-import { isGenuineSignIn } from "@/lib/authEvents";
+import { isGenuineSignIn, stableUser } from "@/lib/authEvents";
 import i18n from "@/i18n";
 
 interface AuthCtx {
@@ -58,7 +58,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     // Set up listener FIRST
     const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
-      setUser(s?.user ?? null);
+      // Keep the `user` object REFERENTIALLY STABLE when the identity is unchanged.
+      // Supabase hands us a brand-new user object on EVERY event — including the
+      // hourly TOKEN_REFRESHED and the SIGNED_IN re-emit that fires on tab-focus /
+      // Mini-App re-open. Blindly calling setUser() with that new object churns
+      // every consumer that depends on `user` (e.g. LessonPage's data-load effect),
+      // which was refetching progress and reloading the Bunny <iframe> mid-video.
+      // Swap the reference only on a genuine identity change (login / logout /
+      // different user) or an explicit USER_UPDATED. `session` still updates every
+      // time, so anything that needs the fresh access token is unaffected.
+      setUser((prev) => stableUser(event, prev, s?.user ?? null));
       if (s?.user) {
         // Capture the id once so async closures below can't read a stale user.
         const uid = s.user.id;
