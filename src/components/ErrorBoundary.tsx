@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { isChunkLoadError, reloadForChunkError, hardReload } from "@/lib/chunkReload";
+import { reportClientError } from "@/lib/beacon";
 
 interface Props {
   children: ReactNode;
@@ -29,12 +30,21 @@ export class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, info: ErrorInfo) {
     // Surface to the console (and any future telemetry) instead of swallowing.
     console.error(`[ErrorBoundary${this.props.label ? `:${this.props.label}` : ""}]`, error, info.componentStack);
+    // Beacon the crash so it's DB-visible (which student, which route, chunk vs. code crash).
+    const chunk = isChunkLoadError(error);
+    try {
+      reportClientError({
+        type: chunk ? "chunk_load" : "render_crash",
+        message: `${error?.name || "Error"}: ${error?.message || ""}`,
+        extra: { boundary: this.props.label },
+      });
+    } catch { /* ignore */ }
     // Stale-deploy backstop: a lazy-route chunk that 404s after a new build
     // rethrows here (through <Suspense>). If vite:preloadError didn't already
     // catch it, force ONE cache-busting reload to fetch the fresh manifest.
     // Guarded so it can never loop — if we already tried, we fall through to the
     // manual-recovery fallback below. NEVER auto-reloads a genuine code crash.
-    if (isChunkLoadError(error)) reloadForChunkError();
+    if (chunk) reloadForChunkError();
   }
 
   reset = () => this.setState({ error: null });

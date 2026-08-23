@@ -5,8 +5,28 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 import { SB_BASE, SB_DIRECT_URL } from '@/lib/supabaseBase';
+import { reportClientError } from '@/lib/beacon';
 
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+// Wrap fetch so a network-layer failure (a REJECTED request — the "Load failed" class, i.e. the
+// backend was unreachable) is beaconed. HTTP errors (4xx/5xx) resolve normally and are NOT beaconed.
+// The beacon itself uses the raw global fetch (not this wrapper), so there is no loop.
+const beaconFetch: typeof fetch = async (input, init) => {
+  try {
+    return await fetch(input as any, init);
+  } catch (err) {
+    try {
+      const url = typeof input === 'string' ? input : (input instanceof URL ? input.href : (input as Request).url);
+      reportClientError({
+        type: 'backend_unreachable',
+        message: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+        extra: { url: String(url).split('?')[0].slice(0, 200) },
+      });
+    } catch { /* ignore */ }
+    throw err;
+  }
+};
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
@@ -18,7 +38,8 @@ export const supabase = createClient<Database>(SB_BASE, SUPABASE_PUBLISHABLE_KEY
     storage: localStorage,
     persistSession: true,
     autoRefreshToken: true,
-  }
+  },
+  global: { fetch: beaconFetch },
 });
 
 // Realtime (websockets) can't ride the Vercel HTTP rewrite, so this dedicated

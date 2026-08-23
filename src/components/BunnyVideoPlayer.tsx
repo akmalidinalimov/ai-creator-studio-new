@@ -1,4 +1,5 @@
 import { forwardRef, useImperativeHandle, useEffect, useRef } from "react";
+import { reportClientError } from "@/lib/beacon";
 
 interface Props {
   libraryId: string;
@@ -142,6 +143,14 @@ export const BunnyVideoPlayer = forwardRef<BunnyPlayerHandle, Props>(function Bu
       })
       .catch((err) => {
         console.warn("[BunnyVideoPlayer] player.js unavailable:", err);
+        // Beacon: player.js failed to load → progress tracking + resume are degraded for this student.
+        try {
+          reportClientError({
+            type: "video_error",
+            message: `player.js load failed: ${err instanceof Error ? err.message : String(err)}`,
+            extra: { lib: libraryId },
+          });
+        } catch { /* ignore */ }
       });
 
     return () => {
