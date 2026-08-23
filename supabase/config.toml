@@ -1,6 +1,9 @@
 project_id = "wapopizrkeeigicxtdnk"
 
 
+[functions.client-beacon]
+verify_jwt = false
+
 [functions.study-assistant]
 verify_jwt = true
 

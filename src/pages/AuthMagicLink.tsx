@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { SB_BASE } from "@/lib/supabaseBase";
+import { reportClientError } from "@/lib/beacon";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -53,6 +54,9 @@ export default function AuthMagicLink() {
         } catch { /* ignore */ }
         if (!cancelled) navigate(data.target_path || "/dashboard", { replace: true });
       } catch (e) {
+        // Network-layer failure on the magic-link redeem = backend unreachable (the "Load failed"
+        // login class). Beacon it so it's DB-visible even though this is a raw fetch (not the client).
+        try { reportClientError({ type: "backend_unreachable", message: `magic-link-redeem: ${e instanceof Error ? e.message : String(e)}` }); } catch { /* ignore */ }
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       }
     })();
