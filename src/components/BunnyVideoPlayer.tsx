@@ -54,16 +54,22 @@ export const BunnyVideoPlayer = forwardRef<BunnyPlayerHandle, Props>(function Bu
   const lastTickPosRef = useRef<number>(0);
   const durationRef = useRef<number>(0);
   const endedFiredRef = useRef<boolean>(false);
+  // Latest resume position, read once when the player is ready. Kept in a ref so
+  // the iframe src does NOT depend on resumeSeconds (see below).
+  const resumeRef = useRef<number>(resumeSeconds);
+  resumeRef.current = resumeSeconds;
 
-  // Build src with resume position
+  // The iframe src is deliberately INDEPENDENT of resumeSeconds. Baking `?t=` into
+  // the URL meant any later resumeSeconds change (a parent re-render after a token
+  // refresh / tab-focus re-emit) rebuilt the src and RELOADED the video mid-play.
+  // We resume via the player.js API on `ready` instead, so the src changes only
+  // when the actual video (libraryId/videoGuid) does.
   const params = new URLSearchParams({
     autoplay: autoPlay ? "true" : "false",
     loop: "false",
     muted: "false",
     preload: "true",
   });
-  const startAt = Math.max(0, Math.floor(resumeSeconds || 0));
-  if (startAt > 0) params.set("t", String(startAt));
   const src = `https://iframe.mediadelivery.net/embed/${libraryId}/${videoGuid}?${params.toString()}`;
 
   // Wire player.js
@@ -81,6 +87,14 @@ export const BunnyVideoPlayer = forwardRef<BunnyPlayerHandle, Props>(function Bu
             player.getDuration((d: number) => {
               if (typeof d === "number" && d > 0) durationRef.current = d;
             });
+          }
+          // Resume ONCE, via the API, to the last-watched position — never via the
+          // iframe URL (which would reload the video). Progress has virtually always
+          // loaded by the time `ready` fires (iframe + player.js network load is
+          // slower than the DB read), so the ref holds the real resume value.
+          const resumeAt = Math.max(0, Math.floor(resumeRef.current || 0));
+          if (resumeAt > 0 && typeof player.setCurrentTime === "function") {
+            player.setCurrentTime(resumeAt);
           }
         });
         player.on("timeupdate", (e: { seconds?: number; duration?: number }) => {

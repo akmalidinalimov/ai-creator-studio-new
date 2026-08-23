@@ -193,7 +193,12 @@ export default function LessonPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [lessonId, courseId, user, reloadKey]);
+    // Key on the user ID, not the user object. AuthContext now keeps the object
+    // referentially stable across token refreshes, but keying on the id makes this
+    // load effect immune to any future reference churn — so it can't refetch
+    // progress and reload the video mid-watch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lessonId, courseId, user?.id, reloadKey]);
 
   // Resume position is passed into the player via props (Bunny ?t=, native HTML5 below).
   useEffect(() => {
