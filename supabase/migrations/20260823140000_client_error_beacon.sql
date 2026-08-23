@@ -8,11 +8,12 @@
 create table if not exists public.client_error_events (
   id          uuid primary key default gen_random_uuid(),
   created_at  timestamptz not null default now(),
-  event_type  text not null,     -- chunk_load | render_crash | unhandled_error | unhandled_rejection | backend_unreachable | video_error | other
+  event_type  text not null check (event_type in
+                 ('chunk_load','render_crash','unhandled_error','unhandled_rejection','backend_unreachable','video_error','other')),
   message     text,
   route       text,
   user_id     uuid,              -- nullable: anon (logged-out) beacons are allowed
-  session_id  text,              -- client-generated; the impact unit the watchdog counts
+  session_id  text,              -- client-generated (or ip-fallback); the impact unit the watchdog counts
   app_version text,
   user_agent  text,
   extra       jsonb
@@ -29,9 +30,9 @@ create policy "client_error_events admin read" on public.client_error_events
 
 -- ------------------------------------------------------------------------------------------------
 -- Watchdog: hourly-ish scan; reports the last-hour breakdown every run (admin_actions), DMs admins
--- only on an egregious spike. Impact is measured in distinct SESSIONS (present even for anon beacons);
--- distinct users are also reported for attribution. Thresholds tuned so a normal post-deploy chunk
--- trickle (which the client auto-recovers) does NOT alarm; a sustained/large spike does. Detect-only.
+-- only on an egregious spike. Impact is measured in distinct SESSIONS (present even for anon/ip-fallback
+-- beacons); distinct users are also reported for attribution. Thresholds tuned so a normal post-deploy
+-- chunk trickle (which the client auto-recovers) does NOT alarm; a sustained/large spike does. Detect-only.
 create or replace function public.client_error_watchdog()
 returns jsonb
 language plpgsql
@@ -40,9 +41,9 @@ set search_path to 'public'
 as $function$
 declare
   _since timestamptz := now() - interval '1 hour';
-  _chunk int; _crash int; _backend int; _video int; _unhandled int; _total int;
-  _s_chunk int; _s_backend int; _s_video int; _s_crash int;   -- distinct-session spike signals
-  _u_chunk int; _u_backend int;                               -- distinct-user attribution
+  _chunk int; _crash int; _backend int; _video int; _unhandled int; _other int; _total int;
+  _s_chunk int; _s_backend int; _s_video int; _s_crash int; _s_unhandled int;   -- distinct-session spike signals
+  _u_chunk int; _u_backend int;                                                 -- distinct-user attribution
   _report jsonb; _alarm boolean; _tok text; _admin record; _msg text;
   _state jsonb; _alerting boolean; _last_ms bigint;
   _now_ms bigint := (extract(epoch from now())*1000)::bigint;
@@ -54,18 +55,23 @@ begin
     count(*) filter (where event_type='backend_unreachable'),
     count(*) filter (where event_type='video_error'),
     count(*) filter (where event_type in ('unhandled_error','unhandled_rejection')),
+    count(*) filter (where event_type='other'),
     count(*),
     count(distinct session_id) filter (where event_type='chunk_load'),
     count(distinct session_id) filter (where event_type='backend_unreachable'),
     count(distinct session_id) filter (where event_type='video_error'),
     count(distinct session_id) filter (where event_type='render_crash'),
+    count(distinct session_id) filter (where event_type in ('unhandled_error','unhandled_rejection')),
     count(distinct user_id) filter (where event_type='chunk_load' and user_id is not null),
     count(distinct user_id) filter (where event_type='backend_unreachable' and user_id is not null)
-  into _chunk,_crash,_backend,_video,_unhandled,_total,_s_chunk,_s_backend,_s_video,_s_crash,_u_chunk,_u_backend
+  into _chunk,_crash,_backend,_video,_unhandled,_other,_total,
+       _s_chunk,_s_backend,_s_video,_s_crash,_s_unhandled,_u_chunk,_u_backend
   from public.client_error_events where created_at > _since;
 
-  -- Thresholds (tunable): a real problem, not normal post-deploy churn.
-  _alarm := (_s_chunk > 25) or (_s_backend > 10) or (_s_crash > 15) or (_s_video > 15);
+  -- Thresholds (tunable): a real problem, not normal post-deploy churn. Covers EVERY event class incl.
+  -- unhandled_* (a mass JS crash) and a raw-volume floor (catches an 'other'/garbage flood or abuse).
+  _alarm := (_s_chunk > 25) or (_s_backend > 10) or (_s_crash > 15) or (_s_video > 15)
+            or (_s_unhandled > 25) or (_total > 3000);
 
   _report := jsonb_build_object(
     'window','1h', 'total', _total,
@@ -73,7 +79,8 @@ begin
     'render_crash', jsonb_build_object('n', _crash, 'sessions', _s_crash),
     'backend_unreachable', jsonb_build_object('n', _backend, 'sessions', _s_backend, 'users', _u_backend),
     'video_error', jsonb_build_object('n', _video, 'sessions', _s_video),
-    'unhandled', _unhandled, 'alarm', _alarm, 'checked_at', now());
+    'unhandled', jsonb_build_object('n', _unhandled, 'sessions', _s_unhandled),
+    'other', _other, 'alarm', _alarm, 'checked_at', now());
 
   begin
     insert into public.admin_actions (actor_user_id, action, details)
@@ -95,8 +102,8 @@ begin
       _msg := case when _recovered
         then '✅ Klient xatoliklari normallashdi.'
         else '⚠️ Klient xatoliklari (soʻnggi 1 soat): chunk-load ' || _s_chunk || ' sessiya, backend-unreachable '
-             || _s_backend || ' sessiya, crash ' || _s_crash || ', video ' || _s_video ||
-             '. admin_actions "client_error_report" ni koʻring.'
+             || _s_backend || ' sessiya, crash ' || _s_crash || ', video ' || _s_video || ', js-crash '
+             || _s_unhandled || ', jami ' || _total || '. admin_actions "client_error_report" ni koʻring.'
       end;
       for _admin in select distinct p.telegram_id from profiles p
         join user_roles r on r.user_id=p.id and r.role in ('admin','superadmin')
