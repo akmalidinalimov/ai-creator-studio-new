@@ -302,6 +302,8 @@
     "xpChip": "+{{xp}} XP",
     "watchedDone": "I've watched the video",
     "watchedAlready": "✓ Watched",
+    "readDone": "I've read it",
+    "readAlready": "✓ Read",
     "nextLesson": "Next lesson",
     "courseModules": "Course modules",
     "video": {

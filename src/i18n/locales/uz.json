@@ -302,6 +302,8 @@
     "xpChip": "+{{xp}} XP",
     "watchedDone": "Videoni ko'rib bo'ldim",
     "watchedAlready": "✓ Ko'rildi",
+    "readDone": "O'qib bo'ldim",
+    "readAlready": "✓ O'qildi",
     "nextLesson": "Keyingi Darslik",
     "courseModules": "Kurs Modullari",
     "video": {
