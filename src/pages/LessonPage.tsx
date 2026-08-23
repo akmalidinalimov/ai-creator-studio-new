@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { SB_BASE } from "@/lib/supabaseBase";
+import { watchedEnough } from "@/lib/watchGate";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { Input } from "@/components/ui/input";
@@ -271,18 +272,28 @@ export default function LessonPage() {
     setCompleted((s) => new Set(s).add(lessonId));
   }, [user, lessonId]);
 
-  // Require genuinely watching ~half the lesson before a manual completion can
-  // count (prevents earning a streak by clicking "Mark complete" without watching).
-  // Lessons with no/unknown video duration are never blocked.
-  const watchedEnough = () => {
+  // A lesson with no resolvable video source (an "upload" lesson with nothing
+  // uploaded — e.g. a homework / "read the text below" lesson) is a TEXT lesson:
+  // nothing to watch, and the render skips the player card. Decide only once
+  // videoData has RESOLVED (null = still loading) and it isn't a tier-locked video.
+  const hasPlayableVideo =
+    !!videoData && !videoData.locked && (
+      (videoData.provider === "bunny" && !!videoData.bunny?.lib && !!videoData.bunny?.guid) ||
+      (!!videoData.url && (videoData.kind === "iframe" || videoData.kind === "hls" || videoData.kind === "mp4"))
+    );
+  const isTextLesson = !!videoData && !videoData.locked && !hasPlayableVideo;
+
+  // Gate manual completion on GENUINELY watching the lesson — this guards BOTH the
+  // "Mark complete" button and the silent completion in `goNext` ("Next" button).
+  // Decision lives in the tested pure helper `watchedEnough` (src/lib/watchGate.ts).
+  const watchGateOpen = () => {
     const dur = Number(videoRef.current?.duration) || watchDurRef.current || Number((progress as any)?.duration_seconds_v2) || 0;
-    if (!dur || dur <= 0) return true;
     const pos = Math.max(
       Number(videoRef.current?.currentTime) || 0,
       watchMaxPosRef.current || 0,
       Number((progress as any)?.max_position_seconds) || 0,
     );
-    return pos >= dur * 0.5;
+    return watchedEnough({ isTextLesson, durationSeconds: dur, watchedSeconds: pos });
   };
 
   const writeComplete = async () => {
@@ -296,7 +307,7 @@ export default function LessonPage() {
 
   const markComplete = async () => {
     if (!user || !lessonId) return;
-    if (!completed.has(lessonId) && !watchedEnough()) {
+    if (!completed.has(lessonId) && !watchGateOpen()) {
       toast.error(t("lesson.watchMoreToComplete"));
       return;
     }
@@ -314,7 +325,7 @@ export default function LessonPage() {
 
   const goNext = async () => {
     // Complete silently only if genuinely watched; otherwise just move on.
-    if (user && lessonId && (completed.has(lessonId) || watchedEnough())) {
+    if (user && lessonId && (completed.has(lessonId) || watchGateOpen())) {
       await writeComplete();
     }
     if (next) navigate(`/lesson/${courseId}/${next.id}`);
@@ -525,17 +536,6 @@ export default function LessonPage() {
   const lessonsInModule = currentModule ? currentModule.lessons.length : 0;
   const isCompleted = lessonId ? completed.has(lessonId) : false;
   const durationMinutes = lesson.duration_seconds ? Math.max(1, Math.round(lesson.duration_seconds / 60)) : null;
-
-  // A lesson with no resolvable video source (an "upload" lesson with nothing
-  // uploaded — e.g. a homework / "read the text below" lesson) is a TEXT lesson.
-  // Show its content, not a black "video unavailable" box. Decide only once
-  // videoData has RESOLVED (null = still loading) and it isn't a tier-locked video.
-  const hasPlayableVideo =
-    !!videoData && !videoData.locked && (
-      (videoData.provider === "bunny" && !!videoData.bunny?.lib && !!videoData.bunny?.guid) ||
-      (!!videoData.url && (videoData.kind === "iframe" || videoData.kind === "hls" || videoData.kind === "mp4"))
-    );
-  const isTextLesson = !!videoData && !videoData.locked && !hasPlayableVideo;
 
   return (
     <PageShell>
