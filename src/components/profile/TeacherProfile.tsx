@@ -185,10 +185,14 @@ export default function TeacherProfile() {
       scored_by: user!.id, scored_at: new Date().toISOString(), score_is_stale: false,
     };
     if (voicePath !== undefined) update.score_feedback_voice_path = voicePath;
-    const { error } = await supabase.from("homework_submissions")
+    const { data: saved, error } = await supabase.from("homework_submissions")
       .update(update as any)
-      .eq("id", item.id);
-    if (error) { toast.error(t("profile.tGradeFailed")); return; }
+      .eq("id", item.id)
+      .select("id")
+      .maybeSingle();
+    // 0 rows + no error = RLS-filtered write (not a teacher of this student / reassigned out of scope):
+    // the grade did NOT save. Treat it as a failure instead of a false success that drops the card.
+    if (error || !saved) { toast.error(t("profile.tGradeFailed")); return; }
     // Fire-and-forget Telegram push (Task 6, voice-homework-feedback) — only when THIS round
     // uploaded a brand new note (not a preserved-existing or cleared-to-null path). Never awaited,
     // never allowed to affect the grade UI (notifyGradeVoice swallows its own errors).

@@ -3,7 +3,8 @@
 // Three concerns, all against the RLS-gated authenticated `supabase` client (the teacher's minted
 // Telegram session), never a service key:
 //   • fetchPendingQueue()   → the junction-scoped grading queue (RPC teacher_pending_submissions()).
-//   • resolveImageUrl(id)   → a viewable <img> src via the hw-image-url edge fn (storage OR file_id).
+//   • resolveSubmissionMedia(id)/fetchSubmissionMediaBlob(id,i) → the grading media gallery
+//     (photo/video/document/link) via the hw-image-url edge fn (storage, external link, OR Telegram file bytes).
 //   • submitScore/returnForRedo → the grade WRITE + the return-for-redo re-open.
 //
 // GRADE-WRITE FIDELITY (the whole point): submitScore writes the EXACT same columns
@@ -12,6 +13,7 @@
 // scored_at / score_is_stale=false — so the +15/+25 homework XP triggers (xp_on_homework) fire
 // identically and the guard trigger behaves the same. We NEVER touch xp_events here.
 import { supabase } from "@/integrations/supabase/client";
+import { SB_BASE } from "@/lib/supabaseBase";
 
 export interface QueueMedia {
   kind?: string;
@@ -52,25 +54,64 @@ export async function fetchPendingQueue(): Promise<PendingSubmission[]> {
   return Array.isArray(data) ? (data as unknown as PendingSubmission[]) : [];
 }
 
-export type ImageResolution = { url: string } | { url: null; reason: string };
+/** One resolved media piece for a submission's grading gallery (from hw-image-url mode A). */
+export interface ResolvedMedia {
+  index: number;
+  kind: string;          // photo | video | document | link
+  url?: string;          // directly loadable (signed storage URL or an external link)
+  fetchable?: boolean;   // a Telegram file — stream the bytes via fetchSubmissionMediaBlob(index)
+  msg_url?: string;      // per-item "open in Telegram" fallback
+  reason?: string;       // this piece couldn't be resolved (e.g. purged storage object)
+}
 
 /**
- * Resolve a submission's viewable image URL via the hw-image-url edge fn. Returns a discriminated
- * result — a usable src, or {url:null, reason} for the (COMMON, not edge-case) degraded state.
- * Never throws: a transport/gateway/403 error resolves to a degraded reason so GradePhoto always
- * renders the "open in Telegram" fallback instead of crashing the card.
+ * Resolve the full media gallery for a submission via the hw-image-url edge fn (mode A). Returns EVERY
+ * piece — photo / video / document / link — with either a directly-loadable `url` or `fetchable:true`
+ * (a Telegram file the client streams via fetchSubmissionMediaBlob). Never throws: a transport/403
+ * error resolves to an empty list + reason so GradePhoto renders the Telegram fallback, not a crash.
  */
-export async function resolveImageUrl(submissionId: string): Promise<ImageResolution> {
+export async function resolveSubmissionMedia(submissionId: string): Promise<{ items: ResolvedMedia[]; reason?: string }> {
   try {
-    const { data, error } = await supabase.functions.invoke("hw-image-url", {
-      body: { submission_id: submissionId },
-    });
-    if (error) return { url: null, reason: "request_failed" };
-    const url = (data as any)?.url ?? null;
-    if (typeof url === "string" && url) return { url };
-    return { url: null, reason: (data as any)?.reason || "no_viewable_media" };
+    const { data, error } = await supabase.functions.invoke("hw-image-url", { body: { submission_id: submissionId } });
+    if (error) return { items: [], reason: "request_failed" };
+    const items = Array.isArray((data as any)?.items) ? ((data as any).items as ResolvedMedia[]) : [];
+    return { items, reason: (data as any)?.reason };
   } catch {
-    return { url: null, reason: "request_failed" };
+    return { items: [], reason: "request_failed" };
+  }
+}
+
+export type MediaBlob = { blobUrl: string; contentType: string } | { reason: string };
+
+/**
+ * Stream one Telegram-hosted media piece's raw bytes via the hw-image-url edge fn (mode B) and wrap it
+ * in an object URL the client can drop into <img>/<video>/a download link. Uses a raw fetch (not
+ * functions.invoke, which JSON-parses the body) because we need the binary. The bot token never leaves
+ * the server — we only receive bytes. A JSON response means the piece can't be inlined (too large /
+ * getFile failed) → the caller shows the "open in Telegram" fallback. Revoke the object URL on unmount.
+ */
+export async function fetchSubmissionMediaBlob(submissionId: string, index: number): Promise<MediaBlob> {
+  try {
+    const { data: sess } = await supabase.auth.getSession();
+    const token = sess?.session?.access_token;
+    if (!token) return { reason: "request_failed" };
+    const apikey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string;
+    const resp = await fetch(`${SB_BASE}/functions/v1/hw-image-url`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey, Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ submission_id: submissionId, index }),
+    });
+    // The streaming path stamps X-Hw-Media-Bytes:1; anything else is a { reason } control response.
+    // (Don't discriminate on content-type — a real .json homework document IS application/json.)
+    if (resp.headers.get("x-hw-media-bytes") === "1" && resp.ok) {
+      const ct = resp.headers.get("content-type") || "application/octet-stream";
+      const blob = await resp.blob();
+      return { blobUrl: URL.createObjectURL(blob), contentType: ct };
+    }
+    const j = await resp.json().catch(() => ({}));
+    return { reason: (j as any)?.reason || "request_failed" };
+  } catch {
+    return { reason: "request_failed" };
   }
 }
 
@@ -130,13 +171,20 @@ export async function submitScore(
   // never silently null out a note from an earlier round just because this caller can't see it.
   if (voicePath !== undefined) update.score_feedback_voice_path = voicePath;
 
-  const { error } = await supabase
+  const { data: saved, error } = await supabase
     .from("homework_submissions")
     // score_feedback_voice_path is not in the generated types yet (Task 1's migration), hence the
     // `as any` cast on the whole payload.
     .update(update as any)
-    .eq("id", submissionId);
+    .eq("id", submissionId)
+    .select("id")
+    .maybeSingle();
   if (error) return { status: "error", message: error.message };
+  // An RLS-filtered UPDATE affects 0 rows WITHOUT raising an error (e.g. the caller isn't a teacher of
+  // this student's group, or the student was reassigned out of the caller's scope). A bare
+  // error-only check would then show a false "saved" toast while the card stays stuck in the queue —
+  // the exact "I graded it and it didn't save" failure mode. A null result means nothing was written.
+  if (!saved) return { status: "error", message: "not_saved" };
   return { status: "ok" };
 }
 

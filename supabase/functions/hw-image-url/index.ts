@@ -1,60 +1,51 @@
-// hw-image-url — resolve a homework submission's VIEWABLE image URL for the teacher Mini App.
+// hw-image-url — resolve a homework submission's VIEWABLE media for the teacher grading UI.
 //
-// POST { submission_id: uuid }
-//   -> { url: string }                      // a viewable https URL the client can put in <img>
-//   -> { url: null, reason: string }         // no viewable media / degraded (graceful, HTTP 200)
-//   -> { error: "forbidden" } (403)          // caller is not a teacher of the submission's group
+// Two modes, both authenticated (verify_jwt=true) + junction-aware RBAC (teacher-of-group ∪ admin):
 //
-// This is the C2 blocker (Teacher Mini App Phase 1, Task 2): homework captured via the Telegram bot
-// is often Telegram-hosted ONLY — the media entry carries a `file_id` (and `telegram_file_id`) with
-// no http url, so an <img src> can't render it. Bot-captured photos live behind the Telegram file
-// API; web/miniapp uploads live in the PRIVATE `homework_images` bucket. This function resolves
-// either kind into a URL a browser can load:
-//   - storage-bucket path (submitted_image_url or a media[] entry that is a bucket key) -> signed URL
-//   - Telegram file_id (no http url)                             -> server-side getFile -> token-free data: URL
-//   - an already-http, image-kind media url (an externally posted image)                -> returned as-is
-//   - nothing viewable                                                                  -> { url: null, reason }
-// Only IMAGE-kind media is a candidate (kind === "photo" or, for legacy rows, absent). A video /
-// document / link submission returns { url: null, reason: "non_image_media" } with NO Telegram fetch —
-// this feeds an <img>, so non-image bytes must never be downloaded and returned as a data: image.
+//   A) POST { submission_id }            -> { items: ResolvedItem[] }   // metadata for the whole gallery
+//   B) POST { submission_id, index }     -> raw media BYTES (streamed, Content-Type set)   // one item
+//                                        -> { reason }  (application/json)  when it can't be inlined
+//   -> { error: "forbidden" } (403)      // caller is not a teacher of the submission's group / not admin
 //
-// Media shapes (mirrors src/pages/Homework.tsx header + the bot capture paths in
-// telegram-bot-webhook/index.ts ~5210 picker-finalize / ~5910 auto-capture):
-//   - web/miniapp:      submitted_image_url = "<uid>/<file>" (bucket key), media = [{kind:"photo", url:"<uid>/<file>"}]
-//                       — `url` here is the SAME bucket key, NOT http (see submit-homework/index.ts:358).
-//   - bot photo/video:  submitted_image_url = null, media = [{kind, file_id, msg_url}], telegram_file_id = file_id
-//   - bot link post:    media = [{kind, url:"https://…", msg_url}] — `url` IS http (an external link)
-// Only `url` (never `msg_url`, which is a t.me message link) is treated as a media http source.
+// WHY BOTH MODES: homework is photo | video | document | link (20260707020000_homework_multimedia.sql;
+// the webhook tags `kind`). The Telegram-captured majority (video + document — the most common types
+// now) carries only a `file_id`, so an <img> / <video src> can't load it directly. Historically this
+// endpoint resolved ONLY images (kind==="photo") and returned "non_image_media" for everything else,
+// which meant teachers could not view video/document homework in the app at all. It now resolves EVERY
+// kind:
+//   - mode A returns, per media item, either a directly-loadable https `url` (signed storage URL or an
+//     external link) or `fetchable:true` (a Telegram file the client streams via mode B), plus its
+//     `kind` and a per-item `msg_url` Telegram fallback.
+//   - mode B streams the Telegram file's raw bytes so the client can play `<video>` / show `<img>` /
+//     open a document from an object URL — no base64 blowup, and the video seeks once loaded.
+// buildItems() is shared by both modes so item indices are stable between the metadata call and the
+// byte-fetch call.
 //
-// Auth: the caller's Supabase session JWT (verify_jwt = true in supabase/config.toml — the gateway
-// rejects unauthenticated calls before this code runs). The frontend obtains that session from
-// tg-miniapp-auth (Telegram initData -> minted Supabase session) and then calls this like any other
-// authenticated endpoint. This function NEVER touches Telegram initData itself.
+// SECURITY (bot-token containment — unchanged, extended to bytes): a Telegram file URL embeds the BOT
+// TOKEN (https://api.telegram.org/file/bot<token>/<path>), which controls the whole bot, so it must
+// NEVER leave the server. Mode B fetches the file SERVER-SIDE and streams the response body straight
+// through to the client — the token stays inside the function, appears in no URL / header / log, and
+// the client only ever receives the raw media bytes. Telegram's Bot API getFile can only download
+// files up to ~20MB; anything larger returns { reason: "media_too_large" } and the client falls back
+// to opening the original message in Telegram (which streams any size natively).
 //
-// RBAC (junction-aware, per CLAUDE.md "teachers of a group" = groups.teacher_id ∪ group_teachers):
-// the caller must be a teacher of the submission's student's group — checked via the
-// is_group_teacher(_group_id,_uid) RPC (SECURITY DEFINER, live since #86) — OR a platform
-// admin/superadmin. Students and unrelated teachers get 403. No URL is minted before this passes.
-//
-// SECURITY (bot-token containment): a Telegram file URL embeds the BOT TOKEN
-// (https://api.telegram.org/file/bot<token>/<path>) — that is how Telegram serves files — and the
-// bot token controls the ENTIRE bot, so it must NEVER leave the server. This function therefore
-// fetches the Telegram file SERVER-SIDE (the token stays inside the function) and returns a
-// token-free `data:<mime>;base64,<bytes>` URL in the same `{ url }` field. The client never sees the
-// token in any form (no network URL, no history, no screenshare). The token is also never logged
-// (not to console, not to admin_actions). A ~6 MB size guard prevents a pathological base64 blowup.
+// Auth: the caller's Supabase session JWT (from tg-miniapp-auth). RBAC via is_group_teacher (junction-
+// aware, groups.teacher_id ∪ group_teachers) OR platform admin/superadmin. Students / unrelated
+// teachers get 403 in both modes; no URL is signed and no byte is streamed before RBAC passes.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
+  // Lets the client read the byte-vs-control marker even if the response is treated as cross-origin.
+  "Access-Control-Expose-Headers": "X-Hw-Media-Bytes",
 };
 
 const BUCKET = "homework_images";
 const SIGNED_TTL = 3600; // ~1h — long enough to grade, short enough not to be a durable leak
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
-const MAX_IMAGE_BYTES = 6 * 1024 * 1024; // ~6 MB — homework photos are small; guards base64 blowup
+const MAX_MEDIA_BYTES = 20 * 1024 * 1024; // Telegram Bot API getFile ceiling. Above it -> Telegram fallback.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isHttp = (s: unknown): s is string => typeof s === "string" && /^https?:\/\//i.test(s);
 
@@ -63,20 +54,12 @@ function json(body: unknown, status = 200) {
 }
 
 type MediaItem = { kind?: string; url?: string; msg_url?: string; file_id?: string };
+// The normalized, ordered list of resolvable pieces. Both modes derive it identically so `index` is stable.
+type SrcItem = { kind: string; storagePath?: string; httpUrl?: string; fileId?: string; msg_url?: string };
 
-// Incident doctrine (CLAUDE.md #5): failures must be DB-visible, not log-only, so the watchdog
-// layer can see them. Best-effort + non-blocking: a failed health write must never break the actual
-// response, and never carries the bot token or any resolved URL. Only real degradations are logged
-// here — "no viewable media" (the student simply posted no image) is an EXPECTED outcome, not a
-// failure, and a purged storage object under the 7-day retention policy is likewise expected (see
-// src/pages/Homework.tsx: a signed-URL failure is deliberately not treated as an error).
-async function logHealth(
-  admin: any,
-  actorUserId: string | null,
-  action: string,
-  details: Record<string, unknown>,
-  submissionId: string | null,
-) {
+// Incident doctrine (CLAUDE.md #5): real failures are DB-visible, not log-only. Best-effort +
+// non-blocking; never carries the bot token or resolved bytes.
+async function logHealth(admin: any, actorUserId: string | null, action: string, details: Record<string, unknown>, submissionId: string | null) {
   try {
     const { error } = await admin.from("admin_actions").insert({
       actor_user_id: actorUserId,
@@ -92,75 +75,80 @@ async function logHealth(
   }
 }
 
-// image/* MIME from a Telegram file_path extension. Returns null when unknown (caller then falls
-// back to the response content-type header, else image/jpeg).
+// MIME from a Telegram file_path extension (image / video / document / audio). null -> caller falls
+// back to the fetch response's content-type header, else application/octet-stream.
 function contentTypeFromPath(filePath: string): string | null {
   const ext = filePath.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
   switch (ext) {
-    case "jpg":
-    case "jpeg": return "image/jpeg";
+    case "jpg": case "jpeg": return "image/jpeg";
     case "png": return "image/png";
     case "webp": return "image/webp";
     case "gif": return "image/gif";
+    case "heic": return "image/heic";
+    case "mp4": return "video/mp4";
+    case "mov": return "video/quicktime";
+    case "m4v": return "video/x-m4v";
+    case "webm": return "video/webm";
+    case "3gp": return "video/3gpp";
+    case "avi": return "video/x-msvideo";
+    case "mkv": return "video/x-matroska";
+    case "pdf": return "application/pdf";
+    case "txt": return "text/plain; charset=utf-8";
+    case "json": return "application/json";
+    case "zip": return "application/zip";
+    case "doc": return "application/msword";
+    case "docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case "xls": return "application/vnd.ms-excel";
+    case "xlsx": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    case "ppt": return "application/vnd.ms-powerpoint";
+    case "pptx": return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    case "mp3": return "audio/mpeg";
+    case "ogg": case "oga": return "audio/ogg";
+    case "m4a": return "audio/mp4";
     default: return null;
   }
 }
 
-// Base64-encode bytes in chunks — a single String.fromCharCode(...wholeArray) spread blows the call
-// stack on large inputs. 0x8000 keeps each spread well under the argument-count limit.
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+// Ordered, resolvable media for a submission. Prefer the media[] array (current path); fall back to the
+// legacy scalar columns for old rows that predate media[]. Only pieces with a real source are kept.
+function buildItems(sub: any): SrcItem[] {
+  const media: MediaItem[] = Array.isArray(sub.media) ? (sub.media as MediaItem[]) : [];
+  const items: SrcItem[] = [];
+  if (media.length) {
+    for (const m of media) {
+      const kind = (typeof m?.kind === "string" && m.kind) ? m.kind : "photo";
+      const it: SrcItem = { kind, msg_url: typeof m?.msg_url === "string" ? m.msg_url : undefined };
+      if (isHttp(m?.url)) it.httpUrl = m!.url;                                   // external link / already-http image
+      else if (typeof m?.url === "string" && m.url) it.storagePath = m.url;      // private bucket key
+      if (typeof m?.file_id === "string" && m.file_id) it.fileId = m.file_id;    // Telegram file
+      if (it.httpUrl || it.storagePath || it.fileId) items.push(it);
+    }
+  } else {
+    if (typeof sub.submitted_image_url === "string" && sub.submitted_image_url) {
+      if (isHttp(sub.submitted_image_url)) items.push({ kind: "photo", httpUrl: sub.submitted_image_url });
+      else items.push({ kind: "photo", storagePath: sub.submitted_image_url });
+    }
+    if (typeof sub.telegram_file_id === "string" && sub.telegram_file_id) {
+      const kind = (typeof sub.telegram_file_kind === "string" && sub.telegram_file_kind) ? sub.telegram_file_kind : "photo";
+      items.push({ kind, fileId: sub.telegram_file_id, msg_url: typeof sub.telegram_message_url === "string" ? sub.telegram_message_url : undefined });
+    }
   }
-  return btoa(binary);
+  return items;
 }
 
-// Resolve a Telegram file_id -> a token-free data: URL by fetching the file SERVER-SIDE. The bot
-// token is used only inside this function (getFile + the file fetch) and NEVER appears in the return
-// value or any log. Returns:
-//   { url }        — a `data:<mime>;base64,<bytes>` URL
-//   { tooLarge }   — file exceeds MAX_IMAGE_BYTES (caller -> reason:"image_too_large")
-//   null           — any failure (bot token missing, getFile !ok, no file_path, fetch !ok)
-type TgResolve = { url: string } | { tooLarge: true } | null;
-async function resolveTelegramFileUrl(fileId: string): Promise<TgResolve> {
-  if (!BOT_TOKEN) return null;
-  try {
-    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ file_id: fileId }),
-    });
-    if (!r.ok) return null;
-    const j = await r.json().catch(() => null);
-    const filePath = j && j.ok ? j?.result?.file_path : null;
-    if (!filePath || typeof filePath !== "string") return null;
-
-    // Fetch the bytes here — the token-bearing URL is built and consumed server-side only.
-    const fileResp = await fetch(`https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`);
-    if (!fileResp.ok) {
-      try { await fileResp.body?.cancel(); } catch { /* ignore */ }
-      return null;
-    }
-    // Cheap pre-check on the declared length before buffering the whole body.
-    const declaredLen = Number(fileResp.headers.get("content-length") || "0");
-    if (declaredLen > MAX_IMAGE_BYTES) {
-      try { await fileResp.body?.cancel(); } catch { /* ignore */ }
-      return { tooLarge: true };
-    }
-    const bytes = new Uint8Array(await fileResp.arrayBuffer());
-    if (bytes.length > MAX_IMAGE_BYTES) return { tooLarge: true }; // headers can lie / be absent
-
-    let ct = contentTypeFromPath(filePath);
-    if (!ct) {
-      const hdr = (fileResp.headers.get("content-type") || "").split(";")[0].trim();
-      ct = hdr.startsWith("image/") ? hdr : "image/jpeg";
-    }
-    return { url: `data:${ct};base64,${bytesToBase64(bytes)}` };
-  } catch {
-    return null;
+// Junction-aware RBAC: teacher of the student's group (is_group_teacher) OR platform admin/superadmin.
+async function callerMayView(admin: any, uid: string, studentId: string): Promise<boolean> {
+  const { data: prof, error: profErr } = await admin.from("profiles").select("group_id").eq("id", studentId).maybeSingle();
+  if (profErr) throw profErr;
+  const groupId: string | null = prof?.group_id ?? null;
+  if (groupId) {
+    const { data: isTeacher, error: itErr } = await admin.rpc("is_group_teacher", { _group_id: groupId, _uid: uid });
+    if (itErr) throw itErr;
+    if (isTeacher === true) return true;
   }
+  const { data: roles, error: rErr } = await admin.from("user_roles").select("role").eq("user_id", uid).in("role", ["admin", "superadmin"]);
+  if (rErr) throw rErr;
+  return !!roles?.length;
 }
 
 Deno.serve(async (req) => {
@@ -171,8 +159,7 @@ Deno.serve(async (req) => {
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
-  // --- 1. Auth: resolve the caller from their JWT (never log the JWT). verify_jwt=true means the
-  // gateway already rejected anonymous callers, but we still need auth.uid() for RBAC. ---
+  // --- Auth: resolve the caller from their JWT (never logged). ---
   const authHeader = req.headers.get("Authorization") || "";
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!jwt) return json({ error: "unauthorized" }, 401);
@@ -184,117 +171,115 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { return json({ error: "bad_json" }, 400); }
   const submissionId = String(body?.submission_id || "").trim();
   if (!UUID_RE.test(submissionId)) return json({ error: "invalid_submission_id" }, 400);
+  const rawIndex = body?.index;
+  const isRaw = Number.isInteger(rawIndex) && rawIndex >= 0; // mode B when a valid index is present
 
   try {
-    // --- 2. Load the submission (service role bypasses RLS) + the student's group. ---
+    // --- Load the submission + RBAC (service role bypasses RLS). ---
     const { data: sub, error: subErr } = await admin
       .from("homework_submissions")
-      .select("id, user_id, submitted_image_url, media, telegram_file_id, telegram_file_kind")
+      .select("id, user_id, submitted_image_url, media, telegram_file_id, telegram_file_kind, telegram_message_url")
       .eq("id", submissionId)
       .maybeSingle();
     if (subErr) throw subErr;
-    if (!sub) return json({ url: null, reason: "submission_not_found" }, 404);
+    if (!sub) return isRaw ? json({ reason: "submission_not_found" }, 404) : json({ items: [], reason: "submission_not_found" }, 404);
 
-    const { data: prof, error: profErr } = await admin
-      .from("profiles")
-      .select("group_id")
-      .eq("id", sub.user_id)
-      .maybeSingle();
-    if (profErr) throw profErr;
-    const groupId: string | null = prof?.group_id ?? null;
-
-    // --- 3. RBAC (junction-aware): a teacher of the student's group (groups.teacher_id ∪
-    // group_teachers, via is_group_teacher) OR a platform admin/superadmin. Anyone else -> 403. ---
-    let allowed = false;
-    if (groupId) {
-      const { data: isTeacher, error: itErr } = await admin
-        .rpc("is_group_teacher", { _group_id: groupId, _uid: uid });
-      if (itErr) throw itErr;
-      allowed = isTeacher === true;
-    }
-    if (!allowed) {
-      const { data: roles, error: rErr } = await admin
-        .from("user_roles").select("role").eq("user_id", uid).in("role", ["admin", "superadmin"]);
-      if (rErr) throw rErr;
-      allowed = !!roles?.length;
-    }
+    const allowed = await callerMayView(admin, uid, sub.user_id);
     if (!allowed) return json({ error: "forbidden" }, 403);
 
-    // --- 4. Resolve a viewable URL, in precedence order. This endpoint feeds an <img>, and homework
-    // media can be photo | video | document | link (20260707020000_homework_multimedia.sql + the
-    // webhook's kind tagging). So ONLY image-kind entries are candidates: a video/document must not be
-    // downloaded and returned as `data:image/...;base64,<non-image bytes>` (broken <img> / misleading
-    // image_too_large), and a `link`-kind external URL must not be auto-loaded (broken image /
-    // tracking-pixel). An entry is an image candidate when kind === "photo" OR kind is absent (legacy
-    // rows predate the kind tag — keep resolving those as today). ---
-    const media: MediaItem[] = Array.isArray(sub.media) ? (sub.media as MediaItem[]) : [];
-    const isImageKind = (k: unknown) => k === "photo" || k == null; // null/undefined = legacy, allow
-    const imageMedia = media.filter((m) => isImageKind(m?.kind));
+    const items = buildItems(sub);
 
-    // A photo scalar signal: submitted_image_url is always a web/miniapp uploaded photo; the
-    // telegram_file_id scalar is an image only when its telegram_file_kind says so.
-    const hasStorageImage = typeof sub.submitted_image_url === "string" && sub.submitted_image_url !== ""
-      && !isHttp(sub.submitted_image_url);
-    const hasScalarImageFile = typeof sub.telegram_file_id === "string" && sub.telegram_file_id !== ""
-      && isImageKind(sub.telegram_file_kind);
+    // ================= MODE B: stream the raw bytes of one item =================
+    // A real getFile failure (revoked token, rate-limit, stale file_id) must be DB-visible via
+    // logHealth (incident-doctrine health-signal rule) and reported as telegram_getfile_failed — NOT
+    // silently mislabeled "too large". Only a genuine >20MB file returns media_too_large (expected;
+    // the client falls back to Telegram, which streams any size). Both Telegram fetches sit inside
+    // local try/catch so a thrown exception from a token-bearing URL can never reach the outer catch's
+    // String(e.message) logging path (bot-token containment, defense-in-depth).
+    if (isRaw) {
+      const it = items[rawIndex as number];
+      if (!it || !it.fileId) return json({ reason: "no_viewable_media" }); // storage/link items aren't fetched here
 
-    // The submission carries media/files, but none of it is an image → don't spend a getFile; tell the
-    // client it isn't a renderable image (video/document/link submission).
-    const hasAnyMediaSignal = media.length > 0
-      || (typeof sub.telegram_file_id === "string" && sub.telegram_file_id !== "")
-      || (typeof sub.submitted_image_url === "string" && sub.submitted_image_url !== "");
-    const nonImageOnly = hasAnyMediaSignal
-      && imageMedia.length === 0 && !hasStorageImage && !hasScalarImageFile;
+      const failGetFile = async (why: string, extra: Record<string, unknown> = {}) => {
+        await logHealth(admin, uid, "hw_media_getfile_failed",
+          { submission_id: submissionId, index: rawIndex, reason: why, ...extra }, submissionId);
+        return json({ reason: "telegram_getfile_failed" });
+      };
 
-    // 4a) An already-http, image-kind media url is viewable as-is.
-    for (const m of imageMedia) {
-      if (isHttp(m?.url)) return json({ url: m.url });
-    }
+      if (!BOT_TOKEN) return await failGetFile("bot_token_missing");
 
-    // 4b) Storage path (private homework_images bucket key): submitted_image_url (non-http) or an
-    // image-kind media entry whose `url` is a bucket key (miniapp/web upload) -> short-lived signed URL.
-    let storagePath = "";
-    if (hasStorageImage) {
-      storagePath = String(sub.submitted_image_url);
-    } else {
-      for (const m of imageMedia) {
-        if (typeof m?.url === "string" && m.url && !isHttp(m.url)) { storagePath = m.url; break; }
+      let gj: any = null;
+      try {
+        const gf = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file_id: it.fileId }),
+        });
+        gj = await gf.json().catch(() => null);
+      } catch {
+        return await failGetFile("getfile_fetch_threw"); // never surface the token-bearing URL/exception
       }
-    }
-    let triedStorage = false;
-    if (storagePath) {
-      triedStorage = true;
-      const { data: signed, error: signErr } = await admin.storage
-        .from(BUCKET).createSignedUrl(storagePath, SIGNED_TTL);
-      if (!signErr && signed?.signedUrl) return json({ url: signed.signedUrl });
-      // Object purged (7-day retention) or inaccessible — EXPECTED, not a health signal.
-      // Fall through: a submission could carry both a bucket key AND a Telegram file_id.
+      const filePath = gj && gj.ok ? gj?.result?.file_path : null;
+      const fileSize = gj?.result?.file_size;
+      if (!filePath || typeof filePath !== "string") {
+        // Distinguish "file too big" (>20MB — expected) from a real getFile failure by the description.
+        const desc = String(gj?.description || "").toLowerCase();
+        if (desc.includes("too big") || desc.includes("too large")) return json({ reason: "media_too_large" });
+        return await failGetFile("getfile_not_ok", { code: gj?.error_code ?? null });
+      }
+      if (typeof fileSize === "number" && fileSize > MAX_MEDIA_BYTES) return json({ reason: "media_too_large" });
+
+      let fr: Response;
+      try {
+        fr = await fetch(`https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`);
+      } catch {
+        return await failGetFile("file_fetch_threw"); // never surface the token-bearing URL/exception
+      }
+      if (!fr.ok || !fr.body) {
+        try { await fr.body?.cancel(); } catch { /* ignore */ }
+        return await failGetFile("file_fetch_not_ok", { status: fr.status });
+      }
+      const declaredLen = Number(fr.headers.get("content-length") || "0");
+      if (declaredLen > MAX_MEDIA_BYTES) {
+        try { await fr.body.cancel(); } catch { /* ignore */ }
+        return json({ reason: "media_too_large" });
+      }
+      let ct = contentTypeFromPath(filePath);
+      if (!ct) {
+        const hdr = (fr.headers.get("content-type") || "").split(";")[0].trim();
+        ct = hdr || "application/octet-stream";
+      }
+      const filename = (filePath.split("/").pop() || "homework").replace(/[^\w.\-]+/g, "_");
+      // Stream Telegram's body straight through — the token-bearing URL is consumed server-side only.
+      // No post-download byte cap here (unlike the old base64 path): intentional streaming tradeoff,
+      // bounded by both the file_size + content-length checks above and Telegram's own ~20MB ceiling.
+      // X-Hw-Media-Bytes marks this as raw bytes so the client never confuses a real application/json
+      // homework document with a { reason } control message.
+      const headers: Record<string, string> = {
+        ...corsHeaders,
+        "Content-Type": ct,
+        "Content-Disposition": `inline; filename="${filename}"`,
+        "Cache-Control": "private, no-store",
+        "X-Hw-Media-Bytes": "1",
+      };
+      if (declaredLen) headers["Content-Length"] = String(declaredLen);
+      return new Response(fr.body, { status: 200, headers });
     }
 
-    // 4c) Telegram file_id (image-kind only) -> server-side getFile -> token-free data: URL.
-    let fileId = "";
-    for (const m of imageMedia) {
-      if (typeof m?.file_id === "string" && m.file_id) { fileId = m.file_id; break; }
+    // ================= MODE A: metadata for the whole gallery =================
+    const out: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.httpUrl) { out.push({ index: i, kind: it.kind, url: it.httpUrl, msg_url: it.msg_url }); continue; }
+      if (it.storagePath) {
+        const { data: signed, error: signErr } = await admin.storage.from(BUCKET).createSignedUrl(it.storagePath, SIGNED_TTL);
+        if (!signErr && signed?.signedUrl) out.push({ index: i, kind: it.kind, url: signed.signedUrl, msg_url: it.msg_url });
+        else out.push({ index: i, kind: it.kind, reason: "image_unavailable", msg_url: it.msg_url }); // purged (7-day retention) — expected
+        continue;
+      }
+      if (it.fileId) { out.push({ index: i, kind: it.kind, fetchable: true, msg_url: it.msg_url }); continue; }
     }
-    if (!fileId && hasScalarImageFile) fileId = String(sub.telegram_file_id);
-    if (fileId) {
-      const res = await resolveTelegramFileUrl(fileId);
-      if (res && "url" in res) return json({ url: res.url }); // token-free data: URL
-      if (res && "tooLarge" in res) return json({ url: null, reason: "image_too_large" });
-      // getFile / file fetch failed: a real degradation of the proxy path — DB-visible (no token).
-      await logHealth(admin, uid, "hw_image_url_getfile_failed",
-        { submission_id: submissionId, reason: "telegram_getfile_failed" }, submissionId);
-      return json({ url: null, reason: "telegram_getfile_failed" });
-    }
-
-    // 4d) Nothing viewable. Non-image submission (video/document/link) vs a purged storage object vs a
-    // truly media-less submission — distinct reasons so the client can message each correctly.
-    const reason = nonImageOnly ? "non_image_media" : (triedStorage ? "image_unavailable" : "no_viewable_media");
-    return json({ url: null, reason });
+    return json({ items: out });
   } catch (e) {
-    // Unexpected failure -> DB-visible health signal (incident doctrine), best-effort, then 500.
-    await logHealth(admin, uid, "hw_image_url_error",
-      { submission_id: submissionId, error: String((e as any)?.message ?? e) }, submissionId);
-    return json({ url: null, reason: "internal_error" }, 500);
+    await logHealth(admin, uid, "hw_image_url_error", { submission_id: submissionId, mode: isRaw ? "raw" : "meta", error: String((e as any)?.message ?? e) }, submissionId);
+    return isRaw ? json({ reason: "internal_error" }, 500) : json({ items: [], reason: "internal_error" }, 500);
   }
 });

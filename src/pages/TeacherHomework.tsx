@@ -226,14 +226,16 @@ export default function TeacherHomework() {
       score_is_stale: false,
     };
     if (voicePath !== undefined) update.score_feedback_voice_path = voicePath;
-    const { error } = await supabase.from("homework_submissions").update(update as any).eq("id", id);
-    if (error) toast.error(error.message);
-    else {
-      // Fire-and-forget: never awaited, never allowed to affect the save UX (notifyGradeVoice
-      // swallows its own errors; the edge fn itself is fully graceful on no-telegram/blocked-bot).
-      if (voiceJustUploaded) notifyGradeVoice(id);
-      toast.success("Baholandi"); setOpen(null); setDrawerRows(null); load();
-    }
+    const { data: saved, error } = await supabase
+      .from("homework_submissions").update(update as any).eq("id", id).select("id").maybeSingle();
+    if (error) { toast.error(error.message); return; }
+    // 0 rows + no error = RLS-filtered write (not a teacher of this student / reassigned out of scope):
+    // the grade did NOT save. Surface it instead of a false "Baholandi" that leaves the card in the queue.
+    if (!saved) { toast.error("Baho saqlanmadi — ro'yxatni yangilang."); return; }
+    // Fire-and-forget: never awaited, never allowed to affect the save UX (notifyGradeVoice
+    // swallows its own errors; the edge fn itself is fully graceful on no-telegram/blocked-bot).
+    if (voiceJustUploaded) notifyGradeVoice(id);
+    toast.success("Baholandi"); setOpen(null); setDrawerRows(null); load();
   };
 
   const reset = async (id: string) => {

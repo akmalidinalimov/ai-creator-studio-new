@@ -1,33 +1,52 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { X, ImageOff, ExternalLink } from "lucide-react";
+import { X, ImageOff, ExternalLink, Play, FileText, Link as LinkIcon, Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui-kit";
 import { cn } from "@/lib/utils";
 import { useMiniApp } from "@/lib/telegram/MiniAppContext";
-import { resolveImageUrl, type QueueMedia } from "@/lib/teacherApi";
+import { resolveSubmissionMedia, fetchSubmissionMediaBlob, type ResolvedMedia, type QueueMedia } from "@/lib/teacherApi";
 
 /**
- * GradePhoto — the homework photo for one grading card.
+ * GradePhoto — the submitted homework media for one grading card.
  *
- * The image is resolved through the hw-image-url edge fn (Task 2), which handles BOTH storage-bucket
- * uploads (signed URL) and Telegram-`file_id`-only bot captures (server-side getFile → token-free
- * data: URL). Because a large share of bot-captured homework is Telegram-hosted-only — and images can
- * be purged, non-image, or oversized — the degraded "rasmni ko'rib bo'lmadi — botda oching" state is
- * a COMMON path, not an edge case: it offers an "open in Telegram" affordance (from the media's
- * msg_url) so the teacher can still see the work in the bot chat.
- *
- * On success the photo taps to a full-screen portal lightbox with pinch-zoom + pan + double-tap, and
- * (in Telegram) disables the WebApp's vertical swipe-to-close so a pan gesture can't dismiss the app.
+ * Homework can be photo | video | document | link (often SEVERAL pieces in one submission — e.g. a
+ * screen-recording video + the bot file). Media is resolved through the hw-image-url edge fn:
+ *   - mode A lists every piece with a directly-loadable `url` (signed storage / external link) or
+ *     `fetchable:true` (a Telegram file whose bytes stream via mode B — the bot token stays server-side).
+ *   - photos load inline (tap → zoom lightbox); videos play in <video> on demand; documents open/inline;
+ *     links open externally. Anything too large for Telegram's ~20MB getFile falls back per-piece to
+ *     "Telegramda ochish" (the original message), so grading is never blocked.
  */
 
 const DEGRADED_HINT: Record<string, string> = {
-  non_image_media: "Bu topshiriq rasm emas (video yoki hujjat).",
-  image_too_large: "Rasm juda katta — Telegramda oching.",
-  telegram_getfile_failed: "Rasmni yuklab bo'lmadi — Telegramda oching.",
-  image_unavailable: "Rasm endi mavjud emas — Telegramda oching.",
-  no_viewable_media: "Ko'rish uchun rasm topilmadi.",
-  request_failed: "Rasmni yuklab bo'lmadi. Telegramda ochib ko'ring.",
+  media_too_large: "Fayl juda katta — Telegramda oching.",
+  telegram_getfile_failed: "Faylni yuklab bo'lmadi — Telegramda oching.",
+  image_unavailable: "Fayl endi mavjud emas — Telegramda oching.",
+  no_viewable_media: "Ko'rish uchun media topilmadi.",
+  submission_not_found: "Topshiriq topilmadi.",
+  internal_error: "Xatolik — Telegramda ochib ko'ring.",
+  request_failed: "Media yuklanmadi. Telegramda ochib ko'ring.",
 };
+
+const KIND_LABEL: Record<string, string> = { photo: "Rasm", video: "Video", document: "Hujjat", link: "Havola" };
+
+const EXT_FROM_CT: Record<string, string> = {
+  "application/msword": "doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.ms-powerpoint": "ppt",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+  "application/zip": "zip",
+  "text/plain": "txt",
+  "application/json": "json",
+};
+// A sensible download filename+extension for a saved document blob (the object URL has no name).
+function docName(ct: string): string {
+  const base = (ct || "").split(";")[0].trim();
+  const ext = EXT_FROM_CT[base] || (base.split("/")[1] || "").replace(/[^a-z0-9]/gi, "");
+  return `hujjat.${ext || "fayl"}`;
+}
 
 function firstMsgUrl(media: QueueMedia[] | null | undefined): string | null {
   if (!Array.isArray(media)) return null;
@@ -47,81 +66,323 @@ export function GradePhoto({
   alt: string;
 }) {
   const { webApp } = useMiniApp();
-  const [state, setState] = useState<{ status: "loading" } | { status: "ok"; url: string } | { status: "degraded"; reason: string }>({
-    status: "loading",
-  });
-  const [zoom, setZoom] = useState(false);
+  const [state, setState] = useState<
+    { status: "loading" } | { status: "ready"; items: ResolvedMedia[] } | { status: "empty"; reason?: string }
+  >({ status: "loading" });
+  const [zoomSrc, setZoomSrc] = useState<string | null>(null);
 
-  // Re-resolve whenever the card changes. A cancelled flag drops a stale response from a previous
-  // submission so the wrong photo can never flash onto the new card.
+  // Re-resolve whenever the card changes. `cancelled` drops a stale response so the wrong media can
+  // never flash onto the new card.
   useEffect(() => {
     let cancelled = false;
     setState({ status: "loading" });
-    setZoom(false);
+    setZoomSrc(null);
     (async () => {
-      const res = await resolveImageUrl(submissionId);
+      const { items, reason } = await resolveSubmissionMedia(submissionId);
       if (cancelled) return;
-      if (res.url === null) setState({ status: "degraded", reason: res.reason });
-      else setState({ status: "ok", url: res.url });
+      if (items.length === 0) setState({ status: "empty", reason });
+      else setState({ status: "ready", items });
     })();
     return () => {
       cancelled = true;
     };
   }, [submissionId]);
 
-  const msgUrl = firstMsgUrl(media);
-  const openInTelegram = useCallback(() => {
-    if (!msgUrl) return;
-    const w = webApp as any;
-    if (w?.openTelegramLink) w.openTelegramLink(msgUrl);
-    else window.open(msgUrl, "_blank", "noopener,noreferrer");
-  }, [msgUrl, webApp]);
+  const openTg = useCallback(
+    (url?: string | null) => {
+      const target = url || firstMsgUrl(media);
+      if (!target) return;
+      const w = webApp as any;
+      if (w?.openTelegramLink) w.openTelegramLink(target);
+      else window.open(target, "_blank", "noopener,noreferrer");
+    },
+    [media, webApp],
+  );
 
   if (state.status === "loading") {
     return <Skeleton className="h-[38vh] w-full rounded-lg" />;
   }
 
-  if (state.status === "degraded") {
+  if (state.status === "empty") {
+    const msgUrl = firstMsgUrl(media);
     return (
-      <div className="flex flex-col items-center gap-2 rounded-lg border border-border bg-surface-2 px-4 py-7 text-center">
-        <ImageOff className="size-7 text-muted-foreground" aria-hidden />
-        <p className="text-sm font-bold text-foreground">Rasmni ko'rib bo'lmadi</p>
-        <p className="max-w-[28ch] text-xs font-semibold text-muted-foreground">
-          {DEGRADED_HINT[state.reason] || DEGRADED_HINT.request_failed}
-        </p>
-        {msgUrl && (
-          <button
-            type="button"
-            onClick={openInTelegram}
-            className="mt-1 inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-tint px-3 text-[13px] font-bold text-foreground transition-colors hover:bg-tint/70"
-          >
-            <ExternalLink className="size-4" />
-            Telegramda ochish
-          </button>
-        )}
-      </div>
+      <DegradedCard
+        hint={DEGRADED_HINT[state.reason || "no_viewable_media"] || DEGRADED_HINT.request_failed}
+        onOpen={msgUrl ? () => openTg(msgUrl) : undefined}
+      />
     );
   }
 
+  const multi = state.items.length > 1;
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setZoom(true)}
-        aria-label="Rasmni kattalashtirish"
-        className="block w-full overflow-hidden rounded-lg border border-border bg-black/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <img
-          src={state.url}
-          alt={alt}
-          // Cap the photo below the fold (stable viewport) so the score chips + coral primary stay
-          // visible without scrolling — and stay reachable when the feedback keyboard opens.
-          className="mx-auto max-w-full object-contain"
-          style={{ maxHeight: "min(42vh, calc(var(--tg-viewport-stable-height, 100vh) * 0.42))" }}
-        />
-      </button>
-      {zoom && <Lightbox src={state.url} alt={alt} onClose={() => setZoom(false)} webApp={webApp} />}
+      <div className="flex flex-col gap-2">
+        {state.items.map((it) => (
+          <div key={`${submissionId}:${it.index}`} className="flex flex-col gap-1">
+            {multi && (
+              <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                {KIND_LABEL[it.kind] || "Fayl"}
+              </span>
+            )}
+            <MediaPiece submissionId={submissionId} item={it} alt={alt} onZoom={setZoomSrc} openTg={openTg} />
+          </div>
+        ))}
+      </div>
+      {zoomSrc && <Lightbox src={zoomSrc} alt={alt} onClose={() => setZoomSrc(null)} webApp={webApp} />}
     </>
+  );
+}
+
+// ---- one media piece (photo / video / document / link) ----
+type BlobState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ok"; url: string; ct: string }
+  | { status: "fail"; reason: string };
+
+function MediaPiece({
+  submissionId,
+  item,
+  alt,
+  onZoom,
+  openTg,
+}: {
+  submissionId: string;
+  item: ResolvedMedia;
+  alt: string;
+  onZoom: (src: string) => void;
+  openTg: (url?: string | null) => void;
+}) {
+  const kind = item.kind;
+  const [blob, setBlob] = useState<BlobState>({ status: "idle" });
+  const blobRef = useRef<string | null>(null);
+  const mounted = useRef(true);
+
+  const revoke = () => {
+    if (blobRef.current) {
+      URL.revokeObjectURL(blobRef.current);
+      blobRef.current = null;
+    }
+  };
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      revoke();
+    };
+  }, []);
+
+  const load = useCallback(async () => {
+    setBlob({ status: "loading" });
+    const res = await fetchSubmissionMediaBlob(submissionId, item.index);
+    if (!mounted.current) {
+      // Card advanced mid-fetch: revoke the just-created object URL so it can't orphan.
+      if ("blobUrl" in res) URL.revokeObjectURL(res.blobUrl);
+      return;
+    }
+    if ("reason" in res) {
+      setBlob({ status: "fail", reason: res.reason });
+      return;
+    }
+    revoke();
+    blobRef.current = res.blobUrl;
+    setBlob({ status: "ok", url: res.blobUrl, ct: res.contentType });
+  }, [submissionId, item.index]);
+
+  // Photos are small → load inline immediately. Video/document load on demand (avoids downloading
+  // large files the teacher may not open).
+  useEffect(() => {
+    if (item.fetchable && kind === "photo") void load();
+  }, [item.fetchable, kind, load]);
+
+  const tgFallback = item.msg_url ? () => openTg(item.msg_url) : undefined;
+
+  // 1) Directly-loadable url (signed storage image, external link, or already-http media).
+  if (item.url) {
+    if (kind === "link") return <LinkTile url={item.url} />;
+    if (kind === "video") return <VideoEl src={item.url} />;
+    if (kind === "document") return <DocTile ready href={item.url} />;
+    return <ImageTile src={item.url} alt={alt} onZoom={onZoom} />;
+  }
+
+  // 2) mode A already knows it's unresolvable (e.g. purged storage object).
+  if (item.reason) {
+    return <DegradedCard small hint={DEGRADED_HINT[item.reason] || DEGRADED_HINT.request_failed} onOpen={tgFallback} />;
+  }
+
+  // 3) Telegram file → stream bytes via mode B.
+  if (item.fetchable) {
+    if (blob.status === "fail") {
+      return <DegradedCard small hint={DEGRADED_HINT[blob.reason] || DEGRADED_HINT.request_failed} onOpen={tgFallback} />;
+    }
+    if (kind === "photo") {
+      if (blob.status === "ok") return <ImageTile src={blob.url} alt={alt} onZoom={onZoom} />;
+      return <Skeleton className="h-[30vh] w-full rounded-lg" />;
+    }
+    if (kind === "video") {
+      if (blob.status === "ok") return <VideoEl src={blob.url} autoPlay />;
+      return <PlayTile label="Videoni ko'rish" loading={blob.status === "loading"} onClick={load} />;
+    }
+    // document (or any other fetchable kind)
+    if (blob.status === "ok") {
+      if (blob.ct.startsWith("image/")) return <ImageTile src={blob.url} alt={alt} onZoom={onZoom} />;
+      if (blob.ct.startsWith("application/pdf")) {
+        return <iframe title={alt} src={blob.url} className="h-[46vh] w-full rounded-lg border border-border bg-white" />;
+      }
+      // A non-previewable doc (.docx/.xlsx/.zip…). Save it via `download` — a `target="_blank"`
+      // navigation to a blob: URL can open blank inside Telegram's in-app webview. Telegram fallback
+      // (msg_url) stays available on the card if the save is blocked.
+      return <DocTile ready download href={blob.url} downloadName={docName(blob.ct)} label="Hujjatni yuklab olish" />;
+    }
+    return <DocTile label="Hujjatni ochish" loading={blob.status === "loading"} onClick={load} />;
+  }
+
+  return <DegradedCard small hint={DEGRADED_HINT.no_viewable_media} onOpen={tgFallback} />;
+}
+
+// ---- presentational pieces ----
+function ImageTile({ src, alt, onZoom }: { src: string; alt: string; onZoom: (src: string) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onZoom(src)}
+      aria-label="Rasmni kattalashtirish"
+      className="block w-full overflow-hidden rounded-lg border border-border bg-black/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <img
+        src={src}
+        alt={alt}
+        className="mx-auto max-w-full object-contain"
+        style={{ maxHeight: "min(42vh, calc(var(--tg-viewport-stable-height, 100vh) * 0.42))" }}
+      />
+    </button>
+  );
+}
+
+function VideoEl({ src, autoPlay }: { src: string; autoPlay?: boolean }) {
+  return (
+    <video
+      src={src}
+      controls
+      autoPlay={autoPlay}
+      playsInline
+      className="w-full rounded-lg border border-border bg-black"
+      style={{ maxHeight: "min(46vh, calc(var(--tg-viewport-stable-height, 100vh) * 0.46))" }}
+    />
+  );
+}
+
+function PlayTile({ label, loading, onClick }: { label: string; loading: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={loading}
+      className="relative grid h-[30vh] w-full place-items-center overflow-hidden rounded-lg border border-border bg-black/40 transition-colors hover:bg-black/30 disabled:opacity-80"
+    >
+      <div className="flex flex-col items-center gap-2 text-foreground">
+        {loading ? (
+          <Loader2 className="size-9 animate-spin text-primary" aria-hidden />
+        ) : (
+          <span className="grid size-14 place-items-center rounded-full bg-primary text-primary-foreground">
+            <Play className="size-7" style={{ marginLeft: 3 }} aria-hidden />
+          </span>
+        )}
+        <span className="text-[13px] font-bold">{loading ? "Yuklanmoqda…" : label}</span>
+      </div>
+    </button>
+  );
+}
+
+// Document: `href` (ready to open in a new tab, via an anchor so it isn't popup-blocked) OR a button
+// that fetches the bytes first (`onClick`).
+function DocTile({
+  ready,
+  href,
+  download,
+  downloadName,
+  label = "Hujjatni ochish",
+  loading,
+  onClick,
+}: {
+  ready?: boolean;
+  href?: string;
+  download?: boolean;
+  downloadName?: string;
+  label?: string;
+  loading?: boolean;
+  onClick?: () => void;
+}) {
+  const inner = (
+    <>
+      <span className="grid size-11 place-items-center rounded-lg bg-tint text-foreground">
+        {loading ? <Loader2 className="size-5 animate-spin" aria-hidden /> : <FileText className="size-5" aria-hidden />}
+      </span>
+      <span className="text-[13px] font-bold text-foreground">{loading ? "Yuklanmoqda…" : label}</span>
+    </>
+  );
+  const cls =
+    "flex min-h-[56px] w-full items-center gap-3 rounded-lg border border-border bg-surface-2 px-4 py-3 text-left transition-colors hover:bg-tint/30";
+  if (ready && href) {
+    // A blob: URL is saved via `download` (a `target="_blank"` navigation to it can open blank in the
+    // Telegram webview); a real https URL opens in a new tab.
+    if (download) {
+      return (
+        <a href={href} download={downloadName || "hujjat"} className={cls}>
+          {inner}
+        </a>
+      );
+    }
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" className={cls}>
+        {inner}
+      </a>
+    );
+  }
+  return (
+    <button type="button" onClick={onClick} disabled={loading} className={cn(cls, "disabled:opacity-80")}>
+      {inner}
+    </button>
+  );
+}
+
+function LinkTile({ url }: { url: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex min-h-[56px] w-full items-center gap-3 rounded-lg border border-border bg-surface-2 px-4 py-3 transition-colors hover:bg-tint/30"
+    >
+      <span className="grid size-11 place-items-center rounded-lg bg-tint text-foreground">
+        <LinkIcon className="size-5" aria-hidden />
+      </span>
+      <span className="truncate text-[13px] font-bold text-primary">{url}</span>
+    </a>
+  );
+}
+
+function DegradedCard({ hint, onOpen, small }: { hint: string; onOpen?: () => void; small?: boolean }) {
+  return (
+    <div
+      className={cn(
+        "flex flex-col items-center gap-2 rounded-lg border border-border bg-surface-2 text-center",
+        small ? "px-4 py-4" : "px-4 py-7",
+      )}
+    >
+      <ImageOff className={cn("text-muted-foreground", small ? "size-5" : "size-7")} aria-hidden />
+      <p className="max-w-[30ch] text-xs font-semibold text-muted-foreground">{hint}</p>
+      {onOpen && (
+        <button
+          type="button"
+          onClick={onOpen}
+          className="mt-1 inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-tint px-3 text-[13px] font-bold text-foreground transition-colors hover:bg-tint/70"
+        >
+          <ExternalLink className="size-4" />
+          Telegramda ochish
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -149,7 +410,6 @@ function Lightbox({
   const lastTap = useRef(0);
 
   useEffect(() => {
-    // In Telegram, a downward pan would otherwise trigger swipe-to-close on the whole Mini App.
     webApp?.disableVerticalSwipes?.();
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -158,9 +418,6 @@ function Lightbox({
     };
     window.addEventListener("keydown", onKey);
     return () => {
-      // Restore the app DEFAULT (swipe-to-close DISABLED — set by useTelegramViewport in the shell),
-      // NOT enableVerticalSwipes. The shell owns the default; the lightbox must leave it as it found
-      // it, or a later downward scroll while grading could accidentally close the Mini App.
       webApp?.disableVerticalSwipes?.();
       document.body.style.overflow = prevOverflow;
       window.removeEventListener("keydown", onKey);
@@ -192,7 +449,6 @@ function Lightbox({
   const endPointer = (e: React.PointerEvent) => {
     pointers.current.delete(e.pointerId);
     if (pointers.current.size < 2) lastDist.current = null;
-    // Snap back to centered when fully zoomed out.
     setScale((s) => {
       if (s <= 1.02) {
         setTx(0);
@@ -204,10 +460,9 @@ function Lightbox({
   };
 
   const onImgClick = (e: React.MouseEvent) => {
-    e.stopPropagation(); // don't let a tap on the image bubble to the backdrop-close
+    e.stopPropagation();
     const now = Date.now();
     if (now - lastTap.current < 300) {
-      // double-tap: toggle zoom
       if (scale > 1) {
         setScale(1);
         setTx(0);
