@@ -226,6 +226,7 @@ export default function TeacherHomework() {
       score_is_stale: false,
     };
     if (voicePath !== undefined) update.score_feedback_voice_path = voicePath;
+    /* eslint-disable-next-line no-restricted-syntax -- already 0-row-guarded via .select("id").maybeSingle() (the #111 grade-write pattern mutate() generalizes); grade-write consolidation is a deferred step. */
     const { data: saved, error } = await supabase
       .from("homework_submissions").update(update as any).eq("id", id).select("id").maybeSingle();
     if (error) { toast.error(error.message); return; }
