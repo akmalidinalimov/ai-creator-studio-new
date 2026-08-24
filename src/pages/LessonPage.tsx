@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
+import { mutate, type SaveResult } from "@/lib/mutate";
+import { reportClientError } from "@/lib/beacon";
 import { SB_BASE } from "@/lib/supabaseBase";
 import { watchedEnough } from "@/lib/watchGate";
 import { useAuth } from "@/contexts/AuthContext";
@@ -75,6 +77,19 @@ function normalizeAssistantLang(code?: string | null): "uz" | "ru" | "en" {
 // xp_on_lesson_complete() awards a flat +20 per lesson_progress.completed_at (ref-key idempotent,
 // reconciled by reconcile_all_xp()). Same constant as src/pages/Lessons.tsx (Darslar).
 const LESSON_XP = 20;
+
+/** Beacon a genuine completion-write failure (0-row RLS / DB error) so a "finished the video but
+ *  got no credit" case is DB-visible — but NEVER an impersonation-preview no-op, which is an
+ *  expected non-write, not a failure. Module-level + pure: adds no React dependency to any effect. */
+function beaconCompletionFailure(r: SaveResult) {
+  if (!r.ok && r.reason !== "impersonation_readonly") {
+    reportClientError({
+      type: "other",
+      message: `lesson_complete_not_saved:${r.reason}`,
+      extra: { reason: r.reason, dbMessage: r.message },
+    });
+  }
+}
 
 export default function LessonPage() {
   const { courseId, lessonId } = useParams();
@@ -227,10 +242,11 @@ export default function LessonPage() {
       if ((data as any)?.completed) setCompleted((s) => new Set(s).add(lessonId));
       // Near-end fallback: mark complete if we're within 5s of the end.
       if (dur > 0 && cur >= dur - 5) {
-        await supabase.from("lesson_progress").upsert({
+        const r = await mutate(() => supabase.from("lesson_progress").upsert({
           user_id: user.id, lesson_id: lessonId, completed_at: new Date().toISOString(),
-        }, { onConflict: "user_id,lesson_id" });
-        setCompleted((s) => new Set(s).add(lessonId));
+        }, { onConflict: "user_id,lesson_id" }));
+        if (r.ok) setCompleted((s) => new Set(s).add(lessonId));
+        else beaconCompletionFailure(r);
       }
     }, 5000);
     return () => clearInterval(id);
@@ -241,10 +257,11 @@ export default function LessonPage() {
     const v = videoRef.current;
     if (!v || !user || !lessonId) return;
     const handler = async () => {
-      await supabase.from("lesson_progress").upsert({
+      const r = await mutate(() => supabase.from("lesson_progress").upsert({
         user_id: user.id, lesson_id: lessonId, completed_at: new Date().toISOString(),
-      }, { onConflict: "user_id,lesson_id" });
-      setCompleted((s) => new Set(s).add(lessonId));
+      }, { onConflict: "user_id,lesson_id" }));
+      if (r.ok) setCompleted((s) => new Set(s).add(lessonId));
+      else beaconCompletionFailure(r);
     };
     v.addEventListener("ended", handler);
     return () => v.removeEventListener("ended", handler);
@@ -266,10 +283,11 @@ export default function LessonPage() {
   }, [user, lessonId]);
   const onBunnyEnded = useCallback(async () => {
     if (!user || !lessonId) return;
-    await supabase.from("lesson_progress").upsert({
+    const r = await mutate(() => supabase.from("lesson_progress").upsert({
       user_id: user.id, lesson_id: lessonId, completed_at: new Date().toISOString(),
-    }, { onConflict: "user_id,lesson_id" });
-    setCompleted((s) => new Set(s).add(lessonId));
+    }, { onConflict: "user_id,lesson_id" }));
+    if (r.ok) setCompleted((s) => new Set(s).add(lessonId));
+    else beaconCompletionFailure(r);
   }, [user, lessonId]);
 
   // A lesson with no resolvable video source (an "upload" lesson with nothing
@@ -296,13 +314,19 @@ export default function LessonPage() {
     return watchedEnough({ isTextLesson, durationSeconds: dur, watchedSeconds: pos });
   };
 
-  const writeComplete = async () => {
-    if (!user || !lessonId) return;
-    await supabase.from("lesson_progress").upsert({
+  const writeComplete = async (): Promise<SaveResult> => {
+    if (!user || !lessonId) return { ok: false, reason: "error", message: "no user/lesson" };
+    // Guarded write: a 0-row (RLS) or DB error must not read as a persisted completion. Only mark
+    // the lesson done (optimistic checkmark) when it actually saved; a real failure is beaconed
+    // (DB-visible), an impersonation preview is a silent no-op. The upsert payload/onConflict are
+    // unchanged, so the server-side +20-XP trigger on completed_at fires exactly as before.
+    const r = await mutate(() => supabase.from("lesson_progress").upsert({
       user_id: user.id, lesson_id: lessonId, completed_at: new Date().toISOString(),
       last_position_seconds: Math.floor(videoRef.current?.currentTime || 0),
-    }, { onConflict: "user_id,lesson_id" });
-    setCompleted((s) => new Set(s).add(lessonId));
+    }, { onConflict: "user_id,lesson_id" }));
+    if (r.ok) setCompleted((s) => new Set(s).add(lessonId));
+    else beaconCompletionFailure(r);
+    return r;
   };
 
   const markComplete = async () => {
@@ -315,8 +339,14 @@ export default function LessonPage() {
     // while !isCompleted, so this is effectively always true via the UI — kept explicit in case
     // markComplete is ever called again, e.g. a stale keyboard event, so it can't re-celebrate).
     const isNewCompletion = !completed.has(lessonId);
-    await writeComplete();
-    if (isNewCompletion) setShowCelebrate(true);
+    const r = await writeComplete();
+    // Gate the +20 XP celebration on the completion ACTUALLY persisting — a 0-row/RLS or DB error
+    // must never fire a false celebration (writeComplete already beaconed it). Impersonation is a
+    // silent no-op; a real failure gets a "try again" toast so the student can re-tap.
+    if (isNewCompletion && r.ok) setShowCelebrate(true);
+    else if (!r.ok && r.reason !== "impersonation_readonly") {
+      toast.error(t("lesson.saveError", { defaultValue: "Saqlab bo'lmadi. Qayta urinib ko'ring." }));
+    }
   };
 
   const flat = modules.flatMap((m) => m.lessons.map((l: any) => ({ ...l, moduleTitle: m.title })));
