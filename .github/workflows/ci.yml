@@ -58,5 +58,13 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: Deno tests (telegram-bot-webhook)
-        run: deno test supabase/functions/telegram-bot-webhook/
+      # All function test dirs (was telegram-bot-webhook only) — un-orphans the _shared/internal-secret,
+      # _shared/telegram-initdata, tg-miniapp-auth/resolve, and broadcast-drainer/classify tests.
+      - name: Deno tests (all functions)
+        run: deno test supabase/functions/
+
+      # Type-check the shared paved-road primitives (the reusable helpers must stay strict-clean).
+      # NOTE: a full-tree `deno check` is deferred — it currently surfaces ~22 pre-existing type errors
+      # in the never-checked telegram-bot-webhook; fixing those + widening this is a follow-up.
+      - name: Deno check (_shared primitives)
+        run: deno check supabase/functions/_shared/*.ts
