@@ -48,6 +48,13 @@ jobs:
         run: npm run lint
         continue-on-error: true
 
+      # Footgun rules: raw supabase .update()/.upsert() and raw api.telegram.org fetches — the two
+      # silent-failure classes. Advisory until the ~103 legacy sites are migrated onto
+      # mutate()/sendTelegram(), then this flips to a BLOCKING gate (drop continue-on-error).
+      - name: Footgun lint (advisory)
+        run: npm run lint:footguns
+        continue-on-error: true
+
   edge:
     name: Edge functions (Deno tests)
     runs-on: ubuntu-latest
@@ -58,5 +65,13 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: Deno tests (telegram-bot-webhook)
-        run: deno test supabase/functions/telegram-bot-webhook/
+      # All function test dirs (was telegram-bot-webhook only) — un-orphans the _shared/internal-secret,
+      # _shared/telegram-initdata, tg-miniapp-auth/resolve, and broadcast-drainer/classify tests.
+      - name: Deno tests (all functions)
+        run: deno test supabase/functions/
+
+      # Type-check the shared paved-road primitives (the reusable helpers must stay strict-clean).
+      # NOTE: a full-tree `deno check` is deferred — it currently surfaces ~22 pre-existing type errors
+      # in the never-checked telegram-bot-webhook; fixing those + widening this is a follow-up.
+      - name: Deno check (_shared primitives)
+        run: deno check supabase/functions/_shared/*.ts

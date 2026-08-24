@@ -1,0 +1,103 @@
+// Tests for the shared Telegram sender. Run: deno test supabase/functions/_shared/telegram-send.test.ts
+import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { sendTelegram } from "./telegram-send.ts";
+
+const TOKEN = "SECRET_TOKEN_do_not_leak_123";
+const realFetch = globalThis.fetch;
+const realError = console.error;
+
+// A service-role-client stub that records admin_actions inserts.
+function fakeAdmin() {
+  const rows: any[] = [];
+  const admin = {
+    from: (_t: string) => ({
+      insert: (row: any) => {
+        rows.push(row);
+        return Promise.resolve({ error: null });
+      },
+    }),
+  };
+  return { admin, rows };
+}
+
+function stubFetch(fn: () => Promise<Response>) {
+  globalThis.fetch = (() => fn()) as unknown as typeof fetch;
+}
+
+// The bot token must never appear in the returned outcome OR any recorded row.
+function assertNoToken(...values: unknown[]) {
+  for (const v of values) assertEquals(JSON.stringify(v).includes(TOKEN), false);
+}
+
+Deno.test("sendTelegram: accepted → ok, no health row, token never in outcome", async () => {
+  stubFetch(() => Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 })));
+  const { admin, rows } = fakeAdmin();
+  try {
+    const out = await sendTelegram(TOKEN, "sendMessage", { chat_id: 1, text: "x" }, { admin, purpose: "grade" });
+    assertEquals(out.ok, true);
+    assertEquals(out.terminal, false);
+    assertEquals(rows.length, 0);
+    assertNoToken(out);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+Deno.test("sendTelegram: blocked recipient → terminal+recorded, token never leaked", async () => {
+  stubFetch(() =>
+    Promise.resolve(new Response(JSON.stringify({ ok: false, description: "Forbidden: bot was blocked by the user" }), { status: 403 }))
+  );
+  const { admin, rows } = fakeAdmin();
+  try {
+    const out = await sendTelegram(TOKEN, "sendMessage", { chat_id: 2, text: "y" }, { admin, purpose: "grade", recipientId: 2 });
+    assertEquals(out.ok, false);
+    assertEquals(out.terminal, true);
+    assertEquals(out.recipient, true);
+    assertEquals(rows.length, 1);
+    assertEquals(rows[0].action, "telegram_send_failed");
+    assertNoToken(out, rows[0]); // token in neither the outcome nor the recorded row
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+Deno.test("sendTelegram: transport error → transient, recorded, never throws", async () => {
+  stubFetch(() => Promise.reject(new Error("network down")));
+  const { admin, rows } = fakeAdmin();
+  try {
+    const out = await sendTelegram(TOKEN, "sendMessage", { chat_id: 3 }, { admin });
+    assertEquals(out.ok, false);
+    assertEquals(out.terminal, false); // transport_error is neither a recipient nor a content error
+    assertEquals(rows.length, 1);
+    assertNoToken(out, rows[0]);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+Deno.test("sendTelegram: record:false → classify only, no health row", async () => {
+  stubFetch(() => Promise.resolve(new Response(JSON.stringify({ ok: false, description: "bot was blocked" }), { status: 403 })));
+  const { admin, rows } = fakeAdmin();
+  try {
+    const out = await sendTelegram(TOKEN, "sendMessage", { chat_id: 4 }, { admin, record: false });
+    assertEquals(out.ok, false);
+    assertEquals(rows.length, 0);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+Deno.test("sendTelegram: non-delivery with NO admin → not fully silent (loud console.error), token safe", async () => {
+  stubFetch(() => Promise.resolve(new Response(JSON.stringify({ ok: false, description: "bot was blocked" }), { status: 403 })));
+  const errCalls: unknown[][] = [];
+  console.error = (...args: unknown[]) => { errCalls.push(args); };
+  try {
+    const out = await sendTelegram(TOKEN, "sendMessage", { chat_id: 5 }); // no opts.admin, record not disabled
+    assertEquals(out.ok, false);
+    assertEquals(errCalls.length, 1); // logged loudly instead of vanishing
+    assertNoToken(out, errCalls[0]);
+  } finally {
+    console.error = realError;
+    globalThis.fetch = realFetch;
+  }
+});

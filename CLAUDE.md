@@ -52,6 +52,33 @@ reconcilers re-derive from source-of-truth tables, SQL fallbacks deliver when th
 down, watchdogs alert humans, and the GitHub verifier audits from OUTSIDE Supabase daily. Every
 leg must stay independent of the thing it watches.
 
+## Prevention hierarchy — before you build a watchdog (self-learning loop, part 2)
+
+A watchdog only *detects* what already escaped. Most recurring failures are a few repeatable footgun
+patterns, so the leverage is to make the *class* impossible-or-loud **by construction** rather than
+watch each instance. When a failure recurs, work DOWN this hierarchy and add a watchdog only for what
+genuinely can't be prevented upstream:
+
+1. **Unrepresentable (primitive/type).** Route it through a paved-road primitive so the bad state
+   can't be written. Writes → `mutate()` / `mutateMany()` / `saveWithToast()` (`src/lib/mutate.ts`):
+   a 0-row RLS-filtered write is `not_saved`, never a false "saved" (and an impersonation no-op is an
+   expected result — never beacon it). Telegram sends → `sendTelegram()`
+   (`supabase/functions/_shared/telegram-send.ts`): every non-delivery is DB-visible by construction.
+   Edge scaffolding → `_shared/edge.ts` (`corsHeaders` / `json` / `logHealth`). **Never hand-roll a
+   raw `supabase…update()/upsert()` or `fetch("…api.telegram.org…")`** — `npm run lint:footguns`
+   finds and (once the legacy sites are migrated) forbids them.
+2. **Invariant (DB).** A property that must never be bypassed by *any* code path belongs in a
+   CHECK / trigger / RLS, not in hoped-for app code (see the existing guards).
+3. **Author-time (lint/types).** A lint rule (the footguns config) or a strict type that fails in the
+   editor + CI. Prefer un-writable over caught-at-runtime.
+4. **CI test.** A test on the mutation path with the REAL data shapes (a *video/document* homework,
+   an RLS-blocked write) — not just the happy case.
+5. **Runtime watchdog.** The backstop, for genuinely emergent properties only (drift, spikes,
+   delivery liveness). NOT for "did this one write/send succeed" — that is layer 1's job now.
+
+**Graceful is not silent:** every fallback path (an "open in Telegram", a "not available", a "try
+again") MUST also emit a counter/signal, or a broken feature hides behind a friendly HTTP 200.
+
 ## Verification bar
 
 - E2E-verify on prod with synthetic users (create via `admin-create-students` with

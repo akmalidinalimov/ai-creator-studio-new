@@ -8,6 +8,7 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
+    "lint:footguns": "eslint --config eslint.footguns.config.js src supabase/functions",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
