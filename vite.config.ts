@@ -12,6 +12,14 @@ export default defineConfig(({ mode }) => ({
       overlay: false,
     },
   },
+  // Stamp the deployed commit into the bundle so the client-error beacon can tag
+  // each event with the exact build it came from (Vercel sets VERCEL_GIT_COMMIT_SHA
+  // at build; falls back to "dev" for local builds). Read via import.meta.env.VITE_APP_VERSION.
+  define: {
+    "import.meta.env.VITE_APP_VERSION": JSON.stringify(
+      process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || "dev",
+    ),
+  },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {
     alias: {
