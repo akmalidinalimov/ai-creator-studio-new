@@ -9,6 +9,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { SUPPORTED_LANGUAGES, type LanguageCode } from "@/i18n";
 import { supabase } from "@/integrations/supabase/client";
+import { mutate } from "@/lib/mutate";
+import { reportClientError } from "@/lib/beacon";
 import { useAuth } from "@/contexts/AuthContext";
 import UZ from "country-flag-icons/react/3x2/UZ";
 import RU from "country-flag-icons/react/3x2/RU";
@@ -48,11 +50,14 @@ export const LanguageSwitcher = ({ variant = "icon" }: Props) => {
       // ignore
     }
     if (user) {
-      supabase
-        .from("profiles")
-        .update({ preferred_language: code } as any)
-        .eq("id", user.id)
-        .then(() => {});
+      // Best-effort cross-device sync — i18n + localStorage already applied above (so the change is
+      // visible to the user regardless). Route through mutate() (never throws) so an impersonation
+      // preview can't orphan a rejected .update() into an unhandledrejection. "Graceful is not
+      // silent": a real 0-row/error sync failure is beaconed (DB-visible), never an impersonation no-op.
+      const r = await mutate(() => supabase.from("profiles").update({ preferred_language: code } as any).eq("id", user.id));
+      if (!r.ok && r.reason !== "impersonation_readonly") {
+        reportClientError({ type: "other", message: `language_pref_not_saved:${r.reason}`, extra: { reason: r.reason } });
+      }
     }
   };
 

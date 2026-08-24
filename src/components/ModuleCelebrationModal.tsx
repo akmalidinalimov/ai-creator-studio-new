@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { mutate } from "@/lib/mutate";
+import { reportClientError } from "@/lib/beacon";
 import { useAuth } from "@/contexts/AuthContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -51,10 +53,14 @@ export function ModuleCelebrationModal() {
   const dismiss = async () => {
     setOpen(false);
     if (celebration) {
-      await supabase
-        .from("module_celebrations")
-        .update({ seen_at: new Date().toISOString() })
-        .eq("id", celebration.id);
+      // Guarded write: if marking-seen silently 0-row fails, this modal re-pops on every load (a
+      // hidden nag-loop) — so surface it to the beacon. Never beacon an impersonation no-op.
+      const r = await mutate(() =>
+        supabase.from("module_celebrations").update({ seen_at: new Date().toISOString() }).eq("id", celebration.id),
+      );
+      if (!r.ok && r.reason !== "impersonation_readonly") {
+        reportClientError({ type: "other", message: `module_celebration_seen_not_saved:${r.reason}`, extra: { reason: r.reason } });
+      }
     }
   };
 
