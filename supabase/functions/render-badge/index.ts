@@ -10,6 +10,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import satori from "https://esm.sh/satori@0.10.13";
 import { initWasm, Resvg } from "https://esm.sh/@resvg/resvg-wasm@2.6.2";
 import { resolveBadge } from "../_shared/badge-presets.ts";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -140,10 +141,14 @@ Deno.serve(async (req) => {
     if (dm && user_id) {
       const { data: prof } = await admin.from("profiles").select("telegram_id").eq("id", user_id).maybeSingle();
       if (prof?.telegram_id) {
-        await fetch(`https://api.telegram.org/bot${Deno.env.get("TELEGRAM_BOT_TOKEN")}/sendPhoto`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: Number(prof.telegram_id), photo: url, caption: card.caption }),
-        });
+        // Earned badge DM — route through the shared sender so a non-delivery is a classified
+        // telegram_send_failed row in admin_actions, not a silently-dropped fetch.
+        await sendTelegram(
+          Deno.env.get("TELEGRAM_BOT_TOKEN") || "",
+          "sendPhoto",
+          { chat_id: Number(prof.telegram_id), photo: url, caption: card.caption },
+          { admin, purpose: "badge_award_dm", recipientId: prof.telegram_id },
+        );
       }
     }
     return json({ ok: true, url });
