@@ -13,7 +13,7 @@
 // non-delivery that is EXPECTED and high-volume — callers/watchdogs should treat a spike of the OTHER
 // classes (transient/content) as the real alarm, and recipient non-delivery as a reach metric.
 
-import { tgResult, isTerminal, isRecipientError, isContentError } from "../broadcast-drainer/classify.ts";
+import { tgResult, isTerminal, isRecipientError, isContentError } from "./telegram-classify.ts";
 import { logHealth } from "./edge.ts";
 
 export type SendOutcome = {
@@ -36,7 +36,7 @@ export async function sendTelegram(
   botToken: string,
   method: string,
   payload: Record<string, unknown>,
-  opts?: { admin?: any; purpose?: string; recipient?: string | number | null; record?: boolean },
+  opts?: { admin?: any; purpose?: string; recipientId?: string | number | null; record?: boolean },
 ): Promise<SendOutcome> {
   let status = 0;
   let j: { ok?: boolean; description?: string } | null = null;
@@ -63,21 +63,32 @@ export async function sendTelegram(
     content: isContentError(error),
   };
 
-  if (!ok && opts?.record !== false && opts?.admin) {
-    await logHealth(
-      opts.admin,
-      "telegram_send_failed",
-      {
+  if (!ok && opts?.record !== false) {
+    if (opts?.admin) {
+      await logHealth(
+        opts.admin,
+        "telegram_send_failed",
+        {
+          method,
+          purpose: opts?.purpose ?? method,
+          recipient: opts?.recipientId ?? null,
+          error: outcome.error, // Telegram description only — never the token
+          terminal: outcome.terminal,
+          recipient_error: outcome.recipient,
+          content_error: outcome.content,
+        },
+        { source: "telegram-send" },
+      );
+    } else {
+      // No admin client → the non-delivery can't be made DB-visible. Never leave it FULLY silent (the
+      // failure class this helper exists to kill): log it loudly. Callers that want it recorded MUST
+      // pass `admin`; only an explicit `record:false` (e.g. a queue drainer writing its own status) opts out.
+      console.error("sendTelegram: non-delivery NOT recorded (no admin client passed)", {
         method,
         purpose: opts?.purpose ?? method,
-        recipient: opts?.recipient ?? null,
         error: outcome.error, // Telegram description only — never the token
-        terminal: outcome.terminal,
-        recipient_error: outcome.recipient,
-        content_error: outcome.content,
-      },
-      { source: "telegram-send" },
-    );
+      });
+    }
   }
 
   return outcome;

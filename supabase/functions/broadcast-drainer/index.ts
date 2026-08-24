@@ -4,7 +4,7 @@
 // (blocked / never-started / bad content) are recorded, transient ones retried (cap 5). Never marks a
 // failed send as sent. Recomputes broadcasts.sent/failed from the deliveries and flips status→done.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { isTerminal, tgResult } from "./classify.ts";
+import { isTerminal, tgResult } from "../_shared/telegram-classify.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

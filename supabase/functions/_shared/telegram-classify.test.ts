@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { isContentError, isRecipientError, isTerminal, tgResult } from "./classify.ts";
+import { isContentError, isRecipientError, isTerminal, tgResult } from "./telegram-classify.ts";
 
 Deno.test("tgResult: accepted", () => {
   assertEquals(tgResult({ ok: true }, 200), { ok: true, error: null });

@@ -18,37 +18,47 @@ describe("mutate (single-row guarded write)", () => {
   beforeEach(() => localStorage.clear());
 
   it("returns ok + row on a successful 1-row write", async () => {
-    const r = await mutate(single({ data: { id: "abc" }, error: null }));
+    const r = await mutate(() => single({ data: { id: "abc" }, error: null }));
     expect(r).toEqual({ ok: true, row: { id: "abc" } });
   });
 
   it("returns not_saved on a 0-row write with NO error (the RLS-filtered silent no-op)", async () => {
-    const r = await mutate(single({ data: null, error: null }));
+    const r = await mutate(() => single({ data: null, error: null }));
     expect(r).toEqual({ ok: false, reason: "not_saved" });
   });
 
   it("returns error with the message on a real DB error", async () => {
-    const r = await mutate(single({ data: null, error: { message: "boom" } }));
+    const r = await mutate(() => single({ data: null, error: { message: "boom" } }));
     expect(r).toEqual({ ok: false, reason: "error", message: "boom" });
   });
 
-  it("returns impersonation_readonly (not a failure) while impersonating, without touching the write", async () => {
+  it("never even CONSTRUCTS the write while impersonating (no throw, no orphaned rejection)", async () => {
     localStorage.setItem("impersonating", "1");
-    let touched = false;
-    const guardedBuilder: any = { select: () => { touched = true; return { maybeSingle: async () => ({ data: null, error: null }) }; } };
-    const r = await mutate(guardedBuilder);
+    let built = false;
+    const r = await mutate(() => {
+      built = true;
+      // simulate the guard: a filtered write throws synchronously at construction during impersonation
+      throw new TypeError("(intermediate value).eq is not a function");
+    });
     expect(r).toEqual({ ok: false, reason: "impersonation_readonly" });
-    expect(touched).toBe(false); // never attempts the write during impersonation
+    expect(built).toBe(false); // the thunk is not invoked at all during impersonation
   });
 
   it("maps a 'read-only impersonation' rejection to impersonation_readonly", async () => {
-    const r = await mutate(singleRejects(new Error("read-only impersonation")));
+    const r = await mutate(() => singleRejects(new Error("read-only impersonation")));
     expect(r).toEqual({ ok: false, reason: "impersonation_readonly" });
   });
 
   it("maps any other rejection to error", async () => {
-    const r = await mutate(singleRejects(new Error("network down")));
+    const r = await mutate(() => singleRejects(new Error("network down")));
     expect(r).toEqual({ ok: false, reason: "error", message: "network down" });
+  });
+
+  it("maps a builder-construction error to error (non-impersonation)", async () => {
+    const r = await mutate(() => {
+      throw new Error("bad query");
+    });
+    expect(r).toEqual({ ok: false, reason: "error", message: "bad query" });
   });
 });
 
@@ -56,17 +66,28 @@ describe("mutateMany (bulk guarded write)", () => {
   beforeEach(() => localStorage.clear());
 
   it("returns ok + rows when all expected rows are written", async () => {
-    const r = await mutateMany(many({ data: [{ id: "a" }, { id: "b" }], error: null }), { expected: 2 });
+    const r = await mutateMany(() => many({ data: [{ id: "a" }, { id: "b" }], error: null }), { expected: 2 });
     expect(r).toEqual({ ok: true, rows: [{ id: "a" }, { id: "b" }] });
   });
 
   it("returns partial with the real count when RLS silently drops some rows", async () => {
-    const r = await mutateMany(many({ data: [{ id: "a" }], error: null }), { expected: 3 });
+    const r = await mutateMany(() => many({ data: [{ id: "a" }], error: null }), { expected: 3 });
     expect(r).toEqual({ ok: false, reason: "partial", count: 1 });
   });
 
   it("returns not_saved when zero rows were written", async () => {
-    const r = await mutateMany(many({ data: [], error: null }), { expected: 2 });
+    const r = await mutateMany(() => many({ data: [], error: null }), { expected: 2 });
     expect(r).toEqual({ ok: false, reason: "not_saved", count: 0 });
+  });
+
+  it("returns impersonation_readonly without building while impersonating", async () => {
+    localStorage.setItem("impersonating", "1");
+    let built = false;
+    const r = await mutateMany(() => {
+      built = true;
+      return many({ data: [], error: null });
+    });
+    expect(r).toEqual({ ok: false, reason: "impersonation_readonly" });
+    expect(built).toBe(false);
   });
 });

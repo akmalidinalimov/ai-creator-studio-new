@@ -48,6 +48,13 @@ jobs:
         run: npm run lint
         continue-on-error: true
 
+      # Footgun rules: raw supabase .update()/.upsert() and raw api.telegram.org fetches — the two
+      # silent-failure classes. Advisory until the ~103 legacy sites are migrated onto
+      # mutate()/sendTelegram(), then this flips to a BLOCKING gate (drop continue-on-error).
+      - name: Footgun lint (advisory)
+        run: npm run lint:footguns
+        continue-on-error: true
+
   edge:
     name: Edge functions (Deno tests)
     runs-on: ubuntu-latest
