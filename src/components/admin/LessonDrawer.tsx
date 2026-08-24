@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { SB_BASE } from "@/lib/supabaseBase";
+import { mutate } from "@/lib/mutate";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,8 +50,8 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
 
   const update = async (patch: any) => {
     setLesson((l: any) => ({ ...l, ...patch }));
-    const { error } = await supabase.from("lessons").update(patch).eq("id", lessonId);
-    if (error) toast.error(error.message);
+    const r = await mutate(() => supabase.from("lessons").update(patch).eq("id", lessonId));
+    if (!r.ok && r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi");
   };
 
   // ===== Unified Bunny upload (replaces old Storage upload) =====
@@ -208,9 +209,9 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
     setSaving(true);
     await removeStorageIfUnshared("lesson-videos", lesson?.video_storage_path, "video_storage_path");
     await removeStorageIfUnshared("lesson-thumbs", lesson?.thumbnail_path, "thumbnail_path");
-    const { error } = await supabase.from("lessons").delete().eq("id", lessonId);
+    const r = await mutate(() => supabase.from("lessons").delete().eq("id", lessonId));
     setSaving(false);
-    if (error) { toast.error(error.message); return; }
+    if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
     toast.success(t("admin.lessonDrawer.deletedToast"));
     onChanged();
     onClose();
@@ -393,7 +394,7 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
           <Button
             onClick={async () => {
               setSaving(true);
-              const { error } = await supabase.from("lessons").update({
+              const r = await mutate(() => supabase.from("lessons").update({
                 title: lesson.title,
                 description: lesson.description,
                 video_provider: lesson.video_provider,
@@ -401,9 +402,9 @@ export const LessonDrawer = ({ lessonId, onClose, onChanged }: Props) => {
                 duration_seconds: lesson.duration_seconds || 0,
                 transcript: lesson.transcript,
                 published: lesson.published,
-              }).eq("id", lessonId);
+              }).eq("id", lessonId));
               setSaving(false);
-              if (error) { toast.error(error.message); return; }
+              if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
               toast.success(t("admin.lessonDrawer.savedToast", { defaultValue: "Saqlandi" }));
               onChanged();
             }}

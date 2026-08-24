@@ -17,6 +17,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Checkbox } from "@/components/ui/checkbox";
 import { useAuth } from "@/contexts/AuthContext";
 import { getSiteUrl } from "@/lib/siteUrl";
+import { mutate, mutateMany } from "@/lib/mutate";
 import { toast } from "sonner";
 
 const FN_BASE = `${SB_BASE}/functions/v1`;
@@ -199,9 +200,10 @@ export default function AdminGroups() {
                       variant={g.is_default ? "default" : "outline"}
                       size="sm"
                       onClick={async () => {
-                        if (!g.is_default) await supabase.from("groups").update({ is_default: false }).neq("id", g.id);
-                        const { error } = await supabase.from("groups").update({ is_default: !g.is_default }).eq("id", g.id);
-                        if (error) toast.error(error.message); else { toast.success(g.is_default ? "Cleared default" : "Set as default"); reload(); }
+                        if (!g.is_default) await mutateMany(() => supabase.from("groups").update({ is_default: false }).neq("id", g.id));
+                        const r = await mutate(() => supabase.from("groups").update({ is_default: !g.is_default }).eq("id", g.id));
+                        if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
+                        toast.success(g.is_default ? "Cleared default" : "Set as default"); reload();
                       }}
                     >{g.is_default ? "Default" : "Set"}</Button>
                   </TableCell>
@@ -259,8 +261,9 @@ export default function AdminGroups() {
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={async () => {
               if (!deleteGroup) return;
-              const { error } = await supabase.from("groups").delete().eq("id", deleteGroup.id);
-              if (error) toast.error(error.message); else toast.success("Group deleted");
+              const r = await mutate(() => supabase.from("groups").delete().eq("id", deleteGroup.id));
+              if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); }
+              else toast.success("Group deleted");
               setDeleteGroup(null); reload();
             }}>Delete</AlertDialogAction>
           </AlertDialogFooter>
@@ -372,7 +375,7 @@ function GroupFormDialog({
         const { data, error } = await q.maybeSingle();
         if (error || !data) { toast.error("Teacher not found by Telegram id/username"); setBusy(false); return; }
         teacher_id = (data as any).id;
-        await supabase.from("user_roles").insert({ user_id: teacher_id!, role: "teacher" as any }).then(() => {}, () => {});
+        await mutate(() => supabase.from("user_roles").insert({ user_id: teacher_id!, role: "teacher" as any }));
       }
       const payload: any = {
         name: name.trim(),
@@ -384,8 +387,11 @@ function GroupFormDialog({
       };
       let gid = group?.id as string | undefined;
       if (group) {
-        const { error } = await supabase.from("groups").update(payload).eq("id", group.id);
-        if (error) throw error;
+        const r = await mutate(() => supabase.from("groups").update(payload).eq("id", group.id));
+        if (!r.ok) {
+          if (r.reason === "impersonation_readonly") return;
+          throw new Error(r.message ?? "Saqlab bo'lmadi");
+        }
       } else {
         const { data: ins, error } = await supabase.from("groups").insert(payload).select("id").single();
         if (error) throw error;
@@ -405,19 +411,31 @@ function GroupFormDialog({
         const toInsert = desired.filter((tid) => !current.includes(tid));
         const toDelete = current.filter((tid) => !desired.includes(tid));
         if (toInsert.length) {
-          const { error: ie } = await supabase.from("group_teachers" as any).insert(
-            toInsert.map((tid) => ({ group_id: gid, teacher_id: tid, is_primary: false, created_by: session?.user?.id ?? null })),
+          const ir = await mutateMany(
+            () => supabase.from("group_teachers" as any).insert(
+              toInsert.map((tid) => ({ group_id: gid, teacher_id: tid, is_primary: false, created_by: session?.user?.id ?? null })),
+            ),
+            { expected: toInsert.length, returning: "teacher_id" },
           );
-          if (ie) throw ie;
+          if (!ir.ok) {
+            if (ir.reason === "impersonation_readonly") return;
+            throw new Error(ir.message ?? "Saqlab bo'lmadi");
+          }
         }
         if (toDelete.length) {
-          const { error: de } = await supabase
-            .from("group_teachers" as any)
-            .delete()
-            .eq("group_id", gid)
-            .eq("is_primary", false)
-            .in("teacher_id", toDelete);
-          if (de) throw de;
+          const dr = await mutateMany(
+            () => supabase
+              .from("group_teachers" as any)
+              .delete()
+              .eq("group_id", gid)
+              .eq("is_primary", false)
+              .in("teacher_id", toDelete),
+            { expected: toDelete.length, returning: "teacher_id" },
+          );
+          if (!dr.ok) {
+            if (dr.reason === "impersonation_readonly") return;
+            throw new Error(dr.message ?? "Saqlab bo'lmadi");
+          }
         }
       }
 
@@ -612,13 +630,13 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
       URL.revokeObjectURL(url);
       try {
         const { data: u } = await supabase.auth.getUser();
-        await supabase.from("admin_actions" as any).insert({
+        await mutate(() => supabase.from("admin_actions" as any).insert({
           actor_user_id: u.user?.id,
           action: "exported_group_csv",
           target_resource_type: "group",
           target_resource_id: group.id,
           details: { row_count: rows.length, has_login_data: true },
-        });
+        }));
       } catch {}
       toast.success(`${rows.length} qator eksport qilindi`);
     } catch (e: any) {
@@ -629,8 +647,9 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
   };
 
   const remove = async (id: string) => {
-    const { error } = await supabase.from("profiles").update({ group_id: null }).eq("id", id);
-    if (error) toast.error(error.message); else { toast.success("Removed"); reload(); }
+    const r = await mutate(() => supabase.from("profiles").update({ group_id: null }).eq("id", id));
+    if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
+    toast.success("Removed"); reload();
   };
 
   const findProfileId = async (rawValue: string): Promise<string | null> => {
@@ -672,8 +691,9 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
           if ((prof as any)?.group_id === group.id) { alreadyInGroup++; continue; }
           const patch: Record<string, any> = { group_id: group.id };
           if (acct) patch.account_type = acct; // batch choice also applies to moved existing students
-          const { error } = await supabase.from("profiles").update(patch as any).eq("id", existingId);
-          if (error) errors.push(`${ident}: ${error.message}`); else moved++;
+          const r = await mutate(() => supabase.from("profiles").update(patch as any).eq("id", existingId));
+          if (!r.ok) { if (r.reason !== "impersonation_readonly") errors.push(`${ident}: ${r.message ?? "saqlanmadi"}`); }
+          else moved++;
         } else {
           // Queue for creation
           if (/^\d+$/.test(v)) toCreate.push({ telegram_user_id: Number(v), account_type: acct });

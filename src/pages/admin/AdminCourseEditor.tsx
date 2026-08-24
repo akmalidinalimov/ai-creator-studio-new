@@ -31,6 +31,7 @@ import {
   GripVertical, Plus, ChevronDown, ChevronRight, Trash2, ExternalLink, Eye, EyeOff, Image as ImageIcon, Upload, MoreVertical, Layers,
 } from "lucide-react";
 import { toast } from "sonner";
+import { mutate } from "@/lib/mutate";
 
 interface Lesson { id: string; title: string; position: number; published: boolean; video_provider: string; duration_seconds: number | null; has_video?: boolean; }
 interface Module { id: string; title: string; summary: string | null; position: number; lessons: Lesson[] }
@@ -74,8 +75,8 @@ export default function AdminCourseEditor() {
 
   const updateCourse = async (patch: Record<string, any>) => {
     setCourse((c: any) => ({ ...c, ...patch }));
-    const { error } = await (supabase.from("courses") as any).update(patch).eq("id", courseId!);
-    if (error) toast.error(error.message);
+    const r = await mutate(() => (supabase.from("courses") as any).update(patch).eq("id", courseId!));
+    if (!r.ok && r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi");
   };
 
   const addModule = async () => {
@@ -92,14 +93,14 @@ export default function AdminCourseEditor() {
   const updateModule = async (id: string, patch: Partial<Module>) => {
     setModules((prev) => prev.map((m) => m.id === id ? { ...m, ...patch } as Module : m));
     const { lessons: _omit, ...dbPatch } = patch as any;
-    const { error } = await (supabase.from("modules") as any).update(dbPatch).eq("id", id);
-    if (error) toast.error(error.message);
+    const r = await mutate(() => (supabase.from("modules") as any).update(dbPatch).eq("id", id));
+    if (!r.ok && r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi");
   };
 
   const deleteModule = async (id: string) => {
     if (!confirm(t("admin.courseEditor.deleteModuleConfirm"))) return;
-    const { error } = await supabase.from("modules").delete().eq("id", id);
-    if (error) { toast.error(error.message); return; }
+    const r = await mutate(() => supabase.from("modules").delete().eq("id", id));
+    if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
     setModules((prev) => prev.filter((m) => m.id !== id));
     toast.success(t("admin.courseEditor.moduleDeleted"));
   };
@@ -123,7 +124,8 @@ export default function AdminCourseEditor() {
     const newIdx = modules.findIndex((m) => m.id === over.id);
     const next = arrayMove(modules, oldIdx, newIdx);
     setModules(next);
-    await Promise.all(next.map((m, i) => supabase.from("modules").update({ position: i }).eq("id", m.id)));
+    const results = await Promise.all(next.map((m, i) => mutate(() => supabase.from("modules").update({ position: i }).eq("id", m.id))));
+    if (results.some((r) => !r.ok && r.reason !== "impersonation_readonly")) toast.error("Saqlanmadi");
   };
 
   const onLessonDragEnd = async (moduleId: string, e: DragEndEvent) => {
@@ -134,7 +136,8 @@ export default function AdminCourseEditor() {
     const newIdx = mod.lessons.findIndex((l) => l.id === over.id);
     const nextLessons = arrayMove(mod.lessons, oldIdx, newIdx);
     setModules((prev) => prev.map((m) => m.id === moduleId ? { ...m, lessons: nextLessons } : m));
-    await Promise.all(nextLessons.map((l, i) => supabase.from("lessons").update({ position: i }).eq("id", l.id)));
+    const results = await Promise.all(nextLessons.map((l, i) => mutate(() => supabase.from("lessons").update({ position: i }).eq("id", l.id))));
+    if (results.some((r) => !r.ok && r.reason !== "impersonation_readonly")) toast.error("Saqlanmadi");
   };
 
   const uploadCover = async (file: File) => {
@@ -399,13 +402,13 @@ function CourseTiers({ courseId, moduleCount }: { courseId: string; moduleCount:
   };
   const patchTier = async (id: string, patch: any) => {
     setTiers((p) => p.map((x) => x.id === id ? { ...x, ...patch } : x));
-    const { error } = await (supabase.from("course_tiers" as any) as any).update(patch).eq("id", id);
-    if (error) toast.error(error.message);
+    const r = await mutate(() => (supabase.from("course_tiers" as any) as any).update(patch).eq("id", id));
+    if (!r.ok && r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi");
   };
   const removeTier = async (id: string) => {
     if (!confirm(t("admin.tiers.deleteConfirm"))) return;
-    const { error } = await (supabase.from("course_tiers" as any) as any).delete().eq("id", id);
-    if (error) { toast.error(error.message); return; }
+    const r = await mutate(() => (supabase.from("course_tiers" as any) as any).delete().eq("id", id));
+    if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
     setTiers((p) => p.filter((x) => x.id !== id));
   };
   const parseLimit = (v: string): number | null => v.trim() === "" ? null : Math.max(1, parseInt(v, 10) || 1);
@@ -462,9 +465,9 @@ function CourseAIOverride({ courseId, initial, onSaved }: { courseId: string; in
   const save = async () => {
     setBusy(true);
     const patch = { ai_system_prompt: enabled ? prompt : null };
-    const { error } = await (supabase.from("courses") as any).update(patch).eq("id", courseId);
+    const r = await mutate(() => (supabase.from("courses") as any).update(patch).eq("id", courseId));
     setBusy(false);
-    if (error) return toast.error(error.message);
+    if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
     onSaved(patch);
     toast.success(t("admin.courseEditor.ai.savedToast"));
   };

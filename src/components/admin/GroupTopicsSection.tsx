@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
+import { mutate, mutateMany } from "@/lib/mutate";
 
 interface Props { groupId: string }
 interface Mod { id: string; title: string; position: number }
@@ -51,7 +52,11 @@ export function GroupTopicsSection({ groupId }: Props) {
     }
     setBusy(true);
     try {
-      await supabase.from("groups").update({ telegram_group_url: groupUrl || null }).eq("id", groupId);
+      const rg = await mutate(() => supabase.from("groups").update({ telegram_group_url: groupUrl || null }).eq("id", groupId));
+      if (!rg.ok && rg.reason !== "impersonation_readonly") { toast.error(rg.message || "Saqlashda xatolik"); return; }
+      // Impersonation patches every write to a no-op, so if the leading write was skipped the whole
+      // save is a no-op — suppress the success toast rather than claim "N topics saved".
+      const readOnly = !rg.ok && rg.reason === "impersonation_readonly";
       const upserts: any[] = [];
       const deletes: string[] = [];
       modules.forEach((m) => {
@@ -61,14 +66,16 @@ export function GroupTopicsSection({ groupId }: Props) {
       });
       let saved = 0;
       if (upserts.length) {
-        const { error } = await supabase.from("group_module_topics" as any).upsert(upserts, { onConflict: "group_id,module_id" });
-        if (error) throw error;
+        const r = await mutateMany(() => supabase.from("group_module_topics" as any).upsert(upserts, { onConflict: "group_id,module_id" }), { expected: upserts.length });
+        if (!r.ok && r.reason !== "impersonation_readonly") { toast.error(r.message || "Saqlashda xatolik"); return; }
         saved = upserts.length;
       }
       if (deletes.length) {
-        await supabase.from("group_module_topics" as any).delete().eq("group_id", groupId).in("module_id", deletes);
+        // 0-row is legitimate here (clearing modules that never had a topic row) — route through
+        // mutateMany only to skip the write during impersonation, not to treat a no-op as failure.
+        await mutateMany(() => supabase.from("group_module_topics" as any).delete().eq("group_id", groupId).in("module_id", deletes));
       }
-      toast.success(`${saved} ta topik saqlandi`);
+      if (!readOnly) toast.success(`${saved} ta topik saqlandi`);
       load();
     } catch (e: any) {
       toast.error(e?.message || "Saqlashda xatolik");

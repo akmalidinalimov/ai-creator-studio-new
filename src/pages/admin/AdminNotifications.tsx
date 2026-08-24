@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
+import { mutate } from "@/lib/mutate";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
@@ -125,13 +126,13 @@ export default function AdminNotifications() {
     const draft = drafts[id];
     if (!draft) return;
     setSaving(id);
-    const { error } = await supabase
+    const r = await mutate(() => supabase
       .from("notification_templates")
       .update({ body: draft.body, button_label: draft.button_label || null })
       .eq("template_key", key)
-      .eq("locale", locale);
+      .eq("locale", locale), "template_key");
     setSaving(null);
-    if (error) { toast.error(error.message); return; }
+    if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
     toast.success("Saved");
     reload();
   };

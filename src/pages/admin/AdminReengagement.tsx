@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Plus, Send, FlaskConical, Download, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
+import { mutate, saveWithToast } from "@/lib/mutate";
 
 type Campaign = {
   id: string;
@@ -115,7 +116,7 @@ export function ReengagementPanel() {
 
   const handleSave = async () => {
     if (!draft) return;
-    const { error } = await supabase
+    const r = await saveWithToast(() => supabase
       .from("re_engagement_campaigns")
       .update({
         name: draft.name,
@@ -128,9 +129,8 @@ export function ReengagementPanel() {
         button_text_en: draft.button_text_en,
         cadence_days: draft.cadence_days,
       })
-      .eq("id", draft.id);
-    if (error) return toast.error(error.message);
-    toast.success("Saqlandi");
+      .eq("id", draft.id), { success: "Saqlandi" });
+    if (!r.ok) return;
     await loadCampaigns();
     setActive(draft);
   };
@@ -140,10 +140,11 @@ export function ReengagementPanel() {
     setSending(true);
     try {
       // Save first so the test reflects current draft
-      await supabase.from("re_engagement_campaigns").update({
+      const sr = await mutate(() => supabase.from("re_engagement_campaigns").update({
         template_uz: draft.template_uz, template_ru: draft.template_ru, template_en: draft.template_en,
         button_text_uz: draft.button_text_uz, button_text_ru: draft.button_text_ru, button_text_en: draft.button_text_en,
-      }).eq("id", draft.id);
+      }).eq("id", draft.id));
+      if (!sr.ok && sr.reason !== "impersonation_readonly") toast.error("Saqlanmadi");
       const { data, error } = await supabase.functions.invoke("re-engagement-send", {
         body: { campaign_id: draft.id, mode: "test" },
       });

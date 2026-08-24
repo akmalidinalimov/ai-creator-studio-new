@@ -3,6 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import Papa from "papaparse";
 import { supabase } from "@/integrations/supabase/client";
 import { SB_BASE } from "@/lib/supabaseBase";
+import { mutate, saveWithToast } from "@/lib/mutate";
 import { useAuth } from "@/contexts/AuthContext";
 import { getSiteUrl } from "@/lib/siteUrl";
 import { PageShell } from "@/components/Layout";
@@ -227,9 +228,8 @@ export default function GroupDetail() {
   const saveTeacher = async () => {
     if (!id) return;
     const newId = pendingTeacher === "__none__" ? null : pendingTeacher || null;
-    const { error } = await supabase.from("groups").update({ teacher_id: newId }).eq("id", id);
-    if (error) { toast.error(error.message); return; }
-    toast.success("Teacher updated");
+    const r = await saveWithToast(() => supabase.from("groups").update({ teacher_id: newId }).eq("id", id), { success: "Teacher updated" });
+    if (!r.ok) return;
     setEditTeacher(false);
     reload();
   };
@@ -244,14 +244,16 @@ export default function GroupDetail() {
       toast.error("Bu ustoz allaqachon biriktirilgan");
       return;
     }
-    const { error } = await supabase.from("group_teachers" as any).insert({
-      group_id: id,
-      teacher_id: pendingCoTeacher,
-      is_primary: false,
-      created_by: session?.user?.id ?? null,
-    });
-    if (error) { toast.error(error.message); return; }
-    toast.success("Yordamchi ustoz qo'shildi");
+    const r = await saveWithToast(
+      () => supabase.from("group_teachers" as any).insert({
+        group_id: id,
+        teacher_id: pendingCoTeacher,
+        is_primary: false,
+        created_by: session?.user?.id ?? null,
+      }),
+      { success: "Yordamchi ustoz qo'shildi", returning: "teacher_id" },
+    );
+    if (!r.ok) return;
     setPendingCoTeacher("");
     setOpenAddCoTeacher(false);
     reload();
@@ -259,12 +261,15 @@ export default function GroupDetail() {
 
   const handleRemoveCoTeacher = async () => {
     if (!id || !removeCoTeacher) return;
-    const { error } = await supabase
-      .from("group_teachers" as any)
-      .delete()
-      .eq("group_id", id)
-      .eq("teacher_id", removeCoTeacher.teacher_id);
-    if (error) { toast.error(error.message); return; }
+    const r = await mutate(
+      () => supabase
+        .from("group_teachers" as any)
+        .delete()
+        .eq("group_id", id)
+        .eq("teacher_id", removeCoTeacher.teacher_id),
+      "teacher_id",
+    );
+    if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
     toast.success("Yordamchi ustoz olib tashlandi");
     setRemoveCoTeacher(null);
     reload();
@@ -274,9 +279,8 @@ export default function GroupDetail() {
     if (!id) return;
     const newId = pendingCourse === "__none__" ? null : pendingCourse || null;
     if (!newId) { toast.error("Course required — a group must belong to a course"); return; }
-    const { error } = await supabase.from("groups").update({ course_id: newId }).eq("id", id);
-    if (error) { toast.error(error.message); return; }
-    toast.success("Course updated");
+    const r = await saveWithToast(() => supabase.from("groups").update({ course_id: newId }).eq("id", id), { success: "Course updated" });
+    if (!r.ok) return;
     setEditCourse(false);
     reload();
   };
@@ -285,9 +289,8 @@ export default function GroupDetail() {
     if (!id) return;
     const nm = pendingName.trim();
     if (!nm) { toast.error("Nom kiritilishi kerak"); return; }
-    const { error } = await supabase.from("groups").update({ name: nm }).eq("id", id);
-    if (error) { toast.error(error.message); return; }
-    toast.success("Guruh nomi yangilandi");
+    const r = await saveWithToast(() => supabase.from("groups").update({ name: nm }).eq("id", id), { success: "Guruh nomi yangilandi" });
+    if (!r.ok) return;
     setEditName(false);
     reload();
   };
@@ -295,9 +298,8 @@ export default function GroupDetail() {
   const saveTier = async () => {
     if (!id) return;
     const newTier = pendingTier === "__none__" ? null : pendingTier || null;
-    const { error } = await supabase.from("groups").update({ tier_id: newTier }).eq("id", id);
-    if (error) { toast.error(error.message); return; }
-    toast.success("Tarif yangilandi");
+    const r = await saveWithToast(() => supabase.from("groups").update({ tier_id: newTier }).eq("id", id), { success: "Tarif yangilandi" });
+    if (!r.ok) return;
     setEditTier(false);
     reload();
   };
@@ -531,9 +533,8 @@ export default function GroupDetail() {
 
   const handleRemove = async () => {
     if (!removeMember) return;
-    const { error } = await supabase.from("profiles").update({ group_id: null }).eq("id", removeMember.id);
-    if (error) { toast.error(error.message); return; }
-    toast.success("Talaba guruhdan chiqarildi");
+    const r = await saveWithToast(() => supabase.from("profiles").update({ group_id: null }).eq("id", removeMember.id), { success: "Talaba guruhdan chiqarildi" });
+    if (!r.ok) return;
     setRemoveMember(null);
     reload();
   };

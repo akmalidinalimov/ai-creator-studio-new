@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageShell } from "@/components/Layout";
 import { toast } from "sonner";
+import { saveWithToast } from "@/lib/mutate";
 
 type NudgeType = "inactive_3d" | "inactive_7d" | "stuck_lesson" | "module_complete";
 const TYPES: NudgeType[] = ["inactive_3d", "inactive_7d", "stuck_lesson", "module_complete"];
@@ -86,9 +87,11 @@ export function NudgesPanel() {
   }
 
   async function saveTemplates() {
-    const { error } = await supabase.from("platform_settings").update({ value: templates }).eq("key", "nudge_templates");
-    if (error) return toast.error(error.message);
-    toast.success("Saqlandi");
+    const r = await saveWithToast(
+      () => supabase.from("platform_settings").update({ value: templates }).eq("key", "nudge_templates"),
+      { success: "Saqlandi", returning: "key" },
+    );
+    if (!r.ok) return;
   }
 
   function updateTpl(type: NudgeType, locale: string, field: "body" | "button", v: string) {

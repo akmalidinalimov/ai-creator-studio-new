@@ -14,6 +14,7 @@ import { Eye, EyeOff, CheckCircle2, Circle, ExternalLink, Copy, Save } from "luc
 import { TelegramDeeplinkButton } from "@/components/TelegramDeeplinkButton";
 import { KnowledgeManager } from "@/components/admin/KnowledgeManager";
 import { AppSettingsSection } from "@/components/admin/AppSettingsSection";
+import { mutate } from "@/lib/mutate";
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Save registry — lets the 4 settings cards share one sticky "Save" button.
@@ -149,10 +150,10 @@ function TelegramBotCard({ userId }: { userId?: string }) {
 
   const save = async (): Promise<boolean> => {
     const value = { bot_username: cleanUsername, bot_token: botToken.trim() };
-    const { error } = await supabase.from("platform_settings").upsert({
+    const r = await mutate(() => supabase.from("platform_settings").upsert({
       key: "telegram", value, updated_by: userId,
-    } as any, { onConflict: "key" });
-    if (error) { toast.error(error.message); return false; }
+    } as any, { onConflict: "key" }), "key");
+    if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return r.ok; }
     setSavedUsername(cleanUsername);
     setSavedToken(botToken.trim());
     return true;
@@ -330,12 +331,12 @@ function AIAssistantCard({ userId }: { userId?: string }) {
 
   const dirty = prompt !== savedPrompt;
   const save = async (): Promise<boolean> => {
-    const { error } = await supabase.from("platform_settings").upsert({
+    const r = await mutate(() => supabase.from("platform_settings").upsert({
       key: "ai_assistant",
       value: { system_prompt: prompt },
       updated_by: userId,
-    } as any, { onConflict: "key" });
-    if (error) { toast.error(error.message); return false; }
+    } as any, { onConflict: "key" }), "key");
+    if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return r.ok; }
     setSavedPrompt(prompt);
     return true;
   };
@@ -405,10 +406,10 @@ function ContentProtectionCard({ userId }: { userId?: string }) {
 
   const dirty = JSON.stringify(val) !== JSON.stringify(savedVal);
   const save = async (): Promise<boolean> => {
-    const { error } = await supabase.from("platform_settings").upsert({
+    const r = await mutate(() => supabase.from("platform_settings").upsert({
       key: "content_protection", value: val, updated_by: userId,
-    } as any, { onConflict: "key" });
-    if (error) { toast.error(error.message); return false; }
+    } as any, { onConflict: "key" }), "key");
+    if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return r.ok; }
     setSavedVal(val);
     return true;
   };
@@ -500,11 +501,11 @@ function EnrollmentMessageCard({ userId }: { userId?: string }) {
       return false;
     }
     const next = { ...value, form_url: url };
-    const { error } = await supabase.from("platform_settings").upsert(
+    const r = await mutate(() => supabase.from("platform_settings").upsert(
       { key: "telegram_enrollment", value: next, updated_by: userId } as any,
       { onConflict: "key" },
-    );
-    if (error) { toast.error(error.message); return false; }
+    ), "key");
+    if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return r.ok; }
     setValue(next);
     setSavedValue(next);
     return true;
