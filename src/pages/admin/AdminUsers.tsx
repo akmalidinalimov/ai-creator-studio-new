@@ -19,6 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, Upload as UploadIcon, Search, Copy, RefreshCw, Trash2, Download, Mail, Unlock, ChevronDown, ChevronRight, AlertTriangle, X, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
+import { mutate, mutateMany } from "@/lib/mutate";
 import Papa from "papaparse";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
@@ -375,14 +376,14 @@ export default function AdminUsers() {
       const toAttach = after.filter((id) => !before.includes(id));
       const toDetach = before.filter((id) => !after.includes(id));
       if (toAttach.length) {
-        const { error } = await (supabase.from("groups") as any)
-          .update({ teacher_id: teacherId }).in("id", toAttach);
-        if (error) { toast.error(error.message); return false; }
+        const r = await mutateMany(() => (supabase.from("groups") as any)
+          .update({ teacher_id: teacherId }).in("id", toAttach), { expected: toAttach.length });
+        if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return false; }
       }
       if (toDetach.length) {
-        const { error } = await (supabase.from("groups") as any)
-          .update({ teacher_id: null }).in("id", toDetach);
-        if (error) { toast.error(error.message); return false; }
+        const r = await mutateMany(() => (supabase.from("groups") as any)
+          .update({ teacher_id: null }).in("id", toDetach), { expected: toDetach.length });
+        if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return false; }
       }
       logAction("update_profile", {
         target_user_id: teacherId,
@@ -548,9 +549,9 @@ export default function AdminUsers() {
       const createdId = (r as any).userId;
       if (newRole === "teacher" && createdId && newTeacherGroupIds.size > 0) {
         const ids = Array.from(newTeacherGroupIds);
-        const { error: gErr } = await (supabase.from("groups") as any)
-          .update({ teacher_id: createdId }).in("id", ids);
-        if (gErr) toast.error(gErr.message);
+        const r = await mutateMany(() => (supabase.from("groups") as any)
+          .update({ teacher_id: createdId }).in("id", ids), { expected: ids.length });
+        if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); }
         else logAction("update_profile", { target_user_id: createdId, details: { action: "teacher_groups_updated", before: [], after: ids } });
       }
       // Assign the chosen tier on the enrollment (if any).
@@ -819,11 +820,11 @@ export default function AdminUsers() {
 
   const toggleEnrollment = async (userId: string, courseId: string, enroll: boolean) => {
     if (enroll) {
-      const { error } = await supabase.from("enrollments").insert({ user_id: userId, course_id: courseId });
-      if (error) return toast.error(error.message);
+      const r = await mutate(() => supabase.from("enrollments").insert({ user_id: userId, course_id: courseId }));
+      if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
     } else {
-      const { error } = await supabase.from("enrollments").delete().eq("user_id", userId).eq("course_id", courseId);
-      if (error) return toast.error(error.message);
+      const r = await mutate(() => supabase.from("enrollments").delete().eq("user_id", userId).eq("course_id", courseId));
+      if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
     }
     setEnrollMap((prev) => {
       const next = { ...prev };
@@ -857,13 +858,13 @@ export default function AdminUsers() {
 
   const setRole = async (user: UserRow, promote: boolean) => {
     if (promote) {
-      const { error } = await supabase.from("user_roles").insert({ user_id: user.id, role: "admin" });
-      if (error) return toast.error(error.message);
+      const r = await mutate(() => supabase.from("user_roles").insert({ user_id: user.id, role: "admin" }));
+      if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
       logAction("promote_to_admin", { target_user_id: user.id, details: { email: user.email } });
       toast.success(t("admin.users.toasts.promoted", { email: user.email }));
     } else {
-      const { error } = await supabase.from("user_roles").delete().eq("user_id", user.id).eq("role", "admin");
-      if (error) return toast.error(error.message);
+      const r = await mutate(() => supabase.from("user_roles").delete().eq("user_id", user.id).eq("role", "admin"));
+      if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
       logAction("demote_to_student", { target_user_id: user.id, details: { email: user.email } });
       toast.success(t("admin.users.toasts.demoted", { email: user.email }));
     }
@@ -899,8 +900,8 @@ export default function AdminUsers() {
   };
 
   const setStatus = async (user: UserRow, status: "active" | "inactive") => {
-    const { error } = await supabase.from("profiles").update({ status }).eq("id", user.id);
-    if (error) return toast.error(error.message);
+    const r = await mutate(() => supabase.from("profiles").update({ status }).eq("id", user.id));
+    if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
     logAction(status === "active" ? "activate_user" : "deactivate_user", { target_user_id: user.id, details: { email: user.email } });
     toast.success(status === "active" ? t("admin.users.toasts.userActive") : t("admin.users.toasts.userInactive"));
     reload();
@@ -911,8 +912,8 @@ export default function AdminUsers() {
     const patch = mode === "archive"
       ? { status: "archived" as any, archived_at: new Date().toISOString() }
       : { status: "active" as any, archived_at: null };
-    const { error } = await (supabase.from("profiles") as any).update(patch).in("id", ids);
-    if (error) return toast.error(error.message);
+    const r = await mutateMany(() => (supabase.from("profiles") as any).update(patch).in("id", ids), { expected: ids.length });
+    if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
     logAction(mode === "archive" ? "archived_users" : "unarchived_users", { details: { profile_ids: ids, count: ids.length } });
     toast.success(mode === "archive"
       ? `${ids.length} ta talaba arxivlandi`
@@ -923,8 +924,8 @@ export default function AdminUsers() {
   };
 
   const updateProfile = async (user: UserRow, patch: Record<string, any>) => {
-    const { error } = await (supabase.from("profiles") as any).update(patch).eq("id", user.id);
-    if (error) return toast.error(error.message);
+    const r = await mutate(() => (supabase.from("profiles") as any).update(patch).eq("id", user.id));
+    if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
     logAction("update_profile", { target_user_id: user.id, details: { changed: Object.keys(patch) } });
     toast.success(t("admin.users.toasts.saved"));
     reload();
@@ -1771,13 +1772,14 @@ export default function AdminUsers() {
                         e.target.value = cur ? String(cur) : "";
                         return;
                       }
-                      const { error } = await (supabase.from("profiles") as any)
+                      const r = await mutate(() => (supabase.from("profiles") as any)
                         .update({ telegram_id: next })
-                        .eq("id", manageUser.id);
-                      if (error) {
-                        const msg = /duplicate|unique/i.test(error.message)
+                        .eq("id", manageUser.id));
+                      if (!r.ok) {
+                        if (r.reason === "impersonation_readonly") return;
+                        const msg = /duplicate|unique/i.test(r.message ?? "")
                           ? t("admin.users.tgIdTaken", { defaultValue: "This Telegram ID is already linked to another user." })
-                          : error.message;
+                          : (r.message ?? "Saqlanmadi");
                         toast.error(msg);
                         e.target.value = cur ? String(cur) : "";
                         return;

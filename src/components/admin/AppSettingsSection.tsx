@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ChevronDown, ChevronRight, RotateCcw, Save } from "lucide-react";
 import { toast } from "sonner";
+import { mutate } from "@/lib/mutate";
 import { SETTING_DEFAULTS, clearSettingCache } from "@/lib/settings";
 
 interface Row { key: string; value: any; description: string | null }
@@ -68,16 +69,18 @@ export function AppSettingsSection() {
     setBusy("__all__");
     const now = new Date().toISOString();
     const errors: string[] = [];
+    let saved = 0;
     for (const key of dirtyKeys) {
-      const { error } = await supabase.from("app_settings" as any).update({
+      const r = await mutate(() => supabase.from("app_settings" as any).update({
         value: drafts[key], updated_by: user?.id, updated_at: now,
-      }).eq("key", key);
-      if (error) errors.push(`${key}: ${error.message}`);
-      else clearSettingCache(key);
+      }).eq("key", key), "key");
+      if (r.ok) { clearSettingCache(key); saved++; }
+      else if (r.reason !== "impersonation_readonly") errors.push(`${key}: ${r.message ?? "saqlanmadi"}`);
     }
     setBusy(null);
     if (errors.length) toast.error(`Xato: ${errors.length} ta`);
-    else toast.success(`✅ ${dirtyKeys.length} ta sozlama saqlandi`);
+    else if (saved > 0) toast.success(`✅ ${saved} ta sozlama saqlandi`);
+    // else: every write was an impersonation read-only no-op → stay silent, never a false "saved".
     load();
   };
 

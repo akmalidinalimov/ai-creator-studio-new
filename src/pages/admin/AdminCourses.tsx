@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
+import { mutate } from "@/lib/mutate";
 import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -53,9 +54,9 @@ export default function AdminCourses() {
 
   const togglePublished = async (c: CourseRow, value: boolean) => {
     setCourses((prev) => prev.map((x) => x.id === c.id ? { ...x, published: value } : x));
-    const { error } = await supabase.from("courses").update({ published: value }).eq("id", c.id);
-    if (error) {
-      toast.error(error.message);
+    const r = await mutate(() => supabase.from("courses").update({ published: value }).eq("id", c.id));
+    if (!r.ok) {
+      if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi");
       setCourses((prev) => prev.map((x) => x.id === c.id ? { ...x, published: !value } : x));
     } else {
       toast.success(value ? t("admin.courses.coursePublished") : t("admin.courses.courseUnpublished"));

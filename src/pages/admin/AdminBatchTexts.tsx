@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { mutateMany } from "@/lib/mutate";
 import { Save, Megaphone, Info } from "lucide-react";
 
 /**
@@ -97,12 +98,13 @@ export default function AdminBatchTexts() {
       body_uz: texts[code] ?? "",
       updated_by: user?.id ?? null,
     }));
-    const { error } = await (supabase as any)
-      .from("badge_messages")
-      .upsert(rows, { onConflict: "code" });
+    const r = await mutateMany(
+      () => (supabase as any).from("badge_messages").upsert(rows, { onConflict: "code" }),
+      { expected: rows.length, returning: "code" }
+    );
     setSaving(false);
-    if (error) {
-      toast.error(error.message);
+    if (!r.ok) {
+      if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi");
       return;
     }
     setInitial({ ...texts });

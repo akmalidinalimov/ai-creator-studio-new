@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2, MoreVertical } from "lucide-react";
 import { getSetting } from "@/lib/settings";
+import { mutate, mutateMany, saveWithToast } from "@/lib/mutate";
 
 interface ModuleRow { id: string; title: string; position: number; course_id: string; courses?: { title: string } }
 interface Assignment {
@@ -129,11 +130,10 @@ export default function AdminHomework() {
       payload.sap_number = null;
     }
     const existingId = editing?.assignment?.id;
-    const { error } = existingId
-      ? await supabase.from("homework_assignments").update(payload).eq("id", existingId)
-      : await supabase.from("homework_assignments").insert(payload);
-    if (error) { toast.error(error.message); return; }
-    toast.success("Saqlandi");
+    const r = existingId
+      ? await saveWithToast(() => supabase.from("homework_assignments").update(payload).eq("id", existingId), { success: "Saqlandi" })
+      : await saveWithToast(() => supabase.from("homework_assignments").insert(payload), { success: "Saqlandi" });
+    if (!r.ok) return;
     setEditing(null);
     load();
   };
@@ -143,26 +143,27 @@ export default function AdminHomework() {
     if (saps.length > 0) {
       if (!confirm(`Bu vazifaning ${saps.length} ta SAP'i bor. Hammasi o'chiriladi. Davom etamizmi?`)) return;
     } else if (!confirm("O'chirish?")) return;
-    const { error } = await supabase.from("homework_assignments").delete().eq("id", a.id);
-    if (error) toast.error(error.message); else { toast.success("O'chirildi"); load(); }
+    const r = await saveWithToast(() => supabase.from("homework_assignments").delete().eq("id", a.id), { success: "O'chirildi" });
+    if (!r.ok) return;
+    load();
   };
 
   const toggleActive = async (a: Assignment) => {
-    const { error } = await supabase.from("homework_assignments").update({ is_active: !a.is_active }).eq("id", a.id);
-    if (error) toast.error(error.message); else load();
+    const r = await saveWithToast(() => supabase.from("homework_assignments").update({ is_active: !a.is_active }).eq("id", a.id));
+    if (!r.ok) return;
+    load();
   };
 
   const createModule = async () => {
     if (!newModule?.title.trim() || !newModule.course_id) { toast.error("Sarlavha va kurs kerak"); return; }
     const courseModules = modules.filter(m => m.course_id === newModule.course_id);
     const nextPos = courseModules.length;
-    const { error } = await supabase.from("modules").insert({
+    const r = await saveWithToast(() => supabase.from("modules").insert({
       course_id: newModule.course_id,
       title: newModule.title.trim().slice(0, 200),
       position: nextPos,
-    });
-    if (error) { toast.error(error.message); return; }
-    toast.success("Modul yaratildi");
+    }), { success: "Modul yaratildi" });
+    if (!r.ok) return;
     setNewModule(null);
     load();
   };
@@ -194,9 +195,12 @@ export default function AdminHomework() {
     const ids = Array.from(selected);
     if (!ids.length) return;
     if (!confirm(`${ids.length} ta vazifa (va tanlangan vazifalarning SAP'lari) o'chiriladi. Davom etamizmi?`)) return;
-    await supabase.from("homework_assignments").delete().in("parent_id", ids);
-    const { error } = await supabase.from("homework_assignments").delete().in("id", ids);
-    if (error) { toast.error(error.message); return; }
+    // SAP cleanup: 0 rows is legitimate (a selected parent may have no SAPs), so its result is not
+    // treated as a failure — routing it through mutateMany still avoids building the write during
+    // read-only impersonation (the primary delete below surfaces impersonation/no-op for the batch).
+    await mutateMany(() => supabase.from("homework_assignments").delete().in("parent_id", ids));
+    const r = await mutateMany(() => supabase.from("homework_assignments").delete().in("id", ids), { expected: ids.length });
+    if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
     toast.success(`${ids.length} ta o'chirildi`);
     setSelected(new Set());
     load();

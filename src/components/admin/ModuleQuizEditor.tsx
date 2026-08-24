@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
+import { mutate } from "@/lib/mutate";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,13 +32,13 @@ export const ModuleQuizEditor = ({ moduleId, onClose }: { moduleId: string; onCl
 
   const updateQ = async (id: string, patch: Partial<Q>) => {
     setQuestions((qs) => qs.map((q) => q.id === id ? { ...q, ...patch } as Q : q));
-    const { error } = await supabase.from("quiz_questions").update(patch).eq("id", id);
-    if (error) toast.error(error.message);
+    const r = await mutate(() => supabase.from("quiz_questions").update(patch).eq("id", id));
+    if (!r.ok && r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi");
   };
 
   const deleteQ = async (id: string) => {
-    const { error } = await supabase.from("quiz_questions").delete().eq("id", id);
-    if (error) { toast.error(error.message); return; }
+    const r = await mutate(() => supabase.from("quiz_questions").delete().eq("id", id));
+    if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
     setQuestions((qs) => qs.filter((q) => q.id !== id));
   };
 
