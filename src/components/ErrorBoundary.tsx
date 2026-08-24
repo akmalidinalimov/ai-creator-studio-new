@@ -2,6 +2,21 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 import { isChunkLoadError, reloadForChunkError, hardReload } from "@/lib/chunkReload";
 import { reportClientError } from "@/lib/beacon";
 
+// Per-page-session count of NON-chunk render crashes. A student who keeps landing
+// back on this screen (e.g. a browser-extension / translation conflict that
+// reproduces every load — we saw one session crash 8×) is in a reload loop; after
+// a couple we stop implying "just reload" and point at the actual likely cause.
+// Best-effort: sessionStorage can throw in locked-down privacy modes.
+const RC_KEY = "__render_crash_count";
+function bumpRenderCrashCount(): void {
+  try {
+    sessionStorage.setItem(RC_KEY, String(Number(sessionStorage.getItem(RC_KEY) || 0) + 1));
+  } catch { /* ignore */ }
+}
+function renderCrashCount(): number {
+  try { return Number(sessionStorage.getItem(RC_KEY) || 0); } catch { return 0; }
+}
+
 interface Props {
   children: ReactNode;
   /** Optional custom fallback. Receives the error and a reset callback. */
@@ -32,11 +47,14 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error(`[ErrorBoundary${this.props.label ? `:${this.props.label}` : ""}]`, error, info.componentStack);
     // Beacon the crash so it's DB-visible (which student, which route, chunk vs. code crash).
     const chunk = isChunkLoadError(error);
+    if (!chunk) bumpRenderCrashCount();
     try {
       reportClientError({
         type: chunk ? "chunk_load" : "render_crash",
         message: `${error?.name || "Error"}: ${error?.message || ""}`,
-        extra: { boundary: this.props.label },
+        // componentStack's innermost frames come first — the server caps extra
+        // values, so the front of the string (the component that threw) is kept.
+        extra: { boundary: this.props.label, componentStack: info.componentStack?.slice(0, 400) || undefined },
       });
     } catch { /* ignore */ }
     // Stale-deploy backstop: a lazy-route chunk that 404s after a new build
@@ -55,6 +73,11 @@ export class ErrorBoundary extends Component<Props, State> {
 
     if (this.props.fallback) return this.props.fallback(error, this.reset);
 
+    // A repeating NON-chunk crash within one session is almost always in-browser
+    // page translation or an extension mutating the DOM — reloading won't fix that,
+    // so point at the real cause instead of looping the student on the Reload button.
+    const looping = !isChunkLoadError(error) && renderCrashCount() >= 2;
+
     return (
       <div
         role="alert"
@@ -66,6 +89,16 @@ export class ErrorBoundary extends Component<Props, State> {
             Sahifani yangilab ko'ring. · Что-то пошло не так — обновите страницу. · Something went wrong.
           </p>
         </div>
+        {looping && (
+          <p className="max-w-sm rounded-md border border-border/60 bg-muted/40 p-3 text-xs text-muted-foreground">
+            Bu ko'pincha brauzer sahifa tarjimasi yoki kengaytma sababli. Sahifa tarjimasini
+            o'chiring yoki darsni Telegram ilovasida oching. ·
+            Часто это из-за перевода страницы или расширения — отключите перевод или откройте урок
+            в приложении Telegram. ·
+            This is usually in-browser page translation or an extension — turn off page translation,
+            or open the lesson in the Telegram app.
+          </p>
+        )}
         <button
           type="button"
           // Cache-busting reload (not a plain soft reload) so a stale cached
