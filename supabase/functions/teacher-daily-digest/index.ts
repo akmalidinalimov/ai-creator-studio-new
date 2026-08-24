@@ -4,6 +4,7 @@
 // is an honest proxy (see teacher_daily_report()). A short line tells the teacher the same stats go to
 // admins (accountability). After the teacher loop, admins get one aggregate summary.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -90,19 +91,15 @@ function boardMessage(cards: GroupCard[], loc: Loc): string {
 }
 const BOARD_URL = `${SITE_URL}/tg/group-board`;
 
-async function sendTg(chatId: number, text: string, buttons?: Btn[][]): Promise<boolean> {
-  try {
-    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true,
-        ...(buttons && buttons.length ? { reply_markup: { inline_keyboard: buttons } } : {}),
-      }),
-    });
-    const jr = await r.json().catch(() => ({}));
-    return Boolean(jr?.ok);
-  } catch { return false; }
+// record=false for send-classes that write their OWN *_failed admin_actions row below (so a failure
+// isn't double-logged); record=true (default) for the board sends, whose only failure signal is
+// sendTelegram's classified telegram_send_failed row.
+async function sendTg(chatId: number, text: string, buttons?: Btn[][], purpose = "teacher_daily_digest", record = true): Promise<boolean> {
+  const out = await sendTelegram(BOT_TOKEN, "sendMessage", {
+    chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true,
+    ...(buttons && buttons.length ? { reply_markup: { inline_keyboard: buttons } } : {}),
+  }, { admin: __admin, purpose, recipientId: chatId, record });
+  return out.ok;
 }
 
 Deno.serve(async (req) => {
@@ -262,7 +259,7 @@ Deno.serve(async (req) => {
     const url = `${SITE_URL}/auth/magic?t=${token}`;
 
     // Core report + Profil (url) button only — never at risk from the board's web_app button/length.
-    const ok = await sendTg(Number(t.telegram_id), lines.join("\n"), [[{ text: "👤 Profil / Profile", url }]]);
+    const ok = await sendTg(Number(t.telegram_id), lines.join("\n"), [[{ text: "👤 Profil / Profile", url }]], "teacher_daily_report", false);
     if (ok) {
       sent++;
       await admin.from("notifications_log").insert({
@@ -283,7 +280,7 @@ Deno.serve(async (req) => {
     const cards = boardEnabled ? (boardByTeacher[t.teacher_id] || []) : [];
     if (cards.length) {
       try {
-        const bok = await sendTg(Number(t.telegram_id), boardMessage(cards, loc), [[{ text: BL[loc].btn, web_app: { url: BOARD_URL } }]]);
+        const bok = await sendTg(Number(t.telegram_id), boardMessage(cards, loc), [[{ text: BL[loc].btn, web_app: { url: BOARD_URL } }]], "teacher_daily_board");
         if (bok) boardSent++; else boardFailed++;
       } catch { boardFailed++; } // board accounting stays independent of the core report's sent/failed
     }
@@ -333,9 +330,9 @@ Deno.serve(async (req) => {
       const cid = Number(a.telegram_id);
       if (seen.has(cid)) continue;
       seen.add(cid);
-      if (await sendTg(cid, adminLines.join("\n"))) adminSent++;
+      if (await sendTg(cid, adminLines.join("\n"), undefined, "teacher_daily_admin_summary", false)) adminSent++;
       else await admin.from("admin_actions").insert({ actor_user_id: null, action: "teacher_daily_admin_send_failed", details: { telegram_id: cid } }).then(() => {}, () => {});
-      if (adminBoardMsg) { if (await sendTg(cid, adminBoardMsg, adminBoardBtn)) boardSent++; else boardFailed++; }
+      if (adminBoardMsg) { if (await sendTg(cid, adminBoardMsg, adminBoardBtn, "teacher_daily_admin_board")) boardSent++; else boardFailed++; }
     }
   }
 

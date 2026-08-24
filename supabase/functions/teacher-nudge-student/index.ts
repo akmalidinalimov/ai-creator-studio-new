@@ -1,6 +1,7 @@
 // One-tap teacher nudge: sends a warm "we miss you" DM to an inactive student
 // via the bot. Teacher-scoped (is_teacher_of) + rate-limited to 1/day/student.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -51,13 +52,13 @@ Deno.serve(async (req) => {
     if (!st?.telegram_id) return json({ error: "no_telegram" }, 400);
 
     const locale = ["uz", "ru", "en"].includes(st.preferred_locale) ? st.preferred_locale : "uz";
-    const r = await fetch(`https://api.telegram.org/bot${Deno.env.get("TELEGRAM_BOT_TOKEN")}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: Number(st.telegram_id), text: MSG[locale](tp?.name || "ustoz") }),
-    });
-    const jr = await r.json().catch(() => ({}));
-    if (!jr?.ok) return json({ error: jr?.description || "send_failed" }, 502);
+    const out = await sendTelegram(
+      Deno.env.get("TELEGRAM_BOT_TOKEN")!,
+      "sendMessage",
+      { chat_id: Number(st.telegram_id), text: MSG[locale](tp?.name || "ustoz") },
+      { admin, purpose: "teacher_nudge", recipientId: Number(st.telegram_id) },
+    );
+    if (!out.ok) return json({ error: out.error || "send_failed" }, 502);
 
     await admin.from("notifications_log").insert({
       user_id: student_id, notification_type: "teacher_nudge",

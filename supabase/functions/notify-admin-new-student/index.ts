@@ -3,6 +3,7 @@
 // Body: { user_id: string }
 // Uses notification_templates(admin_new_student, locale).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,14 +26,6 @@ const FALLBACK: Record<Locale, string> = {
 };
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
-
-function tg(method: string, body: unknown) {
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
 
 const interpolate = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => String(vars[k] ?? ""));
@@ -111,8 +104,8 @@ Deno.serve(async (req) => {
           student_email: student.email || "—",
           total_students: total || 0,
         });
-        const resp = await tg("sendMessage", { chat_id: Number(a.telegram_id), text });
-        if (!resp.ok) { console.error("sendMessage failed", await resp.text()); continue; }
+        const out = await sendTelegram(BOT_TOKEN, "sendMessage", { chat_id: Number(a.telegram_id), text }, { admin, purpose: "admin_new_student", recipientId: Number(a.telegram_id) });
+        if (!out.ok) continue;
         await admin.from("admin_notification_log").insert({
           user_id: a.id,
           notification_type: "admin_new_student",
