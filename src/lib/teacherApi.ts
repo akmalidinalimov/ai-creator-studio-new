@@ -171,13 +171,20 @@ export async function submitScore(
   // never silently null out a note from an earlier round just because this caller can't see it.
   if (voicePath !== undefined) update.score_feedback_voice_path = voicePath;
 
-  const { error } = await supabase
+  const { data: saved, error } = await supabase
     .from("homework_submissions")
     // score_feedback_voice_path is not in the generated types yet (Task 1's migration), hence the
     // `as any` cast on the whole payload.
     .update(update as any)
-    .eq("id", submissionId);
+    .eq("id", submissionId)
+    .select("id")
+    .maybeSingle();
   if (error) return { status: "error", message: error.message };
+  // An RLS-filtered UPDATE affects 0 rows WITHOUT raising an error (e.g. the caller isn't a teacher of
+  // this student's group, or the student was reassigned out of the caller's scope). A bare
+  // error-only check would then show a false "saved" toast while the card stays stuck in the queue —
+  // the exact "I graded it and it didn't save" failure mode. A null result means nothing was written.
+  if (!saved) return { status: "error", message: "not_saved" };
   return { status: "ok" };
 }
 
