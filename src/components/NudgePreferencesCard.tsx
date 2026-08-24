@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { toast } from "sonner";
+import { saveWithToast } from "@/lib/mutate";
 
 export function NudgePreferencesCard({ userId }: { userId?: string }) {
   const [optIn, setOptIn] = useState(true);
@@ -28,9 +28,13 @@ export function NudgePreferencesCard({ userId }: { userId?: string }) {
   async function save(next: { opt_in?: boolean; paused_until?: string | null }) {
     if (!userId) return;
     const payload: any = { profile_id: userId, opt_in: optIn, paused_until: pausedUntil || null, ...next };
-    const { error } = await supabase.from("nudge_preferences").upsert(payload, { onConflict: "profile_id" });
-    if (error) toast.error(error.message);
-    else toast.success("Saqlandi");
+    // Guarded upsert: a 0-row (RLS-filtered) write must not read as "Saqlandi". saveWithToast wires
+    // the success/failure toasts and stays silent on an impersonation no-op. onConflict is profile_id,
+    // so return that column (nudge_preferences has no `id`).
+    await saveWithToast(
+      () => supabase.from("nudge_preferences").upsert(payload, { onConflict: "profile_id" }),
+      { success: "Saqlandi", returning: "profile_id" },
+    );
   }
 
   return (

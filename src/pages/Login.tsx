@@ -60,20 +60,15 @@ const Stat = ({ n, label }: { n: string; label: string }) => (
   <div><div className="text-2xl font-semibold">{n}</div><div className="text-xs text-background/60">{label}</div></div>
 );
 
-/**
- * If "remember me" is unchecked, ensure the supabase session is dropped
- * from localStorage when the tab/window closes — so reopening requires login.
- */
-function installSessionExpiryOnClose() {
-  const handler = () => {
-    try {
-      Object.keys(localStorage)
-        .filter((k) => k.startsWith("sb-") && k.endsWith("-auth-token"))
-        .forEach((k) => localStorage.removeItem(k));
-    } catch { /* ignore */ }
-  };
-  window.addEventListener("pagehide", handler, { once: true });
-}
+// NOTE: "remember me" no longer clears the session on close. The old implementation registered a
+// `pagehide` handler that deleted the `sb-*-auth-token` — but `pagehide` fires on every mobile
+// BACKGROUNDING (app-switch, screen lock, Telegram Mini App chat-switching), not just a real
+// tab-close, so a non-remember student was logged out the first time they left the tab and lost
+// their in-progress lesson. The flag was also write-only (never read), so this was the only thing
+// it did. Disarmed here (localized, touches none of the frozen session core). Proper "don't
+// persist past close" enforcement = sessionStorage-backed auth for non-remember logins, which must
+// be done in the supabase client (client.ts) and is deferred as a separate follow-up. The
+// `auth.remember` flag is still recorded below so that follow-up can read it.
 
 export default function Login() {
   const navigate = useNavigate();
@@ -161,8 +156,9 @@ export default function Login() {
         setLockMessage(recheck.data.message);
       }
     } else {
+      // Recorded for a future sessionStorage-backed "remember me" (see the note above the component).
+      // No longer wired to a pagehide token-nuke — that caused mid-lesson logouts on backgrounding.
       try { localStorage.setItem(REMEMBER_KEY, remember ? "1" : "0"); } catch { /* ignore */ }
-      if (!remember) installSessionExpiryOnClose();
     }
     setLoading(false);
   };

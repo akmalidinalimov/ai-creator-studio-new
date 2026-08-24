@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { translateAuthError } from "@/lib/authErrors";
+import { mutate } from "@/lib/mutate";
 import { Monitor, LogOut, ShieldOff } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { SUPPORTED_LANGUAGES, type LanguageCode } from "@/i18n";
@@ -105,11 +106,16 @@ export default function Settings() {
 
   const save = async () => {
     if (!user) return;
-    const { error } = await supabase
-      .from("profiles")
-      .update({ name, last_name: lastName || null, timezone, weekly_goal_lessons: goal } as any)
-      .eq("id", user.id);
-    if (error) toast.error(translateAuthError(t, error.message)); else toast.success(t("settings.saved"));
+    // Guarded write: a 0-row (RLS-filtered) update must not read as "saved" — mutate() surfaces
+    // not_saved/error instead of a false success toast. Impersonation preview is a silent no-op.
+    const r = await mutate(() =>
+      supabase
+        .from("profiles")
+        .update({ name, last_name: lastName || null, timezone, weekly_goal_lessons: goal } as any)
+        .eq("id", user.id),
+    );
+    if (r.ok) toast.success(t("settings.saved"));
+    else if (r.reason !== "impersonation_readonly") toast.error(r.message ? translateAuthError(t, r.message) : "Saqlab bo'lmadi");
   };
 
   const updatePassword = async () => {
@@ -123,12 +129,14 @@ export default function Settings() {
     await i18n.changeLanguage(code);
     try { localStorage.setItem("lng", code); } catch { /* ignore */ }
     if (user) {
-      const { error } = await supabase
-        .from("profiles")
-        .update({ preferred_language: code } as any)
-        .eq("id", user.id);
-      if (error) toast.error(translateAuthError(t, error.message));
-      else toast.success(t("settings.languageUpdated"));
+      const r = await mutate(() =>
+        supabase
+          .from("profiles")
+          .update({ preferred_language: code } as any)
+          .eq("id", user.id),
+      );
+      if (r.ok) toast.success(t("settings.languageUpdated"));
+      else if (r.reason !== "impersonation_readonly") toast.error(r.message ? translateAuthError(t, r.message) : "Saqlab bo'lmadi");
     }
   };
 
@@ -201,8 +209,9 @@ export default function Settings() {
             onCheckedChange={async (v) => {
               setDigestOptIn(v);
               if (!user) return;
-              const { error } = await supabase.from("profiles").update({ digest_opt_in: v } as any).eq("id", user.id);
-              if (error) toast.error(translateAuthError(t, error.message)); else toast.success(v ? "Digest yoqildi" : "Digest o'chirildi");
+              const r = await mutate(() => supabase.from("profiles").update({ digest_opt_in: v } as any).eq("id", user.id));
+              if (r.ok) toast.success(v ? "Digest yoqildi" : "Digest o'chirildi");
+              else if (r.reason !== "impersonation_readonly") toast.error(r.message ? translateAuthError(t, r.message) : "Saqlab bo'lmadi");
             }}
           />
         </Card>

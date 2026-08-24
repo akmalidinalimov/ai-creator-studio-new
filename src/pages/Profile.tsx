@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { Camera, Zap, TrendingUp, Flame, Award, Globe, Bell, Eye, ChevronRight } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { mutate } from "@/lib/mutate";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { Switch } from "@/components/ui/switch";
@@ -152,8 +153,10 @@ function StudentProfile({ userId }: { userId: string | null }) {
       if (upErr) { toast.error(t("profile.avatarFailed")); return; }
       const { data: pubUrl } = supabase.storage.from("avatars").getPublicUrl(path);
       const url = pubUrl.publicUrl;
-      const { error: updErr } = await supabase.from("profiles").update({ avatar_url: url } as any).eq("id", userId);
-      if (updErr) { toast.error(t("profile.avatarFailed")); return; }
+      // Guarded write: a 0-row (RLS-filtered) update must not read as a saved avatar. An
+      // impersonation preview is a silent no-op (the storage upload above is harmless).
+      const r = await mutate(() => supabase.from("profiles").update({ avatar_url: url } as any).eq("id", userId));
+      if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(t("profile.avatarFailed")); return; }
       setAvatarBroken(false);
       setProfile((p) => (p ? { ...p, avatar_url: url } : p));
       toast.success(t("profile.avatarSaved"));
