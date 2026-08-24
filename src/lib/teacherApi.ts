@@ -101,14 +101,15 @@ export async function fetchSubmissionMediaBlob(submissionId: string, index: numb
       headers: { "Content-Type": "application/json", apikey, Authorization: `Bearer ${token}` },
       body: JSON.stringify({ submission_id: submissionId, index }),
     });
-    const ct = resp.headers.get("content-type") || "";
-    if (ct.includes("application/json")) {
-      const j = await resp.json().catch(() => ({}));
-      return { reason: (j as any)?.reason || "request_failed" };
+    // The streaming path stamps X-Hw-Media-Bytes:1; anything else is a { reason } control response.
+    // (Don't discriminate on content-type — a real .json homework document IS application/json.)
+    if (resp.headers.get("x-hw-media-bytes") === "1" && resp.ok) {
+      const ct = resp.headers.get("content-type") || "application/octet-stream";
+      const blob = await resp.blob();
+      return { blobUrl: URL.createObjectURL(blob), contentType: ct };
     }
-    if (!resp.ok) return { reason: "request_failed" };
-    const blob = await resp.blob();
-    return { blobUrl: URL.createObjectURL(blob), contentType: ct };
+    const j = await resp.json().catch(() => ({}));
+    return { reason: (j as any)?.reason || "request_failed" };
   } catch {
     return { reason: "request_failed" };
   }

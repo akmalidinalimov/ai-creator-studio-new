@@ -38,6 +38,8 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
+  // Lets the client read the byte-vs-control marker even if the response is treated as cross-origin.
+  "Access-Control-Expose-Headers": "X-Hw-Media-Bytes",
 };
 
 const BUCKET = "homework_images";
@@ -188,28 +190,52 @@ Deno.serve(async (req) => {
     const items = buildItems(sub);
 
     // ================= MODE B: stream the raw bytes of one item =================
+    // A real getFile failure (revoked token, rate-limit, stale file_id) must be DB-visible via
+    // logHealth (incident-doctrine health-signal rule) and reported as telegram_getfile_failed — NOT
+    // silently mislabeled "too large". Only a genuine >20MB file returns media_too_large (expected;
+    // the client falls back to Telegram, which streams any size). Both Telegram fetches sit inside
+    // local try/catch so a thrown exception from a token-bearing URL can never reach the outer catch's
+    // String(e.message) logging path (bot-token containment, defense-in-depth).
     if (isRaw) {
       const it = items[rawIndex as number];
       if (!it || !it.fileId) return json({ reason: "no_viewable_media" }); // storage/link items aren't fetched here
-      if (!BOT_TOKEN) return json({ reason: "telegram_getfile_failed" });
 
-      const gf = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file_id: it.fileId }),
-      });
-      const gj = gf.ok ? await gf.json().catch(() => null) : null;
+      const failGetFile = async (why: string, extra: Record<string, unknown> = {}) => {
+        await logHealth(admin, uid, "hw_media_getfile_failed",
+          { submission_id: submissionId, index: rawIndex, reason: why, ...extra }, submissionId);
+        return json({ reason: "telegram_getfile_failed" });
+      };
+
+      if (!BOT_TOKEN) return await failGetFile("bot_token_missing");
+
+      let gj: any = null;
+      try {
+        const gf = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file_id: it.fileId }),
+        });
+        gj = await gf.json().catch(() => null);
+      } catch {
+        return await failGetFile("getfile_fetch_threw"); // never surface the token-bearing URL/exception
+      }
       const filePath = gj && gj.ok ? gj?.result?.file_path : null;
       const fileSize = gj?.result?.file_size;
       if (!filePath || typeof filePath !== "string") {
-        // getFile ok:false is almost always "file is too big" (>20MB) for a valid file_id.
-        return json({ reason: "media_too_large" });
+        // Distinguish "file too big" (>20MB — expected) from a real getFile failure by the description.
+        const desc = String(gj?.description || "").toLowerCase();
+        if (desc.includes("too big") || desc.includes("too large")) return json({ reason: "media_too_large" });
+        return await failGetFile("getfile_not_ok", { code: gj?.error_code ?? null });
       }
       if (typeof fileSize === "number" && fileSize > MAX_MEDIA_BYTES) return json({ reason: "media_too_large" });
 
-      const fr = await fetch(`https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`);
+      let fr: Response;
+      try {
+        fr = await fetch(`https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`);
+      } catch {
+        return await failGetFile("file_fetch_threw"); // never surface the token-bearing URL/exception
+      }
       if (!fr.ok || !fr.body) {
         try { await fr.body?.cancel(); } catch { /* ignore */ }
-        await logHealth(admin, uid, "hw_media_getfile_failed", { submission_id: submissionId, index: rawIndex }, submissionId);
-        return json({ reason: "telegram_getfile_failed" });
+        return await failGetFile("file_fetch_not_ok", { status: fr.status });
       }
       const declaredLen = Number(fr.headers.get("content-length") || "0");
       if (declaredLen > MAX_MEDIA_BYTES) {
@@ -223,11 +249,16 @@ Deno.serve(async (req) => {
       }
       const filename = (filePath.split("/").pop() || "homework").replace(/[^\w.\-]+/g, "_");
       // Stream Telegram's body straight through — the token-bearing URL is consumed server-side only.
+      // No post-download byte cap here (unlike the old base64 path): intentional streaming tradeoff,
+      // bounded by both the file_size + content-length checks above and Telegram's own ~20MB ceiling.
+      // X-Hw-Media-Bytes marks this as raw bytes so the client never confuses a real application/json
+      // homework document with a { reason } control message.
       const headers: Record<string, string> = {
         ...corsHeaders,
         "Content-Type": ct,
         "Content-Disposition": `inline; filename="${filename}"`,
         "Cache-Control": "private, no-store",
+        "X-Hw-Media-Bytes": "1",
       };
       if (declaredLen) headers["Content-Length"] = String(declaredLen);
       return new Response(fr.body, { status: 200, headers });

@@ -30,6 +30,24 @@ const DEGRADED_HINT: Record<string, string> = {
 
 const KIND_LABEL: Record<string, string> = { photo: "Rasm", video: "Video", document: "Hujjat", link: "Havola" };
 
+const EXT_FROM_CT: Record<string, string> = {
+  "application/msword": "doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.ms-powerpoint": "ppt",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+  "application/zip": "zip",
+  "text/plain": "txt",
+  "application/json": "json",
+};
+// A sensible download filename+extension for a saved document blob (the object URL has no name).
+function docName(ct: string): string {
+  const base = (ct || "").split(";")[0].trim();
+  const ext = EXT_FROM_CT[base] || (base.split("/")[1] || "").replace(/[^a-z0-9]/gi, "");
+  return `hujjat.${ext || "fayl"}`;
+}
+
 function firstMsgUrl(media: QueueMedia[] | null | undefined): string | null {
   if (!Array.isArray(media)) return null;
   for (const m of media) {
@@ -138,6 +156,7 @@ function MediaPiece({
   const kind = item.kind;
   const [blob, setBlob] = useState<BlobState>({ status: "idle" });
   const blobRef = useRef<string | null>(null);
+  const mounted = useRef(true);
 
   const revoke = () => {
     if (blobRef.current) {
@@ -145,11 +164,22 @@ function MediaPiece({
       blobRef.current = null;
     }
   };
-  useEffect(() => () => revoke(), []);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      revoke();
+    };
+  }, []);
 
   const load = useCallback(async () => {
     setBlob({ status: "loading" });
     const res = await fetchSubmissionMediaBlob(submissionId, item.index);
+    if (!mounted.current) {
+      // Card advanced mid-fetch: revoke the just-created object URL so it can't orphan.
+      if ("blobUrl" in res) URL.revokeObjectURL(res.blobUrl);
+      return;
+    }
     if ("reason" in res) {
       setBlob({ status: "fail", reason: res.reason });
       return;
@@ -199,7 +229,10 @@ function MediaPiece({
       if (blob.ct.startsWith("application/pdf")) {
         return <iframe title={alt} src={blob.url} className="h-[46vh] w-full rounded-lg border border-border bg-white" />;
       }
-      return <DocTile ready href={blob.url} />;
+      // A non-previewable doc (.docx/.xlsx/.zip…). Save it via `download` — a `target="_blank"`
+      // navigation to a blob: URL can open blank inside Telegram's in-app webview. Telegram fallback
+      // (msg_url) stays available on the card if the save is blocked.
+      return <DocTile ready download href={blob.url} downloadName={docName(blob.ct)} label="Hujjatni yuklab olish" />;
     }
     return <DocTile label="Hujjatni ochish" loading={blob.status === "loading"} onClick={load} />;
   }
@@ -266,12 +299,16 @@ function PlayTile({ label, loading, onClick }: { label: string; loading: boolean
 function DocTile({
   ready,
   href,
+  download,
+  downloadName,
   label = "Hujjatni ochish",
   loading,
   onClick,
 }: {
   ready?: boolean;
   href?: string;
+  download?: boolean;
+  downloadName?: string;
   label?: string;
   loading?: boolean;
   onClick?: () => void;
@@ -287,6 +324,15 @@ function DocTile({
   const cls =
     "flex min-h-[56px] w-full items-center gap-3 rounded-lg border border-border bg-surface-2 px-4 py-3 text-left transition-colors hover:bg-tint/30";
   if (ready && href) {
+    // A blob: URL is saved via `download` (a `target="_blank"` navigation to it can open blank in the
+    // Telegram webview); a real https URL opens in a new tab.
+    if (download) {
+      return (
+        <a href={href} download={downloadName || "hujjat"} className={cls}>
+          {inner}
+        </a>
+      );
+    }
     return (
       <a href={href} target="_blank" rel="noopener noreferrer" className={cls}>
         {inner}
