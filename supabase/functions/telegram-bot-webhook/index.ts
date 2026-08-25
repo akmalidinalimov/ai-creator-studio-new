@@ -3,6 +3,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { computeLeaves, displayStepNumber, pickNextLeaf } from "./homework-routing.ts";
 import { effectiveLeafGrades, summarizeHomework } from "./homework-stats.ts";
+import { isRecipientError, isTerminal, tgResult } from "../_shared/telegram-classify.ts";
 import {
   checksAllGreen, ghAddLabel, ghClosePr, ghFetchChecks, ghFetchPr, ghMergePr,
   OPS_REPO, parseOpsCallback, verifyOpsPr,
@@ -4312,9 +4313,29 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
           // is idempotent, so a re-grade of an already-≥9 submission earns nothing and must not claim XP.
           const priorScore = (sub as any)?.score ?? null;
           const gained25xp = (priorScore == null || priorScore < 9) && score >= 9;
-          await sendLongMessage(stu.telegram_id, tt.gradeStudentDM(csvEscapeHtml(title), score, max, csvEscapeHtml(cardFeedback), gained25xp ? 25 : undefined), {
+          // P0: the grade card is the student's ONLY notification of their score. The student HAS a
+          // telegram_id here (the ~70% without one were skipped above — expected, not a failure), so a
+          // non-delivery means blocked bot / deleted account: "graded but never told", and until now it
+          // vanished (sendLongMessage's .ok was never read; the outer catch only fires on a throw, and a
+          // Telegram {ok:false} does not throw). Record it — classified via the shared taxonomy — so it's
+          // DB-visible, mirroring the grade_voice_delivery_failed row below. Best-effort: the record must
+          // never block the grade (which already saved) or the teacher's "saved" confirmation.
+          const gradeResp = await sendLongMessage(stu.telegram_id, tt.gradeStudentDM(csvEscapeHtml(title), score, max, csvEscapeHtml(cardFeedback), gained25xp ? 25 : undefined), {
             inline_keyboard: rows,
           });
+          try {
+            const gj: any = await gradeResp?.json?.().catch(() => null);
+            const { ok: gradeOk, error: gradeErr } = tgResult(gj, gradeResp?.status ?? 0);
+            if (!gradeOk) {
+              console.error("grade card DM delivery failed", { submission_id: submissionId, student: sub.user_id, error: gradeErr });
+              await admin.from("admin_actions").insert({
+                actor_user_id: profileId, action: "grade_card_dm_failed",
+                target_user_id: sub.user_id, target_resource_type: "homework_submission",
+                target_resource_id: submissionId,
+                details: { error: gradeErr, recipient_error: isRecipientError(gradeErr), terminal: isTerminal(gradeErr), score, max, has_voice: !!voiceFileId },
+              });
+            }
+          } catch (_e) { /* delivery recording is best-effort — never block the grade */ }
           if (voiceFileId) {
             const vok = await sendVoice(Number(stu.telegram_id), voiceFileId, tt.gradeVoiceNote);
             if (!vok) {
@@ -4330,7 +4351,18 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
             }
           }
         } catch (e) {
+          // Same "graded but never told" class as grade_card_dm_failed above, but for a THROW
+          // (network/transport failure, or an error building the card) rather than a Telegram
+          // {ok:false} — that path skips the classifier block, so record it here too. Best-effort.
           console.error("auto-DM student failed", e);
+          try {
+            await admin.from("admin_actions").insert({
+              actor_user_id: profileId, action: "grade_card_dm_failed",
+              target_user_id: sub.user_id, target_resource_type: "homework_submission",
+              target_resource_id: submissionId,
+              details: { error: String((e as any)?.message ?? e), terminal: false, transport: true, score, max },
+            });
+          } catch (_e2) { /* audit best-effort */ }
         }
       }
       await sendWithKeyboard(msg.chat.id, t.gradeSaved(score, max), locale, isAdmin, isAdmin ? "admin" : "teacher");
