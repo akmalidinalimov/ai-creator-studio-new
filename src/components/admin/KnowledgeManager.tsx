@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { supabase, supabaseRealtime } from "@/integrations/supabase/client";
+import { mutate } from "@/lib/mutate";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -216,7 +217,9 @@ export function KnowledgeManager({
   const reindex = async (doc: Doc) => {
     const jobId = `reindex-${doc.id}-${Date.now()}`;
     setJobs((p) => [...p, { id: jobId, name: doc.file_name, size: doc.size_bytes, stage: "indexing", progress: 100, documentId: doc.id }]);
-    await supabase.from("ai_knowledge_documents").update({ status: "pending", error: null }).eq("id", doc.id);
+    // Best-effort status flip before re-ingest (realtime drives the UI); guard so a 0-row/RLS write
+    // can't read as saved and an impersonation preview is a clean no-op.
+    await mutate(() => supabase.from("ai_knowledge_documents").update({ status: "pending", error: null }).eq("id", doc.id));
     const { error } = await supabase.functions.invoke("ingest-knowledge", { body: { documentId: doc.id } });
     if (error) updateJob(jobId, { stage: "error", error: friendlyError(error.message, t) });
   };

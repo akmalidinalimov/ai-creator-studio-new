@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { mutate } from "@/lib/mutate";
 import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -125,11 +126,9 @@ export default function AdminDashboard() {
         return;
       }
       if (groupParam && list.some((g) => g.id === groupParam)) {
-        // Sync active_teacher_group_id so the bot stays in sync
-        (supabase.from("profiles") as any)
-          .update({ active_teacher_group_id: groupParam })
-          .eq("id", user.id)
-          .then(() => {}, () => {});
+        // Sync active_teacher_group_id so the bot stays in sync (best-effort own-row write; guard via
+        // mutate so a 0-row/RLS write can't read as saved and an impersonation preview is a clean no-op).
+        void mutate(() => supabase.from("profiles").update({ active_teacher_group_id: groupParam } as any).eq("id", user.id));
       }
       // Card-grid stats: per-group total + logged + ungraded. `total_students` and
       // `pending_homework` (= ungraded) come straight from the junction-aware teacher_groups rows

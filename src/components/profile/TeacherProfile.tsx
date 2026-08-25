@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { mutate } from "@/lib/mutate";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
@@ -167,7 +168,8 @@ export default function TeacherProfile() {
 
   const pickGroup = async (gid: string) => {
     setSelected(gid);
-    if (user) await supabase.from("profiles").update({ active_teacher_group_id: gid } as any).eq("id", user.id);
+    // Best-effort own-row group switch (guard so a 0-row/RLS write can't read as saved; impersonation no-op).
+    if (user) await mutate(() => supabase.from("profiles").update({ active_teacher_group_id: gid } as any).eq("id", user.id));
   };
 
   /* One-tap grading with a 6-second undo (safety net for fat fingers). `voicePath` (Task 3,
@@ -185,11 +187,15 @@ export default function TeacherProfile() {
       scored_by: user!.id, scored_at: new Date().toISOString(), score_is_stale: false,
     };
     if (voicePath !== undefined) update.score_feedback_voice_path = voicePath;
+    /* eslint-disable no-restricted-syntax -- already 0-row-guarded via .select("id").maybeSingle()
+       (the #111 grade-write pattern mutate() generalizes); grade-write consolidation onto
+       mutate()/teacherApi.submitScore is a deferred step, not this PR's scope. */
     const { data: saved, error } = await supabase.from("homework_submissions")
       .update(update as any)
       .eq("id", item.id)
       .select("id")
       .maybeSingle();
+    /* eslint-enable no-restricted-syntax */
     // 0 rows + no error = RLS-filtered write (not a teacher of this student / reassigned out of scope):
     // the grade did NOT save. Treat it as a failure instead of a false success that drops the card.
     if (error || !saved) { toast.error(t("profile.tGradeFailed")); return; }

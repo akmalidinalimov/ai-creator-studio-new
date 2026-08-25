@@ -48,12 +48,13 @@ jobs:
         run: npm run lint
         continue-on-error: true
 
-      # Footgun rules: raw supabase .update()/.upsert() and raw api.telegram.org fetches — the two
-      # silent-failure classes. Advisory until the ~103 legacy sites are migrated onto
-      # mutate()/sendTelegram(), then this flips to a BLOCKING gate (drop continue-on-error).
-      - name: Footgun lint (advisory)
+      # Footgun rules — the two silent-failure classes. The WRITE rule (raw supabase .update()/.upsert()
+      # in src/, severity "error") is now BLOCKING: every legacy write is on mutate()/saveWithToast(),
+      # so a new unwrapped write fails CI here. The TELEGRAM rule (raw api.telegram.org fetch, severity
+      # "warn") stays ADVISORY until the sendTelegram() adoption finishes — eslint exits 0 on warnings,
+      # so this step passes on telegram warnings and fails only on a write error. No continue-on-error.
+      - name: Footgun lint (writes blocking · telegram advisory)
         run: npm run lint:footguns
-        continue-on-error: true
 
   edge:
     name: Edge functions (Deno tests)
