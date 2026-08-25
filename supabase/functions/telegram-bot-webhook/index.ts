@@ -4086,12 +4086,66 @@ async function thmSendChunked(chatId: number, header: string, lines: string[], f
 }
 
 
+// Re-send the student's submitted media INTO the grader's chat so a teacher can actually SEE the
+// image/video/document while grading — the core fix for "teacher gets homework to grade but can't
+// see it". Works for ANY grader regardless of group membership: a Telegram file_id captured by the
+// bot is reusable by the bot to send into any chat; Mini-App/web uploads (storage path, no file_id)
+// go via a short signed URL Telegram fetches itself. Best-effort per item — never blocks the grading
+// prompt, never throws. Returns how many media messages were delivered.
+async function sendSubmissionMedia(
+  admin: any, chatId: number, media: any[], legacyFileId?: string | null, legacyKind?: string | null, legacyImagePath?: string | null,
+): Promise<{ sent: number; attempted: number }> {
+  const items: any[] = Array.isArray(media) ? media.slice(0, 10) : [];
+  // Legacy fallback: an old row with a scalar telegram_file_id but no media[] array yet.
+  if (!items.length && legacyFileId) items.push({ kind: legacyKind || "photo", file_id: legacyFileId });
+  let sent = 0, attempted = 0;
+  for (const it of items) {
+    const kind = it?.kind;
+    if (kind === "link") continue; // an external link, not media bytes — surfaced as text/button elsewhere
+    let src: string | null = it?.file_id || null;
+    if (!src && it?.url) {
+      // Already-hosted http(s) URL → use directly (matches hw-image-url's isHttp branch); a bare
+      // storage path (Mini App / web upload) → short signed URL Telegram can fetch itself.
+      if (/^https?:\/\//i.test(it.url)) src = it.url;
+      else {
+        try {
+          const { data: signed } = await admin.storage.from("homework_images").createSignedUrl(it.url, 600);
+          src = signed?.signedUrl || null;
+        } catch (_e) { /* unresolvable storage path — skip this item */ }
+      }
+    }
+    if (!src) continue;
+    attempted++;
+    try {
+      const method = kind === "video" ? "sendVideo" : kind === "document" ? "sendDocument" : "sendPhoto";
+      const field = kind === "video" ? "video" : kind === "document" ? "document" : "photo";
+      const r = await tgApi(method, { chat_id: chatId, [field]: src });
+      const j: any = await r.json().catch(() => null);
+      if (j?.ok) sent++;
+    } catch (_e) { /* best-effort per item — a bad file_id/URL must not break grading */ }
+    await new Promise((r) => setTimeout(r, 80)); // light pacing so a 10-item album can't trip Telegram's per-chat rate limit
+  }
+  // Very old web-only rows: no media[] and no file_id, just a storage image path.
+  if (!sent && !items.length && legacyImagePath) {
+    attempted++;
+    try {
+      const { data: signed } = await admin.storage.from("homework_images").createSignedUrl(legacyImagePath, 600);
+      if (signed?.signedUrl) {
+        const r = await tgApi("sendPhoto", { chat_id: chatId, photo: signed.signedUrl });
+        const j: any = await r.json().catch(() => null);
+        if (j?.ok) sent++;
+      }
+    } catch (_e) { /* ignore */ }
+  }
+  return { sent, attempted };
+}
+
 // Open a submission for grading: store conversation state and prompt for score.
 async function startGradingFlow(admin: any, chatId: number, graderTgId: number, graderId: string, submissionId: string, locale: Locale, isAdmin: boolean) {
   const t = T[locale] as any;
   const { data: sub } = await admin
     .from("homework_submissions")
-    .select("id, assignment_id, user_id, submitted_text, submitted_image_url, submitted_at, is_late, score, score_is_stale, previous_score, telegram_message_url, telegram_file_kind")
+    .select("id, assignment_id, user_id, submitted_text, submitted_image_url, submitted_at, is_late, score, score_is_stale, previous_score, telegram_message_url, telegram_file_kind, telegram_file_id, media")
     .eq("id", submissionId)
     .maybeSingle();
   if (!sub) {
@@ -4124,7 +4178,23 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
     : (sub.score != null && (sub as any).score_is_stale
       ? `\n🔄 ${(t as any).pkPrevGrade(sub.score, a?.max_score || 10)}` : "");
   await sendMessage(chatId, `${header}\n\n${body}${prevLine}`);
-  // Telegram-source submission: surface the original message link
+  // PRIMARY FIX: re-send the actual submitted media so the teacher SEES the image/video/document
+  // inline while grading — works for any grader (file_id / signed-URL based, no group membership).
+  const media = await sendSubmissionMedia(admin, chatId, (sub as any).media, (sub as any).telegram_file_id, sub.telegram_file_kind, sub.submitted_image_url);
+  // Health signal (doctrine: graceful is not silent): the teacher opened grading and there WAS media,
+  // but none of it delivered — the exact "teacher can't see the homework" failure this fix targets.
+  // Make it DB-visible so a broken re-send can't hide behind a normal grading prompt. Best-effort.
+  if (media.attempted > 0 && media.sent === 0) {
+    try {
+      await admin.from("admin_actions").insert({
+        actor_user_id: graderId, action: "grade_media_unavailable",
+        target_user_id: sub.user_id, target_resource_type: "homework_submission", target_resource_id: submissionId,
+        details: { attempted: media.attempted, delivered: media.sent, kind: sub.telegram_file_kind || null },
+      });
+    } catch (_e) { /* audit best-effort */ }
+  }
+  // Telegram-source submission: still offer the original post link — supplementary context for a
+  // grader who IS a member of that group (the media above is what non-members rely on).
   if (sub.telegram_message_url) {
     const tt = T[locale] as any;
     await sendMessage(chatId, `📂 ${sub.telegram_file_kind || "file"}`, {
@@ -4133,9 +4203,8 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
         { text: tt.gradeOpenSubmissionPostBtn, url: sub.telegram_message_url },
       ]],
     });
-  }
-  // Legacy web-source submission: show signed image URL
-  if (sub.submitted_image_url) {
+  } else if (!media.sent && sub.submitted_image_url) {
+    // Last resort for a legacy web row whose media re-send couldn't deliver: signed image URL as text.
     try {
       const { data: signed } = await admin.storage.from("homework_images").createSignedUrl(sub.submitted_image_url, 600);
       if (signed?.signedUrl) await sendMessage(chatId, `🖼 ${signed.signedUrl}`);
