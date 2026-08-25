@@ -1,6 +1,7 @@
 // Sends a Telegram celebration when a lesson is completed for the first time.
 // v2.0.2: Vault-based x-internal-secret guard.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,12 +26,12 @@ const FALLBACK: Record<string, { body: string; button_label?: string }> = {
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 const SITE_URL = (Deno.env.get("SITE_URL") || "").replace(/\/$/, "");
 
-function tg(method: string, body: unknown) {
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+// Every completion celebration is an earned student DM that must not vanish silently — route through
+// the shared sender so a non-delivery (blocked bot / never-Started ~70% / transient) lands a
+// classified telegram_send_failed row in admin_actions instead of disappearing behind an HTTP 200.
+// Payload-transparent wrapper; __admin (below) is initialised before any call at request time.
+function tg(method: string, body: any, purpose: string) {
+  return sendTelegram(BOT_TOKEN, method, body, { admin: __admin, purpose, recipientId: body?.chat_id ?? null });
 }
 
 const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -146,7 +147,7 @@ Deno.serve(async (req) => {
         full_name: escHtml(fullName),
         course_title: escHtml(course?.title || "AI Creators"),
       });
-      await tg("sendMessage", { chat_id: chatId, text, parse_mode: "HTML" });
+      await tg("sendMessage", { chat_id: chatId, text, parse_mode: "HTML" }, "completion_course");
       await logNotif(admin, user_id, "course_complete", { lesson_id, course_id: module.course_id });
       return new Response("ok", { status: 200, headers: corsHeaders });
     }
@@ -178,7 +179,7 @@ Deno.serve(async (req) => {
       await tg("sendMessage", {
         chat_id: chatId, text, parse_mode: "HTML",
         reply_markup: inline.length ? { inline_keyboard: inline } : undefined,
-      });
+      }, "completion_module");
       await logNotif(admin, user_id, "module_complete", { module_id: module.id, lesson_id });
 
       // Generate per-module shareable image and send to Telegram
@@ -200,7 +201,7 @@ Deno.serve(async (req) => {
               chat_id: chatId,
               photo: json.image_url,
               caption: json.caption || `Modul ${module.position + 1} tamomlandi! Instagram'da @aicreators_uz ni tag qiling 🎉`,
-            });
+            }, "completion_module_share");
           }
         } else {
           console.error("module-share generation failed", shareResp.status, await shareResp.text());
@@ -230,7 +231,7 @@ Deno.serve(async (req) => {
     await tg("sendMessage", {
       chat_id: chatId, text, parse_mode: "HTML",
       reply_markup: nextUrl && tpl.button_label ? { inline_keyboard: [[{ text: tpl.button_label, url: nextUrl }]] } : undefined,
-    });
+    }, "completion_lesson");
     await logNotif(admin, user_id, "lesson_complete", { lesson_id });
   } catch (e) {
     console.error("notify-completion error", e);
