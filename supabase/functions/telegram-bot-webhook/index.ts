@@ -4412,6 +4412,14 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
                 target_resource_id: submissionId,
                 details: { error: gradeErr, recipient_error: isRecipientError(gradeErr), terminal: isTerminal(gradeErr), score, max, has_voice: !!voiceFileId },
               });
+            } else {
+              // Delivery HEARTBEAT (reliability-hardening spec P0-1): a single-row last-success stamp so
+              // grade_delivery_watchdog can catch the SILENCE case — grading happening but zero grade-card
+              // DMs (the path died) — which a failure-counter alone can't see. Upsert = no row growth.
+              await admin.from("app_settings").upsert(
+                { key: "grade_card_dm_heartbeat", value: { last_sent_at: new Date().toISOString() } },
+                { onConflict: "key" },
+              );
             }
           } catch (_e) { /* delivery recording is best-effort — never block the grade */ }
           if (voiceFileId) {
