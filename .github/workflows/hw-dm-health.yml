@@ -84,6 +84,26 @@ jobs:
           if [ "$miniapp_submit_failed" != "0" ]; then
             echo "::warning::${miniapp_submit_failed} miniapp homework submission attempt(s) failed in the last 24h (any reason — action=miniapp_homework_submit_failed in admin_actions)"
           fi
+          # Reliability-hardening P0-2 (a): watchdog LIVENESS. Every in-Supabase watchdog stamps
+          # <name>_watchdog_state.checked_at on each run; the slowest of the 9 runs daily. A checked_at
+          # older than 25h means that watchdog's cron stopped (or the fn errored before its state
+          # upsert). If pg_cron/pg_net died, they ALL go stale together and none can report it — a
+          # dead watchdog can't alarm on its own death. This out-of-band check is the only leg that can.
+          stale_wd=$(jq -r '.stale_watchdogs // 0' <<<"$HEALTH_JSON")
+          stale_names=$(jq -r '.stale_watchdog_names // ""' <<<"$HEALTH_JSON")
+          if [ "$stale_wd" -gt 0 ]; then
+            echo "::error::${stale_wd} watchdog(s) have not run in >25h (${stale_names}) — pg_cron/pg_net or those functions may be dead; the in-Supabase alarms cannot report this themselves"; fail=1
+          fi
+          # Reliability-hardening P0-2 (b): circular-alert breaker. A spike of non-recipient
+          # (transient/content) telegram_send_failed means Telegram itself is failing — exactly when
+          # the Telegram-based watchdog DMs can't get out. This travels over GitHub email instead.
+          # Baseline is ~0 (0 over the trailing 7d in prod): >20 fails the run, a handful warns.
+          tg_broken=$(jq -r '.telegram_send_broken_24h // 0' <<<"$HEALTH_JSON")
+          if [ "$tg_broken" -gt 20 ]; then
+            echo "::error::${tg_broken} non-recipient Telegram send failures in 24h — Telegram delivery may be broken (the in-app DM alarms travel over the same broken channel)"; fail=1
+          elif [ "$tg_broken" -gt 5 ]; then
+            echo "::warning::${tg_broken} non-recipient Telegram send failures in 24h — above the ~0 baseline; watch for a delivery regression"
+          fi
           exit $fail
 
       - name: Credential expiry countdown
