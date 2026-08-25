@@ -14,11 +14,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { VoiceRecorder } from "@/components/homework/VoiceRecorder";
 import { uploadFeedbackVoice, removeFeedbackVoice } from "@/lib/homeworkAudio";
-import { notifyGradeVoice } from "@/lib/teacherApi";
+import { notifyGradeVoice, type QueueMedia } from "@/lib/teacherApi";
+import { GradePhoto } from "@/components/teacher/GradePhoto";
 
 interface Row {
   id: string; assignment_id: string; user_id: string;
   submitted_text: string; submitted_image_url: string | null;
+  // Full multi-media array (photo/video/document/link) — populated by load()'s select("*"). Rendered
+  // via the shared GradePhoto gallery so the web grading Drawer shows video/documents, not just images.
+  media?: QueueMedia[] | null;
   submitted_at: string; score: number | null; score_feedback: string | null; is_late: boolean;
   scored_at: string | null;
   user_name: string; user_group: string | null; assignment_title: string; max_score: number;
@@ -540,7 +544,6 @@ function Drawer({
 }) {
   const [score, setScore] = useState<string>(row.score?.toString() || "");
   const [fb, setFb] = useState(row.score_feedback || "");
-  const [imgUrl, setImgUrl] = useState<string | null>(null);
   // Task 3 (voice-homework-feedback): `voiceBlob` = a freshly-recorded note pending upload.
   // `existingPath` starts at the row's current column (this Drawer opens for BOTH pending and
   // already-graded rows) and becomes null the moment the teacher removes it; handleSave resolves
@@ -548,13 +551,6 @@ function Drawer({
   const [voiceBlob, setVoiceBlob] = useState<Blob | null>(null);
   const [existingPath, setExistingPath] = useState<string | null>(row.score_feedback_voice_path ?? null);
   const [saving, setSaving] = useState(false);
-  useEffect(() => {
-    (async () => {
-      if (!row.submitted_image_url) { setImgUrl(null); return; }
-      const { data } = await supabase.storage.from("homework_images").createSignedUrl(row.submitted_image_url, 600);
-      setImgUrl(data?.signedUrl || null);
-    })();
-  }, [row.id]);
   useEffect(() => {
     setVoiceBlob(null);
     setExistingPath(row.score_feedback_voice_path ?? null);
@@ -595,7 +591,9 @@ function Drawer({
           {new Date(row.submitted_at).toLocaleString()} {row.is_late && <Badge variant="destructive" className="ml-1">Kech topshirilgan</Badge>}
         </div>
         <Card className="p-4 whitespace-pre-wrap text-sm">{row.submitted_text || <span className="text-muted-foreground">(matn yo'q)</span>}</Card>
-        {imgUrl && <img src={imgUrl} alt="submission" className="max-h-96 rounded-lg border" />}
+        {/* Full media gallery (photo/video/document/link + Telegram fallback) — the shared component
+            the Mini App grading screen uses (#111), so the web Drawer no longer shows only images. */}
+        <GradePhoto submissionId={row.id} media={row.media ?? null} alt={row.assignment_title || "Topshiriq"} />
         <div className="grid grid-cols-3 gap-3">
           <div className="col-span-1">
             <Label>Bal (0–{row.max_score})</Label>
