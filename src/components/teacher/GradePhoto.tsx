@@ -114,6 +114,7 @@ export function GradePhoto({
   }
 
   const multi = state.items.length > 1;
+  const postUrl = firstMsgUrl(media);
   return (
     <>
       <div className="flex flex-col gap-2">
@@ -128,6 +129,19 @@ export function GradePhoto({
           </div>
         ))}
       </div>
+      {/* Always-available link to the ORIGINAL Telegram post/thread (not only the degraded fallback) so
+          a teacher can jump to the group message for context. media[].msg_url is already returned by
+          teacher_pending_submissions — no migration needed. Works in the Mini App (openTelegramLink)
+          and on the web page (window.open) — GradePhoto is shared by both since #121. */}
+      {postUrl && (
+        <button
+          type="button"
+          onClick={() => openTg(postUrl)}
+          className="mt-1 inline-flex items-center gap-1 self-start text-[12px] font-semibold text-primary hover:underline"
+        >
+          <ExternalLink className="size-3.5" /> Telegram postini ochish
+        </button>
+      )}
       {zoomSrc && <Lightbox src={zoomSrc} alt={alt} onClose={() => setZoomSrc(null)} webApp={webApp} />}
     </>
   );
