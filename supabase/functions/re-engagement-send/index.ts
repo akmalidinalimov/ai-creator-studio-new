@@ -2,6 +2,7 @@
 // Modes: { mode: "test" } -> sends only to @alikhanova_admin (always allowed).
 //        { mode: "all", confirm: "YUBORISH" } -> sends to all eligible students (requires campaign.enabled=true).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,21 +13,6 @@ const corsHeaders = {
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 const SITE_URL = (Deno.env.get("SITE_URL") || "https://aicreator.academy").replace(/\/$/, "");
-
-async function tgSend(chatId: number, text: string, buttonText: string, url: string) {
-  const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      disable_web_page_preview: true,
-      reply_markup: { inline_keyboard: [[{ text: buttonText, url }]] },
-    }),
-  });
-  const data = await r.json().catch(() => ({}));
-  return { ok: r.ok && data?.ok, status: r.status, data };
-}
 
 function pickTpl(c: any, locale: string) {
   const loc = (locale || "uz").toLowerCase();
@@ -135,23 +121,32 @@ Deno.serve(async (req) => {
         const url = `${SITE_URL}/auth/magic?t=${token}`;
         const { body: tplBody, btn } = pickTpl(campaign, r.preferred_locale);
         const text = render(tplBody, r);
-        const send = await tgSend(Number(r.telegram_id), text, btn, url);
-        const messageId = send.ok ? String(send.data?.result?.message_id ?? "") : null;
+        // Drainer adoption: send via the shared primitive but CLASSIFY ONLY (record:false) — this loop
+        // writes its own per-row re_engagement_deliveries status below, so recording here would double-log.
+        // Payload is unchanged (no parse_mode; the magic-link url button preserved). Note: SendOutcome does
+        // not surface the response body, so the (write-only, never-read) telegram_message_id is no longer
+        // captured — the sent/failed status + the Telegram error description are still recorded.
+        const send = await sendTelegram(BOT_TOKEN, "sendMessage", {
+          chat_id: Number(r.telegram_id),
+          text,
+          disable_web_page_preview: true,
+          reply_markup: { inline_keyboard: [[{ text: btn, url }]] },
+        }, { record: false });
 
         await admin.from("re_engagement_deliveries").insert({
           campaign_id,
           profile_id: r.id,
           attempt_num: mode === "test" ? 0 : attempt_num,
           magic_token: token,
-          telegram_message_id: messageId,
+          telegram_message_id: null,
           status: send.ok ? "sent" : "failed",
-          error: send.ok ? null : JSON.stringify(send.data).slice(0, 500),
+          error: send.ok ? null : (send.error || "").slice(0, 500),
         });
 
         if (send.ok) sent++;
         else {
           failed++;
-          const detail = `tg ${send.status}: ${JSON.stringify(send.data)}`.slice(0, 500);
+          const detail = `tg ${send.status}: ${send.error || ""}`.slice(0, 500);
           console.error("re_engagement_send tg failure", { profile_id: r.id, detail });
           errors.push({ profile_id: r.id, err: detail });
         }

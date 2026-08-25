@@ -6,7 +6,9 @@
 // Delivery reliability (2026-07-21): previously this marked every row sent_at
 // unconditionally and swallowed send errors into console.error — failed
 // deliveries were invisible to the DB watchdog layer. Now:
-//  - tg() returns {ok,error} parsed from the Telegram API response;
+//  - sends go through the shared sendTelegram() primitive (record:false — this
+//    drainer writes its OWN per-row status, so the helper only classifies), whose
+//    SendOutcome carries {ok, error, terminal, recipient, content};
 //  - rows are CLAIMED atomically (last_attempt_at lease) before sending, so an
 //    overlapping cron tick / manual call can't double-send the same badge;
 //  - each delivered UNIT (image chunk / follow-up message) marks ITS rows sent
@@ -22,6 +24,7 @@
 // (aicreators/badge_<img>) with the student's FIRST name overlaid as the only
 // variable. No server-side image rendering — Cloudinary composites on delivery.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -56,42 +59,12 @@ const CODE_TO_IMG: Record<string, string> = {
   course_complete: "badge_course_complete",
 };
 
-// Calls a Telegram Bot API method and reports whether Telegram ACCEPTED it.
-// Never throws — network errors and non-ok Telegram responses both come back as
-// { ok:false, error } so the caller can decide retry vs terminal.
-async function tg(method: string, body: unknown): Promise<{ ok: boolean; error: string | null }> {
-  try {
-    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const j = await r.json().catch(() => ({ ok: false, description: `http_${r.status}` }));
-    if (j?.ok) return { ok: true, error: null };
-    return { ok: false, error: String(j?.description || `http_${r.status}`).slice(0, 300) };
-  } catch (e) {
-    return { ok: false, error: `network:${(e instanceof Error ? e.message : String(e)).slice(0, 200)}` };
-  }
-}
-
-// Content/validation errors — the SAME content never succeeds on retry (over-long caption from an
-// admin-edited "Batch matnlar" text, unparseable entities, bad media). Terminal, but distinct from
-// recipient-undeliverable so an admin can tell "fix the text" from "student never started".
-function isContentTgError(err: string | null): boolean {
-  if (!err) return false;
-  const e = err.toLowerCase();
-  return /too long|can't parse|wrong file identifier|wrong type|failed to get http url|wrong remote file|image_process|webpage_curl|media_empty|caption/.test(e);
-}
-// Recipient-side errors that will never succeed on retry (the user must act) — also terminal.
-function isRecipientTgError(err: string | null): boolean {
-  if (!err) return false;
-  const e = err.toLowerCase();
-  return /bot was blocked|chat not found|user is deactivated|can't initiate|peer_id_invalid|user_is_blocked|have no rights|forbidden|chat_id is empty|bots can't send/.test(e);
-}
-// Any terminal error: don't retry, mark the row done (with the error kept for the audit/health).
-function isTerminalTgError(err: string | null): boolean {
-  return isRecipientTgError(err) || isContentTgError(err);
-}
+// Sends now go through the shared sendTelegram() primitive with { record: false }: it does the
+// raw fetch + response parsing and classifies the outcome (terminal / recipient / content) via the
+// shared telegram-classify, but does NOT write an admin_actions row — this drainer records its own
+// per-row badge_award_queue status below, so record:false avoids double-logging. The local tg()
+// helper and the isContentTgError/isRecipientTgError/isTerminalTgError classifiers it fed have been
+// replaced by SendOutcome.{ok,error,terminal,recipient,content} carried out of deliverBadges().
 
 // Strip glyphs Cloudinary's Arial text overlay can't render (emoji, flags, symbols) — they make the
 // generated badge image error out, so Telegram returns "failed to get HTTP URL content" and the card
@@ -173,7 +146,7 @@ function shareBlock(msgs: Msgs, name: string): string {
 async function deliverBadges(
   admin: any, chatId: number, uid: string, name: string | null, items: any[], badgeById: Map<string, any>,
   msgs: Msgs, markSent: (ids: string[]) => Promise<void>,
-): Promise<{ error: string | null; delivered: string[] }> {
+): Promise<{ error: string | null; delivered: string[]; terminal: boolean; recipient: boolean; content: boolean }> {
   const nm = firstName(name);
   // Map each unique badge -> its queue row id(s); keep insertion order for stable batching.
   const idsByBadge = new Map<string, string[]>();
@@ -195,13 +168,13 @@ async function deliverBadges(
   // Single image-only badge: one document carrying caption + share + button.
   if (withImg.length === 1 && noImg.length === 0) {
     const b = withImg[0];
-    const res = await tg("sendDocument", {
+    const res = await sendTelegram(BOT_TOKEN, "sendDocument", {
       chat_id: chatId, document: badgeImageUrl(b.code, name),
       caption: `${badgeBody(b.code, msgs, nm, b)}\n\n${shareBlock(msgs, nm)}`, reply_markup: button,
-    });
-    if (!res.ok) return { error: res.error, delivered };
+    }, { record: false });
+    if (!res.ok) return { error: res.error, delivered, terminal: res.terminal, recipient: res.recipient, content: res.content };
     const ids = idsFor([b]); await markSent(ids); delivered.push(...ids);
-    return { error: null, delivered };
+    return { error: null, delivered, terminal: false, recipient: false, content: false };
   }
 
   // Image badges in chunks of 10; mark each chunk sent as soon as it lands.
@@ -209,9 +182,9 @@ async function deliverBadges(
     const chunk = withImg.slice(i, i + 10);
     const media = chunk.map((b) => ({ type: "document", media: badgeImageUrl(b.code, name), caption: badgeBody(b.code, msgs, nm, b) }));
     const res = media.length === 1
-      ? await tg("sendDocument", { chat_id: chatId, document: media[0].media, caption: media[0].caption })
-      : await tg("sendMediaGroup", { chat_id: chatId, media });
-    if (!res.ok) return { error: res.error, delivered };
+      ? await sendTelegram(BOT_TOKEN, "sendDocument", { chat_id: chatId, document: media[0].media, caption: media[0].caption }, { record: false })
+      : await sendTelegram(BOT_TOKEN, "sendMediaGroup", { chat_id: chatId, media }, { record: false });
+    if (!res.ok) return { error: res.error, delivered, terminal: res.terminal, recipient: res.recipient, content: res.content };
     const ids = idsFor(chunk); await markSent(ids); delivered.push(...ids);
   }
 
@@ -222,14 +195,14 @@ async function deliverBadges(
     const text = textOnly
       ? `${ordered.map((b) => `🏅 ${badgeBody(b.code, msgs, nm, b)}`).join("\n\n")}\n\n${shareBlock(msgs, nm)}`
       : `${shareBlock(msgs, nm)}${noImg.length ? `\n\n${noImg.map((b) => `🏅 ${badgeBody(b.code, msgs, nm, b)}`).join("\n\n")}` : ""}`;
-    const res = await tg("sendMessage", { chat_id: chatId, text, reply_markup: button });
-    if (!res.ok) return { error: res.error, delivered };
+    const res = await sendTelegram(BOT_TOKEN, "sendMessage", { chat_id: chatId, text, reply_markup: button }, { record: false });
+    if (!res.ok) return { error: res.error, delivered, terminal: res.terminal, recipient: res.recipient, content: res.content };
     // The follow-up carries the noImg badges' content (their only delivery). For a pure image album
     // (no noImg) the images were already marked; the follow-up is just share+button.
     const ids = textOnly ? idsFor(ordered) : idsFor(noImg);
     if (ids.length) { await markSent(ids); delivered.push(...ids); }
   }
-  return { error: null, delivered };
+  return { error: null, delivered, terminal: false, recipient: false, content: false };
 }
 
 Deno.serve(async (req) => {
@@ -340,7 +313,7 @@ Deno.serve(async (req) => {
     if (unknownIds.length) { await markTerm(unknownIds, "skip:unknown_badge"); skipped += unknownIds.length; }
     if (!knownIds.length) { processed += items.length; continue; }
 
-    const { error: outErr, delivered } = await deliverBadges(
+    const { error: outErr, delivered, terminal: outTerminal, recipient: outRecipient, content: outContent } = await deliverBadges(
       admin, Number(prof.telegram_id), uid, prof.name, items, badgeById, msgs, markSent,
     );
     processed += items.length;
@@ -366,7 +339,7 @@ Deno.serve(async (req) => {
           },
         });
       } catch { /* ignore */ }
-    } else if (isTerminalTgError(outErr) || attemptsSoFar + 1 >= MAX_ATTEMPTS) {
+    } else if (outTerminal || attemptsSoFar + 1 >= MAX_ATTEMPTS) {
       // Give up on the undelivered rows: mark terminal WITH the error (counted undeliverable).
       await markTerm(pendingIds, outErr);
       undeliverable += pendingIds.length;
@@ -376,7 +349,7 @@ Deno.serve(async (req) => {
           target_resource_type: "profile", target_resource_id: uid,
           details: {
             badge_ids: badgeIdsForUser, error: outErr,
-            recipient_error: isRecipientTgError(outErr), content_error: isContentTgError(outErr),
+            recipient_error: outRecipient, content_error: outContent,
             attempts: attemptsSoFar + 1, undelivered: pendingIds.length,
           },
         });

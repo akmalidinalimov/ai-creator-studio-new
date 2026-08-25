@@ -4,7 +4,8 @@
 // (blocked / never-started / bad content) are recorded, transient ones retried (cap 5). Never marks a
 // failed send as sent. Recomputes broadcasts.sent/failed from the deliveries and flips status→done.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { isTerminal, tgResult } from "../_shared/telegram-classify.ts";
+import { isTerminal } from "../_shared/telegram-classify.ts";
+import { sendTelegram, type SendOutcome } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,20 +39,6 @@ async function __internalSecret(force = false): Promise<string> {
 type Locale = "uz" | "ru" | "en";
 function normLocale(l: string | null): Locale {
   return l === "ru" || l === "en" ? l : "uz";
-}
-
-async function tg(method: string, body: unknown): Promise<{ ok: boolean; error: string | null }> {
-  try {
-    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const j = await r.json().catch(() => ({}));
-    return tgResult(j, r.status);
-  } catch (e) {
-    return { ok: false, error: `network:${(e instanceof Error ? e.message : String(e)).slice(0, 200)}` };
-  }
 }
 
 Deno.serve(async (req) => {
@@ -138,12 +125,14 @@ Deno.serve(async (req) => {
       : undefined;
     const chatId = Number(d.telegram_id);
 
-    let res: { ok: boolean; error: string | null };
+    // Drainer adoption: send via the shared primitive but CLASSIFY ONLY (record:false) — this loop
+    // writes its own per-row broadcast_deliveries status below, so recording here would double-log.
+    let res: SendOutcome;
     if (b.image_path) {
       const photo = `${SUPABASE_URL}/storage/v1/object/public/broadcast-images/${b.image_path}`;
-      res = await tg("sendPhoto", { chat_id: chatId, photo, caption: body, parse_mode: "HTML", reply_markup: button });
+      res = await sendTelegram(BOT_TOKEN, "sendPhoto", { chat_id: chatId, photo, caption: body, parse_mode: "HTML", reply_markup: button }, { record: false });
     } else {
-      res = await tg("sendMessage", { chat_id: chatId, text: body, parse_mode: "HTML", disable_web_page_preview: true, reply_markup: button });
+      res = await sendTelegram(BOT_TOKEN, "sendMessage", { chat_id: chatId, text: body, parse_mode: "HTML", disable_web_page_preview: true, reply_markup: button }, { record: false });
     }
 
     if (res.ok) {
