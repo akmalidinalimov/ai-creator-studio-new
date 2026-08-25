@@ -1,5 +1,6 @@
 // One-time push to refresh every teacher's Telegram reply keyboard.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -64,23 +65,13 @@ Deno.serve(async (req) => {
   for (const p of (profs || []) as any[]) {
     const pl = String(p.preferred_locale || "").toLowerCase();
     const locale: "uz" | "ru" | "en" = pl.startsWith("ru") ? "ru" : pl.startsWith("en") ? "en" : "uz";
-    try {
-      const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: Number(p.telegram_id),
-          parse_mode: "HTML",
-          text: NOTES[locale],
-          reply_markup: { keyboard: KEYBOARDS[locale], resize_keyboard: true, is_persistent: true },
-        }),
-      });
-      if (!resp.ok) { failed++; const t = await resp.text().catch(() => ""); console.error("refresh kb fail", p.telegram_id, resp.status, t); }
-      else { sent++; }
-    } catch (e) {
-      failed++;
-      console.error("refresh kb exception", p.telegram_id, e);
-    }
+    const out = await sendTelegram(token, "sendMessage", {
+      chat_id: Number(p.telegram_id),
+      parse_mode: "HTML",
+      text: NOTES[locale],
+      reply_markup: { keyboard: KEYBOARDS[locale], resize_keyboard: true, is_persistent: true },
+    }, { admin: __admin, purpose: "teacher_keyboard_refresh", recipientId: Number(p.telegram_id) });
+    if (out.ok) { sent++; } else { failed++; }
   }
 
   return new Response(JSON.stringify({ ok: true, sent, failed }), {

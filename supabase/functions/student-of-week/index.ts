@@ -3,6 +3,7 @@
 // Tashkent quiet hours, nudge_preferences opt-out, nudge_log logging.
 // Idempotent: dm_sent_at guard prevents duplicate DMs within a week.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -35,16 +36,6 @@ const MESSAGES: Record<Locale, string> = {
   ru: "🏆 Поздравляем! На этой неделе вы набрали наивысший балл активности в группе — вы звезда недели! ⭐\n\nОтличный результат, так держать! 🚀",
   en: "🏆 Congratulations! You scored the highest activity in your group this week — you're the star of the week! ⭐\n\nGreat work, keep it up! 🚀",
 };
-
-async function tgSend(chatId: number, text: string) {
-  const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
-  });
-  const data = await r.json().catch(() => ({}));
-  return { ok: r.ok && data?.ok, status: r.status, data };
-}
 
 function localHour(offsetMinutes: number) {
   const ms = Date.now() + offsetMinutes * 60_000;
@@ -115,12 +106,18 @@ Deno.serve(async (req) => {
       const hr = localHour((p as any).tashkent_offset_minutes ?? 300);
       if (hr < 8 || hr >= 22) { skipped++; continue; }
 
-      // 4) Send
+      // 4) Send — routed through the shared sender so a non-delivery is classified. This drainer
+      // writes its own per-send nudge_log status, so record:false (no duplicate admin_actions row).
       const locale = normLocale((p as any).preferred_locale || (p as any).preferred_language);
       const text = MESSAGES[locale];
-      const r = await tgSend(Number(p.telegram_id), text);
+      const out = await sendTelegram(
+        BOT_TOKEN,
+        "sendMessage",
+        { chat_id: Number(p.telegram_id), text, disable_web_page_preview: true },
+        { admin, purpose: "student_of_week", recipientId: Number(p.telegram_id), record: false },
+      );
 
-      if (r.ok) {
+      if (out.ok) {
         // 5a) Mark sent
         await admin
           .from("weekly_group_star")
@@ -130,7 +127,7 @@ Deno.serve(async (req) => {
         await admin.from("nudge_log").insert({
           profile_id: p.id,
           nudge_type: "student_of_week",
-          telegram_message_id: String(r.data?.result?.message_id ?? ""),
+          telegram_message_id: null,
           payload: { locale, week_start: w.week_start, group_id: w.group_id, ok: true },
           error: null,
         });
@@ -142,7 +139,7 @@ Deno.serve(async (req) => {
           nudge_type: "student_of_week",
           telegram_message_id: null,
           payload: { locale, week_start: w.week_start, group_id: w.group_id, ok: false },
-          error: JSON.stringify(r.data).slice(0, 500),
+          error: out.error,
         });
         failed++;
       }

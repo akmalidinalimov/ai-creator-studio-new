@@ -15,6 +15,7 @@ import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supa
 import { validateInitData } from "../_shared/telegram-initdata.ts";
 import { isChatMember } from "../_shared/telegram-membership.ts";
 import { mintSessionForUser } from "../_shared/mint-session.ts";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 import { resolveProfile, type ResolveDeps, type StudentMatch } from "./resolve.ts";
 
 const corsHeaders = {
@@ -149,14 +150,12 @@ function makeDeps(admin: SupabaseClient): ResolveDeps {
         if (!ids.length) return;
         const { data: admins } = await admin.from("profiles").select("telegram_id").in("id", ids).not("telegram_id", "is", null).limit(3);
         for (const a of (admins || [])) {
-          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: (a as { telegram_id: number }).telegram_id,
-              text: `🔗 <b>${nm}</b> Mini App orqali hisobiga bog'landi (telegram_id ${tgId}${username ? " · @" + username : ""}).\nAgar bu u bo'lmasa — profiles.id <code>${profileId}</code> uchun telegram_id ni tozalang.`,
-              parse_mode: "HTML",
-            }),
-          }).catch(() => {});
+          const chatId = (a as { telegram_id: number }).telegram_id;
+          await sendTelegram(BOT_TOKEN, "sendMessage", {
+            chat_id: chatId,
+            text: `🔗 <b>${nm}</b> Mini App orqali hisobiga bog'landi (telegram_id ${tgId}${username ? " · @" + username : ""}).\nAgar bu u bo'lmasa — profiles.id <code>${profileId}</code> uchun telegram_id ni tozalang.`,
+            parse_mode: "HTML",
+          }, { admin, purpose: "miniapp_first_link_alert", recipientId: chatId });
         }
       } catch { /* best-effort */ }
     },

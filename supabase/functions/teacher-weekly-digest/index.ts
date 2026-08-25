@@ -5,6 +5,7 @@
 // XP earned + level), then the ACTIONABLE tail (pending homework, students the system reminders
 // couldn't recover — last_inactive_warning_day >= 7), with a magic link into their profile.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -149,16 +150,12 @@ Deno.serve(async (req) => {
       if (pending > 0) lines.push("", l.pend(pending));
       if (names.length) lines.push("", l.stub, names.map((n) => `• ${n}`).join("\n"), "", `💡 ${l.hint}`);
 
-      const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: Number(tch.telegram_id), text: lines.join("\n"), parse_mode: "HTML",
-          disable_web_page_preview: true,
-          reply_markup: { inline_keyboard: [[{ text: l.btn, url }]] },
-        }),
-      });
-      const jr = await r.json().catch(() => ({}));
-      if (jr?.ok) {
+      const out = await sendTelegram(BOT_TOKEN, "sendMessage", {
+        chat_id: Number(tch.telegram_id), text: lines.join("\n"), parse_mode: "HTML",
+        disable_web_page_preview: true,
+        reply_markup: { inline_keyboard: [[{ text: l.btn, url }]] },
+      }, { admin, purpose: "teacher_weekly_digest", recipientId: Number(tch.telegram_id) });
+      if (out.ok) {
         sent++;
         await admin.from("notifications_log").insert({
           user_id: tch.id, notification_type: "teacher_weekly_digest",

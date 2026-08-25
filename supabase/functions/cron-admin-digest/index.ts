@@ -3,6 +3,7 @@
 // Uses notification_templates(admin_daily_brief, locale) for message body.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -27,14 +28,6 @@ const FALLBACK: Record<Locale, string> = {
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 
 const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-
-function tg(method: string, body: unknown) {
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
 
 function interpolate(s: string, vars: Record<string, string | number>): string {
   return s.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => String(vars[k] ?? ""));
@@ -188,11 +181,13 @@ Deno.serve(async (req) => {
       const tpl = await loadTemplate(admin, locale);
       const body = interpolate(tpl, { ...metrics, date: ymd });
 
-      const resp = await tg("sendMessage", { chat_id: Number(a.telegram_id), text: body, parse_mode: "HTML" });
-      if (!resp.ok) {
-        console.error("sendMessage failed", await resp.text());
-        continue;
-      }
+      const out = await sendTelegram(
+        BOT_TOKEN,
+        "sendMessage",
+        { chat_id: Number(a.telegram_id), text: body, parse_mode: "HTML" },
+        { admin, purpose: "admin_daily_brief", recipientId: Number(a.telegram_id) },
+      );
+      if (!out.ok) continue;
       await admin.from("admin_notification_log").insert({
         user_id: a.id,
         notification_type: "admin_daily_brief",

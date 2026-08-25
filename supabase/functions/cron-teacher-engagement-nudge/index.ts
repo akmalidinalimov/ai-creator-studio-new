@@ -7,6 +7,7 @@
 // respects each teacher's notifications_enabled (opt-out). The ungraded-homework reminder is a
 // separate, already-live job — this one covers the two NEW triggers.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -50,17 +51,6 @@ function tashkentHour(): number {
   } catch {
     return new Date().getUTCHours() + 5;
   }
-}
-
-async function sendMessage(chatId: number, text: string, url: string, btn: string) {
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true,
-      reply_markup: { inline_keyboard: [[{ text: btn, url }]] },
-    }),
-  });
 }
 
 // Localized copy. Warm, specific, one clear action.
@@ -185,9 +175,11 @@ Deno.serve(async (req) => {
         : COPY.offline[loc](Math.round(s.offline_hours / 24), s.pending_homework);
       const btn = type === "waiting" ? BTN[loc].waiting : BTN[loc].offline;
 
-      const resp = await sendMessage(Number(s.telegram_id), text, url, btn);
-      const jr = await resp.json().catch(() => ({}));
-      if (!jr?.ok) { console.error("teacher nudge send fail", s.teacher_id, type, jr?.description); skipped++; continue; }
+      const out = await sendTelegram(BOT_TOKEN, "sendMessage", {
+        chat_id: Number(s.telegram_id), text, parse_mode: "HTML", disable_web_page_preview: true,
+        reply_markup: { inline_keyboard: [[{ text: btn, url }]] },
+      }, { admin, purpose: `teacher_nudge_${type}`, recipientId: Number(s.telegram_id) });
+      if (!out.ok) { skipped++; continue; }
 
       await admin.from("notifications_log").insert({
         user_id: s.teacher_id,

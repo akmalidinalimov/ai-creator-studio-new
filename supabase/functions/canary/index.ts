@@ -4,6 +4,7 @@
 // (state stored in app_settings) so an outage doesn't spam.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -13,13 +14,14 @@ const corsHeaders = {
 const SITE = "https://aicreator.academy";
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 
-async function tg(chatId: number, text: string) {
+async function tg(admin: any, chatId: number, text: string) {
   if (!BOT_TOKEN) return;
-  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
-  }).catch(() => {});
+  await sendTelegram(
+    BOT_TOKEN,
+    "sendMessage",
+    { chat_id: chatId, text, disable_web_page_preview: true },
+    { admin, purpose: "canary_alert", recipientId: chatId },
+  );
 }
 
 Deno.serve(async (req) => {
@@ -77,7 +79,7 @@ Deno.serve(async (req) => {
       ? `✅ aicreator.academy recovered — all checks passing.`
       : `🚨 aicreator.academy health check FAILED:\n• ${failures.join("\n• ")}`;
     for (const a of (admins || []) as any[]) {
-      if (a.telegram_id) await tg(Number(a.telegram_id), msg);
+      if (a.telegram_id) await tg(admin, Number(a.telegram_id), msg);
     }
   }
 

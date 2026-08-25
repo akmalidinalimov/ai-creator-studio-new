@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -71,12 +72,8 @@ Deno.serve(async (req) => {
       if (dryRun) { sent++; continue; }
       if (!BOT_TOKEN) { errors++; continue; }
 
-      const r2 = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chat_id: p.telegram_id, text: txt }),
-      });
-      if (!r2.ok) errors++; else sent++;
+      const out = await sendTelegram(BOT_TOKEN, "sendMessage", { chat_id: p.telegram_id, text: txt }, { admin, purpose: "weekly_digest", recipientId: p.telegram_id });
+      if (!out.ok) errors++; else sent++;
       await new Promise(res => setTimeout(res, 50));
     } catch (_) { errors++; }
   }

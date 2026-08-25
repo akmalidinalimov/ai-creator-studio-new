@@ -3,6 +3,7 @@
 // Mirrors notify-homework-submission for auth + Telegram send pattern.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -13,20 +14,6 @@ const corsHeaders = {
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 
 const escHtml = (s: string = "") => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-function tg(method: string, body: unknown) {
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-async function sendMessage(chatId: number, text: string, inlineKeyboard?: any[][]) {
-  const body: any = { chat_id: chatId, text, parse_mode: "HTML" };
-  if (inlineKeyboard) body.reply_markup = { inline_keyboard: inlineKeyboard };
-  return tg("sendMessage", body);
-}
 
 const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
@@ -196,14 +183,13 @@ Deno.serve(async (req) => {
         const btn = kind === "teacher"
           ? [{ text: TEACHER_BTN[r.locale], url: TEACHER_URL }]
           : [{ text: ADMIN_BTN[r.locale], url: ADMIN_URL }];
-        try {
-          const resp = await sendMessage(r.chatId, text, [btn]);
-          const ok = resp.ok;
-          if (ok) anySent = true;
-          else console.error("ungraded reminder send fail", s.id, resp.status, await resp.text().catch(() => ""));
-        } catch (e) {
-          console.error("ungraded reminder send exception", s.id, e);
-        }
+        const out = await sendTelegram(BOT_TOKEN, "sendMessage", {
+          chat_id: r.chatId,
+          text,
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: [btn] },
+        }, { admin, purpose: "ungraded_homework_reminder", recipientId: r.chatId });
+        if (out.ok) anySent = true;
       }
 
       if (!anySent) { skipped++; continue; }

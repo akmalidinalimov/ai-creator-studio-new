@@ -3,6 +3,7 @@
 // Sends only when there was at least one import that day (no noise on quiet days).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,11 +26,6 @@ const MSG: Record<Locale, (n: number) => string> = {
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-
-const tg = (method: string, body: unknown) =>
-  fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
 
 function localTimeParts(tz: string): { hour: number; minute: number; ymd: string } {
   try {
@@ -101,8 +97,13 @@ Deno.serve(async (req) => {
       if (importedToday === 0 && !force) { skipped++; continue; } // no imports → no noise
 
       const locale = normLocale(a.preferred_locale);
-      const resp = await tg("sendMessage", { chat_id: Number(a.telegram_id), text: MSG[locale](importedToday), parse_mode: "HTML" });
-      if (!resp.ok) { console.error("sendMessage failed", await resp.text()); continue; }
+      const out = await sendTelegram(
+        BOT_TOKEN,
+        "sendMessage",
+        { chat_id: Number(a.telegram_id), text: MSG[locale](importedToday), parse_mode: "HTML" },
+        { admin, purpose: "import_digest", recipientId: Number(a.telegram_id) },
+      );
+      if (!out.ok) continue;
       await admin.from("admin_notification_log").insert({
         user_id: a.id, notification_type: "import_digest", payload: { ymd, imported_today: importedToday },
       });

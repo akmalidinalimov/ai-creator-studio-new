@@ -4,6 +4,7 @@
 // v2.0.1: All copy is now loaded from public.notification_templates (admin-editable).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -34,12 +35,11 @@ const FALLBACK: Record<string, { body: string; button_label?: string }> = {
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 const SITE_URL = (Deno.env.get("SITE_URL") || "").replace(/\/$/, "");
 
-function tg(method: string, body: unknown) {
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+// Route every engagement DM through the shared sender so a non-delivery (blocked bot /
+// never-Started ~70% / transient) lands a classified telegram_send_failed row in admin_actions
+// instead of vanishing behind a fire-and-forget fetch. Payload-transparent; __admin is module-level.
+function tg(method: string, body: any, purpose: string) {
+  return sendTelegram(BOT_TOKEN, method, body, { admin: __admin, purpose, recipientId: body?.chat_id ?? null });
 }
 
 function randomToken(len = 32): string {
@@ -234,7 +234,7 @@ Deno.serve(async (req) => {
           inline.push([{ text: tpl.button_label, url }]);
         }
         inline.push([{ text: locale === "ru" ? "Не сегодня" : locale === "en" ? "Not today" : "Bugun emas", callback_data: "ack:not_today" }]);
-        await tg("sendMessage", { chat_id: chatId, text, reply_markup: { inline_keyboard: inline } });
+        await tg("sendMessage", { chat_id: chatId, text, reply_markup: { inline_keyboard: inline } }, "daily_reminder");
         await admin.from("profiles").update({ last_daily_reminder_at: new Date().toISOString() }).eq("id", u.id);
         await logNotif(admin, u.id, "daily_reminder", {});
         dailySent++;
@@ -254,7 +254,7 @@ Deno.serve(async (req) => {
             const url = await magicLink(admin, u.id, `/lesson/${userCourseId}/${nextId}`);
             inline.push([{ text: tpl.button_label, url }]);
           }
-          await tg("sendMessage", { chat_id: chatId, text, reply_markup: inline.length ? { inline_keyboard: inline } : undefined });
+          await tg("sendMessage", { chat_id: chatId, text, reply_markup: inline.length ? { inline_keyboard: inline } : undefined }, "streak_warning");
           await admin.from("profiles").update({ last_streak_warning_at: new Date().toISOString() }).eq("id", u.id);
           await logNotif(admin, u.id, "streak_warning", { streak: cs });
           streakSent++;
@@ -290,7 +290,7 @@ Deno.serve(async (req) => {
           }
           const url = await magicLink(admin, u.id, path);
           const reply_markup = tpl.button_label ? { inline_keyboard: [[{ text: tpl.button_label, url }]] } : undefined;
-          await tg("sendMessage", { chat_id: chatId, text, reply_markup });
+          await tg("sendMessage", { chat_id: chatId, text, reply_markup }, "reengagement_drip");
           await admin.from("profiles").update({
             last_inactive_warning_at: new Date().toISOString(),
             last_inactive_warning_day: stage,

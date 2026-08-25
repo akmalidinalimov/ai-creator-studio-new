@@ -1,6 +1,7 @@
 // Weekly check: DM all admins listing groups+modules with no Telegram topic configured.
 // Scheduled Sundays 19:00 Asia/Tashkent (= 14:00 UTC) via pg_cron.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -19,15 +20,6 @@ async function __internalSecret(): Promise<string> {
   if (error) throw error;
   __sec = data as string;
   return __sec;
-}
-
-async function tgSend(chatId: number, text: string) {
-  if (!BOT_TOKEN) return;
-  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true }),
-  });
 }
 
 Deno.serve(async (req) => {
@@ -99,7 +91,15 @@ Deno.serve(async (req) => {
 
     let sent = 0;
     for (const r of recipients) {
-      try { await tgSend(r.telegram_id, body); sent++; } catch (_e) { /* ignore */ }
+      if (BOT_TOKEN) {
+        const out = await sendTelegram(BOT_TOKEN, "sendMessage", {
+          chat_id: r.telegram_id,
+          text: body,
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+        }, { admin, purpose: "weekly_topic_check", recipientId: r.telegram_id });
+        if (out.ok) sent++;
+      }
       await admin.from("admin_notification_log").insert({
         notification_type: "weekly_topic_check",
         user_id: r.id,
