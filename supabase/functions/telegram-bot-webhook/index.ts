@@ -1763,9 +1763,15 @@ const unregisteredLastReplyAt = new Map<number, number>();
 // Unknown users who ARE members of an active-course group chat get onboarded (provisional,
 // same engine + kill-switch flag as in-topic auto-register); everyone else gets ONE plain
 // sentence — no keyboards, no buttons, no links, no account. Membership answers are cached
-// in bot_conversation_state (state 'nm_cache', 30 min) so spam can't turn into getChatMember
+// in bot_conversation_state (state 'nm_cache') so spam can't turn into getChatMember
 // sweeps; replies are additionally throttled to 1/min in-memory.
+// POSITIVE answers cache long (30 min) — membership is stable. NEGATIVE answers cache SHORT
+// (3 min): a student who JOINS the group and opens the bot within the window would otherwise be
+// probed "not a member yet" and then locked out for the FULL TTL even after joining (a real
+// member-forgiveness violation — the @MEN_UZ05 incident, 2026-08-26). 3 min re-checks quickly
+// without opening a getChatMember probe storm (the 1/min reply throttle still bounds the rate).
 const NM_CACHE_TTL_MIN = 30;
+const NM_CACHE_NEG_TTL_MIN = 3;
 
 type MembershipResult = {
   member: boolean;
@@ -1872,11 +1878,14 @@ async function setNmCache(admin: any, tgId: number, m: MembershipResult) {
         existing.expires_at && new Date(existing.expires_at).getTime() > Date.now()) {
       return;
     }
+    // Positive membership caches long (stable); negative caches short so a just-joined member
+    // isn't locked out for the full TTL after joining (see the NM_CACHE_*_TTL_MIN note above).
+    const ttlMin = m.member ? NM_CACHE_TTL_MIN : NM_CACHE_NEG_TTL_MIN;
     await admin.from("bot_conversation_state").upsert({
       telegram_id: tgId, state: "nm_cache",
       context: { member: m.member, staff: m.staff, group_id: m.group?.id ?? null, course_id: m.group?.course_id ?? null },
       updated_at: new Date().toISOString(),
-      expires_at: new Date(Date.now() + NM_CACHE_TTL_MIN * 60_000).toISOString(),
+      expires_at: new Date(Date.now() + ttlMin * 60_000).toISOString(),
     });
   } catch (_e) { /* cache best-effort */ }
 }
