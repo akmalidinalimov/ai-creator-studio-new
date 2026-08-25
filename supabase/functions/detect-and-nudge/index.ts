@@ -18,6 +18,11 @@ const SITE_URL = (Deno.env.get("SITE_URL") || "https://aicreator.academy").repla
 type NudgeType = "inactive_3d" | "inactive_7d" | "stuck_lesson" | "module_complete";
 
 async function tgSend(chatId: number, text: string, buttonText: string, url: string) {
+  // Kept raw on purpose: this drainer stores the raw Telegram result (nudge_log.telegram_message_id)
+  // + echoes the body in test mode, which sendTelegram's SendOutcome intentionally does not expose.
+  // Non-delivery is already DB-visible via nudge_log.error, so there is no silent-failure gap; adopting
+  // the primitive would drop behavior for zero classification gain.
+  // eslint-disable-next-line no-restricted-syntax
   const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

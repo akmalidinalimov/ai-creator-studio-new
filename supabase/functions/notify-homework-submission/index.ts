@@ -1,6 +1,7 @@
 // v3.14.18: Drains homework_teacher_dm_queue and DMs teachers about student submissions.
 // Triggered by pg_cron every minute. Respects notifications_enabled, quiet hours, RBAC.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,14 +12,6 @@ const corsHeaders = {
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 
 const escHtml = (s: string = "") => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-function tg(method: string, body: unknown) {
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
 
 const MSG = {
   uz: (name: string, mn: number, tn: number, title: string) =>
@@ -159,22 +152,26 @@ Deno.serve(async (req) => {
       ? [[{ text: loc === "ru" ? "✏️ Изменить задание" : loc === "en" ? "✏️ Change task" : "✏️ Vazifani o'zgartirish", callback_data: `hwmv:${row.submission_id}` }]]
       : [];
     try {
-      const resp = await tg("sendMessage", {
+      // record:false — this drainer writes its own per-row homework_teacher_dm_queue status below,
+      // so the shared helper only sends+classifies (no double-logged admin_actions row). The
+      // transient-vs-permanent decision stays HTTP-code based, unchanged from before: Telegram's
+      // error_code mirrors the HTTP status, so out.status reproduces the old `error_code ?? status`.
+      const out = await sendTelegram(BOT_TOKEN, "sendMessage", {
         chat_id: Number(teacher.telegram_id),
         text,
         parse_mode: "HTML",
         reply_markup: { inline_keyboard: [buttons, ...retagRow] },
-      });
-      let okBody: any = null;
-      try { okBody = await resp.clone().json(); } catch { /* ignore */ }
-      if (!resp.ok || !okBody?.ok) {
-        const errTxt = okBody ? JSON.stringify(okBody) : await resp.text().catch(() => "");
-        console.error("hw teacher dm fail", row.id, resp.status, errTxt);
-        const code = okBody?.error_code ?? resp.status;
-        if (code === 429 || code >= 500) {
-          await markRetry(`tg_${code}_${String(errTxt).slice(0, 120)}`); // transient → retry next minute
+      }, { record: false });
+      if (!out.ok) {
+        const code = out.status;
+        const errTxt = String(out.error ?? "").slice(0, 120);
+        console.error("hw teacher dm fail", row.id, code, out.error);
+        // status 0 = transport error (sendTelegram never throws — this replaces the old network
+        // exception → retry path). 429 / 5xx = rate-limit or server blip. All transient → retry.
+        if (code === 429 || code >= 500 || code === 0) {
+          await markRetry(`tg_${code}_${errTxt}`); // transient → retry next minute
         } else {
-          await markSent(`tg_${code}_${String(errTxt).slice(0, 120)}`); // permanent (403 blocked, 400 bad chat) → no point retrying
+          await markSent(`tg_${code}_${errTxt}`); // permanent (403 blocked, 400 bad chat) → no point retrying
         }
         skipped++;
       } else {

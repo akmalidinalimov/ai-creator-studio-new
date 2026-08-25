@@ -957,6 +957,12 @@ const SITE_URL = (Deno.env.get("SITE_URL") || "").replace(/\/$/, "");
 const SUPPORT_HANDLE = Deno.env.get("TELEGRAM_SUPPORT_HANDLE") || ""; // e.g. "aicreators_support"
 
 function tgApi(method: string, body: unknown) {
+  // The bot-core raw sender, called from dozens of heterogeneous per-call-site sends (incl.
+  // member-forgiveness friendly messages where a recipient miss is EXPECTED, and answerCallbackQuery/
+  // editMessageText); a blanket sendTelegram swap here would over-record routine member fumbling. The
+  // outcome-critical sends (grade card #119, grade media #120) already record their own delivery
+  // outcome; per-call-site adoption of the rest is a deferred follow-up.
+  // eslint-disable-next-line no-restricted-syntax
   return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1508,6 +1514,9 @@ async function sendDocument(chatId: number, filename: string, content: string, c
     form.append("parse_mode", "HTML");
   }
   form.append("document", new Blob([content], { type: "text/csv;charset=utf-8" }), filename);
+  // Multipart FormData sendDocument (CSV export); sendTelegram() is JSON-body only, so this can't route
+  // through the primitive until it grows a multipart variant. Low-volume admin export.
+  // eslint-disable-next-line no-restricted-syntax
   return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, {
     method: "POST",
     body: form,

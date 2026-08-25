@@ -11,6 +11,7 @@
 // Body: { text: string, pr?: number } — when pr is present, the message carries the approve
 // keyboard (ops:a:<pr> / ops:reject:<pr>, handled admin-only by the bot webhook) + a PR link.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -76,20 +77,21 @@ Deno.serve(async (req) => {
 
     let sent = 0;
     for (const p of (profs || []) as any[]) {
-      try {
-        const resp = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: Number(p.telegram_id),
-            text,
-            parse_mode: "HTML",
-            disable_web_page_preview: true,
-            ...(reply_markup ? { reply_markup } : {}),
-          }),
-        });
-        if (resp.ok) sent++;
-      } catch (_e) { /* best-effort per recipient */ }
+      // sendTelegram never throws (transport error → transient outcome) and records any
+      // non-delivery of this ops DM to admin_actions by construction (record defaults true).
+      const out = await sendTelegram(
+        botToken,
+        "sendMessage",
+        {
+          chat_id: Number(p.telegram_id),
+          text,
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+          ...(reply_markup ? { reply_markup } : {}),
+        },
+        { admin, purpose: "ops_notify", recipientId: p.telegram_id },
+      );
+      if (out.ok) sent++;
     }
 
     return new Response(JSON.stringify({ ok: true, sent }), {

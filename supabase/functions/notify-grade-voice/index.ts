@@ -38,6 +38,7 @@
 // path — genuinely blocked/errored sends — is logged; "no_voice"/"no_telegram" are simply expected
 // and not logged, mirroring hw-image-url/hw-audio-url's convention of only logging real degradations).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -100,29 +101,6 @@ async function logHealth(
     if (error) console.error("notify-grade-voice logHealth insert failed", error.message);
   } catch (e) {
     console.error("notify-grade-voice logHealth threw", String(e));
-  }
-}
-
-// Telegram sendAudio: the file lives in our private storage bucket, so we hand Telegram a
-// short-lived SIGNED HTTPS URL and let Telegram fetch the bytes itself (no proxying through this
-// function, no bot-token leak — the signed URL carries a Supabase Storage token, never the bot's).
-async function sendAudio(
-  chatId: number,
-  audioUrl: string,
-  caption: string,
-  title: string,
-): Promise<{ ok: true } | { ok: false; description: string }> {
-  try {
-    const resp = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendAudio`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, audio: audioUrl, caption, title }),
-    });
-    const j: any = await resp.json().catch(() => null);
-    if (resp.ok && j?.ok) return { ok: true };
-    return { ok: false, description: String(j?.description || `http_${resp.status}`) };
-  } catch (e) {
-    return { ok: false, description: String((e as any)?.message ?? e) };
   }
 }
 
@@ -228,15 +206,26 @@ Deno.serve(async (req) => {
 
     // --- 7. Send. A blocked bot / never-started chat is a Telegram-level `ok:false` — graceful, not
     // a hard error (member-forgiveness): the student simply won't get this DM, the in-app player
-    // (Task 5) still covers them. ---
+    // (Task 5) still covers them. The audio lives in our private bucket, so we hand Telegram the
+    // short-lived SIGNED HTTPS URL and let it fetch the bytes itself (no bot-token leak — the signed
+    // URL carries a Supabase Storage token, never the bot's).
+    //
+    // sendTelegram is the paved-road primitive; we pass record:false because THIS function records
+    // BOTH the success (grade_voice_dm_sent) and failure (grade_voice_dm_failed) rows via its own
+    // logHealth below — record:false classifies only, so the failure isn't double-logged. ---
     const caption = CAPTION[locale](title);
-    const result = await sendAudio(Number(telegramId), signed.signedUrl, caption, title);
-    if (result.ok) {
+    const out = await sendTelegram(
+      BOT_TOKEN,
+      "sendAudio",
+      { chat_id: Number(telegramId), audio: signed.signedUrl, caption, title },
+      { record: false },
+    );
+    if (out.ok) {
       await logHealth(admin, uid, sub.user_id, "grade_voice_dm_sent", { submission_id: submissionId }, submissionId);
       return json({ ok: true, sent: true });
     }
     await logHealth(admin, uid, sub.user_id, "grade_voice_dm_failed",
-      { submission_id: submissionId, desc: result.description }, submissionId);
+      { submission_id: submissionId, desc: out.error }, submissionId);
     return json({ ok: true, sent: false, reason: "telegram_send_failed" });
   } catch (e) {
     // Unexpected failure -> DB-visible health signal (incident doctrine), best-effort, then 500.

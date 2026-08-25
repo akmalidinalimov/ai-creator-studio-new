@@ -31,6 +31,7 @@
 // (action: "teacher_broadcast_miniapp") makes the whole broadcast DB-visible to the health/detector
 // layer — errors that only live in function logs are invisible to the watchdogs.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -157,23 +158,23 @@ Deno.serve(async (req) => {
     let failed = 0;
     for (const r of recipients) {
       try {
-        const resp = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: Number(r.telegram_id), text: body,
-            parse_mode: "HTML", disable_web_page_preview: true,
-          }),
-        });
-        const j = await resp.json().catch(() => ({}) as any);
-        if (resp.ok && j?.ok) {
+        // Drainer adoption: send via the shared primitive but CLASSIFY ONLY (record:false) — this loop
+        // writes its own per-recipient status (bot_broadcast_rate scope:"recipient" on success,
+        // logError→platform_error_log on failure), so recording here would double-log. The Telegram-side
+        // non-ok read (previously `resp.ok && j?.ok`) is now `out.ok` from the shared classifier. Payload
+        // (chat_id/HTML-escaped body/parse_mode/disable_web_page_preview) is unchanged.
+        const out = await sendTelegram(BOT_TOKEN, "sendMessage", {
+          chat_id: Number(r.telegram_id), text: body,
+          parse_mode: "HTML", disable_web_page_preview: true,
+        }, { record: false });
+        if (out.ok) {
           await admin.from("bot_broadcast_rate").insert({
             actor_user_id: who.user.id, recipient_user_id: r.id, scope: "recipient",
           });
           sent++;
         } else {
           failed++;
-          await logError(admin, "teacher-broadcast-group", new Error(j?.description || "send_failed"), {
+          await logError(admin, "teacher-broadcast-group", new Error(out.error || "send_failed"), {
             action: "teacher_broadcast_miniapp_send", user_id: r.id, telegram_id: Number(r.telegram_id),
           });
         }

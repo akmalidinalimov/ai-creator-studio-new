@@ -5,6 +5,7 @@
 // (mark a task done/error + DM the owner the result). Kill-switch: platform_settings key
 // 'claude_agent' → {"enabled": false}. Same least-privilege shape as hw-dm-health.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { sendTelegram } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -86,24 +87,22 @@ Deno.serve(async (req) => {
         if (tok) {
           const head = status === "error" ? "❌ Claude Code — xatolik" : "✅ Claude Code — bajarildi";
           const promptLine = task.prompt ? `\n📌 ${String(task.prompt).slice(0, 200)}` : "";
-          const out = (status === "error" ? String(body?.error || "") : String(body?.result || "")) || "—";
-          const textMsg = `${head}${promptLine}\n\n${out}`.slice(0, 3900);
-          let ok = false, desc = "";
-          try {
-            const r = await fetch(`https://api.telegram.org/bot${tok}/sendMessage`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ chat_id: task.requested_tg, text: textMsg, disable_web_page_preview: true }),
-            });
-            const rb = await r.json().catch(() => null);
-            ok = !!(r.ok && rb?.ok);
-            desc = String(rb?.description || r.status);
-          } catch (e) { desc = e instanceof Error ? e.message : String(e); }
-          if (!ok) {
+          const bodyOut = (status === "error" ? String(body?.error || "") : String(body?.result || "")) || "—";
+          const textMsg = `${head}${promptLine}\n\n${bodyOut}`.slice(0, 3900);
+          // sendTelegram never throws and records any non-delivery to admin_actions (record defaults
+          // true). PLAIN TEXT preserved (no parse_mode) so code/diff output can't trigger a 400.
+          const send = await sendTelegram(
+            tok,
+            "sendMessage",
+            { chat_id: task.requested_tg, text: textMsg, disable_web_page_preview: true },
+            { admin, purpose: "claude_agent", recipientId: task.requested_tg },
+          );
+          if (!send.ok) {
+            // Keep the function's own delivery-status recording too (a detector may query it).
             try {
               await admin.from("platform_error_log").insert({
                 source: "claude-agent", action: "report_dm_failed",
-                message: desc.slice(0, 200), telegram_id: task.requested_tg, context: { task_id: id },
+                message: String(send.error || "").slice(0, 200), telegram_id: task.requested_tg, context: { task_id: id },
               });
             } catch (_e) { /* logging is best-effort */ }
           }
