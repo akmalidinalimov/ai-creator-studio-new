@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X, ImageOff, ExternalLink, Play, FileText, Link as LinkIcon, Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui-kit";
@@ -56,6 +56,48 @@ function firstMsgUrl(media: QueueMedia[] | null | undefined): string | null {
   return null;
 }
 
+/**
+ * Open the ORIGINAL Telegram post so the teacher can view the full submission (any size) natively —
+ * grading still happens here in the Mini App; this is only the "look at the file" step.
+ *
+ * The submission link is a PRIVATE topic link (t.me/c/<chat>/<topic>/<msg>). `WebApp.openTelegramLink`
+ * alone does NOT reliably navigate to such a link on every client (this was the "link does nothing"
+ * bug), so this is a REAL `<a href>`: the Telegram webview's native link handling opens t.me links,
+ * and we ALSO fire openTelegramLink on click (no preventDefault) — whichever path the client honors,
+ * the post opens; on the web page (no webApp) the anchor's target=_blank opens it. NOTE: a private
+ * link only resolves for actual MEMBERS of that group's Telegram; a teacher who isn't in that chat
+ * can't see it via a link no matter how it's opened (Telegram limitation — would need a bot re-send).
+ */
+function TgPostLink({
+  url,
+  webApp,
+  className,
+  children,
+}: {
+  url: string;
+  webApp: unknown;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={() => {
+        try {
+          (webApp as { openTelegramLink?: (u: string) => void } | null | undefined)?.openTelegramLink?.(url);
+        } catch {
+          /* native <a> navigation is the fallback */
+        }
+      }}
+      className={className}
+    >
+      {children}
+    </a>
+  );
+}
+
 export function GradePhoto({
   submissionId,
   media,
@@ -88,17 +130,6 @@ export function GradePhoto({
     };
   }, [submissionId]);
 
-  const openTg = useCallback(
-    (url?: string | null) => {
-      const target = url || firstMsgUrl(media);
-      if (!target) return;
-      const w = webApp as any;
-      if (w?.openTelegramLink) w.openTelegramLink(target);
-      else window.open(target, "_blank", "noopener,noreferrer");
-    },
-    [media, webApp],
-  );
-
   if (state.status === "loading") {
     return <Skeleton className="h-[38vh] w-full rounded-lg" />;
   }
@@ -108,7 +139,8 @@ export function GradePhoto({
     return (
       <DegradedCard
         hint={DEGRADED_HINT[state.reason || "no_viewable_media"] || DEGRADED_HINT.request_failed}
-        onOpen={msgUrl ? () => openTg(msgUrl) : undefined}
+        href={msgUrl || undefined}
+        webApp={webApp}
       />
     );
   }
@@ -125,7 +157,7 @@ export function GradePhoto({
                 {KIND_LABEL[it.kind] || "Fayl"}
               </span>
             )}
-            <MediaPiece submissionId={submissionId} item={it} alt={alt} onZoom={setZoomSrc} openTg={openTg} />
+            <MediaPiece submissionId={submissionId} item={it} alt={alt} onZoom={setZoomSrc} webApp={webApp} />
           </div>
         ))}
       </div>
@@ -134,13 +166,13 @@ export function GradePhoto({
           teacher_pending_submissions — no migration needed. Works in the Mini App (openTelegramLink)
           and on the web page (window.open) — GradePhoto is shared by both since #121. */}
       {postUrl && (
-        <button
-          type="button"
-          onClick={() => openTg(postUrl)}
+        <TgPostLink
+          url={postUrl}
+          webApp={webApp}
           className="mt-1 inline-flex items-center gap-1 self-start text-[12px] font-semibold text-primary hover:underline"
         >
           <ExternalLink className="size-3.5" /> Telegram postini ochish
-        </button>
+        </TgPostLink>
       )}
       {zoomSrc && <Lightbox src={zoomSrc} alt={alt} onClose={() => setZoomSrc(null)} webApp={webApp} />}
     </>
@@ -159,13 +191,13 @@ function MediaPiece({
   item,
   alt,
   onZoom,
-  openTg,
+  webApp,
 }: {
   submissionId: string;
   item: ResolvedMedia;
   alt: string;
   onZoom: (src: string) => void;
-  openTg: (url?: string | null) => void;
+  webApp: unknown;
 }) {
   const kind = item.kind;
   const [blob, setBlob] = useState<BlobState>({ status: "idle" });
@@ -209,8 +241,6 @@ function MediaPiece({
     if (item.fetchable && kind === "photo") void load();
   }, [item.fetchable, kind, load]);
 
-  const tgFallback = item.msg_url ? () => openTg(item.msg_url) : undefined;
-
   // 1) Directly-loadable url (signed storage image, external link, or already-http media).
   if (item.url) {
     if (kind === "link") return <LinkTile url={item.url} />;
@@ -221,13 +251,13 @@ function MediaPiece({
 
   // 2) mode A already knows it's unresolvable (e.g. purged storage object).
   if (item.reason) {
-    return <DegradedCard small hint={DEGRADED_HINT[item.reason] || DEGRADED_HINT.request_failed} onOpen={tgFallback} />;
+    return <DegradedCard small hint={DEGRADED_HINT[item.reason] || DEGRADED_HINT.request_failed} href={item.msg_url || undefined} webApp={webApp} />;
   }
 
   // 3) Telegram file → stream bytes via mode B.
   if (item.fetchable) {
     if (blob.status === "fail") {
-      return <DegradedCard small hint={DEGRADED_HINT[blob.reason] || DEGRADED_HINT.request_failed} onOpen={tgFallback} />;
+      return <DegradedCard small hint={DEGRADED_HINT[blob.reason] || DEGRADED_HINT.request_failed} href={item.msg_url || undefined} webApp={webApp} />;
     }
     if (kind === "photo") {
       if (blob.status === "ok") return <ImageTile src={blob.url} alt={alt} onZoom={onZoom} />;
@@ -251,7 +281,7 @@ function MediaPiece({
     return <DocTile label="Hujjatni ochish" loading={blob.status === "loading"} onClick={load} />;
   }
 
-  return <DegradedCard small hint={DEGRADED_HINT.no_viewable_media} onOpen={tgFallback} />;
+  return <DegradedCard small hint={DEGRADED_HINT.no_viewable_media} href={item.msg_url || undefined} webApp={webApp} />;
 }
 
 // ---- presentational pieces ----
@@ -376,7 +406,7 @@ function LinkTile({ url }: { url: string }) {
   );
 }
 
-function DegradedCard({ hint, onOpen, small }: { hint: string; onOpen?: () => void; small?: boolean }) {
+function DegradedCard({ hint, href, webApp, small }: { hint: string; href?: string; webApp?: unknown; small?: boolean }) {
   return (
     <div
       className={cn(
@@ -386,15 +416,15 @@ function DegradedCard({ hint, onOpen, small }: { hint: string; onOpen?: () => vo
     >
       <ImageOff className={cn("text-muted-foreground", small ? "size-5" : "size-7")} aria-hidden />
       <p className="max-w-[30ch] text-xs font-semibold text-muted-foreground">{hint}</p>
-      {onOpen && (
-        <button
-          type="button"
-          onClick={onOpen}
+      {href && (
+        <TgPostLink
+          url={href}
+          webApp={webApp}
           className="mt-1 inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-tint px-3 text-[13px] font-bold text-foreground transition-colors hover:bg-tint/70"
         >
           <ExternalLink className="size-4" />
           Telegramda ochish
-        </button>
+        </TgPostLink>
       )}
     </div>
   );
