@@ -149,7 +149,7 @@ export default function Landing() {
   };
 
   return (
-    <div className="landing-dark min-h-screen bg-background text-foreground font-brandbody">
+    <div className="landing-dark min-h-screen overflow-x-hidden bg-background text-foreground font-brandbody">
       <header className={`fixed top-0 inset-x-0 z-40 transition-all duration-300 ${scrolled ? "bg-[#0A0D0C]/85 backdrop-blur-md border-b border-white/10" : "bg-transparent"}`}>
         <div className="container flex h-16 items-center justify-between gap-4">
           <Link to="/" className="flex items-center gap-2 font-display text-[19px] font-semibold text-white tracking-tight">
@@ -174,7 +174,7 @@ export default function Landing() {
               aria-label={menuOpen ? "Close menu" : "Open menu"}
               aria-expanded={menuOpen}
               onClick={() => setMenuOpen((o) => !o)}
-              className="md:hidden inline-flex items-center justify-center w-10 h-10 rounded-lg text-white hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6FE6CE]"
+              className="md:hidden inline-flex items-center justify-center w-11 h-11 rounded-lg text-white hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6FE6CE]"
             >
               {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
@@ -207,20 +207,20 @@ export default function Landing() {
           }} />
         <PixelDissolve className="absolute inset-0 w-full h-full" />
 
-        <div className="container relative z-[3] grid lg:grid-cols-[1.15fr_.85fr] gap-10 items-center min-h-screen pt-28 pb-16">
+        <div className="container relative z-[3] grid lg:grid-cols-[1.15fr_.85fr] gap-10 items-center min-h-[100svh] pt-28 pb-16">
           <div className="max-w-2xl">
             <span className="hero-rise inline-flex items-center gap-2.5 text-[13.5px] font-semibold text-[#6FE6CE] border border-white/10 bg-[rgba(47,179,155,.06)] rounded-full px-4 py-2" style={{ animationDelay: "0s" }}>
               <span className="w-[7px] h-[7px] rounded-full bg-[#6FE6CE] shadow-[0_0_12px_#6FE6CE]" /> {t("landing.hero.badge", "8 ta amaliy modul · Telegram-first")}
             </span>
-            <h1 className="hero-rise font-display font-semibold text-[clamp(44px,6.4vw,88px)] leading-[.98] mt-6 text-balance" style={{ animationDelay: ".06s" }}>
+            <h1 className="hero-rise font-display font-semibold text-[clamp(36px,6.4vw,88px)] leading-[1.0] mt-6 text-balance" style={{ animationDelay: ".06s" }}>
               {renderHeadlineDark(headline)} <span className="text-[#2FB39B] text-[.7em] align-[.06em]">✦</span>
             </h1>
             <p className="hero-rise mt-6 text-[clamp(17px,1.5vw,20px)] leading-relaxed text-[#CBD9D4] max-w-[52ch]" style={{ animationDelay: ".12s" }}>{sub}</p>
-            <div className="hero-rise mt-9 flex flex-wrap gap-3.5" style={{ animationDelay: ".18s" }}>
-              <Button asChild size="lg" className="bg-gradient-to-b from-[#6FE6CE] to-[#2FB39B] text-[#052220] shadow-[0_10px_30px_rgba(47,179,155,.32)] hover:-translate-y-0.5 transition-transform focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6FE6CE]">
+            <div className="hero-rise mt-9 flex flex-col sm:flex-row sm:flex-wrap gap-3" style={{ animationDelay: ".18s" }}>
+              <Button asChild size="lg" className="w-full sm:w-auto bg-gradient-to-b from-[#6FE6CE] to-[#2FB39B] text-[#052220] shadow-[0_10px_30px_rgba(47,179,155,.32)] hover:-translate-y-0.5 transition-transform focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6FE6CE]">
                 <Link to="/signup">{t("landing.hero.startLearning")} <ArrowRight className="h-4 w-4" /></Link>
               </Button>
-              <Button asChild size="lg" variant="outline" className="border-white/15 bg-transparent text-white hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6FE6CE]">
+              <Button asChild size="lg" variant="outline" className="w-full sm:w-auto border-white/15 bg-transparent text-white hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6FE6CE]">
                 <a href="#curriculum">{t("landing.hero.viewCurriculum")}</a>
               </Button>
             </div>
@@ -279,7 +279,7 @@ export default function Landing() {
       </section>
 
       {/* Mission — the movement, not a course */}
-      <section className="py-20 md:py-28 bg-[#0A0D0C] text-[#F3F7F5] relative overflow-hidden">
+      <section className="py-16 md:py-28 bg-[#0A0D0C] text-[#F3F7F5] relative overflow-hidden">
         <div aria-hidden className="pointer-events-none absolute -bottom-[20%] left-1/2 -translate-x-1/2 w-[80%] h-[70%] blur-3xl" style={{ background: "radial-gradient(closest-side, rgba(47,179,155,.14), transparent 70%)" }} />
         <div className="container max-w-3xl relative z-10 text-center">
           <span className="inline-flex items-center gap-2 text-[13px] font-semibold text-[#6FE6CE] border border-white/10 bg-[rgba(47,179,155,.06)] rounded-full px-4 py-2">Bizning maqsadimiz</span>
@@ -305,7 +305,7 @@ export default function Landing() {
         </div>
       </section>
 
-      <section id="outcomes" className="py-20 md:py-28">
+      <section id="outcomes" className="py-16 md:py-28">
         <div className="container">
           <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight mb-3">{t("landing.outcomes.heading")}</h2>
           <p className="text-muted-foreground mb-12 max-w-2xl">{t("landing.outcomes.subheading")}</p>
@@ -326,7 +326,7 @@ export default function Landing() {
         </div>
       </section>
 
-      <section id="curriculum" className="py-20 md:py-28 bg-secondary/30">
+      <section id="curriculum" className="py-16 md:py-28 bg-secondary/30">
         <div className="container">
           <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
             <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight">Kurs dasturi — 8 ta modul</h2>
@@ -347,9 +347,9 @@ export default function Landing() {
         </div>
       </section>
 
-      <section id="instructor" className="py-20 md:py-28">
+      <section id="instructor" className="py-16 md:py-28">
         <div className="container max-w-3xl">
-          <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight text-center mb-3">Sizni Shvetsiyalik AI mutaxassislari o'qitadi</h2>
+          <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight text-center text-balance mb-3">Sizni Shvetsiyalik AI mutaxassislari o'qitadi</h2>
           <p className="text-muted-foreground text-center max-w-2xl mx-auto mb-12 leading-relaxed">Biz Shvetsiyada o'z firmamizda AI loyihalari ustida ishlaymiz va bundan real daromad olamiz. Yevropadagi muhandislik va marketing tajribamiz — O'zbekistondagi ko'plab mutaxassislar tajribasidan ustun. Endi shu bilim va tajribani to'g'ridan-to'g'ri sizga olib kelmoqdamiz.</p>
           <div className="grid sm:grid-cols-2 gap-5">
             {FOUNDERS.map((f) => (
@@ -367,7 +367,7 @@ export default function Landing() {
         </div>
       </section>
 
-      <section className="py-20 md:py-28 bg-secondary/30">
+      <section className="py-16 md:py-28 bg-secondary/30">
         <div className="container">
           <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight mb-12">{t("landing.howItWorks.heading")}</h2>
           <div className="grid md:grid-cols-3 gap-8">
@@ -389,7 +389,7 @@ export default function Landing() {
       </section>
 
       {SHOWCASE.length > 0 && (
-      <section id="showcase" className="py-20 md:py-28">
+      <section id="showcase" className="py-16 md:py-28">
         <div className="container">
           <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight mb-3">{t("landing.showcase.heading")}</h2>
           <p className="text-muted-foreground mb-10 max-w-2xl">{t("landing.showcase.sub")}</p>
@@ -412,7 +412,7 @@ export default function Landing() {
       </section>
       )}
 
-      <section id="pricing" className="py-20 md:py-28 bg-secondary/30">
+      <section id="pricing" className="py-16 md:py-28 bg-secondary/30">
         <div className="container max-w-4xl">
           <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight text-center mb-2">Tarifni tanlang</h2>
           <p className="text-muted-foreground text-center mb-12 max-w-2xl mx-auto">Har ikkala tarif ham to'liq 8 modul va 3 ta bonus kursni o'z ichiga oladi.</p>
@@ -474,7 +474,7 @@ export default function Landing() {
         </div>
       </section>
 
-      <section id="faq" className="py-20 md:py-28">
+      <section id="faq" className="py-16 md:py-28">
         <div className="container max-w-3xl">
           <h2 className="font-display text-[36px] md:text-[44px] font-semibold tracking-tight mb-10 text-center">{t("landing.faq.heading")}</h2>
           <Accordion type="single" collapsible className="space-y-2">
@@ -488,7 +488,7 @@ export default function Landing() {
         </div>
       </section>
 
-      <section className="py-20 md:py-28 bg-secondary/60 border-y border-border">
+      <section className="py-16 md:py-28 bg-secondary/60 border-y border-border">
         <div className="container max-w-2xl text-center space-y-6">
           <h2 className="font-display text-[36px] md:text-[48px] font-semibold tracking-tight">{t("landing.finalCta.heading")}</h2>
           <p className="text-muted-foreground text-lg">{t("landing.finalCta.sub")}</p>
