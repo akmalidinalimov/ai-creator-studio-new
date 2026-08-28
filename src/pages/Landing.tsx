@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
 import "./landing-split.css";
 import "./landingReel.css";
 import { LANDING_SPLIT_HTML } from "./landingSplitHtml";
@@ -13,9 +14,8 @@ import { LANDING_SPLIT_HTML } from "./landingSplitHtml";
 // scoped, cleaned-up effect (reveal-on-scroll, count-up, progress fill, deck
 // parallax, the winners reel, the lead form, and the mobile nav).
 //
-// NOTE (follow-up before real traffic): the lead form currently shows a success
-// state only — it does NOT persist the lead yet. Wiring capture (a leads table +
-// admin Telegram notify via sendTelegram) is a separate PR.
+// The lead form POSTs to the submit-lead edge function (via the /sb proxy): it persists the
+// lead and DMs admins. Media (welcome video, teacher photos) are still placeholders.
 export default function Landing() {
   const { user, role, loading } = useAuth();
   const nav = useNavigate();
@@ -213,17 +213,54 @@ export default function Landing() {
       document.body.style.overflow = "";
     });
 
-    // --- lead form (success state only for now; see NOTE above) ---
+    // --- lead form → submit-lead edge fn (persists + DMs admins; routed via /sb proxy) ---
     const form = root.querySelector<HTMLFormElement>("#leadForm");
     if (form) {
-      const onSubmit = (e: Event) => {
+      // Honeypot: bots fill this hidden field; the edge fn silently drops those submissions.
+      let hp = form.querySelector<HTMLInputElement>('input[name="company"]');
+      if (!hp) {
+        hp = document.createElement("input");
+        hp.type = "text";
+        hp.name = "company";
+        hp.tabIndex = -1;
+        hp.autocomplete = "off";
+        hp.setAttribute("aria-hidden", "true");
+        hp.style.cssText = "position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none";
+        form.appendChild(hp);
+      }
+      const btn = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+      const onSubmit = async (e: Event) => {
         e.preventDefault();
         const i = root.querySelector<HTMLInputElement>("#ism");
         const t = root.querySelector<HTMLInputElement>("#tel");
         const ok = root.querySelector<HTMLElement>("#okMsg");
-        if (i && t && i.value.trim() && t.value.trim()) {
-          if (ok) ok.style.display = "block";
+        if (!i || !t || !i.value.trim() || !t.value.trim()) return;
+        const name = i.value.trim();
+        const phone = t.value.trim();
+        const company = hp?.value ?? "";
+        const restore = btn?.innerHTML ?? "";
+        if (btn) { btn.disabled = true; btn.textContent = "Yuborilmoqda…"; }
+        try {
+          const { error } = await supabase.functions.invoke("submit-lead", {
+            body: { name, phone, source: "landing", company },
+          });
+          if (error) throw error;
+          if (ok) { ok.textContent = "✓ Rahmat! Tez orada bogʻlanamiz."; ok.style.color = ""; ok.style.display = "block"; }
           form.reset();
+        } catch (err) {
+          if (ok) {
+            ok.textContent = "Yuborishda xatolik. Iltimos, birozdan soʻng qayta urinib koʻring.";
+            ok.style.color = "#ff9d86";
+            ok.style.display = "block";
+          }
+          // Make a broken lead path DB-visible (best-effort; never blocks the user).
+          try {
+            void supabase.functions.invoke("client-beacon", {
+              body: { event_type: "other", message: "lead_submit_failed", route: "/", extra: { e: String((err as { message?: string })?.message ?? err) } },
+            });
+          } catch { /* noop */ }
+        } finally {
+          if (btn) { btn.disabled = false; btn.innerHTML = restore; }
         }
       };
       form.addEventListener("submit", onSubmit);
