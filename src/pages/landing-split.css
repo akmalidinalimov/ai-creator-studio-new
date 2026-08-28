@@ -343,13 +343,13 @@
 .aicl .hero{position:relative;overflow:hidden}
 .aicl .hero-in{display:block!important;text-align:center;position:static}
 .aicl .hero-in > div:nth-child(2){position:absolute;inset:0;z-index:0;pointer-events:none;margin:0}
-.aicl .hero-in > div:nth-child(2) .hero-stage{position:absolute;top:48%;left:50%;width:1180px;max-width:none;margin:0;transform:translate(-50%,-50%) perspective(1300px) rotateX(8deg) rotateY(30deg) rotateZ(-1.5deg) scale(1.82);filter:blur(2.5px) brightness(.72) saturate(1.05);opacity:.95}
+.aicl .hero-in > div:nth-child(2) .hero-stage{position:absolute;top:48%;left:50%;width:1320px;max-width:none;margin:0;transform:translate(-46%,-50%) perspective(1000px) rotateX(6deg) rotateY(44deg) rotateZ(-2deg) scale(2.05);filter:blur(2.5px) brightness(.72) saturate(1.05);opacity:.95}
 .aicl .hero::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;background:radial-gradient(130% 100% at 50% 42%, transparent 8%, rgba(6,12,10,.72) 58%, var(--bg) 93%)}
 .aicl .hero-in > div:first-child{position:relative;z-index:2;max-width:840px;margin:0 auto}
 .aicl .hero .eyebrow{justify-content:center}
 .aicl .hero .lead, .aicl .hero .urg{margin-left:auto;margin-right:auto}
 .aicl .hero .hero-cta, .aicl .hero .proof{justify-content:center}
 @media(max-width:900px){
-.aicl .hero-in > div:nth-child(2) .hero-stage{width:820px;transform:translate(-50%,-50%) perspective(1100px) rotateX(7deg) rotateY(28deg) rotateZ(-1deg) scale(1.7);filter:blur(2px) brightness(.64)}
+.aicl .hero-in > div:nth-child(2) .hero-stage{width:900px;transform:translate(-46%,-50%) perspective(900px) rotateX(6deg) rotateY(40deg) rotateZ(-1.5deg) scale(1.85);filter:blur(2px) brightness(.64)}
 .aicl .hero::after{background:radial-gradient(150% 100% at 50% 40%, transparent 4%, rgba(6,12,10,.7) 52%, var(--bg) 90%)}
 }
