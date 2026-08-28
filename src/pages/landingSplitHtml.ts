@@ -28,12 +28,11 @@ export const LANDING_SPLIT_HTML = `
   <div class="wrap hero-in">
     <div>
       <span class="eyebrow reveal">5 haftalik amaliy AI challenge</span>
-      <h1 class="display reveal d1">AI bilan 1 oyda <span class="em">daromadga chiqing</span>.</h1>
-      <p class="lead reveal d2">Biz Shvetsiyada AI loyihalarida ishlaydigan er-xotinmiz. Shu 5 haftalik amaliy challengeda tayyor portfolio yasab, real mijozlarga chiqasiz. Yaxshi ishlasangiz to'lovingiz qaytib keladi yoki noutbuk yutasiz.</p>
-      <div class="reveal d2"><span class="urg">🔥 Yangi guruh <b>tez orada</b> boshlanadi · o'rinlar cheklangan</span></div>
+      <h1 class="display reveal d1">AI bilan 5 haftada <span class="em">daromadga chiqing</span>.</h1>
+      <p class="lead reveal d2">5 haftada tayyor portfolio yasab, real mijozlarga chiqasiz. Pulingiz qaytadi yoki noutbuk yutasiz.</p>
+      <div class="reveal d2"><span class="urg">🔥 Yangi guruh · <b>o'rinlar cheklangan</b></span></div>
       <div class="hero-cta reveal d3">
         <a href="#lead" class="btn btn-cta">Challengega qo'shilish <span class="arw">→</span></a>
-        <a href="#welcome" class="btn btn-ghost">▶ Videoni ko'rish</a>
       </div>
       <div class="proof reveal d4">
         <div class="avstack">
@@ -83,15 +82,16 @@ export const LANDING_SPLIT_HTML = `
 
 <!-- ============ 2. TRUST STRIP ============ -->
 <div class="trust">
-  <div class="wrap trust-in">
+  <div class="trust-viewport"><div class="trust-track">
     <div class="tstat"><b data-count="1500" data-suffix="+">0</b><span>o'quvchi daromadga chiqdi</span></div>
-    <div class="tsep"></div>
     <div class="tstat"><b data-count="5">0</b><span>haftalik challenge</span></div>
-    <div class="tsep"></div>
     <div class="tstat"><b data-count="5">0</b><span>amaliy modul</span></div>
-    <div class="tsep"></div>
     <div class="tstat"><b data-count="6">0</b><span>oy darslarga dostup</span></div>
-  </div>
+    <div class="tstat" aria-hidden="true"><b>1 500+</b><span>o'quvchi daromadga chiqdi</span></div>
+    <div class="tstat" aria-hidden="true"><b>5</b><span>haftalik challenge</span></div>
+    <div class="tstat" aria-hidden="true"><b>5</b><span>amaliy modul</span></div>
+    <div class="tstat" aria-hidden="true"><b>6</b><span>oy darslarga dostup</span></div>
+  </div></div>
 </div>
 
 <!-- ============ 3. WELCOME VIDEO (9:16) ============ -->
