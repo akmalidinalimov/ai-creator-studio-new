@@ -23,6 +23,7 @@ export const LANDING_SPLIT_HTML = `
 
 <!-- ============ 1. SPLIT HERO — copy left, interactive deck right ============ -->
 <section class="hero">
+  <video class="hero-video" autoplay loop muted playsinline preload="auto" poster="/hero-bg-poster.jpg"><source src="/hero-bg.mp4" type="video/mp4"></video>
   <div class="hero-glow"></div>
   <div class="hero-grid"></div>
   <div class="wrap hero-in">

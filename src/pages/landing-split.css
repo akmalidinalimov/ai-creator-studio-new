@@ -340,3 +340,17 @@
 .aicl .nav-right{gap:6px}
 .aicl header .nav-right a.btn{padding:8px 13px!important;font-size:12.5px!important}
 }
+.aicl .hero{position:relative;overflow:hidden}
+.aicl .hero .hero-grid, .aicl .hero .hero-glow{display:none}
+.aicl .hero::before{content:"";position:absolute;inset:0;z-index:0;background:url(/hero-bg-poster.jpg) center/cover;filter:blur(14px) brightness(.5);transform:scale(1.12);pointer-events:none}
+.aicl .hero-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;filter:blur(14px) brightness(.5) saturate(1.1);transform:scale(1.12);pointer-events:none}
+.aicl .hero::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;background:radial-gradient(130% 100% at 50% 46%, rgba(6,12,10,.45), rgba(6,12,10,.8) 68%, var(--bg))}
+.aicl .hero .wrap.hero-in{position:relative;z-index:2;display:block!important;text-align:center}
+.aicl .hero-in > div:nth-child(2){display:none!important}
+.aicl .hero-in > div:first-child{max-width:840px;margin:0 auto}
+.aicl .hero .eyebrow{justify-content:center}
+.aicl .hero .lead, .aicl .hero .urg{margin-left:auto;margin-right:auto}
+.aicl .hero .hero-cta, .aicl .hero .proof{justify-content:center}
+@media(prefers-reduced-motion:reduce){
+.aicl .hero-video{display:none}
+}
