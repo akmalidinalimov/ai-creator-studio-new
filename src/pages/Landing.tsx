@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import "./landing-split.css";
+import "./landingReel.css";
 import { LANDING_SPLIT_HTML } from "./landingSplitHtml";
 
 // Public marketing landing for the 5-week AI CREATORS challenge ("Split Hero").
@@ -129,24 +130,88 @@ export default function Landing() {
       cleanups.push(() => el.removeEventListener("click", stop));
     });
 
-    // --- winners reel (facade — real page mounts YouTube Shorts here) ---
+    // --- winners reel: real YouTube Shorts, click-to-play in a 9:16 lightbox ---
+    // Facade pattern: cards show the YouTube thumbnail; the iframe only mounts on
+    // click (no 20 iframes autoplaying). Duplicate set (aria-hidden) makes the
+    // marquee loop seamless.
     const reel = root.querySelector<HTMLElement>("#reel-track");
+    const WINS: { id: string; e: string; t: string }[] = [
+      { id: "UboizrBeOXk", e: "🕋", t: "Umra safarini yutdi" },
+      { id: "kBQlU9VRI_g", e: "💵", t: "$300 ishlab topdi" },
+      { id: "ufYKqrVJLVM", e: "✈️", t: "Turkiyaga sayohat yutdi" },
+      { id: "Mh6uKA-CWTM", e: "🕋", t: "Umra safarini yutdi" },
+      { id: "4MH0YAs3KGQ", e: "💸", t: "To'lovini qaytarib oldi" },
+      { id: "Bt7IMFxZdIg", e: "💸", t: "To'lovini qaytarib oldi" },
+      { id: "OEHU549lPTI", e: "💸", t: "To'lovini qaytarib oldi" },
+      { id: "jSCytXorYPg", e: "🚀", t: "AI'ni biznesiga qo'shdi" },
+      { id: "9ggvrMGDQ3A", e: "🎓", t: "Sertifikat bilan yakunladi" },
+      { id: "vUx_7TqWfoE", e: "🎓", t: "Sertifikat bilan yakunladi" },
+    ];
+    const playSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="#04150f"><path d="M8 5v14l11-7z"/></svg>';
+    const attr = (s: string) => s.replace(/"/g, "&quot;");
+    const mkCard = (w: { id: string; e: string; t: string }, dup: boolean) =>
+      `<button type="button" class="vtest" data-vid="${w.id}"${dup ? ' aria-hidden="true" tabindex="-1"' : ""}` +
+      ` aria-label="${attr(w.t)} — videoni ko'rish"` +
+      ` style="background-image:url('https://i.ytimg.com/vi/${w.id}/hqdefault.jpg'),linear-gradient(160deg,#0f1c18,#0a130f)">` +
+      `<span class="yt">${w.e} Sovrindor</span><span class="loop">▶ Video</span>` +
+      `<div class="play-sm">${playSvg}</div>` +
+      `<div class="who"><b>${attr(w.t)}</b><span>Bosib ko'ring</span></div></button>`;
     if (reel && !reel.childElementCount) {
-      const svg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="#04150f"><path d="M8 5v14l11-7z"/></svg>';
-      const WINS = [
-        { e: "🕋", t: "Umra safarini yutdi" }, { e: "🏆", t: "Noutbuk yutdi" }, { e: "💸", t: "To'lovini qaytarib oldi" },
-        { e: "🚀", t: "Birinchi mijozini topdi" }, { e: "💵", t: "AI bilan daromad qildi" }, { e: "💸", t: "To'lovini qaytarib oldi" },
-        { e: "🏆", t: "Noutbuk yutdi" }, { e: "💼", t: "Portfolio to'pladi" }, { e: "🎓", t: "Sertifikat bilan yakunladi" },
-        { e: "🕋", t: "Umra safarini yutdi" },
-      ];
-      const mkCard = (w: { e: string; t: string }) =>
-        `<div class="vtest"><span class="yt">${w.e} Sovrindor</span><span class="loop">Ovozsiz</span>` +
-        `<div class="play-sm">${svg}</div><div class="vloader"></div>` +
-        `<div class="who"><b>${w.t}</b><span>Bosib ovoz bilan ko'ring</span></div></div>`;
       let html = "";
-      for (let k = 0; k < 2; k++) WINS.forEach((w) => { html += mkCard(w); });
+      WINS.forEach((w) => { html += mkCard(w, false); });
+      WINS.forEach((w) => { html += mkCard(w, true); });
       reel.innerHTML = html;
     }
+
+    // lightbox for the reel videos
+    let modal = root.querySelector<HTMLElement>(".vmodal");
+    if (!modal) {
+      modal = document.createElement("div");
+      modal.className = "vmodal";
+      modal.setAttribute("role", "dialog");
+      modal.setAttribute("aria-modal", "true");
+      modal.innerHTML = '<div class="vbox"><button type="button" class="vclose" aria-label="Yopish">×</button></div>';
+      root.appendChild(modal);
+    }
+    const vbox = modal.querySelector<HTMLElement>(".vbox");
+    const openVid = (id: string) => {
+      if (!vbox || !modal) return;
+      const prev = vbox.querySelector("iframe");
+      if (prev) prev.remove();
+      const ifr = document.createElement("iframe");
+      ifr.src = `https://www.youtube.com/embed/${id}?autoplay=1&playsinline=1&rel=0`;
+      ifr.title = "Sovrindor videosi";
+      ifr.setAttribute("allow", "autoplay; encrypted-media; fullscreen; picture-in-picture");
+      ifr.setAttribute("allowfullscreen", "");
+      vbox.appendChild(ifr);
+      modal.classList.add("open");
+      document.body.style.overflow = "hidden";
+    };
+    const closeVid = () => {
+      if (!modal) return;
+      modal.classList.remove("open");
+      const ifr = modal.querySelector("iframe");
+      if (ifr) ifr.remove();
+      document.body.style.overflow = "";
+    };
+    const onReelClick = (e: MouseEvent) => {
+      const card = (e.target as HTMLElement).closest?.(".vtest[data-vid]") as HTMLElement | null;
+      if (card) { e.preventDefault(); const id = card.getAttribute("data-vid"); if (id) openVid(id); }
+    };
+    const onModalClick = (e: MouseEvent) => {
+      const tgt = e.target as HTMLElement;
+      if (tgt === modal || tgt.classList.contains("vclose")) closeVid();
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closeVid(); };
+    root.addEventListener("click", onReelClick);
+    modal.addEventListener("click", onModalClick);
+    document.addEventListener("keydown", onKey);
+    cleanups.push(() => {
+      root.removeEventListener("click", onReelClick);
+      modal?.removeEventListener("click", onModalClick);
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    });
 
     // --- lead form (success state only for now; see NOTE above) ---
     const form = root.querySelector<HTMLFormElement>("#leadForm");
