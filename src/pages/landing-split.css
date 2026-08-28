@@ -49,7 +49,7 @@
 .aicl .btn:hover .arw{transform:translateX(4px)}
 .aicl header.nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);background:rgba(8,15,13,.72);border-bottom:1px solid var(--line)}
 .aicl .nav-in{display:flex;align-items:center;gap:24px;height:66px}
-.aicl .brand{font-family:var(--f-display);font-weight:800;font-size:18px;letter-spacing:-.02em;display:flex;align-items:center;gap:8px}
+.aicl .brand{font-family:var(--f-display);font-weight:800;font-size:18px;letter-spacing:-.02em;display:flex;align-items:center;gap:8px;white-space:nowrap}
 .aicl .brand .spark{color:var(--emerald)}
 .aicl .nav-links{display:flex;gap:26px;margin-left:14px;font-size:14px;color:var(--muted)}
 .aicl .nav-links a{transition:color .2s}
@@ -64,7 +64,7 @@
 .aicl .hero-grid{position:absolute;inset:0;pointer-events:none;opacity:.5;background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:52px 52px;-webkit-mask-image:radial-gradient(680px 520px at 30% 30%,#000,transparent 75%);mask-image:radial-gradient(680px 520px at 30% 30%,#000,transparent 75%)}
 .aicl .hero-in{position:relative;display:grid;grid-template-columns:1.06fr .94fr;gap:52px;align-items:center}
 .aicl .hero h1{margin:20px 0 18px}
-.aicl .urg{display:inline-flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text);background:rgba(255,106,77,.08);border:1px solid rgba(255,106,77,.3);padding:9px 15px;border-radius:999px;margin-top:8px}
+.aicl .urg{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:var(--text);background:rgba(255,106,77,.08);border:1px solid rgba(255,106,77,.3);padding:9px 15px;border-radius:999px;margin-top:8px;white-space:nowrap}
 .aicl .urg b{color:var(--coral)}
 .aicl .hero-cta{display:flex;gap:14px;flex-wrap:wrap;margin:26px 0 22px}
 .aicl .proof{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
@@ -144,6 +144,10 @@
 .aicl .tstat b{font-family:var(--f-display);font-weight:800;font-size:26px;color:var(--text);font-variant-numeric:tabular-nums}
 .aicl .tstat span{font-size:12.5px;color:var(--muted);letter-spacing:.04em}
 .aicl .tsep{width:1px;background:var(--line);align-self:stretch}
+.aicl .trust-viewport{overflow:hidden;padding:24px 0;-webkit-mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent)}
+.aicl .trust-track{display:flex;align-items:center;gap:0 46px;width:max-content;padding-left:46px;animation:trustscroll 26s linear infinite}
+.aicl .trust-track:hover{animation-play-state:paused}
+@keyframes trustscroll{to{transform:translateX(-50%)}}
 .aicl .grid{display:grid;gap:18px}
 .aicl .tile{background:linear-gradient(180deg,var(--surface),var(--surface-2));border:1px solid var(--line);border-radius:var(--radius);padding:26px;transition:transform .3s var(--ease),border-color .3s,box-shadow .3s}
 .aicl .tile:hover{transform:translateY(-4px);border-color:var(--line-strong);box-shadow:0 24px 50px -30px rgba(47,224,176,.35)}
@@ -312,6 +316,7 @@
 .aicl .reveal{opacity:1;transform:none;transition:none}
 .aicl .reel-track{animation:none}
 .aicl .deck{transform:none}
+.aicl .trust-viewport{overflow-x:auto}
 }
 @media(max-width:600px){
 .aicl .step .wk{font-size:12px}
@@ -330,4 +335,8 @@
 .aicl .qa summary{font-size:15px}
 .aicl .lead{font-size:16px}
 .aicl .foot-col a{padding:11px 0}
+.aicl .brand{font-size:16px}
+.aicl .nav-in{gap:10px}
+.aicl .nav-right{gap:6px}
+.aicl header .nav-right a.btn{padding:8px 13px!important;font-size:12.5px!important}
 }
