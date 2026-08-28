@@ -4,7 +4,7 @@
 .aicl{
     --bg:#080f0d; --bg-2:#0a130f; --surface:#0e1814; --surface-2:#122019;
     --line:rgba(120,220,190,.12); --line-strong:rgba(120,220,190,.24);
-    --text:#eaf2ef; --muted:#93a7a0; --faint:#61756e;
+    --text:#eaf2ef; --muted:#93a7a0; --faint:#75887f; 
     --emerald:#2fe0b0; --emerald-2:#6fe6ce; --emerald-deep:#0e8f74;
     --coral:#ff6a4d; --coral-deep:#e64a2c; --gold:#e6c877;
     --radius:20px; --radius-sm:14px; --maxw:1180px;
@@ -328,6 +328,6 @@
 .aicl .oname{font-size:20px}
 .aicl .price-now{font-size:30px}
 .aicl .qa summary{font-size:15px}
-.aicl .lead{font-size:15.5px}
+.aicl .lead{font-size:16px}
 .aicl .foot-col a{padding:11px 0}
 }
