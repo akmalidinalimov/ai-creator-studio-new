@@ -48,7 +48,7 @@ export const LANDING_SPLIT_HTML = `
           <span class="av" style="background:linear-gradient(135deg,#e6c877,#c9a54a)">N</span>
           <span class="av" style="background:linear-gradient(135deg,#ff6a4d,#e64a2c)">R</span>
         </div>
-        <div><div class="stars">★★★★★</div><small><b style="color:var(--text)">1 500+</b> o'quvchi daromadga chiqdi · sovrinlar: <b style="color:var(--gold)">Umra safari · noutbuk · pul qaytarish</b></small></div>
+        <div><div class="stars">★★★★★</div><small><b style="color:var(--text)">1 500+</b> o'quvchi daromadga chiqdi · sovrinlar: <b style="color:var(--gold)">noutbuk · pul qaytarish</b></small></div>
       </div>
     </div>
 
@@ -179,7 +179,7 @@ export const LANDING_SPLIT_HTML = `
     <div class="sec-head center reveal">
       <span class="eyebrow" style="justify-content:center">Haqiqiy sovrindorlar</span>
       <h2 class="section-title">Sovrin yutgan o'quvchilarimiz</h2>
-      <p class="lead" style="margin:0 auto">Programist yoki injener bo'lmagan oddiy odamlar AI bilan hayotini o'zgartirdi. Ba'zilari to'lovini <b style="color:var(--text)">to'liq qaytarib oldi</b>, ba'zilari <b style="color:var(--text)">Umra safarini yutdi</b>. Bir qatorda ovozsiz aylanadi — bosing, ovoz bilan ochiladi.</p>
+      <p class="lead" style="margin:0 auto">Programist yoki injener bo'lmagan oddiy odamlar AI bilan hayotini o'zgartirdi. Ba'zilari <b style="color:var(--text)">Turkiyaga sayohat</b>, ba'zilari esa <b style="color:var(--text)">Umra safarlarini</b> yutishdi. Endi esa siz ham yaxshi natija ko'rsatib, pulingizni qaytarib oling yoki kompyuter yutib oling.</p>
     </div>
     <div class="reel-viewport reveal">
       <div class="reel-track" id="reel-track"></div>
@@ -231,10 +231,9 @@ export const LANDING_SPLIT_HTML = `
       <a href="#lead" class="btn btn-cta" style="width:100%;justify-content:center;font-size:16px">Ariza qoldirish <span class="arw">→</span></a>
       <div class="cond">⏱ Sotuv menejerlarimiz siz bilan bog'lanadi</div>
     </div>
-    <div class="grid guar guar-3 reveal d1">
+    <div class="grid guar reveal d1">
       <div class="guar-card"><div class="guar-ic">💸</div><div><h4>Pul qaytadi</h4><p>Diplom ishini yaxshi topshirgan va aktiv bo'lgan <b style="color:var(--text)">top-5 o'quvchi to'lovini to'liq qaytarib oladi</b>.</p></div></div>
       <div class="guar-card"><div class="guar-ic">🏆</div><div><h4>Noutbuk sovrini</h4><p>Birinchi 100 to'liq to'lovchidan a'lo natijali <b style="color:var(--text)">top-3 noutbuk yutadi</b>.</p></div></div>
-      <div class="guar-card"><div class="guar-ic">🕋</div><div><h4>Umra safari</h4><p>Eng yaxshi natija ko'rsatganlardan biri <b style="color:var(--text)">Umra safari sovrinini</b> yutadi.</p></div></div>
     </div>
   </div>
 </section>
@@ -249,7 +248,7 @@ export const LANDING_SPLIT_HTML = `
     <div class="faq reveal">
       <details class="qa" open><summary>Bu kursmi yoki challenge? <span class="pm">+</span></summary><p>Bu — 5 haftalik amaliy challenge. Har hafta vazifa bajarasiz, portfolio quriladi va real natijaga chiqasiz. 3 oyda o'rganadigan narsani 1 oyda o'zlashtirasiz.</p></details>
       <details class="qa"><summary>AI bo'yicha tajriba yoki dasturlash kerakmi? <span class="pm">+</span></summary><p>Yo'q, noldan boshlaymiz. Programist bo'lish shart emas — ko'pchilik o'quvchimiz oddiy odamlar. Sizga qurilma, internet va kuniga 1–2 soat kerak.</p></details>
-      <details class="qa"><summary>To'lagan pulimni qaytarib olsam bo'ladimi? <span class="pm">+</span></summary><p>Ha. Diplom ishini yaxshi topshirgan va aktiv bo'lgan top-5 o'quvchi to'lovini to'liq qaytarib oladi. Birinchi 100 to'lovchidan a'lo top-3 noutbuk, eng yaxshilardan biri esa Umra safarini yutadi.</p></details>
+      <details class="qa"><summary>To'lagan pulimni qaytarib olsam bo'ladimi? <span class="pm">+</span></summary><p>Ha. Diplom ishini yaxshi topshirgan va aktiv bo'lgan top-5 o'quvchi to'lovini to'liq qaytarib oladi. Birinchi 100 to'lovchidan a'lo top-3 esa noutbuk yutadi.</p></details>
       <details class="qa"><summary>Mijozni rostdan topib berasizmi? <span class="pm">+</span></summary><p>Ha. 5-haftada ustoz o'z Instagramidan e'lon beradi, biznes egalari forma to'ldiradi, biz esa aktiv o'quvchilarni ularga bog'laymiz.</p></details>
       <details class="qa"><summary>Challengedan keyin darslar qoladimi? <span class="pm">+</span></summary><p>Ha, video darslarga 6 oy dostup qoladi. Pastdagi Telegram botdan bepul AI darsni ham sovg'a olishingiz mumkin.</p></details>
     </div>
