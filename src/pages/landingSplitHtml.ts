@@ -101,24 +101,6 @@ export const LANDING_SPLIT_HTML = `
   </div></div>
 </div>
 
-<!-- ============ 3. WELCOME VIDEO (9:16) ============ -->
-<section id="welcome">
-  <div class="wrap">
-    <div class="welcome-in">
-      <div class="sec-head center reveal" style="margin-bottom:0">
-        <span class="eyebrow" style="justify-content:center">Tanishuv</span>
-        <h2 class="section-title">Challenge nima va u qanday ishlaydi</h2>
-        <p class="lead" style="margin:0 auto">Bu oddiy videodarslik kursi emas. Bekorga buni amaliy challenge demayapmiz. 3 oyda o'rganadigan narsani 1 oyda o'rganib, tezroq daromadga chiqasiz.</p>
-      </div>
-      <div class="phone916 reveal d1" data-video>
-        <span class="vtag">▶ Xush kelibsiz</span>
-        <span class="pl"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
-        <span class="cap">Xush kelibsiz videosi (9:16)</span>
-      </div>
-    </div>
-  </div>
-</section>
-
 <!-- ============ 4. HOW IT WORKS — before -> after ============ -->
 <section class="band" id="road">
   <div class="wrap">
@@ -201,12 +183,6 @@ export const LANDING_SPLIT_HTML = `
     </div>
     <div class="reel-viewport reveal">
       <div class="reel-track" id="reel-track"></div>
-    </div>
-    <div class="grid ig-wall reveal d1">
-      <div class="ig"><div class="ig-top"><span class="ig-av" style="background:linear-gradient(135deg,#2fe0b0,#0e8f74)">D</span><div><b>@dilnoza.creates</b><br><span>Dilnoza K. · Instagram</span></div></div><p>«Hech qachon rasm chizmagandim. 2-haftada birinchi ishimni Instagramga qo'ydim 🔥»</p><div class="ig-foot"><span class="heart">♥ 214</span><span>💬 18</span></div></div>
-      <div class="ig"><div class="ig-top"><span class="ig-av" style="background:linear-gradient(135deg,#e6c877,#c9a54a)">S</span><div><b>@sardor.ai</b><br><span>Sardor A. · Instagram</span></div></div><p>«Challenge tugamasdanoq birinchi buyurtmani oldim. To'lovim ham qaytdi, rahmat!»</p><div class="ig-foot"><span class="heart">♥ 340</span><span>💬 27</span></div></div>
-      <div class="ig"><div class="ig-top"><span class="ig-av" style="background:linear-gradient(135deg,#ff6a4d,#e64a2c)">N</span><div><b>@nigora.designs</b><br><span>Nigora T. · Instagram</span></div></div><p>«Eng qimmatlisi — tuzilma va har kunlik qadam. Endi to'xtamayman.»</p><div class="ig-foot"><span class="heart">♥ 189</span><span>💬 12</span></div></div>
-      <div class="ig"><div class="ig-top"><span class="ig-av" style="background:linear-gradient(135deg,#6fe6ce,#2fb39b)">R</span><div><b>@rustam.makes</b><br><span>Rustam M. · Instagram</span></div></div><p>«5 hafta oldin AI'dan qo'rqardim. Bugun mijozlarga xizmat qilyapman.»</p><div class="ig-foot"><span class="heart">♥ 402</span><span>💬 33</span></div></div>
     </div>
     <div style="text-align:center;margin-top:34px" class="reveal d1"><a href="#lead" class="btn btn-cta">Men ham qo'shilaman <span class="arw">→</span></a></div>
   </div>
