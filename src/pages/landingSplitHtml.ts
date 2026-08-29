@@ -101,6 +101,29 @@ export const LANDING_SPLIT_HTML = `
   </div></div>
 </div>
 
+<!-- ============ EXPERTS (moved up: section 2, right after hero) ============ -->
+<section class="band" id="experts">
+  <div class="wrap">
+    <div class="sec-head center reveal">
+      <span class="eyebrow" style="justify-content:center">Kim o'rgatadi va nega</span>
+      <h2 class="section-title">Sizni Shvetsiyalik AI ekspertlar o'qitadi</h2>
+      <p class="lead" style="margin:0 auto">Turmush o'rtog'im bilan O'zbekiston va Shvetsiyada AI loyihalarida ishlaymiz, bugungacha 1 500+ odamni AI bilan daromadga olib chiqdik. YouTube darslari tarqoq va ingliz tilida — shuning uchun to'g'ri, ketma-ket tizimni challenge qilib berdik.</p>
+    </div>
+    <div class="grid fnd-grid reveal">
+      <div class="fnd"><span class="fnd-av" style="background:linear-gradient(135deg,#2fe0b0,#0e8f74)">SH</span><div><h3>Shahlo Alikhanova</h3><div class="role">Marketing va AI mutaxassisi</div><p>Odamlarni AI bilan real daromadga olib chiquvchi amaliy dasturlar muallifi. Shvetsiyadan.</p></div></div>
+      <div class="fnd"><span class="fnd-av" style="background:linear-gradient(135deg,#e6c877,#c9a54a)">A</span><div><h3>Akmalidin Alimov</h3><div class="role">Muhandis va AI mutaxassisi</div><p>Platforma va AI ish oqimlari ortidagi muhandis — g'oyadan tayyor mahsulotgacha.</p></div></div>
+    </div>
+    <div class="mission-strip reveal d1">
+      <p class="whisper">Biz kurs sotmaymiz. Biz hayotlarni o'zgartiramiz.</p>
+      <h3><span class="em">100 000</span> hayotni o'zgartirish</h3>
+      <div class="prog">
+        <div class="prog-bar"><div class="prog-fill" data-fill="1.5"></div></div>
+        <div class="prog-meta"><span><b style="color:var(--text)" data-count="1500">0</b> o'quvchi</span><span>100 000 maqsad</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ============ 4. HOW IT WORKS — before -> after ============ -->
 <section class="band" id="road">
   <div class="wrap">
@@ -148,29 +171,6 @@ export const LANDING_SPLIT_HTML = `
       <div class="step star"><div class="n">★</div><div class="wk">Har hafta</div><b>Jonli efir + masterklass</b><p>Asosiy o'qituvchilar bilan haftada 1 marta jonli efir. Savollaringizni to'g'ridan-to'g'ri berasiz.</p><div class="out"><span class="di">◆</span><span>Natija: har qadamda yoningizda jamoa</span></div></div>
     </div>
   </section>
-</section>
-
-<!-- ============ 6. EXPERTS + MISSION BAR ============ -->
-<section class="band" id="experts">
-  <div class="wrap">
-    <div class="sec-head center reveal">
-      <span class="eyebrow" style="justify-content:center">Kim o'rgatadi va nega</span>
-      <h2 class="section-title">Sizni Shvetsiyalik AI ekspertlar o'qitadi</h2>
-      <p class="lead" style="margin:0 auto">Turmush o'rtog'im bilan O'zbekiston va Shvetsiyada AI loyihalarida ishlaymiz, bugungacha 1 500+ odamni AI bilan daromadga olib chiqdik. YouTube darslari tarqoq va ingliz tilida — shuning uchun to'g'ri, ketma-ket tizimni challenge qilib berdik.</p>
-    </div>
-    <div class="grid fnd-grid reveal">
-      <div class="fnd"><span class="fnd-av" style="background:linear-gradient(135deg,#2fe0b0,#0e8f74)">SH</span><div><h3>Shahlo Alikhanova</h3><div class="role">Marketing va AI mutaxassisi</div><p>Odamlarni AI bilan real daromadga olib chiquvchi amaliy dasturlar muallifi. Shvetsiyadan.</p></div></div>
-      <div class="fnd"><span class="fnd-av" style="background:linear-gradient(135deg,#e6c877,#c9a54a)">A</span><div><h3>Akmalidin Alimov</h3><div class="role">Muhandis va AI mutaxassisi</div><p>Platforma va AI ish oqimlari ortidagi muhandis — g'oyadan tayyor mahsulotgacha.</p></div></div>
-    </div>
-    <div class="mission-strip reveal d1">
-      <p class="whisper">Biz kurs sotmaymiz. Biz hayotlarni o'zgartiramiz.</p>
-      <h3><span class="em">100 000</span> hayotni o'zgartirish</h3>
-      <div class="prog">
-        <div class="prog-bar"><div class="prog-fill" data-fill="1.5"></div></div>
-        <div class="prog-meta"><span><b style="color:var(--text)" data-count="1500">0</b> o'quvchi</span><span>100 000 maqsad</span></div>
-      </div>
-    </div>
-  </div>
 </section>
 
 <!-- ============ 7. WINNERS reel + IG wall ============ -->
