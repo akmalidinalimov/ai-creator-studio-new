@@ -137,8 +137,10 @@ export default function Landing() {
     const reel = root.querySelector<HTMLElement>("#reel-track");
     const reelVp = root.querySelector<HTMLElement>(".reel-viewport");
     const WINS: { id: string; e: string; t: string }[] = [
+      { id: "UboizrBeOXk", e: "🕋", t: "Umra safarini yutdi" },
       { id: "kBQlU9VRI_g", e: "💵", t: "$300 ishlab topdi" },
       { id: "ufYKqrVJLVM", e: "✈️", t: "Turkiyaga sayohat yutdi" },
+      { id: "Mh6uKA-CWTM", e: "🕋", t: "Umra safarini yutdi" },
       { id: "4MH0YAs3KGQ", e: "💸", t: "To'lovini qaytarib oldi" },
       { id: "Bt7IMFxZdIg", e: "💸", t: "To'lovini qaytarib oldi" },
       { id: "OEHU549lPTI", e: "💸", t: "To'lovini qaytarib oldi" },
