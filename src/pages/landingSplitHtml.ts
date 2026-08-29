@@ -2,6 +2,13 @@
 // Trusted static marketing markup rendered via dangerouslySetInnerHTML in Landing.tsx.
 /* eslint-disable */
 export const LANDING_SPLIT_HTML = `
+<!-- ============ PAGE-WIDE VIDEO BACKDROP (one fixed video behind all sections) ============ -->
+<div class="page-bg" aria-hidden="true">
+  <div class="page-poster"></div>
+  <video class="page-video" autoplay loop muted playsinline preload="auto" poster="/hero-bg-poster.jpg"><source src="/hero-bg.mp4" type="video/mp4"></video>
+</div>
+<div class="page-scrim" aria-hidden="true"></div>
+
 <!-- ============ NAV ============ -->
 <header class="nav">
   <div class="wrap nav-in">
@@ -23,7 +30,6 @@ export const LANDING_SPLIT_HTML = `
 
 <!-- ============ 1. SPLIT HERO — copy left, interactive deck right ============ -->
 <section class="hero">
-  <video class="hero-video" autoplay loop muted playsinline preload="auto" poster="/hero-bg-poster.jpg"><source src="/hero-bg.mp4" type="video/mp4"></video>
   <div class="hero-glow"></div>
   <div class="hero-grid"></div>
   <div class="wrap hero-in">
