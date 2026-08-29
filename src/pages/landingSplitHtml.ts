@@ -179,7 +179,7 @@ export const LANDING_SPLIT_HTML = `
     <div class="sec-head center reveal">
       <span class="eyebrow" style="justify-content:center">Haqiqiy sovrindorlar</span>
       <h2 class="section-title">Sovrin yutgan o'quvchilarimiz</h2>
-      <p class="lead" style="margin:0 auto">Programist yoki injener bo'lmagan oddiy odamlar AI bilan hayotini o'zgartirdi. Ba'zilari to'lovini <b style="color:var(--text)">to'liq qaytarib oldi</b>, ba'zilari <b style="color:var(--text)">noutbuk yutdi</b>. Bir qatorda ovozsiz o'ynaydi — bosing, ovoz bilan ochiladi.</p>
+      <p class="lead" style="margin:0 auto">Programist yoki injener bo'lmagan oddiy odamlar AI bilan hayotini o'zgartirdi. Ba'zilari <b style="color:var(--text)">Turkiyaga sayohat</b>, ba'zilari esa <b style="color:var(--text)">Umra safarlarini</b> yutishdi. Endi esa siz ham yaxshi natija ko'rsatib, pulingizni qaytarib oling yoki kompyuter yutib oling.</p>
     </div>
     <div class="reel-viewport reveal">
       <div class="reel-track" id="reel-track"></div>
