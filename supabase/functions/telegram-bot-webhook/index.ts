@@ -1396,7 +1396,7 @@ function getMainKeyboard(locale: Locale) {
   // only in private chats — exactly where this keyboard is sent to a resolved student.
   const rows: any[] = [];
   if (__studentMiniAppEnabled?.on) {
-    rows.push([{ text: MINIAPP_STUDENT_LABEL[locale], web_app: { url: `${MINIAPP_BASE}/` } }]);
+    rows.push([{ text: MINIAPP_STUDENT_LABEL[locale], web_app: { url: `${MINIAPP_BASE}/dashboard` } }]);
   }
   rows.push(
     [{ text: t.kbDavom }],
@@ -1512,7 +1512,7 @@ async function syncStudentMenuButton(chatId: number, enabled: boolean, locale: L
     await tgApi("setChatMenuButton", {
       chat_id: chatId,
       menu_button: enabled
-        ? { type: "web_app", text: MINIAPP_STUDENT_LABEL[locale], web_app: { url: `${MINIAPP_BASE}/` } }
+        ? { type: "web_app", text: MINIAPP_STUDENT_LABEL[locale], web_app: { url: `${MINIAPP_BASE}/dashboard` } }
         : { type: "default" },
     });
     __studentMenuBtn.set(chatId, { on: enabled, locale, at: Date.now() });
