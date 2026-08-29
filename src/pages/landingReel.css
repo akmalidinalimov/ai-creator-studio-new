@@ -64,3 +64,21 @@
   z-index: 2;
 }
 .aicl .vmodal .vclose:hover { background: rgba(255, 255, 255, 0.26); }
+
+/* inline MUTED autoplay preview: the 16:9 player covers the 9:16 card (center-crop),
+   sits behind the gradient + labels, and ignores pointer events so a tap on the card
+   still opens the lightbox WITH sound. Mounted only for on-screen cards (IntersectionObserver). */
+.aicl .vtest .vfill {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  height: 100%;
+  width: 316%; /* 16:9 player -> 9:16 box, filled by height, cropped on width */
+  border: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+.aicl .vtest::before { z-index: 1; } /* gradient overlay above the video, under the labels */
+.aicl .vtest.playing .play-sm { opacity: 0; } /* hide the big play glyph once a preview is live */
+.aicl .vtest .play-sm { transition: opacity 0.25s ease; }

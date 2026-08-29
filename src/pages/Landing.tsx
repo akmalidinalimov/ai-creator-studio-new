@@ -130,16 +130,15 @@ export default function Landing() {
       cleanups.push(() => el.removeEventListener("click", stop));
     });
 
-    // --- winners reel: real YouTube Shorts, click-to-play in a 9:16 lightbox ---
-    // Facade pattern: cards show the YouTube thumbnail; the iframe only mounts on
-    // click (no 20 iframes autoplaying). Duplicate set (aria-hidden) makes the
-    // marquee loop seamless.
+    // --- winners reel: real YouTube Shorts. Cards AUTOPLAY MUTED inline once they
+    // scroll into view; a tap opens the 9:16 lightbox WITH sound. An
+    // IntersectionObserver keeps only the on-screen cards mounted as live players,
+    // so the marquee/scroll never runs more than a handful of iframes at once.
     const reel = root.querySelector<HTMLElement>("#reel-track");
+    const reelVp = root.querySelector<HTMLElement>(".reel-viewport");
     const WINS: { id: string; e: string; t: string }[] = [
-      { id: "UboizrBeOXk", e: "🕋", t: "Umra safarini yutdi" },
       { id: "kBQlU9VRI_g", e: "💵", t: "$300 ishlab topdi" },
       { id: "ufYKqrVJLVM", e: "✈️", t: "Turkiyaga sayohat yutdi" },
-      { id: "Mh6uKA-CWTM", e: "🕋", t: "Umra safarini yutdi" },
       { id: "4MH0YAs3KGQ", e: "💸", t: "To'lovini qaytarib oldi" },
       { id: "Bt7IMFxZdIg", e: "💸", t: "To'lovini qaytarib oldi" },
       { id: "OEHU549lPTI", e: "💸", t: "To'lovini qaytarib oldi" },
@@ -151,16 +150,51 @@ export default function Landing() {
     const attr = (s: string) => s.replace(/"/g, "&quot;");
     const mkCard = (w: { id: string; e: string; t: string }, dup: boolean) =>
       `<button type="button" class="vtest" data-vid="${w.id}"${dup ? ' aria-hidden="true" tabindex="-1"' : ""}` +
-      ` aria-label="${attr(w.t)} — videoni ko'rish"` +
+      ` aria-label="${attr(w.t)} — ovoz bilan ochish"` +
       ` style="background-image:url('https://i.ytimg.com/vi/${w.id}/hqdefault.jpg'),linear-gradient(160deg,#0f1c18,#0a130f)">` +
-      `<span class="yt">${w.e} Sovrindor</span><span class="loop">▶ Video</span>` +
+      `<span class="yt">${w.e} Sovrindor</span><span class="loop">🔇 Ovozsiz</span>` +
       `<div class="play-sm">${playSvg}</div>` +
-      `<div class="who"><b>${attr(w.t)}</b><span>Bosib ko'ring</span></div></button>`;
+      `<div class="who"><b>${attr(w.t)}</b><span>Ovoz uchun bosing</span></div></button>`;
+    // Mount a muted, looping, controls-off preview inside a card; remove it when off-screen.
+    const mountFrame = (card: Element) => {
+      if (card.querySelector("iframe")) return;
+      const id = card.getAttribute("data-vid");
+      if (!id) return;
+      const ifr = document.createElement("iframe");
+      ifr.className = "vfill";
+      ifr.src =
+        `https://www.youtube.com/embed/${id}?autoplay=1&mute=1&loop=1&playlist=${id}` +
+        `&controls=0&modestbranding=1&playsinline=1&rel=0&disablekb=1&fs=0&iv_load_policy=3`;
+      ifr.title = "Sovrindor videosi (ovozsiz)";
+      ifr.setAttribute("allow", "autoplay; encrypted-media; picture-in-picture");
+      ifr.setAttribute("tabindex", "-1");
+      ifr.setAttribute("aria-hidden", "true");
+      card.insertBefore(ifr, card.firstChild);
+      card.classList.add("playing");
+    };
+    const unmountFrame = (card: Element) => {
+      const ifr = card.querySelector("iframe");
+      if (ifr) ifr.remove();
+      card.classList.remove("playing");
+    };
     if (reel && !reel.childElementCount) {
       let html = "";
       WINS.forEach((w) => { html += mkCard(w, false); });
       WINS.forEach((w) => { html += mkCard(w, true); });
       reel.innerHTML = html;
+      if ("IntersectionObserver" in window) {
+        const io = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((en) => {
+              if (en.isIntersecting) mountFrame(en.target);
+              else unmountFrame(en.target);
+            });
+          },
+          { root: reelVp ?? null, rootMargin: "0px 240px", threshold: 0.25 }
+        );
+        reel.querySelectorAll<HTMLElement>(".vtest").forEach((c) => io.observe(c));
+        cleanups.push(() => io.disconnect());
+      }
     }
 
     // lightbox for the reel videos
