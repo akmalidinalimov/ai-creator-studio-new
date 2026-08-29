@@ -178,7 +178,18 @@ Deno.serve(async (req) => {
 
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const outcome = await resolveProfile(makeDeps(admin), { id: v.user.id, username: v.user.username });
-  if (outcome.kind === "not_linked") return json({ error: "not_linked" }, 403);
+  if (outcome.kind === "not_linked") {
+    // Health signal: the not_linked wall was previously DB-invisible (function logs only), so a
+    // mass lockout after enabling the student Mini App entry would evade every watchdog. Record a
+    // countable, PII-lean row (telegram_id is already logged elsewhere in this fn; NEVER initData).
+    // Best-effort — must never block the 403 response.
+    await admin.from("admin_actions").insert({
+      actor_user_id: null,
+      action: "miniapp_not_linked",
+      details: { telegram_id: v.user.id, has_username: !!v.user.username, at: new Date().toISOString() },
+    }).then(() => {}, () => {});
+    return json({ error: "not_linked" }, 403);
+  }
 
   let session;
   try {
