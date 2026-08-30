@@ -5,6 +5,7 @@ import { ImagePlus, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useMiniApp } from "@/lib/telegram/MiniAppContext";
 import { Button } from "@/components/ui-kit";
 import {
   AlertDialog,
@@ -102,6 +103,27 @@ function submitErrorMessage(code: string, t: TFunction): string {
   }
 }
 
+// Resolve the student's group homework-topic deep-link (t.me/c/<chat>/<topic>) once per session.
+// The in-app path is image-only; video / documents / multiple images can only be submitted by posting
+// into the Telegram group homework topic (the bot-capture path), so we deep-link students there for
+// those. Cached module-level: HomeworkSubmit remounts per assignment (key), so this avoids re-querying
+// on every assignment switch. Group-level url covers all groups (per-module topics are unused today).
+let _topicUrlCache: { uid: string; url: string | null } | null = null;
+async function resolveGroupTopicUrl(uid: string): Promise<string | null> {
+  if (_topicUrlCache && _topicUrlCache.uid === uid) return _topicUrlCache.url;
+  let url: string | null = null;
+  try {
+    const { data: prof } = await supabase.from("profiles").select("group_id").eq("id", uid).maybeSingle();
+    const gid = (prof as { group_id?: string } | null)?.group_id;
+    if (gid) {
+      const { data: gr } = await supabase.from("groups").select("homework_topic_url").eq("id", gid).maybeSingle();
+      url = (gr as { homework_topic_url?: string } | null)?.homework_topic_url || null;
+    }
+  } catch { /* best-effort — no deep-link if we can't resolve it */ }
+  _topicUrlCache = { uid, url };
+  return url;
+}
+
 export interface HomeworkSubmitProps {
   assignment: AssignableItem;
   /** Called after a successful submit or resubmit (toast already shown). */
@@ -114,7 +136,9 @@ export interface HomeworkSubmitProps {
 export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange, className }: HomeworkSubmitProps) {
   const { user } = useAuth();
   const { t } = useTranslation();
+  const { webApp } = useMiniApp();
 
+  const [topicUrl, setTopicUrl] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [note, setNote] = useState("");
@@ -122,6 +146,14 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
   const [uploadedPath, setUploadedPath] = useState<string | null>(null);
   const [confirmResubmitOpen, setConfirmResubmitOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Resolve the group homework-topic deep-link (for the video/document "post in your group" option).
+  useEffect(() => {
+    if (!user) return;
+    let alive = true;
+    void resolveGroupTopicUrl(user.id).then((url) => { if (alive) setTopicUrl(url); });
+    return () => { alive = false; };
+  }, [user]);
 
   // Blob-URL cleanup (fixed post-review, 2026-08-18): onFileChange/resetForm already revoke
   // the PRIOR preview url synchronously on re-pick / successful submit, but neither one fires
@@ -293,6 +325,32 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
         {submitting ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
         {submitting ? t("homework.picker.submitting") : t("homework.picker.submitCta")}
       </Button>
+
+      {topicUrl && (
+        <div className="mt-4 rounded-lg border border-border bg-surface-2 p-3">
+          <div className="text-[12.5px] font-bold text-foreground">{t("homework.picker.topicTitle")}</div>
+          <div className="mt-0.5 text-[11.5px] font-semibold text-muted-foreground">{t("homework.picker.topicHint")}</div>
+          <a
+            href={topicUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => {
+              // The real <a target=_blank> is the fallback; openTelegramLink is the RELIABLE path
+              // inside the Telegram Mini App (a plain <a> can silently no-op in some clients). Fire
+              // both — whichever the client honors opens the private topic link. Members-only (students
+              // are group members by the trust boundary), matching the teacher-side GradePhoto pattern.
+              try {
+                webApp?.openTelegramLink?.(topicUrl);
+              } catch {
+                /* native <a> navigation is the fallback */
+              }
+            }}
+            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-4 py-2.5 text-sm font-bold text-foreground"
+          >
+            📌 {t("homework.picker.topicCta")}
+          </a>
+        </div>
+      )}
 
       <AlertDialog open={confirmResubmitOpen} onOpenChange={setConfirmResubmitOpen}>
         <AlertDialogContent>

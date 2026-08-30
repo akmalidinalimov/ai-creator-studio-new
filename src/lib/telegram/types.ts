@@ -35,6 +35,11 @@ export interface TgWebApp {
   setBackgroundColor?(c: string): void;
   onEvent(event: string, cb: () => void): void;
   offEvent(event: string, cb: () => void): void;
+  /** Open a t.me/telegram.org link inside Telegram (the reliable way to reach a private topic link
+   *  from the Mini App — a plain <a> can silently no-op in some clients). */
+  openTelegramLink?(url: string): void;
+  /** Open an external http(s) link (optionally in the in-app browser). */
+  openLink?(url: string, options?: { try_instant_view?: boolean }): void;
 }
 
 export interface TelegramNamespace {
