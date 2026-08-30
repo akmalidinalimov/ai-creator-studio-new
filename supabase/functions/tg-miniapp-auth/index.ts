@@ -196,6 +196,13 @@ Deno.serve(async (req) => {
     session = await mintSessionForUser(admin, outcome.email);
   } catch (_e) {
     console.error("tg-miniapp-auth mint failed for profile", outcome.profileId); // never log initData
+    // Health signal: a VALID, linked student who can't get a session = the GoTrue thundering-herd
+    // symptom on a mass flip. Previously console-only → invisible to the watchdog layer. Best-effort.
+    await admin.from("admin_actions").insert({
+      actor_user_id: null,
+      action: "miniapp_mint_failed",
+      details: { profile_id: outcome.profileId, at: new Date().toISOString() },
+    }).then(() => {}, () => {});
     return json({ error: "mint_failed" }, 500);
   }
 

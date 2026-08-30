@@ -16,6 +16,7 @@
  *    never stored.
  */
 import { SB_BASE } from "@/lib/supabaseBase";
+import { isTelegramWebView } from "@/lib/platform";
 
 export type BeaconType =
   | "chunk_load" | "render_crash" | "unhandled_error" | "unhandled_rejection"
@@ -80,13 +81,19 @@ export function reportClientError(opts: {
     const tok = accessTokenBestEffort();
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
 
+    // Surface WHICH surface failed. user_agent can't tell iOS Telegram webview from Safari, so we
+    // stamp every beacon with an explicit flag → the watchdog can isolate a Mini-App-only spike
+    // (extra->>'miniapp' = 'true') instead of it hiding under combined web+mini-app thresholds.
+    let miniapp = false;
+    try { miniapp = isTelegramWebView(); } catch { /* best-effort */ }
+
     const body = JSON.stringify({
       event_type: opts.type,
       message,
       route: (opts.route ?? window.location?.pathname ?? "").slice(0, 300),
       session_id: sessionId(),
       app_version: (import.meta.env.VITE_APP_VERSION as string) || undefined,
-      extra: opts.extra,
+      extra: { ...(opts.extra || {}), miniapp },
     });
 
     sent++;
