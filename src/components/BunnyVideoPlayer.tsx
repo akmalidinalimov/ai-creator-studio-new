@@ -78,6 +78,11 @@ export const BunnyVideoPlayer = forwardRef<BunnyPlayerHandle, Props>(function Bu
     let cancelled = false;
     let player: any = null;
     let interval: number | null = null;
+    // Stall detector: if playback STARTS but no `timeupdate` ever arrives (the Telegram-webview
+    // "player loads but ticks never fire" failure → watched-but-no-credit), beacon it. Armed only on
+    // `play`, disarmed on the first tick, so a merely-paused video never false-fires.
+    let sawTick = false;
+    let stallTimer: number | null = null;
 
     loadPlayerJs()
       .then((playerjs) => {
@@ -99,8 +104,24 @@ export const BunnyVideoPlayer = forwardRef<BunnyPlayerHandle, Props>(function Bu
           }
         });
         player.on("timeupdate", (e: { seconds?: number; duration?: number }) => {
+          if (!sawTick) {
+            sawTick = true; // ticks work → disarm the stall detector
+            if (stallTimer) { window.clearTimeout(stallTimer); stallTimer = null; }
+          }
           if (typeof e?.seconds === "number") lastTimeRef.current = e.seconds;
           if (typeof e?.duration === "number" && e.duration > 0) durationRef.current = e.duration;
+        });
+        // Playback started: if no tick has arrived in 15s, the progress bridge is dead in this
+        // webview — the student would watch the whole lesson and get no completion/XP. Make it loud.
+        player.on("play", () => {
+          if (sawTick || stallTimer) return;
+          stallTimer = window.setTimeout(() => {
+            stallTimer = null;
+            if (sawTick) return;
+            try {
+              reportClientError({ type: "video_error", message: "no_timeupdate_ticks", extra: { lib: libraryId } });
+            } catch { /* ignore */ }
+          }, 15000);
         });
         player.on("ended", () => {
           if (endedFiredRef.current) return;
@@ -156,7 +177,8 @@ export const BunnyVideoPlayer = forwardRef<BunnyPlayerHandle, Props>(function Bu
     return () => {
       cancelled = true;
       if (interval) window.clearInterval(interval);
-      try { player?.off?.("timeupdate"); player?.off?.("ended"); player?.off?.("ready"); } catch {}
+      if (stallTimer) window.clearTimeout(stallTimer);
+      try { player?.off?.("timeupdate"); player?.off?.("ended"); player?.off?.("ready"); player?.off?.("play"); } catch {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libraryId, videoGuid]);
