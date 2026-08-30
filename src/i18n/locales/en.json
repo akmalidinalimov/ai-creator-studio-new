@@ -2,7 +2,8 @@
   "miniapp": {
     "signingIn": "Signing you in…",
     "notLinkedTitle": "Account not found",
-    "notLinkedBody": "This Telegram account isn't linked to a profile yet. Please contact your teacher or administrator.",
+    "notLinkedBody": "This Telegram account isn't linked to a profile yet. Log in with your account to continue.",
+    "notLinkedLogin": "Log in with your account",
     "errorTitle": "Something went wrong",
     "errorBody": "We couldn't sign you in. Please try again.",
     "retry": "Try again"

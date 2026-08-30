@@ -1,13 +1,16 @@
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 import { UserX } from "lucide-react";
 
 /**
  * Shown inside the Telegram Mini App when the signed-in Telegram user cannot be
  * resolved to a profile (never linked, not a group member, ambiguous username, …).
  *
- * There is deliberately NO login link: inside Telegram, auth is automatic — the fix is
- * an admin/teacher linking the account, not the student typing a password. Web mode
- * never reaches this screen (the gate passes web visitors straight through).
+ * Recovery: an ACTIVE student already has their telegram_id linked and never reaches
+ * this screen. For the rare unresolved case we offer a website login so the student is
+ * never stranded — they sign in with the account they already have. (A follow-up can
+ * bind their telegram_id after that login so it becomes automatic next time.) Web mode
+ * never reaches this screen — the gate passes web visitors straight through.
  */
 export default function TgNotLinked() {
   const { t } = useTranslation();
@@ -19,6 +22,12 @@ export default function TgNotLinked() {
         </div>
         <h1 className="text-lg font-semibold">{t("miniapp.notLinkedTitle")}</h1>
         <p className="text-sm leading-relaxed text-muted-foreground">{t("miniapp.notLinkedBody")}</p>
+        <Link
+          to="/login"
+          className="inline-flex w-full items-center justify-center rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition hover:opacity-90"
+        >
+          {t("miniapp.notLinkedLogin")}
+        </Link>
       </div>
     </div>
   );
