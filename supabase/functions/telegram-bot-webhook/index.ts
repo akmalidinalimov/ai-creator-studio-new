@@ -1343,6 +1343,7 @@ async function runMigrationBroadcast(admin: any, mode: "test" | "all") {
   // This path is reached via the internal ops branch, which bypasses the top-level priming — prime
   // the Mini App kill-switch here so the persistent teacher keyboards sent below reflect it too.
   try { await loadTeacherMiniAppEnabled(admin); } catch (_e) { /* best-effort */ }
+  try { await loadStudentMiniAppEnabled(admin); } catch (_e) { /* best-effort */ }
 
   let ok = 0, fail = 0;
   const failures: string[] = [];
@@ -1389,13 +1390,22 @@ function getMainKeyboard(locale: Locale) {
   const p = PROF_T[locale];
   // 👤 Profil replaced 📊 Statistikam — all stats now live inside the profile
   // web app. The old kbStreak button (cached keyboards) still routes to /galaba.
+  // Student Mini App entry (kill-switch platform_settings.student_miniapp, default OFF): when enabled
+  // an extra top row opens the Mini App (grades/points/lessons) via a signed-initData web_app button;
+  // when disabled the keyboard is BYTE-IDENTICAL to before (no extra row). web_app reply buttons work
+  // only in private chats — exactly where this keyboard is sent to a resolved student.
+  const rows: any[] = [];
+  if (__studentMiniAppEnabled?.on) {
+    rows.push([{ text: MINIAPP_STUDENT_LABEL[locale], web_app: { url: `${MINIAPP_BASE}/dashboard` } }]);
+  }
+  rows.push(
+    [{ text: t.kbDavom }],
+    [{ text: p.kbProfil }, { text: t.kbHomework }],
+    [{ text: t.kbCert }, { text: t.kbLang }],
+    [{ text: t.kbHelp }],
+  );
   return {
-    keyboard: [
-      [{ text: t.kbDavom }],
-      [{ text: p.kbProfil }, { text: t.kbHomework }],
-      [{ text: t.kbCert }, { text: t.kbLang }],
-      [{ text: t.kbHelp }],
-    ],
+    keyboard: rows,
     resize_keyboard: true,
     is_persistent: true,
   };
@@ -1465,6 +1475,50 @@ async function syncTeacherMenuButton(chatId: number, enabled: boolean, locale: L
     // Health signal: a systemic failure (e.g. domain not registered, API change) would otherwise be
     // invisible. Best-effort — never rethrows; state isn't cached, so it retries next interaction.
     console.error("teacher-miniapp: setChatMenuButton failed", e);
+  }
+}
+
+// ── Student Mini App entry wiring ─────────────────────────────────────────────────────────────
+// Kill-switch: platform_settings.student_miniapp = {"enabled": bool}, seeded FALSE (default OFF).
+// UNLIKE the teacher flag, an ABSENT row defaults to DISABLED and ONLY a literal true enables — so a
+// missing/malformed value can never open the student entry (fail-closed). Cached 60s; primed per request.
+const MINIAPP_STUDENT_LABEL: Record<Locale, string> = {
+  uz: "🚀 Ilovani ochish",
+  ru: "🚀 Открыть приложение",
+  en: "🚀 Open the app",
+};
+let __studentMiniAppEnabled: { on: boolean; at: number } | null = null;
+async function loadStudentMiniAppEnabled(admin: any): Promise<boolean> {
+  if (__studentMiniAppEnabled && Date.now() - __studentMiniAppEnabled.at < 60_000) return __studentMiniAppEnabled.on;
+  let on = false; // default OFF: absent/malformed row → disabled (seed is {"enabled": false})
+  try {
+    const { data } = await admin.from("platform_settings").select("value").eq("key", "student_miniapp").maybeSingle();
+    if (data) on = (data.value as any)?.enabled === true; // only literal true enables
+  } catch (e) {
+    // Fail CLOSED (default off already) — log so a systemic platform_settings/DB read problem is visible.
+    console.error("student-miniapp: kill-switch read failed", e);
+  }
+  __studentMiniAppEnabled = { on, at: Date.now() };
+  return on;
+}
+
+// Per-student ☰ menu button → Mini App home (enabled) or reset to default (kill-switch off).
+// Best-effort + in-memory throttled (1h per chat+state); never throws. Mirrors syncTeacherMenuButton.
+const __studentMenuBtn = new Map<number, { on: boolean; locale: Locale; at: number }>();
+async function syncStudentMenuButton(chatId: number, enabled: boolean, locale: Locale) {
+  const prev = __studentMenuBtn.get(chatId);
+  if (prev && prev.on === enabled && prev.locale === locale && Date.now() - prev.at < 3_600_000) return;
+  try {
+    await tgApi("setChatMenuButton", {
+      chat_id: chatId,
+      menu_button: enabled
+        ? { type: "web_app", text: MINIAPP_STUDENT_LABEL[locale], web_app: { url: `${MINIAPP_BASE}/dashboard` } }
+        : { type: "default" },
+    });
+    __studentMenuBtn.set(chatId, { on: enabled, locale, at: Date.now() });
+  } catch (e) {
+    // Best-effort — never rethrows; state isn't cached on failure so it retries next interaction.
+    console.error("student-miniapp: setChatMenuButton failed", e);
   }
 }
 
@@ -7435,6 +7489,7 @@ Deno.serve(async (req) => {
   // invocation reflects the current state. Best-effort — on failure the keyboard falls back to the
   // plain bot command.
   try { await loadTeacherMiniAppEnabled(admin); } catch (_e) { /* best-effort */ }
+  try { await loadStudentMiniAppEnabled(admin); } catch (_e) { /* best-effort */ }
 
   // Diagnostic: log every incoming update shape (top-level keys + chat type/thread)
   try {
@@ -7561,6 +7616,14 @@ Deno.serve(async (req) => {
       // Throttled 1h/chat; wrapped so it can never block or break the teacher's actual interaction.
       if (isPrivateChat && (persona === "teacher" || persona === "admin")) {
         try { await syncTeacherMenuButton(msg.chat.id, __teacherMiniAppEnabled?.on === true, locale); } catch (_e) { /* best-effort */ }
+      }
+
+      // Student Mini App (kill-switch platform_settings.student_miniapp, default OFF): mirror the
+      // teacher sync. Student persona + private chat + a RESOLVED profile (a registered member —
+      // non-members already returned upstream). Throttled 1h/chat; wrapped so it can never block or
+      // break the student's actual interaction. When the flag is off this resets the menu to default.
+      if (isPrivateChat && persona === "student" && profileForLocale) {
+        try { await syncStudentMenuButton(msg.chat.id, __studentMiniAppEnabled?.on === true, locale); } catch (_e) { /* best-effort */ }
       }
 
       // U1: students WILL try DMing homework media to the bot. Point them to their group's
