@@ -4369,7 +4369,7 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
   if (state.state === "grade_comment") {
     const submissionId = ctx.submission_id as string;
     const { data: sub } = await admin.from("homework_submissions")
-      .select("user_id, assignment_id, score, submitted_at").eq("id", submissionId).maybeSingle();
+      .select("user_id, assignment_id, score, submitted_at, attempt_number").eq("id", submissionId).maybeSingle();
     if (text === "/cancel") {
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
     if (sub) cacheInvalidateUser(sub.user_id);
@@ -4483,6 +4483,13 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
                 { key: "grade_card_dm_heartbeat", value: { last_sent_at: new Date().toISOString() } },
                 { onConflict: "key" },
               );
+              // Stamp the shared per-attempt dedup marker so all 3 grade-card senders (bot here, the app
+              // path in notify-grade-voice, the grade-card-reconcile backstop) share ONE contract: this
+              // bot-delivered card marks the attempt notified, so the reconciler never re-DMs it and an
+              // app re-grade of the same attempt won't double-send. Best-effort — never blocks the grade.
+              await admin.from("homework_submissions")
+                .update({ grade_card_notified_attempt: (sub as any).attempt_number ?? 1 })
+                .eq("id", submissionId);
             }
           } catch (_e) { /* delivery recording is best-effort — never block the grade */ }
           if (voiceFileId) {

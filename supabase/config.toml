@@ -177,6 +177,12 @@ verify_jwt = true
 [functions.notify-grade-voice]
 verify_jwt = true
 
+# grade-card-reconcile: internal (pg_cron) BACKSTOP that heals students graded but never DM'd their
+# grade card. verify_jwt=false + x-internal-secret gated (verifyInternalSecret). See
+# supabase/functions/grade-card-reconcile/index.ts.
+[functions.grade-card-reconcile]
+verify_jwt = false
+
 # teacher-broadcast-group: Mini App API for a teacher to DM-broadcast a message to every student in
 # one of their groups (mirrors the bot-chat /tbroadcast flow exactly — a DM fan-out, NOT a post into
 # the supergroup). Requires a logged-in teacher/admin Supabase session JWT (verify_jwt=true) —

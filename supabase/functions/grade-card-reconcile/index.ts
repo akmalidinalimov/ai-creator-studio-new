@@ -1,0 +1,177 @@
+// grade-card-reconcile — service-role BACKSTOP that heals students graded but never DM'd their grade
+// card (the P0 gap fixed forward in notify-grade-voice / #153) AND catches any future transient miss.
+//
+// All 3 grade-card senders now share ONE dedup contract — homework_submissions.grade_card_notified_attempt
+// (stamped by the bot flow in telegram-bot-webhook, by the app flow in notify-grade-voice, and here). So a
+// row where that marker is NULL genuinely never had its card delivered for this attempt: this reconciler
+// finds those, ATOMICALLY claims each (UPDATE ... WHERE grade_card_notified_attempt IS NULL — which also
+// makes it race-safe against a concurrent grade, since any grade write stamps the marker), sends the card
+// confirming delivery, stamps grade_card_dm_heartbeat. Idempotent, graceful, internal-secret gated
+// (only pg_cron may call it), quiet-hours gated (no student DMs 22:00-08:00 Tashkent).
+//
+// The card TEXT mirrors notify-grade-voice / the bot's gradeStudentDM (hand-synced; a follow-up can
+// consolidate all three into one _shared/grade-card.ts helper).
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { sendTelegram } from "../_shared/telegram-send.ts";
+import { verifyInternalSecret } from "../_shared/internal-secret.ts";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-internal-secret",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
+const LOOKBACK_DAYS = 14; // heal grades from the last 2 weeks; older cohorts have the in-app view
+const BATCH = 60;         // bounded work per run; oldest-pending-first so a backlog drains steadily
+
+const escHtml = (s = "") => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+// Quiet hours: never DM a student 22:00-08:00 Tashkent (UTC+5, no DST) — mirrors cron-ungraded-homework-reminder.
+function tashkentHour(): number {
+  try {
+    const fmt = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Tashkent", hour12: false, hour: "2-digit" });
+    let h = parseInt(fmt.format(new Date()).slice(0, 2), 10);
+    if (h === 24) h = 0;
+    return h;
+  } catch { return 12; } // on failure assume daytime (fail toward delivering, not toward a night-time send)
+}
+
+type Locale = "uz" | "ru" | "en";
+function normLocale(code?: string | null): Locale {
+  const l = (code || "").toLowerCase().slice(0, 2);
+  if (l === "ru") return "ru";
+  if (l === "en") return "en";
+  return "uz";
+}
+// Same TEXT as notify-grade-voice GRADE_CARD / the bot's tt.gradeStudentDM (webhook index.ts:280/567/846).
+const GRADE_CARD: Record<Locale, (title: string, sc: number, mx: number, fb: string, xp?: number) => string> = {
+  uz: (t, sc, mx, fb, xp) => `🎉 Vazifangiz baholandi!\n\n📝 <b>${t}</b>\nBaho: <b>${sc}/${mx}</b>${xp ? `\n⚡ +${xp} XP` : ""}${fb ? `\nIzoh: ${fb}` : ""}`,
+  ru: (t, sc, mx, fb, xp) => `🎉 Ваша работа оценена!\n\n📝 <b>${t}</b>\nОценка: <b>${sc}/${mx}</b>${xp ? `\n⚡ +${xp} XP` : ""}${fb ? `\nКомментарий: ${fb}` : ""}`,
+  en: (t, sc, mx, fb, xp) => `🎉 Your homework was graded!\n\n📝 <b>${t}</b>\nScore: <b>${sc}/${mx}</b>${xp ? `\n⚡ +${xp} XP` : ""}${fb ? `\nFeedback: ${fb}` : ""}`,
+};
+const TITLE_FALLBACK: Record<Locale, string> = { uz: "Uy vazifasi", ru: "Домашнее задание", en: "Homework" };
+
+async function logHealth(admin: any, studentUserId: string | null, action: string, details: Record<string, unknown>, submissionId: string | null) {
+  try {
+    await admin.from("admin_actions").insert({
+      actor_user_id: null, action, target_user_id: studentUserId,
+      target_resource_type: "homework_submission", target_resource_id: submissionId,
+      details: { ...details, source: "grade-card-reconcile" },
+    });
+  } catch (e) { console.error("grade-card-reconcile logHealth threw", String(e)); }
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+
+  const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  if (!(await verifyInternalSecret(req, admin))) return json({ error: "forbidden" }, 403);
+  if (!BOT_TOKEN) return json({ error: "not_configured" }, 500);
+
+  const hr = tashkentHour();
+  if (hr < 8 || hr >= 22) return json({ ok: true, skipped_quiet_hours: true, hour: hr });
+
+  const cutoff = new Date(Date.now() - LOOKBACK_DAYS * 86400_000).toISOString();
+  // Settle window: never touch a grade younger than this. The forward senders (bot, notify-grade-voice)
+  // send-then-stamp within a second or two; leaving fresh grades alone means an in-flight forward send can
+  // never be raced by the reconciler into a DUPLICATE card. A genuinely-failed grade is simply healed a few
+  // minutes later instead of instantly — the backstop's whole point.
+  const settle = new Date(Date.now() - 5 * 60_000).toISOString();
+  const FETCH = 500; // headroom over the ~106 grades/14d; a saturated fetch emits a signal (below)
+
+  // Fetch the recent scored set oldest-first, then keep the FULL undelivered invariant in JS (PostgREST
+  // can't compare two columns): marker IS NULL (never delivered) OR marker < attempt_number (a resubmission
+  // was regraded but its card never landed — the case a NULL-only filter would strand forever). Already
+  // delivered rows carry marker == attempt_number and are excluded.
+  const { data: rows, error: qErr } = await admin
+    .from("homework_submissions")
+    .select("id, user_id, assignment_id, score, previous_score, score_feedback, attempt_number, grade_card_notified_attempt")
+    .not("score", "is", null)
+    .gte("scored_at", cutoff)
+    .lt("scored_at", settle)
+    .order("scored_at", { ascending: true })
+    .limit(FETCH);
+  if (qErr) return json({ error: "query_failed", desc: qErr.message }, 500);
+  if ((rows || []).length >= FETCH) {
+    // The window outgrew the fetch cap → oldest-first means the NEWEST rows past the cap are unseen this
+    // run. Make it visible instead of silently starving (the prior review's starvation concern).
+    await logHealth(admin, null, "grade_card_reconcile_fetch_saturated", { fetched: (rows || []).length, lookback_days: LOOKBACK_DAYS }, null);
+  }
+  const pending = (rows || []).filter((r: any) => {
+    const at = (r.attempt_number as number) ?? 1;
+    const n = r.grade_card_notified_attempt as number | null;
+    return n == null || n < at;
+  }).slice(0, BATCH);
+
+  let healed = 0, failed = 0, skipped = 0;
+
+  for (const sub of pending) {
+    const attempt = (sub.attempt_number as number) ?? 1;
+    const prior = sub.grade_card_notified_attempt as number | null; // restore this exact value on transient fail
+    // ATOMIC claim: WHERE marker IS NULL OR < attempt. If a concurrent grade (bot/app) stamped it to
+    // attempt since our SELECT, this returns 0 rows → we skip (that path owns the send). Also serializes
+    // two reconciler runs. Mirrors notify-grade-voice's claim so all senders share one contract.
+    const { data: claimed } = await admin
+      .from("homework_submissions")
+      .update({ grade_card_notified_attempt: attempt })
+      .eq("id", sub.id)
+      .or(`grade_card_notified_attempt.is.null,grade_card_notified_attempt.lt.${attempt}`)
+      .select("user_id, assignment_id, score, previous_score, score_feedback, attempt_number")
+      .maybeSingle();
+    if (!claimed) { skipped++; continue; }
+
+    // Fresh-read guard: the row may have been resubmitted/regraded between the batch SELECT and this claim
+    // (a resubmission nulls score + bumps attempt_number; the claim gates only on the marker). Re-verify
+    // against the freshly-returned row — if the score is gone or the attempt moved, the card we'd send from
+    // the stale snapshot would be wrong: back off (restore prior marker) and let a later run re-read cleanly.
+    if (claimed.score == null || ((claimed.attempt_number as number) ?? 1) !== attempt) {
+      await admin.from("homework_submissions").update({ grade_card_notified_attempt: prior }).eq("id", sub.id).eq("grade_card_notified_attempt", attempt);
+      skipped++;
+      continue;
+    }
+
+    const { data: student } = await admin.from("profiles").select("telegram_id, preferred_locale").eq("id", sub.user_id).maybeSingle();
+    const tgId = student?.telegram_id ?? null;
+    if (!tgId) {
+      // No telegram_id (~70%) — un-claim (restore prior marker) so a future run reaches them if they
+      // start the bot. prior is NULL for a never-delivered row, or the old attempt for a stale-marker row.
+      await admin.from("homework_submissions").update({ grade_card_notified_attempt: prior }).eq("id", sub.id).eq("grade_card_notified_attempt", attempt);
+      skipped++;
+      continue;
+    }
+    const locale = normLocale(student?.preferred_locale);
+    // Compose from the FRESH claimed row (validated identical to the batch snapshot by the guard above).
+    const { data: a } = await admin.from("homework_assignments").select("title, max_score").eq("id", claimed.assignment_id).maybeSingle();
+    const title = (a?.title && String(a.title).trim()) || TITLE_FALLBACK[locale];
+    const max = (a?.max_score as number) || 10;
+    const fb = typeof claimed.score_feedback === "string" ? claimed.score_feedback.trim() : "";
+    const prev = claimed.previous_score as number | null;
+    const score = claimed.score as number;
+    const gained25xp = (prev == null || prev < 9) && score >= 9;
+    const text = GRADE_CARD[locale](escHtml(title), score, max, escHtml(fb), gained25xp ? 25 : undefined);
+
+    const out = await sendTelegram(BOT_TOKEN, "sendMessage", { chat_id: Number(tgId), text, parse_mode: "HTML" }, { record: false });
+    if (out.ok) {
+      healed++;
+      await admin.from("app_settings").upsert({ key: "grade_card_dm_heartbeat", value: { last_sent_at: new Date().toISOString() } }, { onConflict: "key" });
+      await logHealth(admin, sub.user_id, "grade_card_dm_sent", { submission_id: sub.id, score, max, attempt, reconciled: true }, sub.id);
+    } else if (out.terminal) {
+      // TERMINAL (recipient blocked/deleted OR content that will never render): keep the claim so we never
+      // retry-forever DM a blocked user every 30 min. recipient_error is expected reach (watchdog excludes it).
+      failed++;
+      await logHealth(admin, sub.user_id, "grade_card_dm_failed", { submission_id: sub.id, error: out.error, recipient_error: out.recipient, content_error: out.content, terminal: true, reconciled: true }, sub.id);
+    } else {
+      // Transient (network / 5xx) — un-claim (restore prior marker) so a later run retries this attempt.
+      await admin.from("homework_submissions").update({ grade_card_notified_attempt: prior }).eq("id", sub.id).eq("grade_card_notified_attempt", attempt);
+      failed++;
+      await logHealth(admin, sub.user_id, "grade_card_dm_failed", { submission_id: sub.id, error: out.error, recipient_error: false, terminal: false, reconciled: true }, sub.id);
+    }
+  }
+
+  return json({ ok: true, candidates: (rows || []).length, healed, failed, skipped });
+});
