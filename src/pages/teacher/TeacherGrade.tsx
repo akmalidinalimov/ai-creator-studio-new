@@ -256,7 +256,7 @@ export default function TeacherGrade() {
       // `blob` — an undo→resubmit still has `blob` truthy but must NOT re-fire) gets pushed to the
       // student's Telegram DM if they've started the bot — fire-and-forget: never awaited, never
       // allowed to affect the grade UI (notifyGradeVoice swallows its own errors).
-      if (voiceRecordedThisRoundRef.current) notifyGradeVoice(item.submission_id);
+      notifyGradeVoice(item.submission_id, { voiceFresh: voiceRecordedThisRoundRef.current });
 
       // Advance immediately, offer a 6s undo (auto-advance makes a fat-finger unrecoverable).
       processed.current.add(item.submission_id);

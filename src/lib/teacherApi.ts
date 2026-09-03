@@ -189,18 +189,19 @@ export async function submitScore(
 }
 
 /**
- * Fire-and-forget push of a Telegram audio DM for a voice feedback note JUST uploaded this grading
- * round (Task 6, voice-homework-feedback). Called from all three grading surfaces (TeacherGrade,
- * TeacherHomework, TeacherProfile) right after their grade-write succeeds — NEVER awaited, NEVER
- * allowed to fail the grade: the notify-grade-voice edge fn itself is fully graceful (a student with
- * no telegram_id, a blocked bot, or a Telegram hiccup all resolve to `{ok:true, sent:false}` there),
- * and this wrapper swallows any transport error on top of that so a network blip can't even surface
- * a console warning mid-grading-flow. The in-app player (Task 5 / hw-audio-url) is the durable
- * delivery path for every student regardless of whether this push lands.
+ * Fire-and-forget push of the student's GRADE via Telegram, called from every grading surface right
+ * after a successful grade-write (P0 2026-09-03: app/web grades used to notify the student of nothing
+ * unless a voice note existed — the grade_delivery_watchdog SILENCE alarm caught it). The edge fn sends
+ * the grade CARD (score + feedback) on every graded attempt (deduped server-side), and — only when
+ * `voiceFresh` is passed — the newly-recorded voice note too (so a plain re-grade never re-pushes a
+ * PRESERVED older note). NEVER awaited, NEVER allowed to fail the grade: the fn is fully graceful (no
+ * telegram_id / blocked bot / hiccup all resolve to a `{ok:true}` no-send), and this wrapper swallows any
+ * transport error so a network blip can't even surface a console warning mid-grading-flow. The in-app
+ * views (hw-audio-url / the homework screen) remain the durable path regardless of whether this lands.
  */
-export function notifyGradeVoice(submissionId: string): void {
+export function notifyGradeVoice(submissionId: string, opts?: { voiceFresh?: boolean }): void {
   void supabase.functions
-    .invoke("notify-grade-voice", { body: { submission_id: submissionId } })
+    .invoke("notify-grade-voice", { body: { submission_id: submissionId, voice_fresh: !!opts?.voiceFresh } })
     .catch(() => {});
 }
 
