@@ -77,31 +77,44 @@ Deno.serve(async (req) => {
   if (hr < 8 || hr >= 22) return json({ ok: true, skipped_quiet_hours: true, hour: hr });
 
   const cutoff = new Date(Date.now() - LOOKBACK_DAYS * 86400_000).toISOString();
+  const FETCH = 500; // headroom over the ~106 grades/14d; a saturated fetch emits a signal (below)
 
-  // Directly select the genuinely-undelivered set (marker IS NULL) — bounded, oldest-first so a backlog
-  // drains steadily, no cross-column filter / 400-row starvation. Everything already delivered (bot, app)
-  // carries a non-null marker and is excluded.
+  // Fetch the recent scored set oldest-first, then keep the FULL undelivered invariant in JS (PostgREST
+  // can't compare two columns): marker IS NULL (never delivered) OR marker < attempt_number (a resubmission
+  // was regraded but its card never landed — the case a NULL-only filter would strand forever). Already
+  // delivered rows carry marker == attempt_number and are excluded.
   const { data: rows, error: qErr } = await admin
     .from("homework_submissions")
-    .select("id, user_id, assignment_id, score, previous_score, score_feedback, attempt_number")
+    .select("id, user_id, assignment_id, score, previous_score, score_feedback, attempt_number, grade_card_notified_attempt")
     .not("score", "is", null)
-    .is("grade_card_notified_attempt", null)
     .gte("scored_at", cutoff)
     .order("scored_at", { ascending: true })
-    .limit(BATCH);
+    .limit(FETCH);
   if (qErr) return json({ error: "query_failed", desc: qErr.message }, 500);
+  if ((rows || []).length >= FETCH) {
+    // The window outgrew the fetch cap → oldest-first means the NEWEST rows past the cap are unseen this
+    // run. Make it visible instead of silently starving (the prior review's starvation concern).
+    await logHealth(admin, null, "grade_card_reconcile_fetch_saturated", { fetched: (rows || []).length, lookback_days: LOOKBACK_DAYS }, null);
+  }
+  const pending = (rows || []).filter((r: any) => {
+    const at = (r.attempt_number as number) ?? 1;
+    const n = r.grade_card_notified_attempt as number | null;
+    return n == null || n < at;
+  }).slice(0, BATCH);
 
   let healed = 0, failed = 0, skipped = 0;
 
-  for (const sub of (rows || [])) {
+  for (const sub of pending) {
     const attempt = (sub.attempt_number as number) ?? 1;
-    // ATOMIC claim: WHERE marker IS NULL. If a concurrent grade (bot/app) stamped it since our SELECT,
-    // this returns 0 rows → we skip (that path owns the send). Also prevents two reconciler runs racing.
+    const prior = sub.grade_card_notified_attempt as number | null; // restore this exact value on transient fail
+    // ATOMIC claim: WHERE marker IS NULL OR < attempt. If a concurrent grade (bot/app) stamped it to
+    // attempt since our SELECT, this returns 0 rows → we skip (that path owns the send). Also serializes
+    // two reconciler runs. Mirrors notify-grade-voice's claim so all senders share one contract.
     const { data: claimed } = await admin
       .from("homework_submissions")
       .update({ grade_card_notified_attempt: attempt })
       .eq("id", sub.id)
-      .is("grade_card_notified_attempt", null)
+      .or(`grade_card_notified_attempt.is.null,grade_card_notified_attempt.lt.${attempt}`)
       .select("id")
       .maybeSingle();
     if (!claimed) { skipped++; continue; }
@@ -109,8 +122,9 @@ Deno.serve(async (req) => {
     const { data: student } = await admin.from("profiles").select("telegram_id, preferred_locale").eq("id", sub.user_id).maybeSingle();
     const tgId = student?.telegram_id ?? null;
     if (!tgId) {
-      // No telegram_id (~70%) — un-claim (back to NULL) so a future run reaches them if they start the bot.
-      await admin.from("homework_submissions").update({ grade_card_notified_attempt: null }).eq("id", sub.id);
+      // No telegram_id (~70%) — un-claim (restore prior marker) so a future run reaches them if they
+      // start the bot. prior is NULL for a never-delivered row, or the old attempt for a stale-marker row.
+      await admin.from("homework_submissions").update({ grade_card_notified_attempt: prior }).eq("id", sub.id);
       skipped++;
       continue;
     }
@@ -134,8 +148,8 @@ Deno.serve(async (req) => {
       failed++;
       await logHealth(admin, sub.user_id, "grade_card_dm_failed", { submission_id: sub.id, error: out.error, recipient_error: out.recipient, content_error: out.content, terminal: true, reconciled: true }, sub.id);
     } else {
-      // Transient (network / 5xx) — un-claim so a later run retries.
-      await admin.from("homework_submissions").update({ grade_card_notified_attempt: null }).eq("id", sub.id);
+      // Transient (network / 5xx) — un-claim (restore prior marker) so a later run retries this attempt.
+      await admin.from("homework_submissions").update({ grade_card_notified_attempt: prior }).eq("id", sub.id);
       failed++;
       await logHealth(admin, sub.user_id, "grade_card_dm_failed", { submission_id: sub.id, error: out.error, recipient_error: false, terminal: false, reconciled: true }, sub.id);
     }
