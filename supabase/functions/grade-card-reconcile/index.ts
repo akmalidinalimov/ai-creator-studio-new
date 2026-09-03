@@ -130,7 +130,7 @@ Deno.serve(async (req) => {
     // against the freshly-returned row — if the score is gone or the attempt moved, the card we'd send from
     // the stale snapshot would be wrong: back off (restore prior marker) and let a later run re-read cleanly.
     if (claimed.score == null || ((claimed.attempt_number as number) ?? 1) !== attempt) {
-      await admin.from("homework_submissions").update({ grade_card_notified_attempt: prior }).eq("id", sub.id);
+      await admin.from("homework_submissions").update({ grade_card_notified_attempt: prior }).eq("id", sub.id).eq("grade_card_notified_attempt", attempt);
       skipped++;
       continue;
     }
@@ -140,7 +140,7 @@ Deno.serve(async (req) => {
     if (!tgId) {
       // No telegram_id (~70%) — un-claim (restore prior marker) so a future run reaches them if they
       // start the bot. prior is NULL for a never-delivered row, or the old attempt for a stale-marker row.
-      await admin.from("homework_submissions").update({ grade_card_notified_attempt: prior }).eq("id", sub.id);
+      await admin.from("homework_submissions").update({ grade_card_notified_attempt: prior }).eq("id", sub.id).eq("grade_card_notified_attempt", attempt);
       skipped++;
       continue;
     }
@@ -167,7 +167,7 @@ Deno.serve(async (req) => {
       await logHealth(admin, sub.user_id, "grade_card_dm_failed", { submission_id: sub.id, error: out.error, recipient_error: out.recipient, content_error: out.content, terminal: true, reconciled: true }, sub.id);
     } else {
       // Transient (network / 5xx) — un-claim (restore prior marker) so a later run retries this attempt.
-      await admin.from("homework_submissions").update({ grade_card_notified_attempt: prior }).eq("id", sub.id);
+      await admin.from("homework_submissions").update({ grade_card_notified_attempt: prior }).eq("id", sub.id).eq("grade_card_notified_attempt", attempt);
       failed++;
       await logHealth(admin, sub.user_id, "grade_card_dm_failed", { submission_id: sub.id, error: out.error, recipient_error: false, terminal: false, reconciled: true }, sub.id);
     }
