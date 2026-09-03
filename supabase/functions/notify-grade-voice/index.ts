@@ -52,8 +52,10 @@ function normLocale(code?: string | null): Locale {
   return "uz";
 }
 
-// The grade card — byte-for-byte the bot's tt.gradeStudentDM (webhook index.ts:280/567/846), so a student
-// gets the SAME message whether graded via bot or app. title + fb are HTML-escaped by the caller.
+// The grade card — the SAME TEXT as the bot's tt.gradeStudentDM (webhook index.ts:280/567/846), so a
+// student reads the same score/feedback whether graded via bot or app. (The bot additionally attaches a
+// resubmit + open-site inline keyboard; this is text parity, not the buttons — a follow-up can add them.)
+// title + fb are HTML-escaped by the caller.
 const GRADE_CARD: Record<Locale, (title: string, sc: number, mx: number, fb: string, xp?: number) => string> = {
   uz: (title, sc, mx, fb, xp) => `🎉 Vazifangiz baholandi!\n\n📝 <b>${title}</b>\nBaho: <b>${sc}/${mx}</b>${xp ? `\n⚡ +${xp} XP` : ""}${fb ? `\nIzoh: ${fb}` : ""}`,
   ru: (title, sc, mx, fb, xp) => `🎉 Ваша работа оценена!\n\n📝 <b>${title}</b>\nОценка: <b>${sc}/${mx}</b>${xp ? `\n⚡ +${xp} XP` : ""}${fb ? `\nКомментарий: ${fb}` : ""}`,
@@ -113,7 +115,7 @@ Deno.serve(async (req) => {
     // --- 2. Load the submission. ---
     const { data: sub, error: subErr } = await admin
       .from("homework_submissions")
-      .select("id, user_id, assignment_id, score, score_feedback, score_feedback_voice_path, attempt_number, grade_card_notified_attempt")
+      .select("id, user_id, assignment_id, score, previous_score, score_feedback, score_feedback_voice_path, attempt_number, grade_card_notified_attempt")
       .eq("id", submissionId)
       .maybeSingle();
     if (subErr) throw subErr;
@@ -160,27 +162,43 @@ Deno.serve(async (req) => {
     let cardSent = false;
     let voiceSent = false;
 
-    // --- 6. GRADE CARD (the P0 fix). Once per graded attempt (dedup). ---
+    // --- 6. GRADE CARD (the P0 fix). ATOMIC claim so exactly one send per graded attempt even under a
+    // concurrent double-invoke (co-teacher race / client double-fire); a failed send UN-claims so the
+    // card retries next time (delivery beats a marked-but-unsent card — that would strand the student). ---
     const score = (sub as any).score;
     const attempt = ((sub as any).attempt_number as number) ?? 1;
     const notifiedAttempt = (sub as any).grade_card_notified_attempt as number | null;
-    const alreadyNotified = notifiedAttempt != null && notifiedAttempt >= attempt;
-    if (typeof score === "number" && !alreadyNotified) {
-      const fb = typeof sub.score_feedback === "string" ? sub.score_feedback.trim() : "";
-      const xp = score >= 9 ? 25 : undefined; // matches gradeStudentDM's threshold; +25 award is idempotent
-      const text = GRADE_CARD[locale](escHtml(title), score, max, escHtml(fb), xp);
-      const out = await sendTelegram(BOT_TOKEN, "sendMessage", { chat_id: Number(telegramId), text, parse_mode: "HTML" }, { record: false });
-      if (out.ok) {
-        cardSent = true;
-        // dedup marker (per attempt) + delivery heartbeat so grade_delivery_watchdog sees the APP path,
-        // not just the bot's. Best-effort — never fail the response over recording.
-        await admin.from("homework_submissions").update({ grade_card_notified_attempt: attempt }).eq("id", submissionId);
-        await admin.from("app_settings").upsert({ key: "grade_card_dm_heartbeat", value: { last_sent_at: new Date().toISOString() } }, { onConflict: "key" });
-        await logHealth(admin, uid, sub.user_id, "grade_card_dm_sent", { submission_id: submissionId, score, max, attempt }, submissionId);
-      } else {
-        // recipient_error (blocked/never-started) is EXPECTED reach, not a fault — the watchdog excludes it.
-        await logHealth(admin, uid, sub.user_id, "grade_card_dm_failed",
-          { submission_id: submissionId, error: out.error, recipient_error: out.recipient, terminal: out.terminal, score, max }, submissionId);
+    if (typeof score === "number") {
+      // Claim atomically: set the marker only if not already notified for THIS attempt. A returned row =
+      // we own the send; null = another invoke/attempt already claimed it → skip (no double DM).
+      const { data: claimed } = await admin
+        .from("homework_submissions")
+        .update({ grade_card_notified_attempt: attempt })
+        .eq("id", submissionId)
+        .or(`grade_card_notified_attempt.is.null,grade_card_notified_attempt.lt.${attempt}`)
+        .select("id")
+        .maybeSingle();
+      if (claimed) {
+        const fb = typeof sub.score_feedback === "string" ? sub.score_feedback.trim() : "";
+        // +25 XP is awarded ONCE per assignment (ref_key hw_score:<id>), only on the FIRST crossing into
+        // ≥9 — show the XP line only then, matching the bot's gained25xp gating (a resubmission re-scoring
+        // ≥9 after an earlier ≥9 earns nothing, so must not claim +25 XP in the card).
+        const prevScore = (sub as any).previous_score as number | null;
+        const gained25xp = (prevScore == null || prevScore < 9) && score >= 9;
+        const text = GRADE_CARD[locale](escHtml(title), score, max, escHtml(fb), gained25xp ? 25 : undefined);
+        const out = await sendTelegram(BOT_TOKEN, "sendMessage", { chat_id: Number(telegramId), text, parse_mode: "HTML" }, { record: false });
+        if (out.ok) {
+          cardSent = true;
+          // delivery heartbeat so grade_delivery_watchdog sees the APP path, not just the bot's.
+          await admin.from("app_settings").upsert({ key: "grade_card_dm_heartbeat", value: { last_sent_at: new Date().toISOString() } }, { onConflict: "key" });
+          await logHealth(admin, uid, sub.user_id, "grade_card_dm_sent", { submission_id: submissionId, score, max, attempt }, submissionId);
+        } else {
+          // UN-claim (restore the prior marker) so the card retries; recipient_error (blocked/never-started)
+          // is EXPECTED reach, not a fault — grade_delivery_watchdog excludes it.
+          await admin.from("homework_submissions").update({ grade_card_notified_attempt: notifiedAttempt }).eq("id", submissionId);
+          await logHealth(admin, uid, sub.user_id, "grade_card_dm_failed",
+            { submission_id: submissionId, error: out.error, recipient_error: out.recipient, terminal: out.terminal, score, max }, submissionId);
+        }
       }
     }
 
