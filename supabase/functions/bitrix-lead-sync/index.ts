@@ -41,7 +41,8 @@ Deno.serve(async (req) => {
     const b = await addBitrixLead(webhook, { name: l.name, phone: l.phone, source: l.source });
     if (b.ok) {
       // Stamp only if still unsynced — a concurrent instant-forward may have just synced it (guards against a
-      // double stamp; the rare "Bitrix add succeeded but stamp lost" case can leave a duplicate, Bitrix-dedupable).
+      // double STAMP, not a double CREATE: the rare "Bitrix add succeeded but the stamp was lost" case can
+      // leave a second Bitrix lead — resolve via Bitrix duplicate-control if that ever matters at volume).
       const { data: upd } = await admin.from("leads")
         .update({ bitrix_synced: true, bitrix_lead_id: b.id, bitrix_synced_at: new Date().toISOString(), bitrix_error: null })
         .eq("id", l.id).eq("bitrix_synced", false).select("id").maybeSingle();

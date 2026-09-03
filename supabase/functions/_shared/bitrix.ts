@@ -39,20 +39,28 @@ export async function addBitrixLead(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ fields, params: { REGISTER_SONET_EVENT: "Y" } }),
+      signal: AbortSignal.timeout(5000), // don't let a slow/hanging Bitrix stall the landing submit or the drainer loop
     });
     status = res.status;
     const data = await res.json().catch(() => ({} as Record<string, unknown>));
     if (res.ok && data && (data as { result?: unknown }).result) {
       return { ok: true, id: String((data as { result: unknown }).result), status, terminal: false };
     }
-    // Bitrix returns HTTP 200 with {error, error_description} on logical errors, or a 4xx for a dead/no-scope
-    // webhook. Auth/scope/missing-webhook failures never fix on retry → terminal (the drainer stops retrying).
+    // Bitrix returns HTTP 200 with {error, error_description} on a logical error, or a 4xx for a dead/no-scope
+    // webhook. `terminal` flags auth/scope/dead-webhook so the health signal reads "fix the webhook" vs
+    // "transient" — it is INFORMATIONAL; the drainer keeps retrying either way, so once a bad webhook is
+    // corrected the backlog heals (a permanently dead webhook just keeps the watchdog alarming, as intended).
+    // Only Bitrix's own {error,error_description} is surfaced — never the request URL (which holds the secret).
     const err = (data as { error?: string; error_description?: string });
     const error = err?.error_description || err?.error || `http_${status}`;
     const terminal = status === 401 || status === 403 || status === 404
       || /INVALID_CREDENTIALS|insufficient_scope|ACCESS_DENIED|NO_AUTH_FOUND|invalid_token|PORTAL_DELETED/i.test(String(err?.error || ""));
     return { ok: false, status, error: String(error).slice(0, 300), terminal };
   } catch (e) {
-    return { ok: false, status, error: String(e).slice(0, 300), terminal: false };
+    // SECURITY: a thrown fetch error (DNS/TLS/timeout/connection-refused) embeds the full request URL — which
+    // contains the secret webhook code — in its message. NEVER surface that into leads.bitrix_error /
+    // admin_actions: reduce to the error CLASS only. status stays 0 (already means "network/timeout").
+    const kind = (e as Error)?.name === "TimeoutError" ? "timeout" : "network_error";
+    return { ok: false, status, error: kind, terminal: false };
   }
 }
