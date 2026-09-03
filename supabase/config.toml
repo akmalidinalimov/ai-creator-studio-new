@@ -7,6 +7,11 @@ verify_jwt = false
 [functions.submit-lead]
 verify_jwt = false
 
+# bitrix-lead-sync: internal (pg_cron) drainer that re-forwards landing leads to Bitrix24 CRM that the instant
+# submit-lead push missed. verify_jwt=false + x-internal-secret gated. Dormant when BITRIX_WEBHOOK_URL is unset.
+[functions.bitrix-lead-sync]
+verify_jwt = false
+
 [functions.study-assistant]
 verify_jwt = true
 
