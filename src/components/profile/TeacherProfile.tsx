@@ -202,7 +202,7 @@ export default function TeacherProfile() {
     // Fire-and-forget Telegram push (Task 6, voice-homework-feedback) — only when THIS round
     // uploaded a brand new note (not a preserved-existing or cleared-to-null path). Never awaited,
     // never allowed to affect the grade UI (notifyGradeVoice swallows its own errors).
-    if (voiceJustUploaded) notifyGradeVoice(item.id);
+    notifyGradeVoice(item.id, { voiceFresh: voiceJustUploaded });
     const bump = (delta: number) =>
       setGroups((gs) => gs.map((g) => g.group_name === item.group_name ? { ...g, pending_homework: Math.max(g.pending_homework + delta, 0) } : g));
     setQueue((q) => q.filter((x) => x.id !== item.id));

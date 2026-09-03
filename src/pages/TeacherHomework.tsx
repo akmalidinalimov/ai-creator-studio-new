@@ -239,7 +239,7 @@ export default function TeacherHomework() {
     if (!saved) { toast.error("Baho saqlanmadi — ro'yxatni yangilang."); return; }
     // Fire-and-forget: never awaited, never allowed to affect the save UX (notifyGradeVoice
     // swallows its own errors; the edge fn itself is fully graceful on no-telegram/blocked-bot).
-    if (voiceJustUploaded) notifyGradeVoice(id);
+    notifyGradeVoice(id, { voiceFresh: voiceJustUploaded });
     toast.success("Baholandi"); setOpen(null); setDrawerRows(null); load();
   };
 
