@@ -6,6 +6,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json, logHealth } from "../_shared/edge.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";
+import { addBitrixLead } from "../_shared/bitrix.ts";
 
 const cap = (s: unknown, n: number): string => {
   const t = s === null || s === undefined ? "" : String(s);
@@ -87,6 +88,30 @@ Deno.serve(async (req) => {
     }
     await logHealth(admin, "lead_captured", { source, notified },
       { source: "submit-lead", targetResourceType: "lead", targetResourceId: lead.id });
+
+    // Forward to Bitrix24 CRM — best-effort, AFTER the lead is safely persisted and admins are DM'd, so a
+    // Bitrix outage never loses or blocks a lead. Dormant until BITRIX_WEBHOOK_URL is set (goes live with no
+    // code change). A failure leaves bitrix_synced=false → the bitrix-lead-sync drainer re-forwards it, and
+    // the failure is DB-visible (bitrix_lead_failed + bitrix_error) so the watchdog can alert on a backlog.
+    try {
+      const webhook = Deno.env.get("BITRIX_WEBHOOK_URL");
+      if (webhook) {
+        const b = await addBitrixLead(webhook, { name, phone, source });
+        if (b.ok) {
+          await admin.from("leads").update({
+            bitrix_synced: true, bitrix_lead_id: b.id, bitrix_synced_at: new Date().toISOString(), bitrix_error: null,
+          }).eq("id", lead.id);
+          await logHealth(admin, "bitrix_lead_synced", { source, bitrix_lead_id: b.id },
+            { source: "submit-lead", targetResourceType: "lead", targetResourceId: lead.id });
+        } else {
+          await admin.from("leads").update({ bitrix_error: `${b.status}:${b.error}` }).eq("id", lead.id);
+          await logHealth(admin, "bitrix_lead_failed", { source, status: b.status, error: b.error, terminal: b.terminal },
+            { source: "submit-lead", targetResourceType: "lead", targetResourceId: lead.id });
+        }
+      }
+    } catch (e) {
+      console.error("submit-lead bitrix", e);
+    }
 
     return json({ ok: true });
   } catch (e) {
