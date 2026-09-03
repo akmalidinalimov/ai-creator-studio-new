@@ -44,19 +44,24 @@ Deno.serve(async (req) => {
       console.error("submit-lead floodcheck", e);
     }
 
-    // Atomic per-phone dedupe: a unique index on dedupe_key (phone + ~10-min bucket) makes a
-    // double-tap / retry a no-op at the DB level (upsert → ON CONFLICT DO NOTHING), so it can't
-    // create a second row or a second admin DM. The read-then-insert race is closed in the DB.
+    // Atomic per-phone dedupe via the PARTIAL unique index uq_leads_dedupe (dedupe_key = phone + ~10-min
+    // bucket; the index is `WHERE dedupe_key IS NOT NULL`). PostgREST's upsert `onConflict` CANNOT name a
+    // partial index — Postgres raises "there is no unique or exclusion constraint matching the ON CONFLICT
+    // specification", which 500'd EVERY submit since the leads feature shipped (2026-08-28) and is why the
+    // landing form showed "Yuborishda xatolik" and `leads` stayed empty. Insert directly and treat a 23505
+    // unique-violation as an already-captured no-op — the codebase's partial-index dedupe pattern
+    // (cf. uq_dm_submission_teacher_msg: insert + 23505-skip, never upsert-onConflict).
     const dedupe_key = `${phone}:${Math.floor(Date.now() / 600_000)}`;
     const { data: rows, error: insErr } = await admin.from("leads")
-      .upsert({ name, phone, source, user_agent, ip, dedupe_key }, { onConflict: "dedupe_key", ignoreDuplicates: true })
+      .insert({ name, phone, source, user_agent, ip, dedupe_key })
       .select("id");
     if (insErr) {
+      if ((insErr as { code?: string }).code === "23505") return json({ ok: true }); // duplicate within the bucket — already captured
       await logHealth(admin, "lead_insert_failed", { source, error: insErr.message }, { source: "submit-lead" });
       return json({ ok: false, error: "save" }, 500);
     }
     const lead = rows && rows[0];
-    if (!lead) return json({ ok: true }); // deduped (same phone within the bucket) — already captured
+    if (!lead) return json({ ok: true }); // no row returned — treat as already captured
 
     // Notify admins (best-effort). sendTelegram records any non-delivery to admin_actions; a fn crash
     // before this leaves notified=false, which the leads_watchdog catches. Plain text (no parse_mode)
