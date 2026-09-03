@@ -77,6 +77,11 @@ Deno.serve(async (req) => {
   if (hr < 8 || hr >= 22) return json({ ok: true, skipped_quiet_hours: true, hour: hr });
 
   const cutoff = new Date(Date.now() - LOOKBACK_DAYS * 86400_000).toISOString();
+  // Settle window: never touch a grade younger than this. The forward senders (bot, notify-grade-voice)
+  // send-then-stamp within a second or two; leaving fresh grades alone means an in-flight forward send can
+  // never be raced by the reconciler into a DUPLICATE card. A genuinely-failed grade is simply healed a few
+  // minutes later instead of instantly — the backstop's whole point.
+  const settle = new Date(Date.now() - 5 * 60_000).toISOString();
   const FETCH = 500; // headroom over the ~106 grades/14d; a saturated fetch emits a signal (below)
 
   // Fetch the recent scored set oldest-first, then keep the FULL undelivered invariant in JS (PostgREST
@@ -88,6 +93,7 @@ Deno.serve(async (req) => {
     .select("id, user_id, assignment_id, score, previous_score, score_feedback, attempt_number, grade_card_notified_attempt")
     .not("score", "is", null)
     .gte("scored_at", cutoff)
+    .lt("scored_at", settle)
     .order("scored_at", { ascending: true })
     .limit(FETCH);
   if (qErr) return json({ error: "query_failed", desc: qErr.message }, 500);
@@ -115,9 +121,19 @@ Deno.serve(async (req) => {
       .update({ grade_card_notified_attempt: attempt })
       .eq("id", sub.id)
       .or(`grade_card_notified_attempt.is.null,grade_card_notified_attempt.lt.${attempt}`)
-      .select("id")
+      .select("user_id, assignment_id, score, previous_score, score_feedback, attempt_number")
       .maybeSingle();
     if (!claimed) { skipped++; continue; }
+
+    // Fresh-read guard: the row may have been resubmitted/regraded between the batch SELECT and this claim
+    // (a resubmission nulls score + bumps attempt_number; the claim gates only on the marker). Re-verify
+    // against the freshly-returned row — if the score is gone or the attempt moved, the card we'd send from
+    // the stale snapshot would be wrong: back off (restore prior marker) and let a later run re-read cleanly.
+    if (claimed.score == null || ((claimed.attempt_number as number) ?? 1) !== attempt) {
+      await admin.from("homework_submissions").update({ grade_card_notified_attempt: prior }).eq("id", sub.id);
+      skipped++;
+      continue;
+    }
 
     const { data: student } = await admin.from("profiles").select("telegram_id, preferred_locale").eq("id", sub.user_id).maybeSingle();
     const tgId = student?.telegram_id ?? null;
@@ -129,19 +145,21 @@ Deno.serve(async (req) => {
       continue;
     }
     const locale = normLocale(student?.preferred_locale);
-    const { data: a } = await admin.from("homework_assignments").select("title, max_score").eq("id", sub.assignment_id).maybeSingle();
+    // Compose from the FRESH claimed row (validated identical to the batch snapshot by the guard above).
+    const { data: a } = await admin.from("homework_assignments").select("title, max_score").eq("id", claimed.assignment_id).maybeSingle();
     const title = (a?.title && String(a.title).trim()) || TITLE_FALLBACK[locale];
     const max = (a?.max_score as number) || 10;
-    const fb = typeof sub.score_feedback === "string" ? sub.score_feedback.trim() : "";
-    const prev = sub.previous_score as number | null;
-    const gained25xp = (prev == null || prev < 9) && (sub.score as number) >= 9;
-    const text = GRADE_CARD[locale](escHtml(title), sub.score as number, max, escHtml(fb), gained25xp ? 25 : undefined);
+    const fb = typeof claimed.score_feedback === "string" ? claimed.score_feedback.trim() : "";
+    const prev = claimed.previous_score as number | null;
+    const score = claimed.score as number;
+    const gained25xp = (prev == null || prev < 9) && score >= 9;
+    const text = GRADE_CARD[locale](escHtml(title), score, max, escHtml(fb), gained25xp ? 25 : undefined);
 
     const out = await sendTelegram(BOT_TOKEN, "sendMessage", { chat_id: Number(tgId), text, parse_mode: "HTML" }, { record: false });
     if (out.ok) {
       healed++;
       await admin.from("app_settings").upsert({ key: "grade_card_dm_heartbeat", value: { last_sent_at: new Date().toISOString() } }, { onConflict: "key" });
-      await logHealth(admin, sub.user_id, "grade_card_dm_sent", { submission_id: sub.id, score: sub.score, max, attempt, reconciled: true }, sub.id);
+      await logHealth(admin, sub.user_id, "grade_card_dm_sent", { submission_id: sub.id, score, max, attempt, reconciled: true }, sub.id);
     } else if (out.terminal) {
       // TERMINAL (recipient blocked/deleted OR content that will never render): keep the claim so we never
       // retry-forever DM a blocked user every 30 min. recipient_error is expected reach (watchdog excludes it).
