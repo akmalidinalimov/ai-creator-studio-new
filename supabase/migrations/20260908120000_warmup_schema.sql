@@ -114,8 +114,8 @@ CREATE TABLE warmup.events (
   -- DELTA-1: Telegram redelivers an update whenever the webhook is slow to answer, so the same
   -- payload legitimately arrives twice. The unique key is (update_id, event_type), not update_id
   -- alone, because SPEC §6.1 normalises one update into two events (media + task hashtag →
-  -- media.submitted AND task.completed). NULL for engine-emitted events (day.started, scores.frozen,
-  -- …), which have no Telegram update behind them — hence the partial index.
+  -- media.submitted AND task.completed). NULL for engine-emitted events (day.started,
+  -- scores.frozen, …), which have no Telegram update behind them.
   update_id    BIGINT,
 
   -- DELTA-2: concurrency + poison-event control for warmup-dispatch. Two overlapping ticks would
@@ -129,8 +129,17 @@ CREATE TABLE warmup.events (
 );
 CREATE INDEX IF NOT EXISTS events_unprocessed_idx
   ON warmup.events (processed_at) WHERE processed_at IS NULL;
+-- Deliberately NOT a partial index, though "WHERE update_id IS NOT NULL" reads like the obvious
+-- way to exempt engine-emitted rows. Two reasons, both verified against PostgreSQL 18.3:
+--   1. It would not work through PostgREST. supabase-js sends on_conflict=update_id,event_type,
+--      which becomes ON CONFLICT (update_id, event_type) — and Postgres rejects that against a
+--      partial index ("no unique or exclusion constraint matching the ON CONFLICT specification")
+--      because inference requires the index predicate, which PostgREST cannot express. Ingestion
+--      would fail on every single update.
+--   2. It is unnecessary. Postgres indexes default to NULLS DISTINCT, so rows with a NULL
+--      update_id never conflict with each other — engine-emitted events are already unconstrained.
 CREATE UNIQUE INDEX IF NOT EXISTS events_update_id_type_uidx
-  ON warmup.events (update_id, event_type) WHERE update_id IS NOT NULL;
+  ON warmup.events (update_id, event_type);
 
 -- ----------------------------------------------------------------------------
 -- outbox — every send leaves through here
@@ -140,7 +149,7 @@ CREATE TABLE warmup.outbox (
   telegram_id   BIGINT,
   chat_id       BIGINT,
   surface       TEXT NOT NULL,   -- dm | channel | group
-  kind          TEXT NOT NULL,   -- push | reply | render
+  kind          TEXT NOT NULL,   -- push | reply | render | react
   payload       JSONB NOT NULL,
   scheduled_for TIMESTAMPTZ NOT NULL,
   sent_at       TIMESTAMPTZ,
