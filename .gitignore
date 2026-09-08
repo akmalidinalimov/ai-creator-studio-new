@@ -29,3 +29,4 @@ supabase/.temp/
 
 # Local env files — never commit. .env was tracked until 2026-09-08 (warmup Slice 0).
 .env
+.env.warmup
