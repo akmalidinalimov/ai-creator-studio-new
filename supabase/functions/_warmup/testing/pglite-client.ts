@@ -182,13 +182,27 @@ export function fakeSupabase(db: PGlite): any {
 }
 
 /**
- * Boot an empty PostgreSQL and apply the warmup migration to it.
+ * The warmup migration as it will actually be applied.
  *
  * pgvector is not bundled with PGlite, so CREATE EXTENSION and the VECTOR(1536) column are stubbed —
  * the only two lines not executed verbatim. Both are already proven in this project by migrations
  * 20260426191329 and 20260427203208.
  */
-export async function bootWarmupDb(): Promise<{ db: PGlite; admin: any }> {
+export async function warmupMigrationSql(): Promise<string> {
+  const migPath = new URL("../../../migrations/20260908120000_warmup_schema.sql", import.meta.url);
+  const sql = await Deno.readTextFile(migPath);
+  return sql.replace(/CREATE EXTENSION IF NOT EXISTS vector;/, "").replace(/VECTOR\(1536\)/, "TEXT");
+}
+
+/**
+ * Boot a PostgreSQL and apply the warmup migration to it.
+ *
+ * `seed` runs BEFORE the migration, so a caller can stand up a mock LMS `public` schema and then
+ * prove the migration left it untouched.
+ */
+export async function bootWarmupDb(
+  opts?: { seed?: (db: PGlite) => Promise<void> },
+): Promise<{ db: PGlite; admin: any }> {
   const db = new PGlite();
   await db.waitReady;
 
@@ -196,13 +210,14 @@ export async function bootWarmupDb(): Promise<{ db: PGlite; admin: any }> {
   for (const r of ["service_role", "anon", "authenticated"]) await db.exec(`CREATE ROLE ${r} NOLOGIN;`);
   await db.exec(`ALTER ROLE service_role BYPASSRLS;`);
 
-  const migPath = new URL("../../../migrations/20260908120000_warmup_schema.sql", import.meta.url);
-  let sql = await Deno.readTextFile(migPath);
-  sql = sql.replace(/CREATE EXTENSION IF NOT EXISTS vector;/, "").replace(/VECTOR\(1536\)/, "TEXT");
-  await db.exec(sql);
+  if (opts?.seed) await opts.seed(db);
 
-  // The kill switch lives in public, which warmup only ever READS.
-  await db.exec(`CREATE TABLE public.platform_settings (key text primary key, value jsonb not null);`);
+  await db.exec(await warmupMigrationSql());
+
+  // The kill switch lives in public, which warmup only ever READS. A seeded run supplies its own.
+  if (!opts?.seed) {
+    await db.exec(`CREATE TABLE public.platform_settings (key text primary key, value jsonb not null);`);
+  }
 
   return { db, admin: fakeSupabase(db) };
 }
