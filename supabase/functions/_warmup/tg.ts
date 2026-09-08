@@ -90,8 +90,15 @@ export async function setWebhook(url: string, secretToken?: string): Promise<Sen
   });
 }
 
-/** Current webhook registration — used to verify allowed_updates actually took. */
-export async function getWebhookInfo(): Promise<unknown> {
-  const resp = await fetch(`https://api.telegram.org/bot${WARMUP_BOT_TOKEN}/getWebhookInfo`);
-  return await resp.json();
-}
+// NO getWebhookInfo() helper here, deliberately. It would need a raw
+// fetch("https://api.telegram.org/…"), which the repo's footgun lint blocks — correctly: every
+// Telegram call must go through _shared/telegram-send.ts so a non-delivery is DB-visible rather
+// than silently lost. That primitive returns a classified outcome and discards the response body,
+// so it cannot carry webhook info back, and extending it is not an option (never edit _shared/).
+//
+// Verifying the registration is an operator task anyway, run once after setWebhook:
+//
+//   curl -s "https://api.telegram.org/bot$WARMUP_BOT_TOKEN/getWebhookInfo" | jq
+//
+// Check `allowed_updates` contains "message_reaction". If it does not, reactions never arrive and
+// nothing anywhere logs a reason.
