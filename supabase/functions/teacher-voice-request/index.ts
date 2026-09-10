@@ -31,7 +31,8 @@ function normLocale(code?: string | null): Locale {
   if (l === "en") return "en";
   return "uz";
 }
-// Mirrors telegram-bot-webhook's gvAsk copy so the teacher sees one consistent prompt.
+// The ONLY copy of this prompt. The webhook's grade_voice step owns the follow-ups (gvNeedVoice / gvSaved /
+// gvExpired) — keep the wording consistent if either side changes.
 const ASK: Record<Locale, (student: string, title: string) => string> = {
   uz: (s, t) => `🎤 <b>${s}</b> — ${t}\n\nOvozli izohingizni shu yerga yuboring (yoki /cancel):`,
   ru: (s, t) => `🎤 <b>${s}</b> — ${t}\n\nОтправьте сюда голосовой комментарий (или /cancel):`,

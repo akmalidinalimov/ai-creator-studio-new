@@ -276,8 +276,7 @@ const T = {
     gradeAskComment: "Izoh yozing yoki 🎤 ovozli xabar yuboring (yoki /skip):",
     gradeVoiceNote: "🎧 O'qituvchidan ovozli izoh:",
     // Mini App → bot voice-feedback bridge (Telegram's webview blocks the mic, so the teacher records here).
-    gvAsk: (student: string, title: string) =>
-      `🎤 <b>${student}</b> — ${title}\n\nOvozli izohingizni shu yerga yuboring (yoki /cancel):`,
+    gvExpired: "⌛ Ovozli izoh so'rovi muddati tugagan, shuning uchun bu ovoz saqlanmadi. Mini ilovada «Telegramda ovoz yozish» tugmasini qayta bosing va ovozni qayta yuboring.",
     gvNeedVoice: "🎤 Ovozli xabar yuboring (yoki /cancel).",
     gvSaved: (student: string, delivered: boolean) => delivered
       ? `✅ Ovozli izoh saqlandi va yuborildi: <b>${student}</b>`
@@ -569,8 +568,7 @@ const T = {
     gradeAskScore: (max: number) => `Введите балл (0–${max}):`,
     gradeAskComment: "Напишите комментарий или 🎤 отправьте голосовое (или /skip):",
     gradeVoiceNote: "🎧 Голосовой комментарий преподавателя:",
-    gvAsk: (student: string, title: string) =>
-      `🎤 <b>${student}</b> — ${title}\n\nОтправьте сюда голосовой комментарий (или /cancel):`,
+    gvExpired: "⌛ Запрос на голосовой комментарий истёк, поэтому это голосовое не сохранено. Нажмите «Telegramda ovoz yozish» в мини-приложении ещё раз и отправьте его снова.",
     gvNeedVoice: "🎤 Отправьте голосовое сообщение (или /cancel).",
     gvSaved: (student: string, delivered: boolean) => delivered
       ? `✅ Голосовой комментарий сохранён и отправлен: <b>${student}</b>`
@@ -854,8 +852,7 @@ const T = {
     gradeAskScore: (max: number) => `Enter score (0–${max}):`,
     gradeAskComment: "Write a comment or 🎤 send a voice message (or /skip):",
     gradeVoiceNote: "🎧 Voice feedback from your teacher:",
-    gvAsk: (student: string, title: string) =>
-      `🎤 <b>${student}</b> — ${title}\n\nSend your voice feedback here (or /cancel):`,
+    gvExpired: "⌛ That voice feedback request expired, so this voice note wasn't saved. Tap «Telegramda ovoz yozish» in the Mini App again, then resend it.",
     gvNeedVoice: "🎤 Please send a voice message (or /cancel).",
     gvSaved: (student: string, delivered: boolean) => delivered
       ? `✅ Voice feedback saved and sent to <b>${student}</b>`
@@ -4330,7 +4327,23 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
     .maybeSingle();
   if (!state) return false;
   if (new Date(state.expires_at).getTime() < Date.now()) {
-    await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+    // Delete only while STILL expired: teacher-voice-request may have re-parked this row a moment ago.
+    await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).lt("expires_at", new Date().toISOString());
+    // A voice note sent to an EXPIRED Mini App voice request would otherwise fall through to the generic
+    // keyboard hint, and the teacher would believe feedback was saved that never was. Say so, and leave a
+    // DB-visible trail (a steady stream of these means the request TTL is too short).
+    if (state.state === "grade_voice" && (msg.voice || msg.audio)) {
+      await sendMessage(msg.chat.id, t.gvExpired);
+      try {
+        await admin.from("admin_actions").insert({
+          actor_user_id: profileId, action: "grade_voice_request_expired",
+          target_resource_type: "homework_submission",
+          target_resource_id: (state.context as any)?.submission_id ?? null,
+          details: { source: "miniapp_voice_bridge" },
+        });
+      } catch (_e) { /* best-effort */ }
+      return true;
+    }
     return false;
   }
 
@@ -4392,8 +4405,11 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
   // grading flow already uses — no second delivery mechanism to keep in sync.
   if (state.state === "grade_voice") {
     const submissionId = String(ctx.submission_id || "");
+    // Every delete in this branch is scoped to THIS request (state + submission). teacher-voice-request can
+    // re-point the row at another card while this update is mid-flight; an unscoped delete would wipe that
+    // newer request, and the teacher's next voice note would fall through unsaved.
     if (text === "/cancel") {
-      await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+      await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice");
       await sendWithKeyboard(msg.chat.id, t.gradeCancelled, locale, isAdmin, isAdmin ? "admin" : "teacher");
       return true;
     }
@@ -4404,7 +4420,7 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
       // opposite of member forgiveness: release the parked state and let the message route normally. The
       // prompt stays in the chat, and one tap on the Mini App button re-arms it.
       if (text) {
-        await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice");
+        await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice").eq("context->>submission_id", submissionId);
         return false;
       }
       // Non-text, non-voice (sticker, photo, video note): nudge rather than silently swallow it.
@@ -4414,7 +4430,7 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
     const { data: sub } = await admin.from("homework_submissions")
       .select("user_id, assignment_id").eq("id", submissionId).maybeSingle();
     if (!sub) {
-      await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+      await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice").eq("context->>submission_id", submissionId);
       await sendMessage(msg.chat.id, t.gradeNotFound);
       return true;
     }
@@ -4423,7 +4439,7 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
     if (!isAdmin) {
       const scope = await gradingScopeIds(admin, profileId, false);
       if (!scope || !scope.includes(sub.user_id)) {
-        await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+        await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice").eq("context->>submission_id", submissionId);
         await sendMessage(msg.chat.id, t.gradeNotFound);
         return true;
       }
@@ -4459,7 +4475,7 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
         }
       }
     } catch (e) { console.error("grade_voice deliver threw", String(e)); }
-    await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+    await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice").eq("context->>submission_id", submissionId);
     cacheInvalidateUser(sub.user_id);
     // Name the student in the confirmation: the state is one-per-teacher, so if she requested notes for two
     // cards back to back the latest request wins — naming who received it makes any mix-up visible at once.
