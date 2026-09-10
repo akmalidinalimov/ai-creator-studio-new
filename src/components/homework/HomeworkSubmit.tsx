@@ -118,12 +118,12 @@ async function resolveGroupTopicUrl(uid: string): Promise<string | null> {
   if (_topicUrlCache && _topicUrlCache.uid === uid) return _topicUrlCache.url;
   let url: string | null = null;
   try {
-    const { data: prof } = await supabase.from("profiles").select("group_id").eq("id", uid).maybeSingle();
-    const gid = (prof as { group_id?: string } | null)?.group_id;
-    if (gid) {
-      const { data: gr } = await supabase.from("groups").select("homework_topic_url").eq("id", gid).maybeSingle();
-      url = (gr as { homework_topic_url?: string } | null)?.homework_topic_url || null;
-    }
+    // MUST go through the RPC: public.groups is admin-only under RLS ("groups admin all"), so the old
+    // client-side `from("groups").select("homework_topic_url")` returned zero rows for every STUDENT and this
+    // deep-link silently never rendered. my_homework_topic_url() is SECURITY DEFINER and returns ONLY the
+    // caller's own topic url (see 20260910100000_my_homework_topic_url.sql).
+    const { data } = await supabase.rpc("my_homework_topic_url" as any);
+    url = typeof data === "string" && data ? data : null;
   } catch { /* best-effort — no deep-link if we can't resolve it */ }
   _topicUrlCache = { uid, url };
   return url;
