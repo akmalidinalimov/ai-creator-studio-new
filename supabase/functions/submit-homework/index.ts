@@ -47,6 +47,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const MAX_ITEMS = 10;
 const MAX_PHOTO_BYTES = 10 * 1024 * 1024; // sendPhoto
 const MAX_VIDEO_BYTES = 50 * 1024 * 1024; // sendVideo (multipart upload by a bot)
+const MAX_TOTAL_BYTES = 150 * 1024 * 1024; // aggregate per request — bounds what the edge runtime buffers
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -274,6 +275,52 @@ async function applyResubmission(
   return { submissionId: targetId, attemptNumber };
 }
 
+// How long a claim is honoured before a later request may take it over (a crashed / timed-out request must
+// not wedge the assignment forever). Long enough to cover a slow 50MB mobile upload.
+const CLAIM_STALE_MS = 5 * 60_000;
+
+/**
+ * ATOMIC per-(student, assignment) claim, taken BEFORE anything is posted to Telegram.
+ *
+ * Posting into a shared class topic is irreversible, so two racing requests (double-tap, a client retry
+ * after a slow upload, two open webviews) must never both reach Telegram. The claim table's PRIMARY KEY is
+ * the serialization point: exactly one INSERT wins. We deliberately do NOT pre-insert a placeholder
+ * homework_submissions row for this — that would fire the +15 XP INSERT trigger for a submission that might
+ * never complete.
+ *
+ * Returns true if this request owns the claim. Fails OPEN (returns true) on an unexpected DB error: the
+ * claim is a race guard, and a claim-table hiccup must not block every student from submitting — the
+ * failure is made DB-visible instead.
+ */
+async function claimSubmit(admin: any, userId: string, assignmentId: string): Promise<boolean> {
+  const { data: ins, error: insErr } = await admin
+    .from("homework_submit_claims")
+    .insert({ user_id: userId, assignment_id: assignmentId })
+    .select("user_id")
+    .maybeSingle();
+  if (!insErr && ins) return true;
+  if (insErr && (insErr as any).code !== "23505") {
+    await logOutcome(admin, false, userId, { reason: "claim_error_fail_open", assignment_id: assignmentId, error: insErr.message });
+    return true; // never block submission on the guard itself
+  }
+  // Someone holds it. Take over ONLY if their claim is stale (their request died mid-flight).
+  const staleIso = new Date(Date.now() - CLAIM_STALE_MS).toISOString();
+  const { data: took } = await admin
+    .from("homework_submit_claims")
+    .update({ claimed_at: new Date().toISOString() })
+    .eq("user_id", userId).eq("assignment_id", assignmentId).lt("claimed_at", staleIso)
+    .select("user_id")
+    .maybeSingle();
+  return !!took;
+}
+
+/** Release the claim so a later legitimate resubmission isn't blocked. Best-effort: a leaked claim expires. */
+async function releaseSubmit(admin: any, userId: string, assignmentId: string): Promise<void> {
+  try {
+    await admin.from("homework_submit_claims").delete().eq("user_id", userId).eq("assignment_id", assignmentId);
+  } catch (e) { console.error("submit-homework releaseSubmit threw", String(e)); }
+}
+
 /**
  * Post the submitted files into the student's Telegram group HOMEWORK TOPIC as the bot, on the student's
  * behalf (Telegram has NO "post as user" API for a Mini App), and return everything needed to record the
@@ -296,7 +343,7 @@ async function postHomeworkToTopic(
   files: File[],
   submittedText: string,
   target: any,
-): Promise<{ mediaItems: Record<string, unknown>[]; tgCols: Record<string, unknown> } | { errorResponse: Response }> {
+): Promise<{ mediaItems: Record<string, unknown>[]; tgCols: Record<string, unknown>; posted: number; failed: number } | { errorResponse: Response }> {
   const { data: prof, error: profErr } = await admin.from("profiles")
     .select("group_id, name, last_name, telegram_username").eq("id", userId).maybeSingle();
   if (profErr) {
@@ -309,18 +356,41 @@ async function postHomeworkToTopic(
     return { errorResponse: json({ error: "no_group" }, 400) };
   }
 
-  const { data: grp } = await admin.from("groups")
-    .select("homework_topic_url, homework_topic_id").eq("id", groupId).maybeSingle();
+  // Topic precedence MUST mirror the webhook's own resolver (resolveAssignmentForTopic path A/B) and the
+  // my_homework_topic_url RPC: the module's dedicated topic when one is configured, else the group-level
+  // topic. group_module_topics is empty today (all 3 groups use the group topic) but it is a LIVE admin
+  // config surface (components/admin/GroupTopicsSection.tsx) — ignoring it would silently make Mini App
+  // submission impossible for any group configured that way, with no fallback link either.
+  const moduleId: string | null = (target as any)?.module_id ?? null;
+  const [gmtRes, grpRes] = await Promise.all([
+    moduleId
+      ? admin.from("group_module_topics").select("telegram_topic_url")
+          .eq("group_id", groupId).eq("module_id", moduleId).maybeSingle()
+      : Promise.resolve({ data: null }),
+    admin.from("groups").select("homework_topic_url, homework_topic_id").eq("id", groupId).maybeSingle(),
+  ]);
+  const perModuleUrl = String((gmtRes as any)?.data?.telegram_topic_url || "");
+  const grp = (grpRes as any)?.data ?? null;
+  const groupUrl = String(grp?.homework_topic_url || "");
+  const topicUrl = perModuleUrl || groupUrl;
+
   // chat id lives in the t.me/c/<internal>/<thread> link (same parse the webhook's membership sweep uses).
-  const m = /\/c\/(\d+)(?:\/(\d+))?/.exec(String(grp?.homework_topic_url || ""));
-  if (!m) {
-    await logOutcome(admin, false, userId, { reason: "topic_not_configured", assignment_id: assignmentId, group_id: groupId });
+  const m = /\/c\/(\d+)(?:\/(\d+))?/.exec(topicUrl);
+  const chatInternal = m?.[1] ?? null;
+  const threadFromUrl = m?.[2] ? Number(m[2]) : null;
+  // homework_topic_id is the group-level thread — it must NOT be applied to a per-module topic url.
+  const threadId = perModuleUrl ? threadFromUrl : (Number(grp?.homework_topic_id ?? 0) || threadFromUrl);
+  // Require a THREAD, not just a chat: without one we would post into the group's General chat instead of
+  // the homework topic. The admin form enforces the topic segment, but never trust that server-side.
+  if (!chatInternal || !threadId) {
+    await logOutcome(admin, false, userId, {
+      reason: "topic_not_configured", assignment_id: assignmentId, group_id: groupId,
+      has_per_module: !!perModuleUrl, has_group_topic: !!groupUrl,
+    });
     return { errorResponse: json({ error: "topic_not_configured" }, 409) };
   }
-  const chatInternal = m[1];
   const chatId = Number(`-100${chatInternal}`);
-  const threadId = Number(grp?.homework_topic_id ?? m[2] ?? 0) || null;
-  const linkBase = `https://t.me/c/${chatInternal}${threadId ? `/${threadId}` : ""}`;
+  const linkBase = `https://t.me/c/${chatInternal}/${threadId}`;
 
   const uname = (prof?.telegram_username || "").toString().trim().replace(/^@/, "");
   const studentName = ([prof?.name, prof?.last_name].filter(Boolean).join(" ") || "—") + (uname ? ` (@${uname})` : "");
@@ -329,7 +399,11 @@ async function postHomeworkToTopic(
     target?.step_number ? `${target.step_number}-vazifa` : null,
     target?.title || null,
   ].filter(Boolean).join(" · ");
-  // Caption goes on the FIRST item only (Telegram caps captions at 1024 chars).
+  // Caption rides the first item that actually POSTS (not literally index 0) — if item 0 failed, the
+  // student's name/title/note would otherwise be missing from the only visible post in the topic.
+  // No parse_mode anywhere here: the caption interpolates a student-supplied name/username/note, so it must
+  // stay plain text — markup could otherwise break the send or inject formatting. Telegram caps captions at
+  // 1024 chars; 1000 leaves margin.
   let caption = `📝 ${studentName}${titleBits ? `\n${titleBits}` : ""}`;
   if (submittedText) caption += `\n\n${submittedText}`;
   caption = caption.slice(0, 1000);
@@ -339,13 +413,13 @@ async function postHomeworkToTopic(
   let firstFileId: string | null = null;
   let firstKind: string | null = null;
   let failed = 0;
+  let captionUsed = false;
 
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
     const isVideo = (f.type || "").startsWith("video/");
-    const fields: Record<string, string | number> = { chat_id: chatId };
-    if (threadId) fields.message_thread_id = threadId;
-    if (i === 0) fields.caption = caption;
+    const fields: Record<string, string | number> = { chat_id: chatId, message_thread_id: threadId };
+    if (!captionUsed) fields.caption = caption;
     if (isVideo) fields.supports_streaming = "true";
 
     const { outcome, result } = await sendTelegramMultipart(
@@ -368,6 +442,7 @@ async function postHomeworkToTopic(
 
     const msgUrl = msgId ? `${linkBase}/${msgId}` : null;
     mediaItems.push({ kind: isVideo ? "video" : "photo", file_id: fileId, ...(msgUrl ? { msg_url: msgUrl } : {}) });
+    captionUsed = true; // only after a REAL success, so the caption isn't lost with a failed first item
     if (firstMsgId === null) { firstMsgId = msgId; firstFileId = fileId; firstKind = isVideo ? "video" : "photo"; }
   }
 
@@ -381,6 +456,8 @@ async function postHomeworkToTopic(
   }
 
   return {
+    posted: mediaItems.length,
+    failed,
     mediaItems,
     tgCols: {
       telegram_chat_id: chatId,
@@ -480,6 +557,13 @@ Deno.serve(async (req) => {
         return json({ error: "file_too_large", kind: isVideo ? "video" : "photo", max_bytes: cap }, 413);
       }
     }
+    // Aggregate ceiling too: 10 near-limit videos would be ~500MB buffered by req.formData() and then
+    // re-wrapped per item, which the edge runtime should never be asked to hold.
+    const totalBytes = files.reduce((n, f) => n + f.size, 0);
+    if (totalBytes > MAX_TOTAL_BYTES) {
+      await logOutcome(admin, false, userId, { reason: "batch_too_large", assignment_id: assignmentId, total: totalBytes });
+      return json({ error: "batch_too_large", max_bytes: MAX_TOTAL_BYTES }, 413);
+    }
   } else {
     if (!imagePaths.length) {
       await logOutcome(admin, false, userId, { reason: "image_path_required", assignment_id: assignmentId });
@@ -550,16 +634,33 @@ Deno.serve(async (req) => {
   let firstImagePath: string | null = null;
   let tgCols: Record<string, unknown> = {};
 
+  let postedCount = 0;
+  let failedCount = 0;
+
   if (isMultipart) {
     const botToken = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
     if (!botToken) {
       await logOutcome(admin, false, userId, { reason: "bot_token_missing", assignment_id: assignmentId });
       return json({ error: "internal_error" }, 500);
     }
-    const posted = await postHomeworkToTopic(admin, botToken, userId, assignmentId, files, submittedText, target);
+    // ATOMIC claim before the irreversible group post — a concurrent request (double-tap / retry during a
+    // slow upload / second webview) gets a clean 409 instead of posting the same media into the class topic
+    // a second time. Released in `finally` so a later legitimate resubmission isn't blocked.
+    if (!(await claimSubmit(admin, userId, assignmentId))) {
+      await logOutcome(admin, false, userId, { reason: "submit_in_progress", assignment_id: assignmentId });
+      return json({ error: "submit_in_progress" }, 409);
+    }
+    let posted;
+    try {
+      posted = await postHomeworkToTopic(admin, botToken, userId, assignmentId, files, submittedText, target);
+    } finally {
+      await releaseSubmit(admin, userId, assignmentId);
+    }
     if ("errorResponse" in posted) return posted.errorResponse;
     mediaItems = posted.mediaItems;
     tgCols = posted.tgCols;
+    postedCount = posted.posted;
+    failedCount = posted.failed;
   } else {
     // media[] carries every uploaded photo in order; submitted_image_url keeps the FIRST as the legacy
     // scalar that older teacher-facing reads still use (the grading gallery renders the full media[]).
@@ -657,5 +758,12 @@ Deno.serve(async (req) => {
   // --- 7. Success health signal (source='miniapp' on the row is also a queryable marker). ---
   await logOutcome(admin, true, userId, { assignment_id: assignmentId, status, attempt_number: attemptNumber }, submissionId);
 
-  return json({ submission_id: submissionId, status, attempt_number: attemptNumber });
+  // posted/failed let the client tell the student "N of M uploaded" instead of a plain success toast when
+  // some files didn't make it into the topic (the failure is DB-visible via telegram_post_partial too).
+  return json({
+    submission_id: submissionId,
+    status,
+    attempt_number: attemptNumber,
+    ...(isMultipart ? { posted: postedCount, failed: failedCount } : {}),
+  });
 });

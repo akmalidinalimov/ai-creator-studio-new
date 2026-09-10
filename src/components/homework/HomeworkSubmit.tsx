@@ -97,6 +97,10 @@ function submitErrorMessage(code: string, t: TFunction): string {
       return t("homework.picker.tooManyImages", { max: MAX_ITEMS });
     case "file_too_large":
       return t("homework.picker.errTooLarge", { photo: mb(MAX_PHOTO_BYTES), video: mb(MAX_VIDEO_BYTES) });
+    case "batch_too_large":
+      return t("homework.picker.errBatchTooLarge");
+    case "submit_in_progress":
+      return t("homework.picker.errInProgress");
     case "unsupported_media":
       return t("homework.picker.invalidFile");
     case "topic_not_configured":
@@ -115,15 +119,18 @@ function submitErrorMessage(code: string, t: TFunction): string {
 // The student's group homework-topic deep-link — now only a FALLBACK surface (for a file too big for the
 // bot to upload, or a group whose topic isn't configured). Resolved via a SECURITY DEFINER RPC because
 // public.groups is admin-only under RLS (see 20260910100000_my_homework_topic_url.sql).
-let _topicUrlCache: { uid: string; url: string | null } | null = null;
-async function resolveGroupTopicUrl(uid: string): Promise<string | null> {
-  if (_topicUrlCache && _topicUrlCache.uid === uid) return _topicUrlCache.url;
+let _topicUrlCache: { uid: string; moduleId: string | null; url: string | null } | null = null;
+async function resolveGroupTopicUrl(uid: string, moduleId: string | null): Promise<string | null> {
+  if (_topicUrlCache && _topicUrlCache.uid === uid && _topicUrlCache.moduleId === moduleId) return _topicUrlCache.url;
   let url: string | null = null;
   try {
-    const { data } = await supabase.rpc("my_homework_topic_url" as any);
+    // p_module_id MATTERS: the RPC prefers the module's own topic (group_module_topics) over the group-level
+    // one, mirroring the server's posting precedence. Omitting it would show a wrong/blank fallback link for
+    // any group configured with per-module topics.
+    const { data } = await supabase.rpc("my_homework_topic_url" as any, { p_module_id: moduleId });
     url = typeof data === "string" && data ? data : null;
   } catch { /* best-effort */ }
-  _topicUrlCache = { uid, url };
+  _topicUrlCache = { uid, moduleId, url };
   return url;
 }
 
@@ -156,9 +163,10 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
   useEffect(() => {
     if (!user) return;
     let alive = true;
-    void resolveGroupTopicUrl(user.id).then((url) => { if (alive) { setTopicUrl(url); setTopicLoaded(true); } });
+    void resolveGroupTopicUrl(user.id, assignment.module_id ?? null)
+      .then((url) => { if (alive) { setTopicUrl(url); setTopicLoaded(true); } });
     return () => { alive = false; };
-  }, [user]);
+  }, [user, assignment.module_id]);
 
   // Revoke outstanding object URLs on unmount (abandoned form / navigation).
   useEffect(() => {
@@ -274,14 +282,26 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
           setConfirmResubmitOpen(true); // selection stays intact
           return;
         }
-        if (code === "topic_not_configured" || code === "no_group") setNeedTopicFallback(true);
+        // Always leave an escape hatch: for a topic mis-config AND for a failed Telegram post (bot lacks
+        // posting rights / topic closed), retrying in-app won't self-heal — show the "post it yourself" card.
+        if (code === "topic_not_configured" || code === "no_group" || code === "telegram_post_failed") {
+          setNeedTopicFallback(true);
+        }
         toast.error(submitErrorMessage(code, t));
         return;
       }
 
-      toast.success(
-        data?.status === "resubmitted" ? t("homework.picker.resubmitSuccess") : t("homework.picker.submitSuccess"),
-      );
+      // Partial success: some files never reached the topic. Say so rather than a flat "submitted!" —
+      // otherwise the student can't know to re-send the missing item.
+      const failedN = Number((data as any)?.failed ?? 0);
+      const postedN = Number((data as any)?.posted ?? 0);
+      if (failedN > 0) {
+        toast.error(t("homework.picker.partialUpload", { posted: postedN, total: postedN + failedN }));
+      } else {
+        toast.success(
+          data?.status === "resubmitted" ? t("homework.picker.resubmitSuccess") : t("homework.picker.submitSuccess"),
+        );
+      }
       resetForm();
       onDone();
     } catch (e) {
@@ -361,6 +381,34 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
         </button>
       )}
 
+      {/* Oversize / no-topic fallback — deliberately placed IMMEDIATELY under the picker (not below the
+          Submit button) so the student sees WHY their big file was refused and where to put it, right where
+          they just tried. Normal submissions never render this. Posting in the topic is a first-class
+          submission path: the bot captures it there exactly like any other homework post. */}
+      {showTopicCard && topicUrl && (
+        <div className="mt-3 rounded-lg border border-primary bg-primary/5 p-3 ring-1 ring-primary/40">
+          <div className="text-[12.5px] font-bold text-foreground">{t("homework.picker.topicTitle")}</div>
+          <div className="mt-0.5 text-[11.5px] font-semibold text-muted-foreground">{t("homework.picker.topicHint")}</div>
+          <a
+            href={topicUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => {
+              try { webApp?.openTelegramLink?.(topicUrl); } catch { /* native <a> is the fallback */ }
+            }}
+            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-4 py-2.5 text-sm font-bold text-foreground"
+          >
+            📌 {t("homework.picker.topicCta")}
+          </a>
+        </div>
+      )}
+      {showTopicCard && !topicUrl && (
+        <div className="mt-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+          <div className="text-[12.5px] font-bold text-foreground">{t("homework.picker.videoNoTopicTitle")}</div>
+          <div className="mt-0.5 text-[11.5px] font-semibold text-muted-foreground">{t("homework.picker.videoNoTopic")}</div>
+        </div>
+      )}
+
       <div className="mt-4">
         <label className="mb-1.5 block text-[12.5px] font-bold text-foreground">{t("homework.picker.noteLabel")}</label>
         <textarea
@@ -383,32 +431,6 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
         {submitting ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
         {submitting ? t("homework.picker.submitting") : t("homework.picker.submitCta")}
       </Button>
-
-      {/* Fallback surface only — shown when a picked file exceeds Telegram's bot upload ceiling, or the
-          group's topic isn't configured. Normal submissions never need it. */}
-      {showTopicCard && topicUrl && (
-        <div className="mt-4 rounded-lg border border-primary bg-primary/5 p-3 ring-1 ring-primary/40">
-          <div className="text-[12.5px] font-bold text-foreground">{t("homework.picker.topicTitle")}</div>
-          <div className="mt-0.5 text-[11.5px] font-semibold text-muted-foreground">{t("homework.picker.topicHint")}</div>
-          <a
-            href={topicUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => {
-              try { webApp?.openTelegramLink?.(topicUrl); } catch { /* native <a> is the fallback */ }
-            }}
-            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-4 py-2.5 text-sm font-bold text-foreground"
-          >
-            📌 {t("homework.picker.topicCta")}
-          </a>
-        </div>
-      )}
-      {showTopicCard && !topicUrl && (
-        <div className="mt-4 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
-          <div className="text-[12.5px] font-bold text-foreground">{t("homework.picker.videoNoTopicTitle")}</div>
-          <div className="mt-0.5 text-[11.5px] font-semibold text-muted-foreground">{t("homework.picker.videoNoTopic")}</div>
-        </div>
-      )}
 
       <AlertDialog open={confirmResubmitOpen} onOpenChange={setConfirmResubmitOpen}>
         <AlertDialogContent>

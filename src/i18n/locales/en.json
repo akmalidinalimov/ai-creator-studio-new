@@ -241,7 +241,7 @@
       "videoNoTopicTitle": "⚠️ Group topic not set up",
       "videoNoTopic": "Your group's homework topic isn't linked yet. Please tell your teacher or an admin.",
       "topicTitle": "📹 File too large",
-      "topicHint": "The bot can't upload a file this big. Post it in your group's homework topic yourself — any size works there.",
+      "topicHint": "The bot can't upload a file this big. Post it in your group's homework topic — any size works there, and it counts as your submission automatically.",
       "topicCta": "Open your group topic",
       "noteLabel": "Note (optional)",
       "notePlaceholder": "Briefly describe your work…",
@@ -259,7 +259,10 @@
       "errGeneric": "Something went wrong. Please try again.",
       "errMediaRequired": "Choose an image or video.",
       "errTooLarge": "File too large. Images up to {{photo}}MB, video up to {{video}}MB.",
-      "errTelegramPost": "Couldn't send to Telegram. Please try again."
+      "errTelegramPost": "Couldn't send to Telegram. Please try again.",
+      "errBatchTooLarge": "These files are too large together. Choose fewer or smaller files.",
+      "errInProgress": "Your homework is still uploading — please wait.",
+      "partialUpload": "{{posted}} of {{total}} uploaded. Please re-send the rest."
     }
   },
   "course": {

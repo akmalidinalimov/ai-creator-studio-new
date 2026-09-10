@@ -244,7 +244,7 @@
       "videoNoTopicTitle": "⚠️ Guruh topiki sozlanmagan",
       "videoNoTopic": "Guruhingiz uchun vazifa topiki hali ulanmagan. Iltimos, o'qituvchingiz yoki adminga ayting.",
       "topicTitle": "📹 Fayl juda katta",
-      "topicHint": "Bot bunday katta faylni yubora olmaydi. Uni guruhingizdagi vazifa topikiga o'zingiz joylang — u yerda istalgan hajm ishlaydi.",
+      "topicHint": "Bot bunday katta faylni yubora olmaydi. Uni guruhingizdagi vazifa topikiga joylang — u yerda istalgan hajm ishlaydi va vazifangiz avtomatik qabul qilinadi.",
       "topicCta": "Guruh topikiga o'tish",
       "noteLabel": "Izoh (ixtiyoriy)",
       "notePlaceholder": "Vazifangiz haqida qisqacha yozing…",
@@ -259,7 +259,10 @@
       "errNotAssignable": "Bu vazifa sizga mos emas. Sahifani yangilab ko'ring.",
       "errImageNotFound": "Rasm topilmadi. Qaytadan yuklashga harakat qiling.",
       "errAuth": "Sessiya muddati tugagan. Qaytadan kiring.",
-      "errGeneric": "Xatolik yuz berdi. Qaytadan urinib ko'ring."
+      "errGeneric": "Xatolik yuz berdi. Qaytadan urinib ko'ring.",
+      "errBatchTooLarge": "Fayllar hajmi juda katta. Kamroq yoki kichikroq fayl tanlang.",
+      "errInProgress": "Vazifangiz yuborilmoqda — biroz kuting.",
+      "partialUpload": "{{total}} tadan {{posted}} tasi yuborildi. Qolganini qayta yuboring."
     }
   },
   "course": {
@@ -1327,7 +1330,13 @@
     "twEmpty": "Bu hafta uchun hali ma'lumot yo'q — dam olyapsizmi? 🌱",
     "twHours": "{{n}} soat",
     "twMin": "{{n}} daq",
-    "tLevelNames": ["Yangi ustoz", "Ustoz", "Katta ustoz", "Tajribali ustoz", "Top ustoz"],
+    "tLevelNames": [
+      "Yangi ustoz",
+      "Ustoz",
+      "Katta ustoz",
+      "Tajribali ustoz",
+      "Top ustoz"
+    ],
     "tToNext": "Keyingi darajaga {{xp}} XP",
     "kpiLessonsWatched": "dars ko'rildi",
     "kpiModulesDone": "modul tugallandi",
