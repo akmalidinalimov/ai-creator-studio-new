@@ -303,21 +303,31 @@ async function claimSubmit(admin: any, userId: string, assignmentId: string): Pr
     await logOutcome(admin, false, userId, { reason: "claim_error_fail_open", assignment_id: assignmentId, error: insErr.message });
     return true; // never block submission on the guard itself
   }
-  // Someone holds it. Take over ONLY if their claim is stale (their request died mid-flight).
+  // Someone holds it. Take over ONLY if their claim is stale (their request died mid-flight). Single atomic
+  // UPDATE ... WHERE claimed_at < stale — never read-modify-write.
   const staleIso = new Date(Date.now() - CLAIM_STALE_MS).toISOString();
-  const { data: took } = await admin
+  const { data: took, error: tookErr } = await admin
     .from("homework_submit_claims")
     .update({ claimed_at: new Date().toISOString() })
     .eq("user_id", userId).eq("assignment_id", assignmentId).lt("claimed_at", staleIso)
     .select("user_id")
     .maybeSingle();
+  if (tookErr) {
+    // Fail CLOSED here (a fresh claim genuinely existing is the far likelier reading), but never silently:
+    // without this the student would get "still uploading" with no trace of the real DB failure anywhere.
+    await logOutcome(admin, false, userId, { reason: "claim_takeover_error", assignment_id: assignmentId, error: tookErr.message });
+    return false;
+  }
   return !!took;
 }
 
-/** Release the claim so a later legitimate resubmission isn't blocked. Best-effort: a leaked claim expires. */
+/** Release the claim so a later legitimate resubmission isn't blocked. Best-effort — a leaked claim is
+ *  self-healing via the stale takeover above — but never SILENT (this file's class-A rule). */
 async function releaseSubmit(admin: any, userId: string, assignmentId: string): Promise<void> {
   try {
-    await admin.from("homework_submit_claims").delete().eq("user_id", userId).eq("assignment_id", assignmentId);
+    const { error } = await admin.from("homework_submit_claims").delete()
+      .eq("user_id", userId).eq("assignment_id", assignmentId);
+    if (error) console.error("submit-homework releaseSubmit failed", error.message);
   } catch (e) { console.error("submit-homework releaseSubmit threw", String(e)); }
 }
 
@@ -369,6 +379,17 @@ async function postHomeworkToTopic(
       : Promise.resolve({ data: null }),
     admin.from("groups").select("homework_topic_url, homework_topic_id").eq("id", groupId).maybeSingle(),
   ]);
+  // Check BOTH reads: a transient DB error must not fall through and masquerade as "topic_not_configured",
+  // which would both mislead the student and poison that health signal (this file's class-A rule).
+  const gmtErr = (gmtRes as any)?.error ?? null;
+  const grpErr = (grpRes as any)?.error ?? null;
+  if (gmtErr || grpErr) {
+    await logOutcome(admin, false, userId, {
+      reason: "topic_lookup_failed", assignment_id: assignmentId, group_id: groupId,
+      error: String(gmtErr?.message ?? grpErr?.message ?? "unknown"),
+    });
+    return { errorResponse: json({ error: "internal_error" }, 500) };
+  }
   const perModuleUrl = String((gmtRes as any)?.data?.telegram_topic_url || "");
   const grp = (grpRes as any)?.data ?? null;
   const groupUrl = String(grp?.homework_topic_url || "");
@@ -646,6 +667,13 @@ Deno.serve(async (req) => {
     // ATOMIC claim before the irreversible group post — a concurrent request (double-tap / retry during a
     // slow upload / second webview) gets a clean 409 instead of posting the same media into the class topic
     // a second time. Released in `finally` so a later legitimate resubmission isn't blocked.
+    //
+    // ACCEPTED RESIDUAL: the release happens when the post returns, a few ms BEFORE the row write below
+    // commits, so a retry landing in exactly that gap could repost. It cannot corrupt data (the unique
+    // (user_id, assignment_id) index funnels the loser into applyResubmission), and a realistic retry only
+    // happens after a client timeout — seconds later, i.e. after this request finished, which no claim
+    // window covers anyway. Fully closing THAT needs a client-supplied idempotency key; tracked as a
+    // follow-up rather than pretending the claim solves it.
     if (!(await claimSubmit(admin, userId, assignmentId))) {
       await logOutcome(admin, false, userId, { reason: "submit_in_progress", assignment_id: assignmentId });
       return json({ error: "submit_in_progress" }, 409);
