@@ -275,6 +275,13 @@ const T = {
     gradeAskScore: (max: number) => `Baho kiriting (0–${max}):`,
     gradeAskComment: "Izoh yozing yoki 🎤 ovozli xabar yuboring (yoki /skip):",
     gradeVoiceNote: "🎧 O'qituvchidan ovozli izoh:",
+    // Mini App → bot voice-feedback bridge (Telegram's webview blocks the mic, so the teacher records here).
+    gvAsk: (student: string, title: string) =>
+      `🎤 <b>${student}</b> — ${title}\n\nOvozli izohingizni shu yerga yuboring (yoki /cancel):`,
+    gvNeedVoice: "🎤 Ovozli xabar yuboring (yoki /cancel).",
+    gvSaved: (student: string, delivered: boolean) => delivered
+      ? `✅ Ovozli izoh saqlandi va yuborildi: <b>${student}</b>`
+      : `✅ Ovozli izoh saqlandi: <b>${student}</b>\nTelegramda yetkazib bo'lmadi — talaba uni ilovada tinglaydi.`,
     gradeBadScore: (max: number) => `Bal 0–${max} oralig'ida bo'lishi kerak.`,
     gradeSaved: (sc: number, mx: number) => `✅ Saqlandi: ${sc}/${mx}. Talaba xabardor qilindi.`,
     gradeStudentDM: (title: string, sc: number, mx: number, fb: string, xp?: number) =>
@@ -562,6 +569,12 @@ const T = {
     gradeAskScore: (max: number) => `Введите балл (0–${max}):`,
     gradeAskComment: "Напишите комментарий или 🎤 отправьте голосовое (или /skip):",
     gradeVoiceNote: "🎧 Голосовой комментарий преподавателя:",
+    gvAsk: (student: string, title: string) =>
+      `🎤 <b>${student}</b> — ${title}\n\nОтправьте сюда голосовой комментарий (или /cancel):`,
+    gvNeedVoice: "🎤 Отправьте голосовое сообщение (или /cancel).",
+    gvSaved: (student: string, delivered: boolean) => delivered
+      ? `✅ Голосовой комментарий сохранён и отправлен: <b>${student}</b>`
+      : `✅ Голосовой комментарий сохранён: <b>${student}</b>\nВ Telegram доставить не удалось — студент прослушает его в приложении.`,
     gradeBadScore: (max: number) => `Балл должен быть от 0 до ${max}.`,
     gradeSaved: (sc: number, mx: number) => `✅ Сохранено: ${sc}/${mx}. Студенту отправлено уведомление.`,
     gradeStudentDM: (title: string, sc: number, mx: number, fb: string, xp?: number) =>
@@ -841,6 +854,12 @@ const T = {
     gradeAskScore: (max: number) => `Enter score (0–${max}):`,
     gradeAskComment: "Write a comment or 🎤 send a voice message (or /skip):",
     gradeVoiceNote: "🎧 Voice feedback from your teacher:",
+    gvAsk: (student: string, title: string) =>
+      `🎤 <b>${student}</b> — ${title}\n\nSend your voice feedback here (or /cancel):`,
+    gvNeedVoice: "🎤 Please send a voice message (or /cancel).",
+    gvSaved: (student: string, delivered: boolean) => delivered
+      ? `✅ Voice feedback saved and sent to <b>${student}</b>`
+      : `✅ Voice feedback saved for <b>${student}</b>\nCouldn't deliver it on Telegram — the student will hear it in the app.`,
     gradeBadScore: (max: number) => `Score must be between 0 and ${max}.`,
     gradeSaved: (sc: number, mx: number) => `✅ Saved: ${sc}/${mx}. Student notified.`,
     gradeStudentDM: (title: string, sc: number, mx: number, fb: string, xp?: number) =>
@@ -4363,6 +4382,88 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
       expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
     }).eq("telegram_id", tgId);
     await sendMessage(msg.chat.id, t.gradeAskComment);
+    return true;
+  }
+
+  // Mini App → bot VOICE BRIDGE. Telegram's in-app webview does not grant Mini Apps microphone access, so
+  // the teacher's in-app recorder is dead on most devices. teacher-voice-request parks this state and
+  // prompts the teacher HERE, in the bot chat, where Telegram's own recorder always works. We attach the
+  // note to the submission and deliver it to the student through the SAME save + sendVoice path the in-bot
+  // grading flow already uses — no second delivery mechanism to keep in sync.
+  if (state.state === "grade_voice") {
+    const submissionId = String(ctx.submission_id || "");
+    if (text === "/cancel") {
+      await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+      await sendWithKeyboard(msg.chat.id, t.gradeCancelled, locale, isAdmin, isAdmin ? "admin" : "teacher");
+      return true;
+    }
+    const voiceFileId: string | null = msg.voice?.file_id || msg.audio?.file_id || null;
+    if (!voiceFileId) {
+      // TEXT means she moved on — typically a keyboard-menu tap, which arrives as plain text and reaches this
+      // handler FIRST. Trapping every menu tap behind "send a voice message" for the whole 15-minute TTL is the
+      // opposite of member forgiveness: release the parked state and let the message route normally. The
+      // prompt stays in the chat, and one tap on the Mini App button re-arms it.
+      if (text) {
+        await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice");
+        return false;
+      }
+      // Non-text, non-voice (sticker, photo, video note): nudge rather than silently swallow it.
+      await sendMessage(msg.chat.id, t.gvNeedVoice);
+      return true;
+    }
+    const { data: sub } = await admin.from("homework_submissions")
+      .select("user_id, assignment_id").eq("id", submissionId).maybeSingle();
+    if (!sub) {
+      await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+      await sendMessage(msg.chat.id, t.gradeNotFound);
+      return true;
+    }
+    // Re-check scope at COMMIT time (teachers only) — same guard the grade_comment path applies, so a
+    // stale parked state can never attach a note to a student outside the grader's groups.
+    if (!isAdmin) {
+      const scope = await gradingScopeIds(admin, profileId, false);
+      if (!scope || !scope.includes(sub.user_id)) {
+        await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+        await sendMessage(msg.chat.id, t.gradeNotFound);
+        return true;
+      }
+    }
+    // Clear score_feedback_voice_path in the SAME write: hw-audio-url plays the app-recorded path FIRST and
+    // the bot file_id only as a fallback, so leaving an older in-app note in place would silently shadow the
+    // note the teacher just recorded here. Newest recording must win. (submitScore never touches the
+    // file_id column, so a later in-app save can't wipe this one either.)
+    const { error: vErr } = await admin.from("homework_submissions")
+      .update({ score_feedback_voice_file_id: voiceFileId, score_feedback_voice_path: null }).eq("id", submissionId);
+    if (vErr) {
+      await sendMessage(msg.chat.id, `❌ ${vErr.message}`);
+      return true;
+    }
+    // Deliver to the student in THEIR locale; a non-delivery stays DB-visible (doctrine), mirroring the
+    // grade_voice_delivery_failed row the in-bot grading path writes. Most students (~70%) never pressed
+    // Start, so "not delivered" is common and expected — the note is still saved and playable in the app.
+    let studentName = "";
+    let delivered = false;
+    try {
+      const { data: stu } = await admin.from("profiles")
+        .select("telegram_id, preferred_locale, name, last_name").eq("id", sub.user_id).maybeSingle();
+      studentName = [stu?.name, stu?.last_name].filter(Boolean).join(" ");
+      if (stu?.telegram_id) {
+        const stuT = T[normLocale(stu.preferred_locale)];
+        delivered = await sendVoice(Number(stu.telegram_id), voiceFileId, stuT.gradeVoiceNote);
+        if (!delivered) {
+          await admin.from("admin_actions").insert({
+            actor_user_id: profileId, action: "grade_voice_delivery_failed",
+            target_user_id: sub.user_id, target_resource_type: "homework_submission",
+            target_resource_id: submissionId, details: { source: "miniapp_voice_bridge" },
+          });
+        }
+      }
+    } catch (e) { console.error("grade_voice deliver threw", String(e)); }
+    await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+    cacheInvalidateUser(sub.user_id);
+    // Name the student in the confirmation: the state is one-per-teacher, so if she requested notes for two
+    // cards back to back the latest request wins — naming who received it makes any mix-up visible at once.
+    await sendWithKeyboard(msg.chat.id, t.gvSaved(csvEscapeHtml(studentName || "—"), delivered), locale, isAdmin, isAdmin ? "admin" : "teacher");
     return true;
   }
 

@@ -182,6 +182,13 @@ verify_jwt = true
 [functions.notify-grade-voice]
 verify_jwt = true
 
+# teacher-voice-request: bridges the Mini App's blocked microphone (Telegram's webview denies getUserMedia)
+# to Telegram's own recorder — parks a grade_voice conversation state and DMs the teacher a prompt in the bot
+# chat. Requires a logged-in teacher/admin JWT (verify_jwt=true) + junction-aware RBAC (is_group_teacher ∪
+# admin). See supabase/functions/teacher-voice-request/index.ts.
+[functions.teacher-voice-request]
+verify_jwt = true
+
 # teacher-broadcast-group: Mini App API for a teacher to DM-broadcast a message to every student in
 # one of their groups (mirrors the bot-chat /tbroadcast flow exactly — a DM fan-out, NOT a post into
 # the supergroup). Requires a logged-in teacher/admin Supabase session JWT (verify_jwt=true) —
