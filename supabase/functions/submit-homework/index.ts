@@ -234,8 +234,8 @@ async function applyResubmission(
   assignmentId: string,
   targetId: string,
   submittedText: string,
-  imagePath: string,
-  mediaItem: Record<string, string>,
+  firstImagePath: string,
+  mediaItems: Record<string, string>[],
   nowIso: string,
 ): Promise<{ submissionId: string; attemptNumber: number } | { errorResponse: Response }> {
   const { data: resub, error: resubErr } = await userClient.rpc("start_homework_resubmission", { p_submission_id: targetId });
@@ -251,8 +251,8 @@ async function applyResubmission(
 
   const { error: updErr } = await admin.from("homework_submissions").update({
     submitted_text: submittedText,
-    submitted_image_url: imagePath,
-    media: [mediaItem],
+    submitted_image_url: firstImagePath,
+    media: mediaItems,
     source: "miniapp",
     submitted_at: nowIso,
     previous_score: previousScoreToCarry,
@@ -287,7 +287,16 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { return json({ error: "bad_json" }, 400); }
 
   const assignmentId = String(body?.assignment_id || "").trim();
-  const imagePath = String(body?.image_path || "").trim();
+  // Multi-image (2026-09-10): accept image_paths[] (several in-app photos) and fall back to the legacy single
+  // image_path so an older client / stale bundle keeps working through rollout. VIDEOS are NOT uploaded here
+  // — they route to the Telegram group homework topic (HomeworkSubmit.tsx), so every path is a private-bucket
+  // PHOTO key. MAX_IMAGES caps the count so a crafted request can't force hundreds of storage HEADs or a huge
+  // media[] array.
+  const MAX_IMAGES = 10;
+  const rawPaths: unknown[] = Array.isArray(body?.image_paths)
+    ? body.image_paths
+    : (body?.image_path != null ? [body.image_path] : []);
+  const imagePaths = rawPaths.map((p) => String(p ?? "").trim()).filter((p) => p.length > 0);
   const submittedText = typeof body?.submitted_text === "string" ? body.submitted_text.slice(0, 4000) : "";
   // Additive beyond the base 3-field contract: without an explicit resubmit confirmation, a
   // graded-and-not-stale submission is left locked (409) rather than silently overwritten by a
@@ -300,25 +309,31 @@ Deno.serve(async (req) => {
     await logOutcome(admin, false, userId, { reason: "invalid_assignment_id" });
     return json({ error: "invalid_assignment_id" }, 400);
   }
-  if (!imagePath) {
+  if (!imagePaths.length) {
     await logOutcome(admin, false, userId, { reason: "image_path_required", assignment_id: assignmentId });
     return json({ error: "image_path_required" }, 400);
   }
-
-  // --- 3. image_path must belong to the caller: "<uid>/<file>" (matches the storage RLS shape
-  // from 20260502233427_*:104-106 — a student can only ever have uploaded under their own uid). ---
-  if (!imagePath.startsWith(`${userId}/`)) {
-    await logOutcome(admin, false, userId, { reason: "image_path_not_own", assignment_id: assignmentId });
-    return json({ error: "forbidden" }, 403);
+  if (imagePaths.length > MAX_IMAGES) {
+    await logOutcome(admin, false, userId, { reason: "too_many_images", assignment_id: assignmentId, count: imagePaths.length });
+    return json({ error: "too_many_images" }, 400);
   }
 
-  // The client claims to have already uploaded this object — verify it actually exists rather
-  // than trusting the string (a signed-URL attempt is a proven check already used for this same
-  // bucket at index.ts:4060).
-  const { error: signErr } = await admin.storage.from(BUCKET).createSignedUrl(imagePath, 60);
-  if (signErr) {
-    await logOutcome(admin, false, userId, { reason: "image_not_found", assignment_id: assignmentId });
-    return json({ error: "image_not_found" }, 400);
+  // --- 3. every path must belong to the caller: "<uid>/<file>" (matches the storage RLS shape
+  // from 20260502233427_*:104-106 — a student can only ever have uploaded under their own uid) AND
+  // actually exist in the bucket (verify rather than trust the string — a signed-URL attempt is the
+  // proven existence check already used for this bucket at index.ts:4060). ---
+  for (const p of imagePaths) {
+    if (!p.startsWith(`${userId}/`)) {
+      await logOutcome(admin, false, userId, { reason: "image_path_not_own", assignment_id: assignmentId });
+      return json({ error: "forbidden" }, 403);
+    }
+  }
+  for (const p of imagePaths) {
+    const { error: signErr } = await admin.storage.from(BUCKET).createSignedUrl(p, 60);
+    if (signErr) {
+      await logOutcome(admin, false, userId, { reason: "image_not_found", assignment_id: assignmentId });
+      return json({ error: "image_not_found" }, 400);
+    }
   }
 
   // --- 2. Assignable-set + tier check: replicate by calling student_assignable_homework() AS
@@ -355,7 +370,10 @@ Deno.serve(async (req) => {
     return json({ error: "already_graded", submission_id: prior!.id, score: prior!.score }, 409);
   }
 
-  const mediaItem = { kind: "photo", url: imagePath };
+  // media[] carries every uploaded photo in order; submitted_image_url keeps the FIRST as the legacy
+  // scalar that older teacher-facing reads still use (the teacher grading gallery renders the full media[]).
+  const mediaItems = imagePaths.map((p) => ({ kind: "photo", url: p }));
+  const firstImagePath = imagePaths[0];
   const nowIso = new Date().toISOString();
   let submissionId: string;
   let attemptNumber: number;
@@ -363,7 +381,7 @@ Deno.serve(async (req) => {
 
   if (prior) {
     status = "resubmitted";
-    const r = await applyResubmission(userClient, admin, userId, assignmentId, prior.id, submittedText, imagePath, mediaItem, nowIso);
+    const r = await applyResubmission(userClient, admin, userId, assignmentId, prior.id, submittedText, firstImagePath, mediaItems, nowIso);
     if ("errorResponse" in r) return r.errorResponse;
     submissionId = r.submissionId;
     attemptNumber = r.attemptNumber;
@@ -384,8 +402,8 @@ Deno.serve(async (req) => {
       user_id: userId,
       assignment_id: assignmentId,
       submitted_text: submittedText,
-      submitted_image_url: imagePath,
-      media: [mediaItem],
+      submitted_image_url: firstImagePath,
+      media: mediaItems,
       source: "miniapp",
       submitted_at: nowIso,
       attempt_number: 1,
@@ -406,7 +424,7 @@ Deno.serve(async (req) => {
         return json({ error: "internal_error" }, 500);
       }
       status = "resubmitted";
-      const r = await applyResubmission(userClient, admin, userId, assignmentId, raced.id, submittedText, imagePath, mediaItem, nowIso);
+      const r = await applyResubmission(userClient, admin, userId, assignmentId, raced.id, submittedText, firstImagePath, mediaItems, nowIso);
       if ("errorResponse" in r) return r.errorResponse;
       submissionId = r.submissionId;
       attemptNumber = r.attemptNumber;
