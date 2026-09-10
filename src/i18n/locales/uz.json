@@ -238,6 +238,8 @@
       "tooManyImages": "Eng ko'pi {{max}} ta rasm.",
       "invalidFile": "Faqat rasm yoki video tanlang.",
       "videoToTopic": "Videolarni guruh topikiga joylang 👇",
+      "videoNoTopicTitle": "⚠️ Guruh topiki sozlanmagan",
+      "videoNoTopic": "Guruhingiz uchun vazifa topiki hali ulanmagan. Iltimos, o'qituvchingiz yoki adminga ayting.",
       "topicTitle": "📹 Video yubormoqchimisiz?",
       "topicHint": "Videolarni ilovadan yubora olmaysiz. Guruhingizdagi vazifa topikiga joylang — istalgan hajmdagi video u yerda ishlaydi.",
       "topicCta": "Guruh topikiga o'tish",

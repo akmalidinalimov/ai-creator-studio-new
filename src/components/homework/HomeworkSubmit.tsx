@@ -4,6 +4,7 @@ import type { TFunction } from "i18next";
 import { ImagePlus, Loader2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { reportClientError } from "@/lib/beacon";
 import { useAuth } from "@/contexts/AuthContext";
 import { useMiniApp } from "@/lib/telegram/MiniAppContext";
 import { Button } from "@/components/ui-kit";
@@ -143,6 +144,7 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
   const { webApp } = useMiniApp();
 
   const [topicUrl, setTopicUrl] = useState<string | null>(null);
+  const [topicLoaded, setTopicLoaded] = useState(false);
   const [images, setImages] = useState<PickedImage[]>([]);
   const [videoPicked, setVideoPicked] = useState(false);
   const [note, setNote] = useState("");
@@ -158,9 +160,29 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
   useEffect(() => {
     if (!user) return;
     let alive = true;
-    void resolveGroupTopicUrl(user.id).then((url) => { if (alive) setTopicUrl(url); });
+    void resolveGroupTopicUrl(user.id).then((url) => { if (alive) { setTopicUrl(url); setTopicLoaded(true); } });
     return () => { alive = false; };
   }, [user]);
+
+  // Scaling safety net (doctrine: graceful ≠ silent). The topic hand-off is fully per-student
+  // (profiles.group_id → that group's homework_topic_url), so it scales to any number of groups — BUT only
+  // if each group's link is set (AdminGroups form). The failure mode when a NEW group (6.0: ~12 groups) is
+  // created WITHOUT its link is a student who picks a video and has nowhere to go. Don't dead-end silently:
+  // show a clear fallback (below) AND beacon it once, so admins catch the mis-configured group the moment a
+  // real student hits it — not up to a week later via weekly-admin-topic-check. Landed in client_error_events
+  // (auto-flagged miniapp) as message 'hw_topic_url_missing'.
+  const beaconedMissingRef = useRef(false);
+  useEffect(() => {
+    if (videoPicked && topicLoaded && !topicUrl && !beaconedMissingRef.current) {
+      beaconedMissingRef.current = true;
+      reportClientError({
+        type: "other",
+        message: "hw_topic_url_missing",
+        route: "/homework",
+        extra: { assignment_id: assignment.assignment_id },
+      });
+    }
+  }, [videoPicked, topicLoaded, topicUrl, assignment.assignment_id]);
 
   // Revoke every outstanding object URL on unmount (abandon / navigate away). Per-image revokes on
   // remove + on successful reset happen inline below; this covers the "just left" case.
@@ -407,6 +429,16 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
           >
             📌 {t("homework.picker.topicCta")}
           </a>
+        </div>
+      )}
+
+      {/* Fallback when this student's group has NO homework_topic_url configured (a new group set up
+          without its link) — a clear message instead of a silent dead-end; the missing config was beaconed
+          above so admins are alerted. */}
+      {!topicUrl && topicLoaded && videoPicked && (
+        <div className="mt-4 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+          <div className="text-[12.5px] font-bold text-foreground">{t("homework.picker.videoNoTopicTitle")}</div>
+          <div className="mt-0.5 text-[11.5px] font-semibold text-muted-foreground">{t("homework.picker.videoNoTopic")}</div>
         </div>
       )}
 

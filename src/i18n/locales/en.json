@@ -238,6 +238,8 @@
       "tooManyImages": "Up to {{max}} images.",
       "invalidFile": "Please choose an image or video.",
       "videoToTopic": "Post videos in your group topic 👇",
+      "videoNoTopicTitle": "⚠️ Group topic not set up",
+      "videoNoTopic": "Your group's homework topic isn't linked yet. Please tell your teacher or an admin.",
       "topicTitle": "📹 Want to send a video?",
       "topicHint": "Videos can't be sent from the app. Post them in your group's homework topic — any size video works there.",
       "topicCta": "Open your group topic",
