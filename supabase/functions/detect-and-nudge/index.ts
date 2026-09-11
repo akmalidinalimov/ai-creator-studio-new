@@ -161,23 +161,26 @@ async function isEligible(admin: any, profile: any, type: NudgeType): Promise<{ 
 
 async function runInactive3d(admin: any, templates: any) {
   const { data: candidates } = await admin.rpc("nudge_candidates_inactive", { _days: 3 });
-  let sent = 0, skipped = 0;
+  let sent = 0, skipped = 0, failed = 0;
   for (const p of candidates || []) {
     // Skip if any nudge in last 7 days
     const recent = await recentCount(admin, p.id, 7);
     if (recent > 0) { skipped++; continue; }
     const elig = await isEligible(admin, p, "inactive_3d");
     if (!elig.ok) { skipped++; continue; }
-    await sendNudge(admin, templates, p, "inactive_3d", {}, "/dashboard");
-    sent++;
+    // `sent` must mean DELIVERED: a transport failure is now caught inside sendNudge (it writes the
+    // nudge_log row and returns ok:false), so counting it here would over-report success to anything
+    // that later reads this summary.
+    const r = await sendNudge(admin, templates, p, "inactive_3d", {}, "/dashboard");
+    if (r.ok) sent++; else failed++;
     await sleep(50);
   }
-  return { sent, skipped, total: candidates?.length || 0 };
+  return { sent, failed, skipped, total: candidates?.length || 0 };
 }
 
 async function runInactive7d(admin: any, templates: any) {
   const { data: candidates } = await admin.rpc("nudge_candidates_inactive", { _days: 7 });
-  let sent = 0, skipped = 0;
+  let sent = 0, skipped = 0, failed = 0;
   for (const p of candidates || []) {
     const last3 = await lastSentOfType(admin, p.id, "inactive_3d");
     if (last3?.clicked_at) { skipped++; continue; }
@@ -192,26 +195,26 @@ async function runInactive7d(admin: any, templates: any) {
       else if (loc === "en") teacherLine = `Your teacher ${p.teacher_name} is waiting. `;
       else teacherLine = `Ustozingiz ${p.teacher_name} sizni kutmoqda. `;
     }
-    await sendNudge(admin, templates, p, "inactive_7d", { teacher_line: teacherLine }, "/dashboard");
-    sent++;
+    const r = await sendNudge(admin, templates, p, "inactive_7d", { teacher_line: teacherLine }, "/dashboard");
+    if (r.ok) sent++; else failed++;
     await sleep(50);
   }
-  return { sent, skipped, total: candidates?.length || 0 };
+  return { sent, failed, skipped, total: candidates?.length || 0 };
 }
 
 async function runStuckLesson(admin: any, templates: any) {
   const { data: candidates } = await admin.rpc("nudge_candidates_stuck");
-  let sent = 0, skipped = 0;
+  let sent = 0, skipped = 0, failed = 0;
   for (const c of candidates || []) {
     const elig = await isEligible(admin, c, "stuck_lesson");
     if (!elig.ok) { skipped++; continue; }
     const recent = await recentCount(admin, c.id, 7);
     if (recent >= 3) { skipped++; continue; }
-    await sendNudge(admin, templates, c, "stuck_lesson", { lesson_title: c.lesson_title || "" }, `/lesson/${c.lesson_id}`);
-    sent++;
+    const r = await sendNudge(admin, templates, c, "stuck_lesson", { lesson_title: c.lesson_title || "" }, `/lesson/${c.lesson_id}`);
+    if (r.ok) sent++; else failed++;
     await sleep(50);
   }
-  return { sent, skipped, total: candidates?.length || 0 };
+  return { sent, failed, skipped, total: candidates?.length || 0 };
 }
 
 async function runModuleComplete(admin: any, templates: any) {
@@ -220,7 +223,7 @@ async function runModuleComplete(admin: any, templates: any) {
     .select("profile_id, module_id")
     .is("sent_at", null)
     .limit(500);
-  let sent = 0, skipped = 0;
+  let sent = 0, skipped = 0, failed = 0;
   for (const q of queue || []) {
     const { data: p } = await admin
       .from("profiles")
@@ -237,12 +240,14 @@ async function runModuleComplete(admin: any, templates: any) {
     if (prefs && prefs.opt_in === false) { skipped++; continue; }
     if (prefs?.paused_until && prefs.paused_until >= new Date().toISOString().slice(0, 10)) { skipped++; continue; }
     const { data: m } = await admin.from("modules").select("title").eq("id", q.module_id).maybeSingle();
-    await sendNudge(admin, templates, p, "module_complete", { module_name: m?.title || "" }, "/dashboard");
+    const r = await sendNudge(admin, templates, p, "module_complete", { module_name: m?.title || "" }, "/dashboard");
+    // sent_at is still stamped regardless of delivery — unchanged on purpose: this queue is at-most-once,
+    // so a blocked recipient can't have the celebration retried every hour. nudge_log carries the error.
     await admin.from("nudge_module_celebrations").update({ sent_at: new Date().toISOString() }).eq("profile_id", q.profile_id).eq("module_id", q.module_id);
-    sent++;
+    if (r.ok) sent++; else failed++;
     await sleep(50);
   }
-  return { sent, skipped, total: queue?.length || 0 };
+  return { sent, failed, skipped, total: queue?.length || 0 };
 }
 
 Deno.serve(async (req) => {
