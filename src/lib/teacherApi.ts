@@ -205,6 +205,29 @@ export function notifyGradeVoice(submissionId: string, opts?: { voiceFresh?: boo
     .catch(() => {});
 }
 
+/**
+ * Voice-feedback bridge. Telegram's in-app webview denies Mini Apps microphone access, so the in-app
+ * VoiceRecorder is a dead end on most teacher devices. This asks teacher-voice-request to park a
+ * `grade_voice` conversation state and DM the teacher a prompt in the bot chat, where Telegram's native
+ * recorder always works; the webhook then attaches the note to this submission and delivers it.
+ *
+ * Unlike notifyGradeVoice this is NOT fire-and-forget: it returns a typed code so the grading screen can
+ * tell the teacher exactly what to do (e.g. `no_telegram` / `prompt_failed` → open the bot and press /start).
+ */
+export async function requestTeacherVoiceInTelegram(submissionId: string): Promise<{ ok: boolean; code?: string }> {
+  const { error } = await supabase.functions.invoke("teacher-voice-request", {
+    body: { submission_id: submissionId },
+  });
+  if (!error) return { ok: true };
+  let code = "";
+  try {
+    // On an HTTP error supabase-js puts the response body in error.context, not `data`.
+    const j = await (error as any).context?.json?.();
+    code = j?.error || "";
+  } catch { /* body unreadable — generic message */ }
+  return { ok: false, code: code || "internal_error" };
+}
+
 // NOTE: there is deliberately NO `undoScore` that clears score→null. The homework_submissions_guard
 // trigger (20260509085603_...sql) only permits OLD.score→NULL when attempt_number is ALSO bumped (a
 // resubmission); a plain null-clear is SILENTLY reverted (`NEW.score := OLD.score`) while our
