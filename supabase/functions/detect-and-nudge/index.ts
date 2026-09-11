@@ -4,6 +4,7 @@
 //        { mode: "cron" } → invoked by pg_cron; runs all 4 types over all eligible students.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
+import { redactSecrets } from "../_shared/redact.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -22,17 +23,25 @@ async function tgSend(chatId: number, text: string, buttonText: string, url: str
   // + echoes the body in test mode, which sendTelegram's SendOutcome intentionally does not expose.
   // Non-delivery is already DB-visible via nudge_log.error, so there is no silent-failure gap; adopting
   // the primitive would drop behavior for zero classification gain.
-  // eslint-disable-next-line no-restricted-syntax
-  const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      disable_web_page_preview: true,
-      reply_markup: { inline_keyboard: [[{ text: buttonText, url }]] },
-    }),
-  });
+  let r: Response;
+  try {
+    // eslint-disable-next-line no-restricted-syntax
+    r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        disable_web_page_preview: true,
+        reply_markup: { inline_keyboard: [[{ text: buttonText, url }]] },
+      }),
+    });
+  } catch (e) {
+    // TOKEN CONTAINMENT (same class as the webhook's tgApi): a Deno transport error embeds the full
+    // token-bearing URL, and this function's failures surface BOTH in nudge_log.error and in the
+    // handler's 500 body -- which the hourly cron and the admin Nudges page both receive.
+    throw new Error(`telegram_transport_error (sendMessage): ${redactSecrets(e)}`);
+  }
   const data = await r.json().catch(() => ({}));
   return { ok: r.ok && data?.ok, status: r.status, data };
 }
@@ -84,7 +93,16 @@ async function sendNudge(
   const { token, url } = await makeMagicLink(admin, profile.id, targetPath);
   const body = render(tpl.body, { name, ...extra });
   const button = tpl.button || "Open";
-  const r = await tgSend(Number(profile.telegram_id), body, button, url);
+  // A TRANSPORT failure (tgSend throws) used to propagate out of the whole run: the nudge_log row was
+  // never written, the remaining candidates were skipped, and so were the later run types — the only
+  // trace was an HTTP 500 body. Contain it per candidate so one flaky send costs one nudge, and so the
+  // failure stays DB-visible (graceful is not silent). tgSend has already redacted the message.
+  let r: Awaited<ReturnType<typeof tgSend>>;
+  try {
+    r = await tgSend(Number(profile.telegram_id), body, button, url);
+  } catch (e) {
+    r = { ok: false, status: 0, data: { error: redactSecrets(e) } };
+  }
   await admin.from("nudge_log").insert({
     profile_id: profile.id,
     nudge_type: type,
@@ -143,23 +161,26 @@ async function isEligible(admin: any, profile: any, type: NudgeType): Promise<{ 
 
 async function runInactive3d(admin: any, templates: any) {
   const { data: candidates } = await admin.rpc("nudge_candidates_inactive", { _days: 3 });
-  let sent = 0, skipped = 0;
+  let sent = 0, skipped = 0, failed = 0;
   for (const p of candidates || []) {
     // Skip if any nudge in last 7 days
     const recent = await recentCount(admin, p.id, 7);
     if (recent > 0) { skipped++; continue; }
     const elig = await isEligible(admin, p, "inactive_3d");
     if (!elig.ok) { skipped++; continue; }
-    await sendNudge(admin, templates, p, "inactive_3d", {}, "/dashboard");
-    sent++;
+    // `sent` must mean DELIVERED: a transport failure is now caught inside sendNudge (it writes the
+    // nudge_log row and returns ok:false), so counting it here would over-report success to anything
+    // that later reads this summary.
+    const r = await sendNudge(admin, templates, p, "inactive_3d", {}, "/dashboard");
+    if (r.ok) sent++; else failed++;
     await sleep(50);
   }
-  return { sent, skipped, total: candidates?.length || 0 };
+  return { sent, failed, skipped, total: candidates?.length || 0 };
 }
 
 async function runInactive7d(admin: any, templates: any) {
   const { data: candidates } = await admin.rpc("nudge_candidates_inactive", { _days: 7 });
-  let sent = 0, skipped = 0;
+  let sent = 0, skipped = 0, failed = 0;
   for (const p of candidates || []) {
     const last3 = await lastSentOfType(admin, p.id, "inactive_3d");
     if (last3?.clicked_at) { skipped++; continue; }
@@ -174,26 +195,26 @@ async function runInactive7d(admin: any, templates: any) {
       else if (loc === "en") teacherLine = `Your teacher ${p.teacher_name} is waiting. `;
       else teacherLine = `Ustozingiz ${p.teacher_name} sizni kutmoqda. `;
     }
-    await sendNudge(admin, templates, p, "inactive_7d", { teacher_line: teacherLine }, "/dashboard");
-    sent++;
+    const r = await sendNudge(admin, templates, p, "inactive_7d", { teacher_line: teacherLine }, "/dashboard");
+    if (r.ok) sent++; else failed++;
     await sleep(50);
   }
-  return { sent, skipped, total: candidates?.length || 0 };
+  return { sent, failed, skipped, total: candidates?.length || 0 };
 }
 
 async function runStuckLesson(admin: any, templates: any) {
   const { data: candidates } = await admin.rpc("nudge_candidates_stuck");
-  let sent = 0, skipped = 0;
+  let sent = 0, skipped = 0, failed = 0;
   for (const c of candidates || []) {
     const elig = await isEligible(admin, c, "stuck_lesson");
     if (!elig.ok) { skipped++; continue; }
     const recent = await recentCount(admin, c.id, 7);
     if (recent >= 3) { skipped++; continue; }
-    await sendNudge(admin, templates, c, "stuck_lesson", { lesson_title: c.lesson_title || "" }, `/lesson/${c.lesson_id}`);
-    sent++;
+    const r = await sendNudge(admin, templates, c, "stuck_lesson", { lesson_title: c.lesson_title || "" }, `/lesson/${c.lesson_id}`);
+    if (r.ok) sent++; else failed++;
     await sleep(50);
   }
-  return { sent, skipped, total: candidates?.length || 0 };
+  return { sent, failed, skipped, total: candidates?.length || 0 };
 }
 
 async function runModuleComplete(admin: any, templates: any) {
@@ -202,7 +223,7 @@ async function runModuleComplete(admin: any, templates: any) {
     .select("profile_id, module_id")
     .is("sent_at", null)
     .limit(500);
-  let sent = 0, skipped = 0;
+  let sent = 0, skipped = 0, failed = 0;
   for (const q of queue || []) {
     const { data: p } = await admin
       .from("profiles")
@@ -219,12 +240,14 @@ async function runModuleComplete(admin: any, templates: any) {
     if (prefs && prefs.opt_in === false) { skipped++; continue; }
     if (prefs?.paused_until && prefs.paused_until >= new Date().toISOString().slice(0, 10)) { skipped++; continue; }
     const { data: m } = await admin.from("modules").select("title").eq("id", q.module_id).maybeSingle();
-    await sendNudge(admin, templates, p, "module_complete", { module_name: m?.title || "" }, "/dashboard");
+    const r = await sendNudge(admin, templates, p, "module_complete", { module_name: m?.title || "" }, "/dashboard");
+    // sent_at is still stamped regardless of delivery — unchanged on purpose: this queue is at-most-once,
+    // so a blocked recipient can't have the celebration retried every hour. nudge_log carries the error.
     await admin.from("nudge_module_celebrations").update({ sent_at: new Date().toISOString() }).eq("profile_id", q.profile_id).eq("module_id", q.module_id);
-    sent++;
+    if (r.ok) sent++; else failed++;
     await sleep(50);
   }
-  return { sent, skipped, total: queue?.length || 0 };
+  return { sent, failed, skipped, total: queue?.length || 0 };
 }
 
 Deno.serve(async (req) => {
@@ -289,6 +312,6 @@ Deno.serve(async (req) => {
     const mc = await runModuleComplete(admin, templates);
     return new Response(JSON.stringify({ ok: true, inactive_3d: i3, inactive_7d: i7, stuck_lesson: stuck, module_complete: mc }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e?.message || e) }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ error: redactSecrets((e as any)?.message ?? e) }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });
