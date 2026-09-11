@@ -16,6 +16,9 @@
 // detect-and-nudge's `tgSend`, which rethrow sanitized errors), and the DB triggers added in
 // 20260912010000_redact_secrets_in_error_logs.sql are the invariant underneath both.
 
+// NOTE: the `eyJ…` and 40+-hex shapes are deliberately broad, so a legitimate long hash or base64url
+// blob written into a redacted column (platform_error_log.context, a queue row's `error`) is replaced
+// too. Log a short prefix of a hash rather than the whole thing if you need it back for debugging.
 const SECRET_RE =
   /(bot[0-9]+:[A-Za-z0-9_-]{20,}|[Bb]earer\s+[A-Za-z0-9._-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.?[A-Za-z0-9_-]*|[A-Fa-f0-9]{40,})/g;
 

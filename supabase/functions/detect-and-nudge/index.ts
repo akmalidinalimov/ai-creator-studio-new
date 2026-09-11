@@ -93,7 +93,16 @@ async function sendNudge(
   const { token, url } = await makeMagicLink(admin, profile.id, targetPath);
   const body = render(tpl.body, { name, ...extra });
   const button = tpl.button || "Open";
-  const r = await tgSend(Number(profile.telegram_id), body, button, url);
+  // A TRANSPORT failure (tgSend throws) used to propagate out of the whole run: the nudge_log row was
+  // never written, the remaining candidates were skipped, and so were the later run types — the only
+  // trace was an HTTP 500 body. Contain it per candidate so one flaky send costs one nudge, and so the
+  // failure stays DB-visible (graceful is not silent). tgSend has already redacted the message.
+  let r: Awaited<ReturnType<typeof tgSend>>;
+  try {
+    r = await tgSend(Number(profile.telegram_id), body, button, url);
+  } catch (e) {
+    r = { ok: false, status: 0, data: { error: redactSecrets(e) } };
+  }
   await admin.from("nudge_log").insert({
     profile_id: profile.id,
     nudge_type: type,

@@ -1595,11 +1595,18 @@ async function sendDocument(chatId: number, filename: string, content: string, c
   form.append("document", new Blob([content], { type: "text/csv;charset=utf-8" }), filename);
   // Multipart FormData sendDocument (CSV export); sendTelegram() is JSON-body only, so this can't route
   // through the primitive until it grows a multipart variant. Low-volume admin export.
-  // eslint-disable-next-line no-restricted-syntax
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, {
-    method: "POST",
-    body: form,
-  });
+  try {
+    // eslint-disable-next-line no-restricted-syntax
+    return await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, {
+      method: "POST",
+      body: form,
+    });
+  } catch (e) {
+    // Same token containment as tgApi — this is the only other raw Telegram fetch in the file. Today the
+    // throw happens to land in the top-level handler, which redacts; that is luck, not design, and one
+    // intermediate catch that logs `e` would reopen the leak. Contain it at the source instead.
+    throw new Error(`telegram_transport_error (sendDocument): ${redactSecrets(e)}`);
+  }
 }
 
 // Re-send a Telegram voice note by its file_id (grade voice feedback). file_id-based → the audio
