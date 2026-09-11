@@ -4,6 +4,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { computeLeaves, displayStepNumber, pickNextLeaf } from "./homework-routing.ts";
 import { effectiveLeafGrades, summarizeHomework } from "./homework-stats.ts";
 import { isRecipientError, isTerminal, tgResult } from "../_shared/telegram-classify.ts";
+import { redactJson, redactSecrets } from "../_shared/redact.ts";
 import {
   checksAllGreen, ghAddLabel, ghClosePr, ghFetchChecks, ghFetchPr, ghMergePr,
   OPS_REPO, parseOpsCallback, verifyOpsPr,
@@ -972,18 +973,26 @@ const WEBHOOK_SECRET = Deno.env.get("BOT_WEBHOOK_SECRET") || "";
 const SITE_URL = (Deno.env.get("SITE_URL") || "").replace(/\/$/, "");
 const SUPPORT_HANDLE = Deno.env.get("TELEGRAM_SUPPORT_HANDLE") || ""; // e.g. "aicreators_support"
 
-function tgApi(method: string, body: unknown) {
+async function tgApi(method: string, body: unknown): Promise<Response> {
   // The bot-core raw sender, called from dozens of heterogeneous per-call-site sends (incl.
   // member-forgiveness friendly messages where a recipient miss is EXPECTED, and answerCallbackQuery/
   // editMessageText); a blanket sendTelegram swap here would over-record routine member fumbling. The
   // outcome-critical sends (grade card #119, grade media #120) already record their own delivery
   // outcome; per-call-site adoption of the rest is a deferred follow-up.
-  // eslint-disable-next-line no-restricted-syntax
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  try {
+    // eslint-disable-next-line no-restricted-syntax
+    return await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    // TOKEN CONTAINMENT: Deno's transport errors ("error sending request for url (...)") embed the FULL
+    // request URL, which carries the bot token. Callers bubble these up into logError / console.error,
+    // which is exactly how 11 rows of platform_error_log ended up holding the live token in plaintext.
+    // Rethrow the same failure with the secret stripped; the method name is the diagnostic that matters.
+    throw new Error(`telegram_transport_error (${method}): ${redactSecrets(e)}`);
+  }
 }
 
 async function sendMessage(chatId: number, text: string, reply_markup?: unknown) {
@@ -1618,10 +1627,12 @@ async function logError(
     await admin.from("platform_error_log").insert({
       source,
       action: ctx.action ?? null,
-      message: String(message instanceof Error ? message.message : message).slice(0, 1000),
+      // Defence in depth behind tgApi's containment: a future call site that hands us a raw
+      // token-bearing string still cannot persist it (the trigger from 20260912010000 is layer three).
+      message: redactSecrets(message).slice(0, 1000),
       user_id: ctx.user_id ?? null,
       telegram_id: ctx.telegram_id ?? null,
-      context: ctx.context ?? {},
+      context: redactJson(ctx.context ?? {}),
     });
   } catch (_e) { /* error logging must never throw */ }
 }
@@ -7887,7 +7898,7 @@ Deno.serve(async (req) => {
   } catch (e) {
     // A genuine, unhandled failure while processing a Telegram update — capture it DB-visibly so
     // the agent can classify it (real code bug vs transient) rather than it vanishing into logs.
-    console.error("update handler error", e);
+    console.error("update handler error", redactSecrets((e as any)?.stack ?? e));
     try {
       const from = update?.message?.from || update?.callback_query?.from || update?.edited_message?.from;
       await logError(admin, "telegram-bot-webhook", e, {

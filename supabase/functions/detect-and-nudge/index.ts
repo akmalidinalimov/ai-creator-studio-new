@@ -4,6 +4,7 @@
 //        { mode: "cron" } → invoked by pg_cron; runs all 4 types over all eligible students.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
+import { redactSecrets } from "../_shared/redact.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -22,17 +23,25 @@ async function tgSend(chatId: number, text: string, buttonText: string, url: str
   // + echoes the body in test mode, which sendTelegram's SendOutcome intentionally does not expose.
   // Non-delivery is already DB-visible via nudge_log.error, so there is no silent-failure gap; adopting
   // the primitive would drop behavior for zero classification gain.
-  // eslint-disable-next-line no-restricted-syntax
-  const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      disable_web_page_preview: true,
-      reply_markup: { inline_keyboard: [[{ text: buttonText, url }]] },
-    }),
-  });
+  let r: Response;
+  try {
+    // eslint-disable-next-line no-restricted-syntax
+    r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        disable_web_page_preview: true,
+        reply_markup: { inline_keyboard: [[{ text: buttonText, url }]] },
+      }),
+    });
+  } catch (e) {
+    // TOKEN CONTAINMENT (same class as the webhook's tgApi): a Deno transport error embeds the full
+    // token-bearing URL, and this function's failures surface BOTH in nudge_log.error and in the
+    // handler's 500 body -- which the hourly cron and the admin Nudges page both receive.
+    throw new Error(`telegram_transport_error (sendMessage): ${redactSecrets(e)}`);
+  }
   const data = await r.json().catch(() => ({}));
   return { ok: r.ok && data?.ok, status: r.status, data };
 }
@@ -289,6 +298,6 @@ Deno.serve(async (req) => {
     const mc = await runModuleComplete(admin, templates);
     return new Response(JSON.stringify({ ok: true, inactive_3d: i3, inactive_7d: i7, stuck_lesson: stuck, module_complete: mc }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e?.message || e) }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ error: redactSecrets((e as any)?.message ?? e) }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });
