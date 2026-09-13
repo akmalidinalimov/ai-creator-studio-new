@@ -6,6 +6,7 @@ import { SB_BASE } from "@/lib/supabaseBase";
 import { reportClientError } from "@/lib/beacon";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { TelegramDeeplinkButton } from "@/components/TelegramDeeplinkButton";
 
 // A magic-link token is SINGLE USE, so this page must POST it exactly once per open — which the
 // previous implementation could not guarantee. Its effect listed `t` (from useTranslation) in the dep
@@ -18,14 +19,20 @@ import { Button } from "@/components/ui/button";
 // ~3 seconds later, and 48 of 98 redeem calls in 24h were 410s — about half of every student who
 // opened a bot link.
 //
-// The redeem is therefore keyed by token in a module-level map: every mount (re-render, remount,
-// StrictMode double-invoke, a second tab) awaits the SAME promise, so the token is spent once and
-// every waiter gets the same outcome.
+// The redeem is therefore keyed by token in a module-level map, so every mount of THIS document
+// (re-render, remount, StrictMode double-invoke) awaits the same promise and spends the token once.
+// A second TAB is a separate document with its own map — that case is covered by the server's short
+// replay grace, not by this memo.
 type RedeemResult =
   | { ok: true; target: string; hardNav: boolean }
-  | { ok: false; code: string; message: string };
+  | { ok: false; code: string; message: string; userId: string | null; retryable: boolean };
 
 const INFLIGHT = new Map<string, Promise<RedeemResult>>();
+
+// The beacon must carry a CLASS, never the server's raw error text: magic-link-redeem's catch-all
+// returns the exception message, which can echo the account's email (GoTrue) or quote the token
+// itself (PostgREST) straight into client_error_events.
+const KNOWN_CODES = new Set(["used", "expired", "invalid", "user_not_found", "set_session", "400", "404", "410", "500"]);
 
 async function redeemAndSignIn(token: string, imp: boolean, impAs: string): Promise<RedeemResult> {
   const r = await fetch(`${SB_BASE}/functions/v1/magic-link-redeem`, {
@@ -36,13 +43,20 @@ async function redeemAndSignIn(token: string, imp: boolean, impAs: string): Prom
   const data = await r.json().catch(() => null as unknown as Record<string, unknown> | null);
   const d = (data || {}) as Record<string, any>;
   if (!r.ok || !d?.session) {
-    return { ok: false, code: String(d?.error || r.status), message: String(d?.message || "") };
+    return {
+      ok: false,
+      code: String(d?.error || r.status),
+      message: String(d?.message || ""),
+      userId: typeof d?.user_id === "string" ? d.user_id : null,
+      // 410/404 are final; a 5xx or a transport hiccup is worth one more try on reload.
+      retryable: r.status >= 500,
+    };
   }
   const { error: setErr } = await supabase.auth.setSession({
     access_token: d.session.access_token,
     refresh_token: d.session.refresh_token,
   });
-  if (setErr) return { ok: false, code: "set_session", message: setErr.message };
+  if (setErr) return { ok: false, code: "set_session", message: setErr.message, userId: null, retryable: true };
   if (imp) {
     // Flag lives in localStorage (shared across tabs) so it agrees with the shared Supabase auth
     // token — every tab shows the banner + read-only guard.
@@ -65,6 +79,7 @@ export default function AuthMagicLink() {
   const navigate = useNavigate();
   const { t } = useTranslation();
   const [error, setError] = useState<string | null>(null);
+  const [showBotRecovery, setShowBotRecovery] = useState(false);
   // navigate/t are read through refs so they can stay OUT of the dep array: both take a new identity
   // on a language change, which is precisely what used to re-fire the redeem.
   const navRef = useRef(navigate);
@@ -91,22 +106,35 @@ export default function AuthMagicLink() {
           else navRef.current(res.target, { replace: true });
           return;
         }
-        // The link is spent or expired. Before showing a dead end, check whether this browser is
-        // ALREADY signed in — the everyday case is a second open of a link whose first open worked
-        // (Telegram's in-app browser, then the real one; or a re-tap), where the right answer is
-        // "come in", not "couldn't sign in".
+        if (res.retryable) INFLIGHT.delete(token);
+
+        // The link is spent or expired. The everyday case is a second open of a link whose first open
+        // worked (Telegram's in-app browser, then the real one), where the right answer is "come in".
+        // But ONLY for the same person: on a shared phone the browser may hold a DIFFERENT student's
+        // session, and silently dropping this one into that dashboard would show them someone else's
+        // work and write as them. Impersonation never auto-navigates either — a spent imp link would
+        // otherwise land an admin on their OWN dashboard with no banner, believing they are in
+        // read-only preview while every write executes as admin.
         const { data } = await supabase.auth.getSession();
         if (cancelled) return;
-        if (data?.session) {
+        const sessionUid = data?.session?.user?.id ?? null;
+        if (sessionUid && !imp && res.userId && sessionUid === res.userId) {
           navRef.current("/dashboard", { replace: true });
           return;
         }
-        // Genuinely dead AND not signed in: this student is stuck, so make it DB-visible (the server
-        // records its own row; this one proves what the student actually saw).
+        const mismatch = !!sessionUid && !!res.userId && sessionUid !== res.userId;
+
+        // Genuinely stuck: make it DB-visible (the server records its own row; this one proves what
+        // the student actually saw), then offer a way out instead of a dead end.
         try {
-          reportClientError({ type: "other", message: "magic_link_dead", extra: { code: res.code } });
+          reportClientError({
+            type: "other",
+            message: "magic_link_dead",
+            extra: { code: KNOWN_CODES.has(res.code) ? res.code : "other", mismatch },
+          });
         } catch { /* ignore */ }
-        setError(res.message || tRef.current("authMagic.invalid"));
+        setShowBotRecovery(!mismatch);
+        setError(mismatch ? tRef.current("authMagic.otherAccount") : (res.message || tRef.current("authMagic.invalid")));
       } catch (e) {
         // Network-layer failure on the magic-link redeem = backend unreachable (the "Load failed"
         // login class). Beacon it so it's DB-visible even though this is a raw fetch (not the client).
@@ -127,7 +155,14 @@ export default function AuthMagicLink() {
         <div className="max-w-sm w-full text-center space-y-4">
           <h1 className="text-2xl font-semibold">{t("authMagic.invalidTitle")}</h1>
           <p className="text-muted-foreground text-sm">{error}</p>
-          <Button asChild className="w-full"><Link to="/login">{t("authMagic.backToLogin")}</Link></Button>
+          {/* A dead link used to end here, which is terminal for a student whose only way in IS the
+              bot. Offer the same Telegram sign-in the login page uses — it mints a fresh link. */}
+          {showBotRecovery && (
+            <TelegramDeeplinkButton onSuccess={() => navigate("/dashboard", { replace: true })} />
+          )}
+          <Button asChild variant={showBotRecovery ? "outline" : "default"} className="w-full">
+            <Link to="/login">{t("authMagic.backToLogin")}</Link>
+          </Button>
         </div>
       </div>
     );

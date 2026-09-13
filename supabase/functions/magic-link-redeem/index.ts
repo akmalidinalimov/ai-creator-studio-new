@@ -69,7 +69,9 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (!row) {
-      await logHealth(admin, "magic_link_unknown_token", {}, { source: "magic-link-redeem" });
+      if (/^[a-f0-9]{32}$/i.test(token) && Math.random() < 0.1) {
+        await logHealth(admin, "magic_link_unknown_token", { sampled: 0.1 }, { source: "magic-link-redeem" });
+      }
       return new Response(JSON.stringify({ error: "invalid" }), {
         status: 404,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -77,14 +79,14 @@ Deno.serve(async (req) => {
     }
     if (row.used_at) {
       const ageMs = Date.now() - new Date(row.used_at).getTime();
-      const withinGrace = ageMs >= 0 && ageMs <= REPLAY_GRACE_MS;
+      const withinGrace = ageMs > -30_000 && ageMs <= REPLAY_GRACE_MS;
       // DB-visible by construction: before this, a replay existed ONLY in raw edge logs, so a failure
       // hitting half of all bot-link opens was invisible to every watchdog and to the owner.
       await logHealth(admin, "magic_link_replay", {
         purpose: row.purpose, age_seconds: Math.round(ageMs / 1000), regranted: withinGrace,
       }, { source: "magic-link-redeem", targetUserId: row.user_id });
       if (!withinGrace) {
-        return new Response(JSON.stringify({ error: "used", message: "This link has already been used. Open the bot and tap the button again to get a fresh one." }), {
+        return new Response(JSON.stringify({ error: "used", user_id: row.user_id, message: "This link has already been used. Open the bot and tap the button again to get a fresh one." }), {
           status: 410,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
@@ -96,7 +98,7 @@ Deno.serve(async (req) => {
         purpose: row.purpose,
         age_days: Math.round((Date.now() - new Date(row.expires_at).getTime()) / 86_400_000),
       }, { source: "magic-link-redeem", targetUserId: row.user_id });
-      return new Response(JSON.stringify({ error: "expired", message: "This bot link has expired. Open the bot and tap the button again to get a fresh one." }), {
+      return new Response(JSON.stringify({ error: "expired", user_id: row.user_id, message: "This bot link has expired. Open the bot and tap the button again to get a fresh one." }), {
         status: 410,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -113,10 +115,17 @@ Deno.serve(async (req) => {
     const session = await mintSessionForUser(admin, userRow.user.email, `${SITE_URL}/dashboard`);
     // `.is("used_at", null)` keeps the FIRST use as the clock for REPLAY_GRACE_MS — without it a
     // client retrying every minute would roll the window forward and the link would never die.
-    await admin.from("telegram_magic_links")
+    const firstUse = !row.used_at;
+    const { data: stamped, error: stampErr } = await admin.from("telegram_magic_links")
       .update({ used_at: new Date().toISOString() })
       .eq("token", token)
-      .is("used_at", null);
+      .is("used_at", null)
+      .select("token");
+    if (firstUse && (stampErr || !stamped?.length)) {
+      await logHealth(admin, "magic_link_stamp_failed", {
+        purpose: row.purpose, reason: stampErr?.message ?? "zero_rows",
+      }, { source: "magic-link-redeem", targetUserId: row.user_id });
+    }
     // Re-engagement: mark delivery clicked
     try {
       await admin.from("re_engagement_deliveries").update({ clicked_at: new Date().toISOString() }).eq("magic_token", token).is("clicked_at", null);

@@ -449,6 +449,7 @@
     "signingIn": "Signing you in…",
     "invalid": "This link is invalid or expired.",
     "invalidTitle": "Couldn't sign in",
+    "otherAccount": "You're signed in with a different account, so this link wasn't opened. Sign out first, or open the link in a private window.",
     "backToLogin": "Back to login"
   },
   "landing": {
