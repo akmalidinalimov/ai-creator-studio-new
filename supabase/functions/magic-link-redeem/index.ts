@@ -69,7 +69,10 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (!row) {
-      if (/^[a-f0-9]{32}$/i.test(token) && Math.random() < 0.1) {
+      // Token shapes differ by minter: 32 hex (webhook randomToken, digests, nudges), a 36-char
+      // hyphenated UUID (detect-and-nudge, re-engagement-send), and two concatenated UUIDs
+      // (admin-impersonate). A 32-hex-only test would silently log nothing for three of them.
+      if (/^[a-f0-9-]{32,64}$/i.test(token) && Math.random() < 0.1) {
         await logHealth(admin, "magic_link_unknown_token", { sampled: 0.1 }, { source: "magic-link-redeem" });
       }
       return new Response(JSON.stringify({ error: "invalid" }), {

@@ -47,6 +47,11 @@ export function TelegramDeeplinkButton({ onSuccess }: Props) {
   const begin = async () => {
     setStarting(true);
     setExpiredMsg(null);
+    // Clear both latches: a previous attempt that won the poll but failed at setSession would
+    // otherwise leave doneRef set, and every poll of the NEW token would return immediately —
+    // a permanently stuck "Waiting…" that only a page reload could clear.
+    doneRef.current = false;
+    inFlightRef.current = false;
     try {
       const url = `${SB_BASE}/functions/v1/telegram-login-start`;
       const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
@@ -70,18 +75,22 @@ export function TelegramDeeplinkButton({ onSuccess }: Props) {
   };
 
   const poll = async (tok: string) => {
-    // telegram-login-status BURNS the token — it deletes the row the moment it mints a session — so a
-    // second poll overlapping the winning one finds nothing, reads "expired", and shows a dead end
-    // over a sign-in that just succeeded. The same class as the magic-link double-redeem: a one-shot
-    // token spent twice. The interval fires every 2s whether or not the previous call has returned,
-    // and minting costs two server round-trips, so that overlap is ordinary rather than exotic.
-    if (doneRef.current || inFlightRef.current) return;
+    if (doneRef.current) return;
+    // Deadline BEFORE the in-flight guard: fetch has no timeout, so a hung request would otherwise
+    // pin inFlightRef and the 5-minute expiry would never evaluate — a spinner that waits forever
+    // and never tells the student anything.
     if (!stopRef.current.deadline || Date.now() > stopRef.current.deadline) {
       stopPolling();
       setWaiting(false);
       setExpiredMsg(t("telegramDeeplink.expired"));
       return;
     }
+    // telegram-login-status BURNS the token — it deletes the row the moment it mints a session — so a
+    // second poll overlapping the winning one finds nothing, reads "expired", and shows a dead end
+    // over a sign-in that just succeeded. The same class as the magic-link double-redeem: a one-shot
+    // token spent twice. The interval fires every 2s whether or not the previous call has returned,
+    // and minting costs two server round-trips, so that overlap is ordinary rather than exotic.
+    if (inFlightRef.current) return;
     inFlightRef.current = true;
     try {
       const url = `${SB_BASE}/functions/v1/telegram-login-status`;
