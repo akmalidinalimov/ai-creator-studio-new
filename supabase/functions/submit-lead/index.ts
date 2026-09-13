@@ -6,6 +6,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json, logHealth } from "../_shared/edge.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";
+import { addBitrixLead } from "../_shared/bitrix.ts";
 
 const cap = (s: unknown, n: number): string => {
   const t = s === null || s === undefined ? "" : String(s);
@@ -43,19 +44,24 @@ Deno.serve(async (req) => {
       console.error("submit-lead floodcheck", e);
     }
 
-    // Atomic per-phone dedupe: a unique index on dedupe_key (phone + ~10-min bucket) makes a
-    // double-tap / retry a no-op at the DB level (upsert → ON CONFLICT DO NOTHING), so it can't
-    // create a second row or a second admin DM. The read-then-insert race is closed in the DB.
+    // Atomic per-phone dedupe via the PARTIAL unique index uq_leads_dedupe (dedupe_key = phone + ~10-min
+    // bucket; the index is `WHERE dedupe_key IS NOT NULL`). PostgREST's upsert `onConflict` CANNOT name a
+    // partial index — Postgres raises "there is no unique or exclusion constraint matching the ON CONFLICT
+    // specification", which 500'd EVERY submit since the leads feature shipped (2026-08-28) and is why the
+    // landing form showed "Yuborishda xatolik" and `leads` stayed empty. Insert directly and treat a 23505
+    // unique-violation as an already-captured no-op — the codebase's partial-index dedupe pattern
+    // (cf. uq_dm_submission_teacher_msg: insert + 23505-skip, never upsert-onConflict).
     const dedupe_key = `${phone}:${Math.floor(Date.now() / 600_000)}`;
     const { data: rows, error: insErr } = await admin.from("leads")
-      .upsert({ name, phone, source, user_agent, ip, dedupe_key }, { onConflict: "dedupe_key", ignoreDuplicates: true })
+      .insert({ name, phone, source, user_agent, ip, dedupe_key })
       .select("id");
     if (insErr) {
+      if ((insErr as { code?: string }).code === "23505") return json({ ok: true }); // duplicate within the bucket — already captured
       await logHealth(admin, "lead_insert_failed", { source, error: insErr.message }, { source: "submit-lead" });
       return json({ ok: false, error: "save" }, 500);
     }
     const lead = rows && rows[0];
-    if (!lead) return json({ ok: true }); // deduped (same phone within the bucket) — already captured
+    if (!lead) return json({ ok: true }); // no row returned — treat as already captured
 
     // Notify admins (best-effort). sendTelegram records any non-delivery to admin_actions; a fn crash
     // before this leaves notified=false, which the leads_watchdog catches. Plain text (no parse_mode)
@@ -87,6 +93,30 @@ Deno.serve(async (req) => {
     }
     await logHealth(admin, "lead_captured", { source, notified },
       { source: "submit-lead", targetResourceType: "lead", targetResourceId: lead.id });
+
+    // Forward to Bitrix24 CRM — best-effort, AFTER the lead is safely persisted and admins are DM'd, so a
+    // Bitrix outage never loses or blocks a lead. Dormant until BITRIX_WEBHOOK_URL is set (goes live with no
+    // code change). A failure leaves bitrix_synced=false → the bitrix-lead-sync drainer re-forwards it, and
+    // the failure is DB-visible (bitrix_lead_failed + bitrix_error) so the watchdog can alert on a backlog.
+    try {
+      const webhook = Deno.env.get("BITRIX_WEBHOOK_URL");
+      if (webhook) {
+        const b = await addBitrixLead(webhook, { name, phone, source });
+        if (b.ok) {
+          await admin.from("leads").update({
+            bitrix_synced: true, bitrix_lead_id: b.id, bitrix_synced_at: new Date().toISOString(), bitrix_error: null,
+          }).eq("id", lead.id);
+          await logHealth(admin, "bitrix_lead_synced", { source, bitrix_lead_id: b.id },
+            { source: "submit-lead", targetResourceType: "lead", targetResourceId: lead.id });
+        } else {
+          await admin.from("leads").update({ bitrix_error: `${b.status}:${b.error}` }).eq("id", lead.id);
+          await logHealth(admin, "bitrix_lead_failed", { source, status: b.status, error: b.error, terminal: b.terminal },
+            { source: "submit-lead", targetResourceType: "lead", targetResourceId: lead.id });
+        }
+      }
+    } catch (e) {
+      console.error("submit-lead bitrix", e);
+    }
 
     return json({ ok: true });
   } catch (e) {

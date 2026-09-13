@@ -6,6 +6,7 @@ import "./i18n";
 import { reloadForChunkError, stripChunkReloadParam } from "./lib/chunkReload";
 import { installGlobalBeacons, reportClientError } from "./lib/beacon";
 import { installDomTranslateGuard } from "./lib/domTranslateGuard";
+import { installStaleBuildCheck } from "./lib/staleBuild";
 
 // Crash guard (MUST run before React renders): neutralize the removeChild /
 // insertBefore NotFoundError that in-page translation (Google Translate) and some
@@ -26,6 +27,12 @@ window.addEventListener("vite:preloadError" as any, (e: Event) => {
   reportClientError({ type: "chunk_load", message: String((e as any)?.payload?.message || "vite:preloadError") });
   if (reloadForChunkError()) e.preventDefault();
 });
+
+// Stale-build recovery for the Telegram Mini App: the webview is kept alive / cached across our (several
+// times a day) deploys, so a resumed webview can be running an old build whose lazy chunks the deploy
+// removed. This proactively detects a version change on resume and pulls the fresh build, so a re-opened
+// Mini App never shows a stale / non-loading screen. See src/lib/staleBuild.ts.
+installStaleBuildCheck();
 
 // If we just came back from a cache-bust reload, drop the ?cb= marker so it
 // doesn't linger in / get shared from the URL.

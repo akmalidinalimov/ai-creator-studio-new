@@ -4,6 +4,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { computeLeaves, displayStepNumber, pickNextLeaf } from "./homework-routing.ts";
 import { effectiveLeafGrades, summarizeHomework } from "./homework-stats.ts";
 import { isRecipientError, isTerminal, tgResult } from "../_shared/telegram-classify.ts";
+import { redactJson, redactSecrets } from "../_shared/redact.ts";
 import {
   checksAllGreen, ghAddLabel, ghClosePr, ghFetchChecks, ghFetchPr, ghMergePr,
   OPS_REPO, parseOpsCallback, verifyOpsPr,
@@ -275,6 +276,12 @@ const T = {
     gradeAskScore: (max: number) => `Baho kiriting (0–${max}):`,
     gradeAskComment: "Izoh yozing yoki 🎤 ovozli xabar yuboring (yoki /skip):",
     gradeVoiceNote: "🎧 O'qituvchidan ovozli izoh:",
+    // Mini App → bot voice-feedback bridge (Telegram's webview blocks the mic, so the teacher records here).
+    gvExpired: "⌛ Ovozli izoh so'rovi muddati tugagan, shuning uchun bu ovoz saqlanmadi. Mini ilovada «Telegramda ovoz yozish» tugmasini qayta bosing va ovozni qayta yuboring.",
+    gvNeedVoice: "🎤 Ovozli xabar yuboring (yoki /cancel).",
+    gvSaved: (student: string, delivered: boolean) => delivered
+      ? `✅ Ovozli izoh saqlandi va yuborildi: <b>${student}</b>`
+      : `✅ Ovozli izoh saqlandi: <b>${student}</b>\nTelegramda yetkazib bo'lmadi — talaba uni ilovada tinglaydi.`,
     gradeBadScore: (max: number) => `Bal 0–${max} oralig'ida bo'lishi kerak.`,
     gradeSaved: (sc: number, mx: number) => `✅ Saqlandi: ${sc}/${mx}. Talaba xabardor qilindi.`,
     gradeStudentDM: (title: string, sc: number, mx: number, fb: string, xp?: number) =>
@@ -562,6 +569,11 @@ const T = {
     gradeAskScore: (max: number) => `Введите балл (0–${max}):`,
     gradeAskComment: "Напишите комментарий или 🎤 отправьте голосовое (или /skip):",
     gradeVoiceNote: "🎧 Голосовой комментарий преподавателя:",
+    gvExpired: "⌛ Запрос на голосовой комментарий истёк, поэтому это голосовое не сохранено. Нажмите «Telegramda ovoz yozish» в мини-приложении ещё раз и отправьте его снова.",
+    gvNeedVoice: "🎤 Отправьте голосовое сообщение (или /cancel).",
+    gvSaved: (student: string, delivered: boolean) => delivered
+      ? `✅ Голосовой комментарий сохранён и отправлен: <b>${student}</b>`
+      : `✅ Голосовой комментарий сохранён: <b>${student}</b>\nВ Telegram доставить не удалось — студент прослушает его в приложении.`,
     gradeBadScore: (max: number) => `Балл должен быть от 0 до ${max}.`,
     gradeSaved: (sc: number, mx: number) => `✅ Сохранено: ${sc}/${mx}. Студенту отправлено уведомление.`,
     gradeStudentDM: (title: string, sc: number, mx: number, fb: string, xp?: number) =>
@@ -841,6 +853,11 @@ const T = {
     gradeAskScore: (max: number) => `Enter score (0–${max}):`,
     gradeAskComment: "Write a comment or 🎤 send a voice message (or /skip):",
     gradeVoiceNote: "🎧 Voice feedback from your teacher:",
+    gvExpired: "⌛ That voice feedback request expired, so this voice note wasn't saved. Tap «Telegramda ovoz yozish» in the Mini App again, then resend it.",
+    gvNeedVoice: "🎤 Please send a voice message (or /cancel).",
+    gvSaved: (student: string, delivered: boolean) => delivered
+      ? `✅ Voice feedback saved and sent to <b>${student}</b>`
+      : `✅ Voice feedback saved for <b>${student}</b>\nCouldn't deliver it on Telegram — the student will hear it in the app.`,
     gradeBadScore: (max: number) => `Score must be between 0 and ${max}.`,
     gradeSaved: (sc: number, mx: number) => `✅ Saved: ${sc}/${mx}. Student notified.`,
     gradeStudentDM: (title: string, sc: number, mx: number, fb: string, xp?: number) =>
@@ -956,18 +973,26 @@ const WEBHOOK_SECRET = Deno.env.get("BOT_WEBHOOK_SECRET") || "";
 const SITE_URL = (Deno.env.get("SITE_URL") || "").replace(/\/$/, "");
 const SUPPORT_HANDLE = Deno.env.get("TELEGRAM_SUPPORT_HANDLE") || ""; // e.g. "aicreators_support"
 
-function tgApi(method: string, body: unknown) {
+async function tgApi(method: string, body: unknown): Promise<Response> {
   // The bot-core raw sender, called from dozens of heterogeneous per-call-site sends (incl.
   // member-forgiveness friendly messages where a recipient miss is EXPECTED, and answerCallbackQuery/
   // editMessageText); a blanket sendTelegram swap here would over-record routine member fumbling. The
   // outcome-critical sends (grade card #119, grade media #120) already record their own delivery
   // outcome; per-call-site adoption of the rest is a deferred follow-up.
-  // eslint-disable-next-line no-restricted-syntax
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  try {
+    // eslint-disable-next-line no-restricted-syntax
+    return await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    // TOKEN CONTAINMENT: Deno's transport errors ("error sending request for url (...)") embed the FULL
+    // request URL, which carries the bot token. Callers bubble these up into logError / console.error,
+    // which is exactly how 11 rows of platform_error_log ended up holding the live token in plaintext.
+    // Rethrow the same failure with the secret stripped; the method name is the diagnostic that matters.
+    throw new Error(`telegram_transport_error (${method}): ${redactSecrets(e)}`);
+  }
 }
 
 async function sendMessage(chatId: number, text: string, reply_markup?: unknown) {
@@ -1570,11 +1595,18 @@ async function sendDocument(chatId: number, filename: string, content: string, c
   form.append("document", new Blob([content], { type: "text/csv;charset=utf-8" }), filename);
   // Multipart FormData sendDocument (CSV export); sendTelegram() is JSON-body only, so this can't route
   // through the primitive until it grows a multipart variant. Low-volume admin export.
-  // eslint-disable-next-line no-restricted-syntax
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, {
-    method: "POST",
-    body: form,
-  });
+  try {
+    // eslint-disable-next-line no-restricted-syntax
+    return await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, {
+      method: "POST",
+      body: form,
+    });
+  } catch (e) {
+    // Same token containment as tgApi — this is the only other raw Telegram fetch in the file. Today the
+    // throw happens to land in the top-level handler, which redacts; that is luck, not design, and one
+    // intermediate catch that logs `e` would reopen the leak. Contain it at the source instead.
+    throw new Error(`telegram_transport_error (sendDocument): ${redactSecrets(e)}`);
+  }
 }
 
 // Re-send a Telegram voice note by its file_id (grade voice feedback). file_id-based → the audio
@@ -1602,10 +1634,12 @@ async function logError(
     await admin.from("platform_error_log").insert({
       source,
       action: ctx.action ?? null,
-      message: String(message instanceof Error ? message.message : message).slice(0, 1000),
+      // Defence in depth behind tgApi's containment: a future call site that hands us a raw
+      // token-bearing string still cannot persist it (the trigger from 20260912010000 is layer three).
+      message: redactSecrets(message).slice(0, 1000),
       user_id: ctx.user_id ?? null,
       telegram_id: ctx.telegram_id ?? null,
-      context: ctx.context ?? {},
+      context: redactJson(ctx.context ?? {}),
     });
   } catch (_e) { /* error logging must never throw */ }
 }
@@ -4311,7 +4345,23 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
     .maybeSingle();
   if (!state) return false;
   if (new Date(state.expires_at).getTime() < Date.now()) {
-    await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
+    // Delete only while STILL expired: teacher-voice-request may have re-parked this row a moment ago.
+    await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).lt("expires_at", new Date().toISOString());
+    // A voice note sent to an EXPIRED Mini App voice request would otherwise fall through to the generic
+    // keyboard hint, and the teacher would believe feedback was saved that never was. Say so, and leave a
+    // DB-visible trail (a steady stream of these means the request TTL is too short).
+    if (state.state === "grade_voice" && (msg.voice || msg.audio)) {
+      await sendMessage(msg.chat.id, t.gvExpired);
+      try {
+        await admin.from("admin_actions").insert({
+          actor_user_id: profileId, action: "grade_voice_request_expired",
+          target_resource_type: "homework_submission",
+          target_resource_id: (state.context as any)?.submission_id ?? null,
+          details: { source: "miniapp_voice_bridge" },
+        });
+      } catch (_e) { /* best-effort */ }
+      return true;
+    }
     return false;
   }
 
@@ -4363,6 +4413,91 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
       expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
     }).eq("telegram_id", tgId);
     await sendMessage(msg.chat.id, t.gradeAskComment);
+    return true;
+  }
+
+  // Mini App → bot VOICE BRIDGE. Telegram's in-app webview does not grant Mini Apps microphone access, so
+  // the teacher's in-app recorder is dead on most devices. teacher-voice-request parks this state and
+  // prompts the teacher HERE, in the bot chat, where Telegram's own recorder always works. We attach the
+  // note to the submission and deliver it to the student through the SAME save + sendVoice path the in-bot
+  // grading flow already uses — no second delivery mechanism to keep in sync.
+  if (state.state === "grade_voice") {
+    const submissionId = String(ctx.submission_id || "");
+    // Every delete in this branch is scoped to THIS request (state + submission). teacher-voice-request can
+    // re-point the row at another card while this update is mid-flight; an unscoped delete would wipe that
+    // newer request, and the teacher's next voice note would fall through unsaved.
+    if (text === "/cancel") {
+      await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice");
+      await sendWithKeyboard(msg.chat.id, t.gradeCancelled, locale, isAdmin, isAdmin ? "admin" : "teacher");
+      return true;
+    }
+    const voiceFileId: string | null = msg.voice?.file_id || msg.audio?.file_id || null;
+    if (!voiceFileId) {
+      // TEXT means she moved on — typically a keyboard-menu tap, which arrives as plain text and reaches this
+      // handler FIRST. Trapping every menu tap behind "send a voice message" for the whole 15-minute TTL is the
+      // opposite of member forgiveness: release the parked state and let the message route normally. The
+      // prompt stays in the chat, and one tap on the Mini App button re-arms it.
+      if (text) {
+        await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice").eq("context->>submission_id", submissionId);
+        return false;
+      }
+      // Non-text, non-voice (sticker, photo, video note): nudge rather than silently swallow it.
+      await sendMessage(msg.chat.id, t.gvNeedVoice);
+      return true;
+    }
+    const { data: sub } = await admin.from("homework_submissions")
+      .select("user_id, assignment_id").eq("id", submissionId).maybeSingle();
+    if (!sub) {
+      await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice").eq("context->>submission_id", submissionId);
+      await sendMessage(msg.chat.id, t.gradeNotFound);
+      return true;
+    }
+    // Re-check scope at COMMIT time (teachers only) — same guard the grade_comment path applies, so a
+    // stale parked state can never attach a note to a student outside the grader's groups.
+    if (!isAdmin) {
+      const scope = await gradingScopeIds(admin, profileId, false);
+      if (!scope || !scope.includes(sub.user_id)) {
+        await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice").eq("context->>submission_id", submissionId);
+        await sendMessage(msg.chat.id, t.gradeNotFound);
+        return true;
+      }
+    }
+    // Clear score_feedback_voice_path in the SAME write: hw-audio-url plays the app-recorded path FIRST and
+    // the bot file_id only as a fallback, so leaving an older in-app note in place would silently shadow the
+    // note the teacher just recorded here. Newest recording must win. (submitScore never touches the
+    // file_id column, so a later in-app save can't wipe this one either.)
+    const { error: vErr } = await admin.from("homework_submissions")
+      .update({ score_feedback_voice_file_id: voiceFileId, score_feedback_voice_path: null }).eq("id", submissionId);
+    if (vErr) {
+      await sendMessage(msg.chat.id, `❌ ${vErr.message}`);
+      return true;
+    }
+    // Deliver to the student in THEIR locale; a non-delivery stays DB-visible (doctrine), mirroring the
+    // grade_voice_delivery_failed row the in-bot grading path writes. Most students (~70%) never pressed
+    // Start, so "not delivered" is common and expected — the note is still saved and playable in the app.
+    let studentName = "";
+    let delivered = false;
+    try {
+      const { data: stu } = await admin.from("profiles")
+        .select("telegram_id, preferred_locale, name, last_name").eq("id", sub.user_id).maybeSingle();
+      studentName = [stu?.name, stu?.last_name].filter(Boolean).join(" ");
+      if (stu?.telegram_id) {
+        const stuT = T[normLocale(stu.preferred_locale)];
+        delivered = await sendVoice(Number(stu.telegram_id), voiceFileId, stuT.gradeVoiceNote);
+        if (!delivered) {
+          await admin.from("admin_actions").insert({
+            actor_user_id: profileId, action: "grade_voice_delivery_failed",
+            target_user_id: sub.user_id, target_resource_type: "homework_submission",
+            target_resource_id: submissionId, details: { source: "miniapp_voice_bridge" },
+          });
+        }
+      }
+    } catch (e) { console.error("grade_voice deliver threw", String(e)); }
+    await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice").eq("context->>submission_id", submissionId);
+    cacheInvalidateUser(sub.user_id);
+    // Name the student in the confirmation: the state is one-per-teacher, so if she requested notes for two
+    // cards back to back the latest request wins — naming who received it makes any mix-up visible at once.
+    await sendWithKeyboard(msg.chat.id, t.gvSaved(csvEscapeHtml(studentName || "—"), delivered), locale, isAdmin, isAdmin ? "admin" : "teacher");
     return true;
   }
 
@@ -7777,7 +7912,7 @@ Deno.serve(async (req) => {
   } catch (e) {
     // A genuine, unhandled failure while processing a Telegram update — capture it DB-visibly so
     // the agent can classify it (real code bug vs transient) rather than it vanishing into logs.
-    console.error("update handler error", e);
+    console.error("update handler error", redactSecrets((e as any)?.stack ?? e));
     try {
       const from = update?.message?.from || update?.callback_query?.from || update?.edited_message?.from;
       await logError(admin, "telegram-bot-webhook", e, {

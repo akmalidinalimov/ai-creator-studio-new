@@ -72,14 +72,11 @@ function replaceWithCacheBust(): void {
   }
 }
 
-/**
- * Auto-recovery entry point (called from the global vite:preloadError handler
- * and, as a backstop, from the ErrorBoundary). Triggers at most ONE cache-
- * busting reload; returns true if a reload was started (caller should stop its
- * own error handling — the page is navigating away), false if the guard
- * tripped (already tried once — show manual recovery instead).
- */
-export function reloadForChunkError(): boolean {
+/** Shared guarded cache-bust reload used by BOTH the chunk-error path and the stale-build path. One
+ *  loop-guard (GUARD_KEY / cb param) across both, so they can never ping-pong against each other:
+ *  triggers at most ONE cache-busting reload per guard window; returns true if a reload was started
+ *  (caller should stop its own handling — the page is navigating away), false if the guard tripped. */
+function guardedCacheBustReload(): boolean {
   if (typeof window === "undefined") return false;
 
   if (canUseSession()) {
@@ -96,6 +93,26 @@ export function reloadForChunkError(): boolean {
 
   replaceWithCacheBust();
   return true;
+}
+
+/**
+ * Auto-recovery entry point (called from the global vite:preloadError handler
+ * and, as a backstop, from the ErrorBoundary). Triggers at most ONE cache-
+ * busting reload; returns true if a reload was started (caller should stop its
+ * own error handling — the page is navigating away), false if the guard
+ * tripped (already tried once — show manual recovery instead).
+ */
+export function reloadForChunkError(): boolean {
+  return guardedCacheBustReload();
+}
+
+/**
+ * Stale-build recovery: the entire running build is out of date because a deploy replaced it (the
+ * webview kept the old build alive / served a stale cached index). Pull the fresh index + manifest.
+ * Shares reloadForChunkError's loop-guard. Called by staleBuild.ts on webview resume.
+ */
+export function reloadForStaleBuild(): boolean {
+  return guardedCacheBustReload();
 }
 
 /**

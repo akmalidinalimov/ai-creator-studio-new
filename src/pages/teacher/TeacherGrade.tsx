@@ -21,7 +21,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Loader2, MessageSquarePlus, RotateCcw, SkipForward } from "lucide-react";
+import { Loader2, MessageSquarePlus, Mic, RotateCcw, SkipForward } from "lucide-react";
 import { Card, Button, StatusChip, ProgressBar, EmptyState, Skeleton } from "@/components/ui-kit";
 import { cn } from "@/lib/utils";
 import { GradePhoto } from "@/components/teacher/GradePhoto";
@@ -32,6 +32,7 @@ import {
   submitScore,
   returnForRedo,
   notifyGradeVoice,
+  requestTeacherVoiceInTelegram,
   type PendingSubmission,
 } from "@/lib/teacherApi";
 
@@ -74,6 +75,7 @@ export default function TeacherGrade() {
   const [voiceBlob, setVoiceBlob] = useState<Blob | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [redoing, setRedoing] = useState(false);
+  const [requestingVoice, setRequestingVoice] = useState(false);
 
   const processed = useRef<Set<string>>(new Set());
   // Remembers the last successfully-uploaded voice object for the CURRENT item, so that if the
@@ -112,6 +114,32 @@ export default function TeacherGrade() {
   const handleVoiceChange = useCallback((blob: Blob | null) => {
     voiceRecordedThisRoundRef.current = blob != null;
     setVoiceBlob(blob);
+  }, []);
+
+  // Voice bridge. Telegram's webview denies Mini Apps the microphone on most devices, so the in-app
+  // recorder is a dead end there. This asks the bot to prompt the teacher in her Telegram chat, where the
+  // native recorder always works; the bot attaches the note to THIS submission and delivers it. We
+  // deliberately do NOT close the Mini App — that would throw away the score she hasn't submitted yet.
+  const requestVoiceInTelegram = useCallback(async (submissionId: string) => {
+    setRequestingVoice(true);
+    try {
+      const r = await requestTeacherVoiceInTelegram(submissionId);
+      if (r.ok) {
+        toast.success("Botga xabar yuborildi", {
+          description: "Bahoni saqlang, so'ng Telegram chatida ovozli izohni yuboring.",
+        });
+      } else if (r.code === "no_telegram") {
+        toast.error("Telegram akkauntingiz ulanmagan — botni oching va /start bosing.");
+      } else if (r.code === "busy") {
+        toast.error("Botda boshqa amal ochiq — uni tugating yoki /cancel yuboring, so'ng qayta bosing.");
+      } else if (r.code === "prompt_failed") {
+        toast.error("Botga xabar yetkazilmadi — botni oching, /start bosing va qayta urinib ko'ring.");
+      } else {
+        toast.error("Xatolik yuz berdi. Qaytadan urinib ko'ring.");
+      }
+    } finally {
+      setRequestingVoice(false);
+    }
   }, []);
 
   // Re-open-to-correct (undo): put an already-entered score + feedback + voice note BACK into the
@@ -497,7 +525,24 @@ export default function TeacherGrade() {
               placeholder="Izoh (ixtiyoriy)"
               className="w-full resize-none rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
-            <VoiceRecorder value={voiceBlob} onChange={handleVoiceChange} disabled={submitting || redoing} />
+            <VoiceRecorder
+              value={voiceBlob}
+              onChange={handleVoiceChange}
+              disabled={submitting || redoing}
+              fallback={
+                current ? (
+                  <button
+                    type="button"
+                    onClick={() => void requestVoiceInTelegram(current.submission_id)}
+                    disabled={requestingVoice || submitting || redoing}
+                    className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-[12.5px] font-bold text-foreground disabled:opacity-50"
+                  >
+                    {requestingVoice ? <Loader2 className="size-4 animate-spin" /> : <Mic className="size-4" />}
+                    Telegramda ovoz yozish
+                  </button>
+                ) : null
+              }
+            />
           </div>
         ) : (
           <button

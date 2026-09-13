@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { ImagePlus, Loader2, Upload } from "lucide-react";
+import { ImagePlus, Loader2, Upload, X, Play } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { reportClientError } from "@/lib/beacon";
 import { useAuth } from "@/contexts/AuthContext";
 import { useMiniApp } from "@/lib/telegram/MiniAppContext";
 import { Button } from "@/components/ui-kit";
@@ -19,28 +20,32 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { AssignableItem } from "@/lib/homeworkAssignable";
 
-/* Reusable "submit for a KNOWN assignment" widget — extracted 2026-08-18 (module-end homework
- * feature) from src/pages/Homework.tsx's picker "upload" stage (item 4, 2026-08-18), which had
- * the full flow inline: photo picker + preview + optional note → upload to the private
- * `homework_images` bucket at `<uid>/<uuid>.<ext>` → supabase.functions.invoke("submit-homework")
- * → in-flight submit lock → 409 already_graded → resubmit-confirm dialog → friendly error
- * mapping that keeps the current selection on failure. That mechanism is now here, UNCHANGED,
- * so both Homework.tsx (after a picker selection) and the new module-end homework screen
- * (src/pages/ModuleHomework.tsx, preselected) call the exact same code path — never duplicated.
+/* Reusable "submit for a KNOWN assignment" widget. Mounted by Homework.tsx (after a picker selection) and
+ * ModuleHomework.tsx (preselected) — one code path, never duplicated.
  *
- * Mount with `key={assignment.assignment_id}` whenever the assignment can change under the same
- * parent (e.g. Homework.tsx's picker, switching between list rows) — this component intentionally
- * has no prop/effect that resets file/note state on an assignment change; remounting on a key
- * change is what gives the same "fresh form per assignment" behavior the old imperative
- * resetUploadForm() gave, and it also means a successful submit's internal reset (see
- * submitHomework below) is enough to leave a clean form behind for screens that stay mounted
- * (ModuleHomework.tsx doesn't close/unmount after a submit the way Homework.tsx's dialog does).
+ * 2026-09-10 — IMAGES **AND VIDEO** UPLOAD IN-APP, STRAIGHT TO TELEGRAM (owner decision).
+ * The student picks photos and/or videos here; we send the actual FILES (multipart) to submit-homework,
+ * which posts them into their Telegram group HOMEWORK TOPIC as the bot on their behalf and records the
+ * submission exactly like a bot-captured post. Nothing is stored in Supabase — no storage cost, and every
+ * existing teacher grading surface already resolves Telegram-captured media.
+ *
+ * Telegram's BOT upload ceilings are hard limits (photo 10MB, video 50MB), so oversize files are rejected
+ * client-side with a clear message + the "post it in your group topic yourself" fallback.
+ *
+ * Mount with `key={assignment.assignment_id}` when the assignment can change under the same parent —
+ * remounting is what gives a fresh form per assignment.
  */
 
-// Client-side downscale before upload — same approach as Profile.tsx's avatar compressor: skip
-// the re-encode round-trip for already-small files, downscale+re-encode large ones so mobile
-// uploads stay fast. Any failure (unsupported format, canvas error) falls back to the original
-// file untouched — compression is a nice-to-have, never a submission blocker.
+const MAX_ITEMS = 10; // mirrors submit-homework's MAX_ITEMS
+const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+const mb = (n: number) => Math.round(n / (1024 * 1024));
+
+type PickedItem = { id: string; file: File; previewUrl: string; kind: "photo" | "video" };
+
+// Client-side downscale before upload — keeps mobile uploads fast and photos comfortably under Telegram's
+// 10MB photo ceiling. Any failure falls back to the original file: compression is a nice-to-have, never a
+// submission blocker. Videos are never re-encoded (can't be, reliably, in a browser).
 async function compressHomeworkImage(file: File, maxDim = 1600, quality = 0.82): Promise<Blob> {
   if (file.size <= 1.5 * 1024 * 1024) return file;
   try {
@@ -56,17 +61,11 @@ async function compressHomeworkImage(file: File, maxDim = 1600, quality = 0.82):
         canvas.width = w;
         canvas.height = h;
         const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          reject(new Error("canvas unavailable"));
-          return;
-        }
+        if (!ctx) { reject(new Error("canvas unavailable")); return; }
         ctx.drawImage(img, 0, 0, w, h);
         canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("encode failed"))), "image/jpeg", quality);
       };
-      img.onerror = () => {
-        URL.revokeObjectURL(objUrl);
-        reject(new Error("could not read image"));
-      };
+      img.onerror = () => { URL.revokeObjectURL(objUrl); reject(new Error("could not read image")); };
       img.src = objUrl;
     });
   } catch {
@@ -79,22 +78,36 @@ function extForBlob(blob: Blob, originalName: string): string {
   if (type.includes("jpeg") || type.includes("jpg")) return "jpg";
   if (type.includes("png")) return "png";
   if (type.includes("webp")) return "webp";
-  if (type.includes("heic")) return "heic";
-  if (type.includes("heif")) return "heif";
   const m = /\.([a-zA-Z0-9]+)$/.exec(originalName);
   return (m?.[1] || "jpg").toLowerCase();
 }
 
-// submit-homework's error bodies are stable string codes (index.ts) — map the ones a student
-// can realistically hit to friendly copy; anything unmapped (internal_error, bad_json, ...)
-// falls back to a generic retry message rather than surfacing a raw code.
+// submit-homework returns stable string codes — map the ones a student can realistically hit to friendly
+// copy; anything unmapped falls back to a generic retry message rather than surfacing a raw code.
 function submitErrorMessage(code: string, t: TFunction): string {
   switch (code) {
     case "not_assignable":
       return t("homework.picker.errNotAssignable");
+    case "media_required":
     case "image_not_found":
     case "image_path_required":
-      return t("homework.picker.errImageNotFound");
+      return t("homework.picker.errMediaRequired");
+    case "too_many_files":
+    case "too_many_images":
+      return t("homework.picker.tooManyImages", { max: MAX_ITEMS });
+    case "file_too_large":
+      return t("homework.picker.errTooLarge", { photo: mb(MAX_PHOTO_BYTES), video: mb(MAX_VIDEO_BYTES) });
+    case "batch_too_large":
+      return t("homework.picker.errBatchTooLarge");
+    case "submit_in_progress":
+      return t("homework.picker.errInProgress");
+    case "unsupported_media":
+      return t("homework.picker.invalidFile");
+    case "topic_not_configured":
+    case "no_group":
+      return t("homework.picker.videoNoTopic");
+    case "telegram_post_failed":
+      return t("homework.picker.errTelegramPost");
     case "unauthorized":
     case "forbidden":
       return t("homework.picker.errAuth");
@@ -103,24 +116,21 @@ function submitErrorMessage(code: string, t: TFunction): string {
   }
 }
 
-// Resolve the student's group homework-topic deep-link (t.me/c/<chat>/<topic>) once per session.
-// The in-app path is image-only; video / documents / multiple images can only be submitted by posting
-// into the Telegram group homework topic (the bot-capture path), so we deep-link students there for
-// those. Cached module-level: HomeworkSubmit remounts per assignment (key), so this avoids re-querying
-// on every assignment switch. Group-level url covers all groups (per-module topics are unused today).
-let _topicUrlCache: { uid: string; url: string | null } | null = null;
-async function resolveGroupTopicUrl(uid: string): Promise<string | null> {
-  if (_topicUrlCache && _topicUrlCache.uid === uid) return _topicUrlCache.url;
+// The student's group homework-topic deep-link — now only a FALLBACK surface (for a file too big for the
+// bot to upload, or a group whose topic isn't configured). Resolved via a SECURITY DEFINER RPC because
+// public.groups is admin-only under RLS (see 20260910100000_my_homework_topic_url.sql).
+let _topicUrlCache: { uid: string; moduleId: string | null; url: string | null } | null = null;
+async function resolveGroupTopicUrl(uid: string, moduleId: string | null): Promise<string | null> {
+  if (_topicUrlCache && _topicUrlCache.uid === uid && _topicUrlCache.moduleId === moduleId) return _topicUrlCache.url;
   let url: string | null = null;
   try {
-    const { data: prof } = await supabase.from("profiles").select("group_id").eq("id", uid).maybeSingle();
-    const gid = (prof as { group_id?: string } | null)?.group_id;
-    if (gid) {
-      const { data: gr } = await supabase.from("groups").select("homework_topic_url").eq("id", gid).maybeSingle();
-      url = (gr as { homework_topic_url?: string } | null)?.homework_topic_url || null;
-    }
-  } catch { /* best-effort — no deep-link if we can't resolve it */ }
-  _topicUrlCache = { uid, url };
+    // p_module_id MATTERS: the RPC prefers the module's own topic (group_module_topics) over the group-level
+    // one, mirroring the server's posting precedence. Omitting it would show a wrong/blank fallback link for
+    // any group configured with per-module topics.
+    const { data } = await supabase.rpc("my_homework_topic_url" as any, { p_module_id: moduleId });
+    url = typeof data === "string" && data ? data : null;
+  } catch { /* best-effort */ }
+  _topicUrlCache = { uid, moduleId, url };
   return url;
 }
 
@@ -139,125 +149,159 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
   const { webApp } = useMiniApp();
 
   const [topicUrl, setTopicUrl] = useState<string | null>(null);
-  const [file, setFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [topicLoaded, setTopicLoaded] = useState(false);
+  const [items, setItems] = useState<PickedItem[]>([]);
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [uploadedPath, setUploadedPath] = useState<string | null>(null);
+  const [needTopicFallback, setNeedTopicFallback] = useState(false); // a file was too big for the bot
   const [confirmResubmitOpen, setConfirmResubmitOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Resolve the group homework-topic deep-link (for the video/document "post in your group" option).
+  const itemsRef = useRef<PickedItem[]>([]);
+  itemsRef.current = items;
+
   useEffect(() => {
     if (!user) return;
     let alive = true;
-    void resolveGroupTopicUrl(user.id).then((url) => { if (alive) setTopicUrl(url); });
+    void resolveGroupTopicUrl(user.id, assignment.module_id ?? null)
+      .then((url) => { if (alive) { setTopicUrl(url); setTopicLoaded(true); } });
     return () => { alive = false; };
-  }, [user]);
+  }, [user, assignment.module_id]);
 
-  // Blob-URL cleanup (fixed post-review, 2026-08-18): onFileChange/resetForm already revoke
-  // the PRIOR preview url synchronously on re-pick / successful submit, but neither one fires
-  // when the form is simply abandoned (picker closed, "back to list", navigated away, accordion
-  // collapsed) — the pre-extraction Homework.tsx revoked on every dialog close, so restore that
-  // here at the component level. Effect-cleanup keyed on `previewUrl` revokes whatever the
-  // CURRENT previewUrl is whenever it changes (i.e. also on unmount). This can occasionally
-  // double-revoke the outgoing url on a re-pick (once here, once in onFileChange's own updater)
-  // but URL.revokeObjectURL is a silent no-op on an already-revoked/invalid url, so that's
-  // harmless — it never revokes a url that's still the current one.
+  // Revoke outstanding object URLs on unmount (abandoned form / navigation).
   useEffect(() => {
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-    };
-  }, [previewUrl]);
+    return () => { for (const it of itemsRef.current) URL.revokeObjectURL(it.previewUrl); };
+  }, []);
 
-  const setSubmittingTracked = (v: boolean) => {
-    setSubmitting(v);
-    onSubmittingChange?.(v);
-  };
+  // Scaling safety net (graceful ≠ silent): if the fallback is needed but the group has no topic link
+  // configured, say so AND beacon it, so a mis-configured group is caught the moment a student hits it.
+  const beaconedMissingRef = useRef(false);
+  useEffect(() => {
+    if (needTopicFallback && topicLoaded && !topicUrl && !beaconedMissingRef.current) {
+      beaconedMissingRef.current = true;
+      reportClientError({
+        type: "other",
+        message: "hw_topic_url_missing",
+        route: "/homework",
+        extra: { assignment_id: assignment.assignment_id },
+      });
+    }
+  }, [needTopicFallback, topicLoaded, topicUrl, assignment.assignment_id]);
+
+  const setSubmittingTracked = (v: boolean) => { setSubmitting(v); onSubmittingChange?.(v); };
 
   const resetForm = () => {
-    setFile(null);
-    setPreviewUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return null;
-    });
+    setItems((prev) => { for (const it of prev) URL.revokeObjectURL(it.previewUrl); return []; });
     setNote("");
-    setUploadedPath(null);
+    setNeedTopicFallback(false);
+  };
+
+  const removeItem = (id: string) => {
+    if (submitting) return;
+    setItems((prev) => {
+      const target = prev.find((x) => x.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((x) => x.id !== id);
+    });
   };
 
   const onFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    e.target.value = ""; // allow re-picking the exact same file later
-    if (!f) return;
-    if (!f.type.startsWith("image/")) {
-      toast.error(t("homework.picker.invalidFile"));
-      return;
-    }
-    setPreviewUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return URL.createObjectURL(f);
-    });
-    setFile(f);
-    setUploadedPath(null); // a new file always needs a fresh upload
-  };
+    const list = Array.from(e.target.files || []);
+    e.target.value = ""; // allow re-picking the same file later
+    if (!list.length) return;
 
-  // Uploads (once) to the private homework_images bucket at "<uid>/<uuid>.<ext>" — the RLS path
-  // shape submit-homework's `image_path.startsWith(userId + "/")` check requires. Cached via
-  // uploadedPath so a submit retry (network blip, or the 409 already-graded confirm) never
-  // re-uploads the same file.
-  const uploadSelectedImage = async (): Promise<string | null> => {
-    if (!user || !file) return null;
-    if (uploadedPath) return uploadedPath;
-    const blob = await compressHomeworkImage(file);
-    const ext = extForBlob(blob, file.name);
-    const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
-    const { error } = await supabase.storage
-      .from("homework_images")
-      .upload(path, blob, { contentType: blob.type || file.type || "image/jpeg" });
-    if (error) {
-      console.error("[HomeworkSubmit] image upload failed", error);
-      return null;
+    const picked: PickedItem[] = [];
+    let tooBig = false;
+    let unsupported = false;
+
+    for (const f of list) {
+      const isVideo = (f.type || "").startsWith("video/");
+      const isImage = (f.type || "").startsWith("image/");
+      if (!isVideo && !isImage) { unsupported = true; continue; }
+      // Telegram's bot ceilings are hard — reject here with a clear message instead of failing mid-upload.
+      if (f.size > (isVideo ? MAX_VIDEO_BYTES : MAX_PHOTO_BYTES)) { tooBig = true; continue; }
+      picked.push({
+        id: crypto.randomUUID(),
+        file: f,
+        previewUrl: URL.createObjectURL(f),
+        kind: isVideo ? "video" : "photo",
+      });
     }
-    setUploadedPath(path);
-    return path;
+
+    if (picked.length) {
+      setItems((prev) => {
+        const room = MAX_ITEMS - prev.length;
+        if (room <= 0) {
+          for (const it of picked) URL.revokeObjectURL(it.previewUrl);
+          toast.error(t("homework.picker.tooManyImages", { max: MAX_ITEMS }));
+          return prev;
+        }
+        const kept = picked.slice(0, room);
+        for (const it of picked.slice(room)) URL.revokeObjectURL(it.previewUrl);
+        if (picked.length > room) toast.error(t("homework.picker.tooManyImages", { max: MAX_ITEMS }));
+        return [...prev, ...kept];
+      });
+    }
+    if (tooBig) {
+      setNeedTopicFallback(true); // surface the "post it in your topic" card for the oversize file
+      toast.error(t("homework.picker.errTooLarge", { photo: mb(MAX_PHOTO_BYTES), video: mb(MAX_VIDEO_BYTES) }));
+    } else if (unsupported && !picked.length) {
+      toast.error(t("homework.picker.invalidFile"));
+    }
   };
 
   const submitHomework = async (resubmit: boolean) => {
-    if (!file || submitting) return;
+    if (!items.length || submitting) return;
     setSubmittingTracked(true);
     try {
-      const imagePath = await uploadSelectedImage();
-      if (!imagePath) {
-        toast.error(t("homework.picker.uploadFailed"));
-        return;
-      }
-      const body: Record<string, unknown> = { assignment_id: assignment.assignment_id, image_path: imagePath };
+      // Send the real FILES (multipart). submit-homework posts them into the group's homework topic as the
+      // bot on the student's behalf — nothing is written to Supabase storage.
+      const fd = new FormData();
+      fd.append("assignment_id", assignment.assignment_id);
       const trimmedNote = note.trim();
-      if (trimmedNote) body.submitted_text = trimmedNote;
-      if (resubmit) body.resubmit = true;
+      if (trimmedNote) fd.append("submitted_text", trimmedNote);
+      if (resubmit) fd.append("resubmit", "true");
+      for (const it of itemsRef.current) {
+        if (it.kind === "photo") {
+          const blob = await compressHomeworkImage(it.file);
+          const ext = extForBlob(blob, it.file.name);
+          fd.append("files", new File([blob], `homework.${ext}`, { type: blob.type || it.file.type || "image/jpeg" }));
+        } else {
+          fd.append("files", it.file, it.file.name || "homework.mp4");
+        }
+      }
 
-      const { data, error } = await supabase.functions.invoke("submit-homework", { body });
+      const { data, error } = await supabase.functions.invoke("submit-homework", { body: fd });
       if (error) {
-        // On an HTTP error, supabase-js puts the response body in error.context, not `data`
-        // (same pattern as AdminUsers.tsx's admin-impersonate call).
         let code = "";
         try {
           const j = await (error as any).context?.json?.();
           code = j?.error || "";
-        } catch {
-          // body unreadable — falls through to the generic error message below
-        }
+        } catch { /* body unreadable — generic message below */ }
         if (!resubmit && code === "already_graded") {
-          setConfirmResubmitOpen(true); // the file stays uploaded + selection stays intact
+          setConfirmResubmitOpen(true); // selection stays intact
           return;
+        }
+        // Always leave an escape hatch: for a topic mis-config AND for a failed Telegram post (bot lacks
+        // posting rights / topic closed), retrying in-app won't self-heal — show the "post it yourself" card.
+        if (code === "topic_not_configured" || code === "no_group" || code === "telegram_post_failed") {
+          setNeedTopicFallback(true);
         }
         toast.error(submitErrorMessage(code, t));
         return;
       }
 
-      toast.success(
-        data?.status === "resubmitted" ? t("homework.picker.resubmitSuccess") : t("homework.picker.submitSuccess"),
-      );
+      // Partial success: some files never reached the topic. Say so rather than a flat "submitted!" —
+      // otherwise the student can't know to re-send the missing item.
+      const failedN = Number((data as any)?.failed ?? 0);
+      const postedN = Number((data as any)?.posted ?? 0);
+      if (failedN > 0) {
+        toast.error(t("homework.picker.partialUpload", { posted: postedN, total: postedN + failedN }));
+      } else {
+        toast.success(
+          data?.status === "resubmitted" ? t("homework.picker.resubmitSuccess") : t("homework.picker.submitSuccess"),
+        );
+      }
       resetForm();
       onDone();
     } catch (e) {
@@ -268,28 +312,62 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
     }
   };
 
+  const canAddMore = items.length < MAX_ITEMS;
+  const showTopicCard = needTopicFallback && topicLoaded;
+
   return (
     <div className={className}>
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
-        capture="environment"
+        accept="image/*,video/*"
+        multiple
         className="hidden"
         onChange={onFileChange}
       />
 
-      {previewUrl ? (
-        <div className="relative">
-          <img src={previewUrl} alt="" className="max-h-64 w-full rounded-lg border border-border object-cover" />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={submitting}
-            className="absolute bottom-2 right-2 rounded-full bg-card/90 px-3 py-1.5 text-[11.5px] font-bold text-foreground shadow-soft disabled:pointer-events-none disabled:opacity-50"
-          >
-            {t("homework.picker.changePhoto")}
-          </button>
+      {items.length > 0 ? (
+        <div className="grid grid-cols-3 gap-2">
+          {items.map((it) => (
+            <div key={it.id} className="relative aspect-square">
+              {it.kind === "video" ? (
+                <>
+                  <video
+                    src={it.previewUrl}
+                    muted
+                    playsInline
+                    preload="metadata"
+                    className="h-full w-full rounded-lg border border-border object-cover"
+                  />
+                  <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                    <Play className="size-6 fill-white/90 text-white drop-shadow" />
+                  </span>
+                </>
+              ) : (
+                <img src={it.previewUrl} alt="" className="h-full w-full rounded-lg border border-border object-cover" />
+              )}
+              <button
+                type="button"
+                onClick={() => removeItem(it.id)}
+                disabled={submitting}
+                aria-label={t("homework.picker.removeImage")}
+                className="absolute -right-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full bg-card text-foreground shadow-soft ring-1 ring-border disabled:pointer-events-none disabled:opacity-50"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          ))}
+          {canAddMore && (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={submitting}
+              className="flex aspect-square flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-border bg-surface-2 text-muted-foreground disabled:opacity-50"
+            >
+              <ImagePlus className="size-5" />
+              <span className="text-[11px] font-bold">{t("homework.picker.addMore")}</span>
+            </button>
+          )}
         </div>
       ) : (
         <button
@@ -301,6 +379,34 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
           <span className="text-[13px] font-bold text-foreground">{t("homework.picker.pickPhoto")}</span>
           <span className="text-[11.5px] font-semibold text-muted-foreground">{t("homework.picker.pickPhotoHint")}</span>
         </button>
+      )}
+
+      {/* Oversize / no-topic fallback — deliberately placed IMMEDIATELY under the picker (not below the
+          Submit button) so the student sees WHY their big file was refused and where to put it, right where
+          they just tried. Normal submissions never render this. Posting in the topic is a first-class
+          submission path: the bot captures it there exactly like any other homework post. */}
+      {showTopicCard && topicUrl && (
+        <div className="mt-3 rounded-lg border border-primary bg-primary/5 p-3 ring-1 ring-primary/40">
+          <div className="text-[12.5px] font-bold text-foreground">{t("homework.picker.topicTitle")}</div>
+          <div className="mt-0.5 text-[11.5px] font-semibold text-muted-foreground">{t("homework.picker.topicHint")}</div>
+          <a
+            href={topicUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => {
+              try { webApp?.openTelegramLink?.(topicUrl); } catch { /* native <a> is the fallback */ }
+            }}
+            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-4 py-2.5 text-sm font-bold text-foreground"
+          >
+            📌 {t("homework.picker.topicCta")}
+          </a>
+        </div>
+      )}
+      {showTopicCard && !topicUrl && (
+        <div className="mt-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+          <div className="text-[12.5px] font-bold text-foreground">{t("homework.picker.videoNoTopicTitle")}</div>
+          <div className="mt-0.5 text-[11.5px] font-semibold text-muted-foreground">{t("homework.picker.videoNoTopic")}</div>
+        </div>
       )}
 
       <div className="mt-4">
@@ -318,39 +424,13 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
       <Button
         variant="primary"
         block
-        disabled={!file || submitting}
+        disabled={!items.length || submitting}
         onClick={() => void submitHomework(false)}
         className="mt-4"
       >
         {submitting ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
         {submitting ? t("homework.picker.submitting") : t("homework.picker.submitCta")}
       </Button>
-
-      {topicUrl && (
-        <div className="mt-4 rounded-lg border border-border bg-surface-2 p-3">
-          <div className="text-[12.5px] font-bold text-foreground">{t("homework.picker.topicTitle")}</div>
-          <div className="mt-0.5 text-[11.5px] font-semibold text-muted-foreground">{t("homework.picker.topicHint")}</div>
-          <a
-            href={topicUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => {
-              // The real <a target=_blank> is the fallback; openTelegramLink is the RELIABLE path
-              // inside the Telegram Mini App (a plain <a> can silently no-op in some clients). Fire
-              // both — whichever the client honors opens the private topic link. Members-only (students
-              // are group members by the trust boundary), matching the teacher-side GradePhoto pattern.
-              try {
-                webApp?.openTelegramLink?.(topicUrl);
-              } catch {
-                /* native <a> navigation is the fallback */
-              }
-            }}
-            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-4 py-2.5 text-sm font-bold text-foreground"
-          >
-            📌 {t("homework.picker.topicCta")}
-          </a>
-        </div>
-      )}
 
       <AlertDialog open={confirmResubmitOpen} onOpenChange={setConfirmResubmitOpen}>
         <AlertDialogContent>
@@ -361,10 +441,7 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => {
-                setConfirmResubmitOpen(false);
-                void submitHomework(true);
-              }}
+              onClick={() => { setConfirmResubmitOpen(false); void submitHomework(true); }}
             >
               {t("homework.picker.resubmitConfirmCta")}
             </AlertDialogAction>

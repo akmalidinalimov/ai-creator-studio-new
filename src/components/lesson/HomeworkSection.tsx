@@ -79,18 +79,12 @@ export function HomeworkSection({ lessonId }: Props) {
       const gid = prof?.group_id || null;
       setGroupId(gid);
       if (gid) {
-        const { data: gmt } = await supabase
-          .from("group_module_topics" as any)
-          .select("telegram_topic_url")
-          .eq("group_id", gid).eq("module_id", l.module_id).maybeSingle();
-        let url = (gmt as any)?.telegram_topic_url || null;
-        if (!url) {
-          const { data: gr } = await supabase
-            .from("groups").select("homework_topic_url")
-            .eq("id", gid).maybeSingle();
-          url = (gr as any)?.homework_topic_url || null;
-        }
-        setTopicUrl(url);
+        // MUST go through the RPC: public.groups (and group_module_topics) are not student-readable under
+        // RLS ("groups admin all"), so the old client-side selects resolved NULL for every STUDENT and this
+        // topic link silently never rendered. my_homework_topic_url() is SECURITY DEFINER, applies the same
+        // precedence (per-module topic → group topic) and returns only the caller's own url.
+        const { data } = await supabase.rpc("my_homework_topic_url" as any, { p_module_id: l.module_id });
+        setTopicUrl(typeof data === "string" && data ? data : null);
       }
     })();
   }, [user, lessonId]);

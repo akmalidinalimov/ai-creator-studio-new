@@ -7,6 +7,11 @@ verify_jwt = false
 [functions.submit-lead]
 verify_jwt = false
 
+# bitrix-lead-sync: internal (pg_cron) drainer that re-forwards landing leads to Bitrix24 CRM that the instant
+# submit-lead push missed. verify_jwt=false + x-internal-secret gated. Dormant when BITRIX_WEBHOOK_URL is unset.
+[functions.bitrix-lead-sync]
+verify_jwt = false
+
 [functions.study-assistant]
 verify_jwt = true
 
@@ -175,6 +180,13 @@ verify_jwt = true
 # student has no telegram_id or the submission has no voice note. See
 # supabase/functions/notify-grade-voice/index.ts.
 [functions.notify-grade-voice]
+verify_jwt = true
+
+# teacher-voice-request: bridges the Mini App's blocked microphone (Telegram's webview denies getUserMedia)
+# to Telegram's own recorder — parks a grade_voice conversation state and DMs the teacher a prompt in the bot
+# chat. Requires a logged-in teacher/admin JWT (verify_jwt=true) + junction-aware RBAC (is_group_teacher ∪
+# admin). See supabase/functions/teacher-voice-request/index.ts.
+[functions.teacher-voice-request]
 verify_jwt = true
 
 # grade-card-reconcile: internal (pg_cron) BACKSTOP that heals students graded but never DM'd their

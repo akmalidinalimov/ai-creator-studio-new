@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Mic, MicOff, RotateCcw, Square, Trash2 } from "lucide-react";
 import { Mp3Encoder } from "@breezystack/lamejs";
 import { Button } from "@/components/ui-kit";
+import { reportClientError } from "@/lib/beacon";
 
 /**
  * VoiceRecorder — shared mic-record → client MP3 encode → preview control.
@@ -103,9 +104,15 @@ export interface VoiceRecorderProps {
   value: Blob | null;
   onChange: (mp3: Blob | null) => void;
   disabled?: boolean;
+  /**
+   * Rendered inside the "microphone unavailable" row. Telegram's in-app webview denies Mini Apps mic
+   * access, so on most teacher devices this is the ONLY path that works — the Mini App passes a
+   * "record in Telegram" action here so the row is a way forward instead of a dead end.
+   */
+  fallback?: React.ReactNode;
 }
 
-export function VoiceRecorder({ value, onChange, disabled }: VoiceRecorderProps): JSX.Element {
+export function VoiceRecorder({ value, onChange, disabled, fallback }: VoiceRecorderProps): JSX.Element {
   const [recording, setRecording] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [encoding, setEncoding] = useState(false);
@@ -122,6 +129,17 @@ export function VoiceRecorder({ value, onChange, disabled }: VoiceRecorderProps)
   const startedAtRef = useRef(0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stoppingRef = useRef(false); // guards against a double-stop (hard cap racing a manual tap)
+
+  // Doctrine: graceful ≠ silent. A blocked mic degraded quietly to a text-only row, so nobody knew teachers
+  // were hitting a dead end — this shipped unverified in the Telegram webview and stayed invisible until a
+  // teacher reported it by hand. Beacon it once per mount so the block is finally measurable.
+  const micBeaconedRef = useRef(false);
+  useEffect(() => {
+    if (unavailable && !micBeaconedRef.current) {
+      micBeaconedRef.current = true;
+      reportClientError({ type: "other", message: "voice_mic_unavailable" });
+    }
+  }, [unavailable]);
 
   // Preview object URL mirrors `value` — created/revoked on every change, and on unmount, so no
   // blob: URL ever leaks.
@@ -281,6 +299,9 @@ export function VoiceRecorder({ value, onChange, disabled }: VoiceRecorderProps)
         <MicOff className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
         <div className="min-w-0 flex-1 space-y-1">
           <p className="text-[12.5px] font-semibold leading-snug text-muted-foreground">{NO_MIC_REASON}</p>
+          {/* The way FORWARD (Telegram's webview blocks the mic on most teacher devices) — without this the
+              row just told them to "send it from the bot" with no way to get there. */}
+          {fallback ? <div className="pt-1">{fallback}</div> : null}
           {!disabled && (
             <button
               type="button"

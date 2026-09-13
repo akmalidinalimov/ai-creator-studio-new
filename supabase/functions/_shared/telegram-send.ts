@@ -32,6 +32,80 @@ export type SendOutcome = {
  * count recipient reach, etc.). Pass `record:false` to only classify (e.g. inside a queue drainer that
  * writes its own per-row status).
  */
+/** Shared non-delivery recorder for both the JSON and multipart senders (see sendTelegram's doc). */
+async function recordNonDelivery(
+  outcome: SendOutcome,
+  method: string,
+  opts?: { admin?: any; purpose?: string; recipientId?: string | number | null; record?: boolean },
+): Promise<void> {
+  if (outcome.ok || opts?.record === false) return;
+  if (opts?.admin) {
+    await logHealth(
+      opts.admin,
+      "telegram_send_failed",
+      {
+        method,
+        purpose: opts?.purpose ?? method,
+        recipient: opts?.recipientId ?? null,
+        error: outcome.error, // Telegram description only — never the token
+        terminal: outcome.terminal,
+        recipient_error: outcome.recipient,
+        content_error: outcome.content,
+      },
+      { source: "telegram-send" },
+    );
+  } else {
+    console.error("sendTelegram: non-delivery NOT recorded (no admin client passed)", {
+      method,
+      purpose: opts?.purpose ?? method,
+      error: outcome.error,
+    });
+  }
+}
+
+/**
+ * Multipart (FILE UPLOAD) sibling of sendTelegram, for methods that take a real file rather than a
+ * file_id/URL — sendPhoto / sendVideo / sendDocument with binary content. Same token containment, same
+ * classification + health recording; additionally returns Telegram's `result` (the sent Message), which the
+ * caller needs for `message_id` and the resulting `file_id`.
+ *
+ * Telegram's BOT upload ceilings apply here and cannot be raised: ~10MB per photo, ~50MB per video/document.
+ * A larger file comes back as a terminal content error — callers should pre-check size and offer a fallback.
+ */
+export async function sendTelegramMultipart(
+  botToken: string,
+  method: string,
+  fields: Record<string, string | number>,
+  file: { field: string; blob: Blob; filename: string },
+  opts?: { admin?: any; purpose?: string; recipientId?: string | number | null; record?: boolean },
+): Promise<{ outcome: SendOutcome; result: any }> {
+  let status = 0;
+  let j: { ok?: boolean; description?: string; result?: unknown } | null = null;
+  try {
+    const form = new FormData();
+    for (const [k, v] of Object.entries(fields)) form.append(k, String(v));
+    form.append(file.field, file.blob, file.filename);
+    // No explicit Content-Type: fetch sets multipart/form-data + the boundary from the FormData body.
+    const resp = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, { method: "POST", body: form });
+    status = resp.status;
+    j = await resp.json().catch(() => null);
+  } catch {
+    j = { ok: false, description: "transport_error" };
+  }
+
+  const { ok, error } = tgResult(j, status);
+  const outcome: SendOutcome = {
+    ok,
+    status,
+    error,
+    terminal: isTerminal(error),
+    recipient: isRecipientError(error),
+    content: isContentError(error),
+  };
+  await recordNonDelivery(outcome, method, opts);
+  return { outcome, result: (j as { result?: unknown } | null)?.result ?? null };
+}
+
 export async function sendTelegram(
   botToken: string,
   method: string,
@@ -63,33 +137,9 @@ export async function sendTelegram(
     content: isContentError(error),
   };
 
-  if (!ok && opts?.record !== false) {
-    if (opts?.admin) {
-      await logHealth(
-        opts.admin,
-        "telegram_send_failed",
-        {
-          method,
-          purpose: opts?.purpose ?? method,
-          recipient: opts?.recipientId ?? null,
-          error: outcome.error, // Telegram description only — never the token
-          terminal: outcome.terminal,
-          recipient_error: outcome.recipient,
-          content_error: outcome.content,
-        },
-        { source: "telegram-send" },
-      );
-    } else {
-      // No admin client → the non-delivery can't be made DB-visible. Never leave it FULLY silent (the
-      // failure class this helper exists to kill): log it loudly. Callers that want it recorded MUST
-      // pass `admin`; only an explicit `record:false` (e.g. a queue drainer writing its own status) opts out.
-      console.error("sendTelegram: non-delivery NOT recorded (no admin client passed)", {
-        method,
-        purpose: opts?.purpose ?? method,
-        error: outcome.error, // Telegram description only — never the token
-      });
-    }
-  }
+  // Non-delivery is made DB-visible here (or logged loudly when no admin client was passed) — see
+  // recordNonDelivery. Callers that write their own per-row status opt out with `record:false`.
+  await recordNonDelivery(outcome, method, opts);
 
   return outcome;
 }
