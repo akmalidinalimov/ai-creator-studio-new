@@ -449,6 +449,7 @@
     "signingIn": "Kirilmoqda…",
     "invalid": "Havola yaroqsiz yoki muddati tugagan.",
     "invalidTitle": "Kirish amalga oshmadi",
+    "otherAccount": "Siz boshqa akkaunt bilan kirgansiz, shuning uchun havola ochilmadi. Avval akkauntdan chiqing yoki havolani inkognito oynada oching.",
     "backToLogin": "Login sahifasiga qaytish"
   },
   "landing": {
