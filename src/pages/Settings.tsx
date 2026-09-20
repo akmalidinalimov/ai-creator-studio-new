@@ -55,6 +55,7 @@ export default function Settings() {
   const [lastName, setLastName] = useState("");
   const [timezone, setTimezone] = useState("UTC");
   const [goal, setGoal] = useState(5);
+  const [instagram, setInstagram] = useState("");
   const [pw, setPw] = useState("");
   const [events, setEvents] = useState<AuthEvent[]>([]);
   const [digestOptIn, setDigestOptIn] = useState(true);
@@ -83,6 +84,14 @@ export default function Settings() {
         .select("name, last_name, timezone, weekly_goal_lessons, preferred_language, digest_opt_in")
         .eq("id", user.id)
         .maybeSingle();
+      // Read the handle through an UNTYPED client, separately. The generated types come from prod and
+      // won't carry instagram_username until the migration lands; putting it in the typed select
+      // above collapses the whole result type and breaks every field read.
+      try {
+        const { data: ig } = await (supabase as any)
+          .from("profiles").select("instagram_username").eq("id", user.id).maybeSingle();
+        setInstagram((ig?.instagram_username as string) || "");
+      } catch { /* column not there yet — leave the field empty */ }
       if (data) {
         setName(data.name || "");
         setLastName((data as any).last_name || "");
@@ -111,7 +120,10 @@ export default function Settings() {
     const r = await mutate(() =>
       supabase
         .from("profiles")
-        .update({ name, last_name: lastName || null, timezone, weekly_goal_lessons: goal } as any)
+        .update({
+          name, last_name: lastName || null, timezone, weekly_goal_lessons: goal,
+          instagram_username: instagram.trim() || null,
+        } as any)
         .eq("id", user.id),
     );
     if (r.ok) toast.success(t("settings.saved"));
@@ -177,6 +189,8 @@ export default function Settings() {
           <div className="space-y-1.5"><Label>{t("auth.email")}</Label><Input value={user?.email || ""} disabled /></div>
           <div className="space-y-1.5"><Label>{t("settings.timezone")}</Label><Input value={timezone} onChange={(e) => setTimezone(e.target.value)} /></div>
           <div className="space-y-1.5"><Label>{t("settings.weeklyGoal")}</Label><Input type="number" value={goal} onChange={(e) => setGoal(parseInt(e.target.value) || 0)} /></div>
+          {/* "Instagram" is the same word in uz/ru/en, so it needs no translation key. */}
+          <div className="space-y-1.5"><Label>Instagram</Label><Input value={instagram} onChange={(e) => setInstagram(e.target.value)} placeholder="@username" /></div>
           <Button onClick={save}>{t("settings.saveProfile")}</Button>
         </Card>
 

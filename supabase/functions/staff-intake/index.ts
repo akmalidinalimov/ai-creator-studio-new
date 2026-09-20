@@ -61,6 +61,9 @@ Deno.serve(async (req) => {
     const group_name = norm(body?.group_name);
     const phone = norm(body?.phone);
     const email = norm(body?.email);
+    // Challenge 6.0: the Instagram handle is how a verified post is matched back to a student.
+    // Optional — a missing handle only means that student can't earn Instagram points yet.
+    const instagram = norm(body?.instagram_username);
     // Account type: 'paid' (full access) or 'provisional' (trial — homework/points/stats but
     // NO lessons). Defaults to 'paid' so an unset/legacy request never accidentally locks a payer.
     const account_type = norm(body?.account_type) === "provisional" ? "provisional" : "paid";
@@ -135,6 +138,15 @@ Deno.serve(async (req) => {
     const profileUpdate: Record<string, unknown> = { account_type };
     if (phone) profileUpdate.phone = phone;
     await admin.from("profiles").update(profileUpdate).eq("id", userId);
+    // Written SEPARATELY and best-effort on purpose. Edge functions deploy BEFORE migrations in the
+    // same run, so for a few seconds this code can be live while `instagram_username` does not exist
+    // yet. Folding it into the update above would fail the whole write and cost the student their
+    // tier and account type. The DB trigger normalizes "@name", spaces and profile URLs.
+    if (instagram) {
+      try {
+        await admin.from("profiles").update({ instagram_username: instagram }).eq("id", userId);
+      } catch (_e) { /* handle is a bonus, never block an enrolment */ }
+    }
     await admin.from("admin_actions").insert({
       actor_user_id: actorId, action: "staff_intake", target_user_id: userId,
       details: { course_id, tier_id, account_type, status },

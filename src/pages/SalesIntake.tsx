@@ -42,6 +42,7 @@ export default function SalesIntake() {
   const [group, setGroup] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
+  const [instagram, setInstagram] = useState("");
   const [accountType, setAccountType] = useState<"paid" | "provisional">("paid");
   const [submitting, setSubmitting] = useState(false);
   const [recent, setRecent] = useState<Recent[]>([]);
@@ -97,7 +98,8 @@ export default function SalesIntake() {
       const payload = {
         name: first.trim(), last_name: last.trim(), telegram_username: username.trim(),
         course_id: selCourse.id, tier_id, group_name: groupName,
-        phone: phone.trim(), email: email.trim(), confirm_move: opts.confirmMove,
+        phone: phone.trim(), email: email.trim(), instagram_username: instagram.trim(),
+        confirm_move: opts.confirmMove,
         account_type: accountType,
       };
       // A transient network blip (common on mobile / Telegram's in-app browser) surfaces
@@ -324,6 +326,11 @@ export default function SalesIntake() {
               <Label>Email</Label>
               <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="(ixtiyoriy)" />
             </div>
+          </div>
+          {/* Challenge 6.0: without a handle the student simply can't earn Instagram points. */}
+          <div className="space-y-1.5">
+            <Label>Instagram</Label>
+            <Input value={instagram} onChange={(e) => setInstagram(e.target.value)} placeholder="@username (challenge uchun)" />
           </div>
 
           <Button className="w-full" onClick={submit} disabled={submitting}>
