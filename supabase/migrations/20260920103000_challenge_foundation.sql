@@ -28,6 +28,29 @@
 --   * Events are stamped created_at = the message's sent_at, so the per-day cap stays accurate even
 --     when a run covers a long window.
 --
+-- CROSS-RECONCILER SAFETY (both reviews flagged this; the XP review called it blocking): question
+-- points deliberately reuse the EXISTING `cq:<day>` ref_key rather than a parallel `ch_q:<day>`.
+-- reconcile_community_xp pays `cq:<day>` for an "ustoz" question and knows nothing about this engine.
+-- A real question ("Ustoz, bu yerda nima xato?") satisfies BOTH engines, so with two different keys
+-- whichever job ran second would have paid a SECOND point for the same question — +4 instead of +2,
+-- permanently, since both are idempotent. Sharing one key makes that impossible by construction:
+-- xp_events' UNIQUE (user_id, ref_key) rejects the duplicate, and the existing reconciler needs no
+-- change. The reason column still records which engine paid ('challenge_question' vs
+-- 'community_question'), so reporting can tell them apart.
+--   Accepted side effect: a challenge question can add up to +2 beyond the community daily cap, since
+--   that cap is counted inside the other reconciler. Bounded at one award per student per day.
+--
+-- ACCEPTED LIMITS, recorded so nobody rediscovers them the hard way (XP-integrity review):
+--   * RATING CARRY-OVER: user_group_rating_xp subtracts only lesson/homework XP belonging to another
+--     course, so challenge points — like community and daily XP before them — stay in a student's
+--     total and follow them into whatever group they are in LATER. This cannot affect the challenge
+--     prizes (every participant is in a 6.0 group for the whole window), but when this cohort moves on
+--     their challenge points will sit in the next group's rating. Fixing it needs a source-group tag on
+--     the ledger row, which changes the shared rating function and belongs in its own PR.
+--   * GROUP MEDIA IS PARTICIPATION, NOT QUALITY: any photo or video outside the homework topic earns,
+--     with no relevance bar. The daily cap is the bound — at most 2 posts, 10 points, against 30 for a
+--     single verified Instagram post, so the cheapest path is also the least rewarding one.
+--
 -- KNOWN PRE-EXISTING VECTOR, deliberately NOT changed here: reconcile_community_xp pays `chelp:` for
 -- any reply, and Telegram marks every post in a forum topic as a reply to the topic-creation message,
 -- so a student who creates a topic can collect help points from posts in it. Fixing that changes what
@@ -64,7 +87,13 @@ begin
     _v := regexp_replace(_v, '^@+', '');
     _v := nullif(btrim(_v), '');
     if _v is not null and _v !~ '^[a-z0-9._]{1,30}$' then
-      _v := null;   -- unusable input is stored as "not set" rather than as a handle that can never match
+      -- Unusable input must never silently WIPE a handle that already earned points: keep the old
+      -- value on an update, and store nothing on an insert.
+      if tg_op = 'UPDATE' then
+        new.instagram_username := old.instagram_username;
+        return new;
+      end if;
+      _v := null;
     end if;
     new.instagram_username := _v::citext;
   exception when others then
@@ -101,15 +130,27 @@ as $$
 $$;
 
 -- Active = switched on AND inside the challenge window (either end may be null = open-ended).
+-- plpgsql with an exception handler on purpose: a malformed window timestamp typed into the settings
+-- row would otherwise raise inside EVERY caller (the reconciler, health, the watchdog). It must fail
+-- CLOSED rather than take the engine down.
 create or replace function public.challenge_active(_at timestamptz default now())
 returns boolean
-language sql stable security definer set search_path = public
+language plpgsql stable security definer set search_path = public
 as $$
-  select coalesce((public.challenge_config()->>'enabled')::boolean, false)
-     and (nullif(public.challenge_config()->'window'->>'start','') is null
-          or _at >= (public.challenge_config()->'window'->>'start')::timestamptz)
-     and (nullif(public.challenge_config()->'window'->>'end','') is null
-          or _at <= (public.challenge_config()->'window'->>'end')::timestamptz);
+declare _cfg jsonb; _s text; _e text;
+begin
+  _cfg := public.challenge_config();
+  if not coalesce((_cfg->>'enabled')::boolean, false) then
+    return false;
+  end if;
+  _s := nullif(_cfg->'window'->>'start', '');
+  _e := nullif(_cfg->'window'->>'end', '');
+  if _s is not null and _at < _s::timestamptz then return false; end if;
+  if _e is not null and _at > _e::timestamptz then return false; end if;
+  return true;
+exception when others then
+  return false;
+end;
 $$;
 
 -- The groups in scope: explicitly listed groups, plus every group of a listed course. Returns NOTHING
@@ -143,9 +184,8 @@ create table if not exists public.challenge_weekly_results (
 alter table public.challenge_weekly_results enable row level security;  -- service-role only, no policies
 
 -- ───────────────────────── 4. The reconciler (group-activity points) ─────────────────────────
--- Runs every 10 minutes over a 2h lookback: generous overlap, and every award is idempotent, so a
--- missed tick heals itself on the next one.
-create or replace function public.reconcile_challenge_xp(_since timestamptz default now() - interval '2 hours')
+-- Runs every 10 minutes. Every award is idempotent, so overlap is free and a missed tick heals itself.
+create or replace function public.reconcile_challenge_xp(_since timestamptz default null)
 returns table(awarded int, capped int)
 language plpgsql
 security definer
@@ -160,6 +200,16 @@ declare
   _active boolean := public.challenge_active();
 begin
   perform pg_advisory_xact_lock(hashtext('reconcile_challenge_xp'));
+
+  -- Self-healing lookback: normally the last heartbeat minus a 30-minute overlap, so an outage of any
+  -- length is covered by the next tick instead of silently losing every point earned while the cron
+  -- was down. Falls back to 2 hours on a first run. Cheap either way — webhook_inbox is read through
+  -- its received_at index.
+  _since := coalesce(
+    _since,
+    (select max(created_at) - interval '30 minutes'
+       from admin_actions where action = 'challenge_xp_reconciled'),
+    now() - interval '2 hours');
 
   if _active then
     select coalesce((public.challenge_config()->'points'->>'group_media')::int, 5),
@@ -203,8 +253,11 @@ begin
           case
             -- Own work shared in the group. The homework topic is excluded: homework already has its
             -- own points, and paying twice for one upload would be the easiest farm in the system.
+            -- A group with NO homework topic configured earns NO media points rather than paying for
+            -- every homework upload — safe by construction, and surfaced by challenge_health().
             when ((b.m->'photo') is not null or (b.m->'video') is not null)
-                 and (b.homework_topic_id is null or b.thread_id is distinct from b.homework_topic_id)
+                 and b.homework_topic_id is not null
+                 and b.thread_id is distinct from b.homework_topic_id
               then 'media'
             -- A real question, not a bare "?" — 15 characters keeps one-character spam out.
             when coalesce(b.m->>'text', b.m->>'caption', '') like '%?%'
@@ -218,7 +271,9 @@ begin
                case t.kind when 'media' then _p_media when 'question' then _p_question end as amount,
                case t.kind
                  when 'media' then 'ch_img:' || t.chat_id::text || ':' || t.msg_id::text
-                 when 'question' then 'ch_q:' || t.day::text
+                 -- Shared namespace with reconcile_community_xp — see the header. The UNIQUE
+                 -- (user_id, ref_key) makes a double-pay for one question impossible.
+                 when 'question' then 'cq:' || t.day::text
                end as ref_key
         from typed t
         where t.kind is not null
@@ -235,11 +290,6 @@ begin
       from deduped d
       where d.rn = 1
         and not exists (select 1 from xp_events x where x.user_id = d.student and x.ref_key = d.ref_key)
-        -- Don't pay twice for one question: the existing community reconciler may already have paid
-        -- `cq:<day>` for an "ustoz" question the same day.
-        and (d.kind <> 'question'
-             or not exists (select 1 from xp_events x2
-                            where x2.user_id = d.student and x2.ref_key = 'cq:' || d.day::text))
       order by d.student, d.day, d.sent_at
     loop
       if _key is distinct from (_rec.student::text || '|' || _rec.day::text) then
@@ -278,7 +328,8 @@ begin
   end if;
 
   -- Heartbeat on EVERY tick, including while the challenge is off, and it records which. The watchdog
-  -- can then tell "switched off" apart from "the job died" instead of guessing.
+  -- can then tell "switched off" apart from "the job died" instead of guessing. It is also what the
+  -- self-healing lookback above reads.
   begin
     insert into public.admin_actions (actor_user_id, action, details)
     values (null, 'challenge_xp_reconciled',
@@ -293,6 +344,9 @@ revoke execute on function public.reconcile_challenge_xp(timestamptz) from publi
 -- ───────────────────────── 5. Team board (group vs group) ─────────────────────────
 -- Ranked by average points per ENROLLED member, not by total: group sizes differ, and averaging over
 -- everyone enrolled rewards groups that bring every member along rather than a few stars.
+-- It counts ALL points earned in the window — lessons and homework included, not only challenge
+-- points. That is deliberate: the rule is that every activity earns, so a group that studies hard
+-- competes with a group that posts hard.
 create or replace function public.challenge_team_board(_from timestamptz, _to timestamptz)
 returns table(group_id uuid, group_name text, members int, total_points bigint, avg_points numeric)
 language sql stable security definer set search_path = public
@@ -321,7 +375,9 @@ $$;
 revoke execute on function public.challenge_team_board(timestamptz, timestamptz) from public, anon, authenticated;
 
 -- ───────────────────────── 6. Disqualification (rare, admin-only) ─────────────────────────
--- There is no per-submission review; this is the reactive tool for a proven cheat.
+-- There is no per-submission review; this is the reactive tool for a proven cheat. It matches on the
+-- REASON as well as the ref_key, because question points share the community `cq:` namespace.
+-- `starts_with(ref_key,'ch_')` deliberately does not match the existing `chelp:` community key.
 create or replace function public.admin_void_challenge_points(_student uuid, _reason text)
 returns int
 language plpgsql
@@ -336,7 +392,8 @@ begin
   end if;
 
   delete from xp_events
-  where user_id = _student and starts_with(ref_key, 'ch_');
+  where user_id = _student
+    and (starts_with(ref_key, 'ch_') or reason like 'challenge\_%');
   get diagnostics _n = row_count;
 
   insert into user_xp (user_id, total_xp, level, updated_at)
@@ -363,16 +420,21 @@ returns jsonb
 language sql stable security definer set search_path = public
 as $$
   select jsonb_build_object(
-    'active',        public.challenge_active(),
+    'active',          public.challenge_active(),
     'groups_in_scope', (select count(*) from public.challenge_group_ids()),
-    'handles',       (select count(*) from profiles where instagram_username is not null),
-    'media_points',  (select count(*) from xp_events where reason = 'challenge_group_media'),
+    -- A scoped group with no homework topic configured earns NO media points at all (see the
+    -- reconciler). Surfaced here so a mis-configured group is visible instead of silently unpaid.
+    'groups_missing_homework_topic',
+      (select count(*) from groups g
+       where g.id in (select public.challenge_group_ids()) and g.homework_topic_id is null),
+    'handles',         (select count(*) from profiles where instagram_username is not null),
+    'media_points',    (select count(*) from xp_events where reason = 'challenge_group_media'),
     'question_points', (select count(*) from xp_events where reason = 'challenge_question'),
-    'ig_points',     (select count(*) from xp_events where reason = 'challenge_instagram'),
-    'students',      (select count(distinct user_id) from xp_events where starts_with(ref_key, 'ch_')),
-    'xp_total',      (select coalesce(sum(amount), 0) from xp_events where starts_with(ref_key, 'ch_')),
-    'last_run',      (select max(created_at) from admin_actions where action = 'challenge_xp_reconciled'),
-    'checked_at',    now()
+    'ig_points',       (select count(*) from xp_events where reason = 'challenge_instagram'),
+    'students',        (select count(distinct user_id) from xp_events where reason like 'challenge\_%'),
+    'xp_total',        (select coalesce(sum(amount), 0) from xp_events where reason like 'challenge\_%'),
+    'last_run',        (select max(created_at) from admin_actions where action = 'challenge_xp_reconciled'),
+    'checked_at',      now()
   );
 $$;
 revoke execute on function public.challenge_health() from public, anon, authenticated;
