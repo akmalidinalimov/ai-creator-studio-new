@@ -5306,8 +5306,18 @@ async function recordGroupMessageEvent(admin: any, msg: any) {
 
   // v2 teacher-stats signals: identify questions DIRECTED at the group's teacher (reply / @tag /
   // "ustoz") so we can measure if/when they're answered. Best-effort, never throws.
-  const replyMsgId = msg.reply_to_message?.message_id ?? null;
-  const replyUserId = msg.reply_to_message?.from?.id ?? null;
+  // Telegram marks EVERY message posted in a forum topic as a reply to that topic's creation service
+  // message. That is not a reply to a person, and storing it as one is what let an ordinary post look
+  // like "helping a peer": the community XP engine credits reply_to_user_id with +3, so whoever created
+  // the topic would collect a point from every classmate who posts in it, every day.
+  // 61,911 such rows already exist. Nothing has been minted from them only because the two accounts
+  // that have ever created a topic here are an admin (excluded as staff) and GroupAnonymousBot (no
+  // profile). That is an accident of who taps "create topic", not a rule — and it stops protecting us
+  // the first time a student, an assistant or an unroled co-teacher creates one in a 6.0 group.
+  // Both fields are dropped together so the row cannot resolve to a peer downstream.
+  const _implicitTopicReply = !!msg.reply_to_message?.forum_topic_created;
+  const replyMsgId = _implicitTopicReply ? null : (msg.reply_to_message?.message_id ?? null);
+  const replyUserId = _implicitTopicReply ? null : (msg.reply_to_message?.from?.id ?? null);
   const _txt = ((msg.text || msg.caption || "") + "").toLowerCase();
   const hasUstoz = _txt.includes("ustoz");
   let mentionsTeacher = false;
