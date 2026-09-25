@@ -66,6 +66,11 @@ declare
 begin
   -- Serialize concurrent invocations (hourly cron vs. a manual re-run) so the check-then-act daily
   -- cap below can't be jointly overshot across distinct ref_keys. Released automatically at commit.
+  -- NOTE for anyone calling this from inside a migration: this is the SAME lock key the live hourly
+  -- cron takes, and an advisory XACT lock is held until the real transaction commits — a savepoint
+  -- rollback does NOT release it. So a migration that calls this function holds the lock for the rest
+  -- of the file, and will itself wait if the cron happens to be mid-run. Harmless here (the call is
+  -- the last statement), but non-obvious.
   perform pg_advisory_xact_lock(hashtext('reconcile_community_xp'));
 
   select coalesce((value->>'help')::int, 3),
@@ -180,16 +185,29 @@ $function$;
 revoke execute on function public.reconcile_community_xp(timestamptz) from public, anon, authenticated;
 
 -- ───────────────────────── Deploy self-test (guarded) ─────────────────────────
--- Smoke-tests the rewritten function end to end — parse, both CTEs, the window, the loop — while being
--- STRUCTURALLY INCAPABLE of awarding anything: `_since = now()` means no group_message_events row can
--- qualify. That matters. An earlier draft replayed 30 days here, which would have written real XP to
--- real students during a deploy and could legitimately award a point the cap had previously skipped,
--- turning a normal outcome into a self-test "failure". A deploy check must observe, not mutate.
--- Recorded, never raised: a failed self-test must not roll back a migration that already applied.
+-- Smoke-tests the rewritten function end to end — parse, both CTEs, the window, the loop — with the
+-- narrowest possible chance of touching real data.
+--
+-- BE PRECISE ABOUT WHY THIS IS SAFE, because an earlier draft of this comment was not. Passing a
+-- "now" timestamp does NOT make an award structurally impossible: `now()` is transaction-start time,
+-- and this database takes live webhook traffic, so a message committed by another transaction while
+-- this migration runs could still satisfy `sent_at >= _since`. `clock_timestamp()` narrows that
+-- window to the instant of the call rather than the start of the file, but does not close it.
+--
+-- THE REAL GUARANTEE is PL/pgSQL's rollback-on-exception: this block's `exception when others`
+-- handler takes an implicit savepoint at BEGIN, so if the raise below fires, every persistent write
+-- made since — including the nested reconcile_community_xp() call's xp_events insert, its user_xp
+-- upsert and its own heartbeat — is rolled back. A raced award cannot survive; it surfaces as a
+-- `community_xp_topic_guard_selftest_failed` row, which is written after the rollback and therefore
+-- persists.
+--
+-- (An earlier draft replayed 30 days here, which would have written real XP to real students during a
+-- deploy and could legitimately award a point the cap had previously skipped — turning a correct
+-- outcome into a self-test "failure". A deploy check should observe, not mutate.)
 do $$
 declare _aw int; _cp int;
 begin
-  select r.awarded, r.capped into _aw, _cp from public.reconcile_community_xp(now()) r;
+  select r.awarded, r.capped into _aw, _cp from public.reconcile_community_xp(clock_timestamp()) r;
 
   if _aw <> 0 or _cp <> 0 then
     raise exception 'community xp self-test was not inert: awarded=% capped=%', _aw, _cp;
