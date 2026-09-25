@@ -79,6 +79,28 @@ genuinely can't be prevented upstream:
 **Graceful is not silent:** every fallback path (an "open in Telegram", a "not available", a "try
 again") MUST also emit a counter/signal, or a broken feature hides behind a friendly HTTP 200.
 
+**A deploy self-test must not be able to mutate what it is checking.** Gate the CALL, not the
+assertion. `run_the_function(); if (flag_is_off and result <> 0) then raise;` only fires on the
+disabled path — if the flag is ON at deploy time the function does its real work and the migration
+commits it as a *passing* test. Write `if flag_is_off then run_and_assert else record_skipped end if`.
+Where a function has no inert mode, run it inside a sub-block that raises a sentinel immediately
+after, so PL/pgSQL's implicit savepoint rolls the writes back on the SUCCESS path too — and check
+first that it takes no advisory lock, because a lock is NOT released by a savepoint rollback.
+Corollaries, each of which has already cost a real bug here: **a "now()" argument does not make a
+function inert** (`now()` is transaction-start time, and live traffic commits inside the window);
+**an argument that gates one code path may not gate another** (`award_teacher_engagement_xp(0)`
+bounds its answered-question section but not its queue-clear section); and **never self-test a
+function whose guard needs a JWT** (`auth.uid()` is NULL in a migration, so an admin-only RPC raises
+every single deploy — a permanent false alarm that trains people to ignore the real ones).
+
+**Verify the comment against the database before writing a guard to match it.** The most expensive
+class of bug in this codebase has not been bad logic, it has been a confident sentence that was
+wrong, with correct-looking code written to satisfy it. `grade-card-reconcile` checked
+`score == null` because its own comment said "a resubmission nulls score"; the graded branch of
+`start_homework_resubmission()` actually KEEPS the score and only flags `score_is_stale`, so the
+guard never fired for the case it existed for and a student was told their replaced grade three
+times. Read the function, the trigger, or the raw payload — then write the guard.
+
 ## Verification bar
 
 - E2E-verify on prod with synthetic users (create via `admin-create-students` with
