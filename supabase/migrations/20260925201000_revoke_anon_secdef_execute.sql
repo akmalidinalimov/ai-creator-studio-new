@@ -56,6 +56,26 @@
 --   as postgres and bypasses grants entirely, and a SECURITY DEFINER function calling another runs as
 --   its owner — so the DB-internal callers (post_group_weekly_boards, the watchdogs) are unaffected.
 --
+-- ═══ THE LIVE DATABASE HAS DRIFTED FROM THE REPO, IN THE PERMISSIVE DIRECTION ═══
+--   Review checked the migration history and reported that ops_net_post, nudge_candidates_inactive,
+--   nudge_candidates_stuck and nudge_cron_status were already revoked from anon at creation, making
+--   those lines here a no-op. The LIVE ACLs say otherwise — each carries an explicit `anon=X/postgres`
+--   grant right now:
+--       ops_net_post               postgres=X | anon=X | authenticated=X | service_role=X
+--       nudge_candidates_inactive  postgres=X | anon=X | authenticated=X | service_role=X
+--       nudge_candidates_stuck     postgres=X | anon=X | authenticated=X | service_role=X
+--       nudge_cron_status          postgres=X | anon=X | authenticated=X | service_role=X
+--   Their migrations DID revoke anon. So something re-granted it outside version control. Combined
+--   with cron_service_key() existing in the live database but in NO tracked migration (it is
+--   referenced by 9 cron-scheduling migrations and defined by none — a database rebuilt from this
+--   repo would not have it, and every one of those cron jobs would fail), the picture is live
+--   SQL-editor changes that were never reconciled back. This repo has precedent for exactly that; see
+--   the header of 20260609100000_internal_fn_secret_vault_hardening.sql.
+--   TWO FOLLOW-UPS FOR THE OWNER, neither done here: reconcile cron_service_key()'s CREATE FUNCTION
+--   into a tracked migration, and work out what else has drifted. The `anon_secdef_remaining` count
+--   this migration writes to admin_actions is the authoritative starting point — a repo grep is not,
+--   because it cannot see objects that only exist live.
+--
 -- Idempotent + replay-safe: REVOKE/GRANT are declarative and converge. Touches no data, no XP, no
 -- table. This is the remaining 64 anon-executable SECURITY DEFINER functions' problem too — they are
 -- NOT addressed here because each needs its own caller audit; see the report for the owner.
@@ -101,10 +121,18 @@ grant  execute on function public.nudge_cron_status() to authenticated, service_
 revoke execute on function public.weekly_digest_status() from public, anon;
 grant  execute on function public.weekly_digest_status() to authenticated, service_role;
 
--- ───────────────────────── 3. Deploy self-test (guarded) ─────────────────────────
--- Read-only assertions. Proves the credential is closed to anon AND that every caller this platform
--- actually has still works: service_role keeps everything, and the three browser RPCs keep
--- authenticated. A revoke that also broke the app would be a worse outcome than the leak.
+-- ───────────────────────── 3. Deploy self-test (FAILS LOUD, on purpose) ─────────────────────────
+-- Read-only assertions, in both directions: the credential is closed to anon, AND every caller this
+-- platform actually has still works — service_role keeps what edge functions need, `authenticated`
+-- keeps the three browser RPCs, and anon keeps the deliberately-public get_public_setting.
+--
+-- THIS ONE IS ALLOWED TO ABORT THE MIGRATION, unlike the house pattern of catching and logging.
+-- That house pattern exists so a broken self-test cannot roll back a migration whose real work
+-- already landed and must not be undone. Here the entire migration is GRANT/REVOKE: declarative,
+-- side-effect-free, and safe to roll back in full. So the trade runs the other way — a revoke that
+-- silently broke the app would be a worse outcome than the leak it fixed, and letting it commit with
+-- only a passive admin_actions row that nobody is watching would be exactly the "graceful is not
+-- silent" failure this project's doctrine warns about. Fail loud; the deploy step will go red.
 do $selftest$
 declare _bad text := '';
 begin
@@ -126,7 +154,7 @@ begin
   if has_function_privilege('anon', 'public.get_setting(text)', 'EXECUTE') then
     _bad := _bad || 'anon STILL has get_setting; ';
   end if;
-  -- the browser must keep working
+  -- The browser must keep working.
   if not has_function_privilege('authenticated', 'public.get_setting(text)', 'EXECUTE') then
     _bad := _bad || 'authenticated LOST get_setting (breaks src/lib/settings.ts); ';
   end if;
@@ -136,27 +164,27 @@ begin
   if not has_function_privilege('authenticated', 'public.weekly_digest_status()', 'EXECUTE') then
     _bad := _bad || 'authenticated LOST weekly_digest_status (breaks WeeklyDigestTile); ';
   end if;
-  -- and the deliberately-public one must stay public
+  -- And the deliberately-public one must stay public.
   if not has_function_privilege('anon', 'public.get_public_setting(text)', 'EXECUTE') then
     _bad := _bad || 'anon LOST get_public_setting (breaks LessonPage for logged-out visitors); ';
   end if;
 
-  if _bad <> '' then raise exception 'secdef revoke self-test failed: %', _bad; end if;
-
-  insert into public.admin_actions (actor_user_id, action, details)
-  values (null, 'anon_secdef_revoke_selftest',
-          jsonb_build_object(
-            'closed_to_anon', 10, 'narrowed_to_authenticated', 3,
-            'anon_secdef_remaining',
-              (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-                where n.nspname = 'public' and p.prosecdef and p.prokind = 'f'
-                  and has_function_privilege('anon', p.oid, 'EXECUTE')),
-            'note', 'cron_service_key was readable by anon; owner should rotate CRON_SERVICE_KEY',
-            'at', now()));
-exception when others then
+  -- Best-effort record BEFORE the raise, so the reason survives the rollback in the logs.
   begin
     insert into public.admin_actions (actor_user_id, action, details)
-    values (null, 'anon_secdef_revoke_selftest_failed',
-            jsonb_build_object('error', sqlerrm, 'at', now()));
+    values (null, case when _bad = '' then 'anon_secdef_revoke_selftest'
+                       else 'anon_secdef_revoke_selftest_failed' end,
+            jsonb_build_object(
+              'failures', nullif(_bad, ''),
+              'anon_secdef_remaining',
+                (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                  where n.nspname = 'public' and p.prosecdef and p.prokind = 'f'
+                    and has_function_privilege('anon', p.oid, 'EXECUTE')),
+              'note', 'cron_service_key was readable by anon; owner should rotate CRON_SERVICE_KEY',
+              'at', now()));
   exception when others then null; end;
+
+  if _bad <> '' then
+    raise exception 'secdef revoke self-test failed, rolling back: %', _bad;
+  end if;
 end $selftest$;
