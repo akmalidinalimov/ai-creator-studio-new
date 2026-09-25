@@ -115,7 +115,7 @@ Deno.serve(async (req) => {
     // --- 2. Load the submission. ---
     const { data: sub, error: subErr } = await admin
       .from("homework_submissions")
-      .select("id, user_id, assignment_id, score, previous_score, score_feedback, score_feedback_voice_path, attempt_number, grade_card_notified_attempt")
+      .select("id, user_id, assignment_id, score, previous_score, score_feedback, score_feedback_voice_path, attempt_number, grade_card_notified_attempt, score_is_stale")
       .eq("id", submissionId)
       .maybeSingle();
     if (subErr) throw subErr;
@@ -168,7 +168,13 @@ Deno.serve(async (req) => {
     const score = (sub as any).score;
     const attempt = ((sub as any).attempt_number as number) ?? 1;
     const notifiedAttempt = (sub as any).grade_card_notified_attempt as number | null;
-    if (typeof score === "number") {
+    // score_is_stale guards the CLASS, not a bug observed here. This function is invoked with a specific
+    // submission id at the moment a teacher grades, so its score is fresh by construction and no stale
+    // send has ever happened through it. But the graded branch of start_homework_resubmission() keeps the
+    // old score and only flags it stale, so ANY caller that reaches this path for a re-opened row would
+    // announce a grade the student is replacing. One line here makes that unrepresentable rather than
+    // dependent on every future caller knowing the rule.
+    if (typeof score === "number" && (sub as any).score_is_stale !== true) {
       // Claim atomically: set the marker only if not already notified for THIS attempt. A returned row =
       // we own the send; null = another invoke/attempt already claimed it → skip (no double DM).
       const { data: claimed } = await admin

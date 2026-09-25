@@ -88,10 +88,18 @@ Deno.serve(async (req) => {
   // can't compare two columns): marker IS NULL (never delivered) OR marker < attempt_number (a resubmission
   // was regraded but its card never landed — the case a NULL-only filter would strand forever). Already
   // delivered rows carry marker == attempt_number and are excluded.
+  //
+  // score_is_stale=false is NOT optional. start_homework_resubmission() has two branches, and the GRADED
+  // one does NOT clear the score: it keeps score + scored_at, bumps attempt_number and sets
+  // score_is_stale=true. That bump re-opens the row as "undelivered" by the marker rule above while the
+  // score no longer applies — so without this filter the reconciler DMs "🎉 Baholandi! 7/10" for a grade
+  // the student is actively trying to replace. It has already done that 3 times to one student.
+  // (NOT NULL DEFAULT false on prod, so .eq is safe and index-free.)
   const { data: rows, error: qErr } = await admin
     .from("homework_submissions")
-    .select("id, user_id, assignment_id, score, previous_score, score_feedback, attempt_number, grade_card_notified_attempt")
+    .select("id, user_id, assignment_id, score, previous_score, score_feedback, attempt_number, grade_card_notified_attempt, score_is_stale")
     .not("score", "is", null)
+    .eq("score_is_stale", false)
     .gte("scored_at", cutoff)
     .lt("scored_at", settle)
     .order("scored_at", { ascending: true })
@@ -102,6 +110,28 @@ Deno.serve(async (req) => {
     // run. Make it visible instead of silently starving (the prior review's starvation concern).
     await logHealth(admin, null, "grade_card_reconcile_fetch_saturated", { fetched: (rows || []).length, lookback_days: LOOKBACK_DAYS }, null);
   }
+  // The stale rows excluded above are students waiting for a regrade they asked for. Silently filtering
+  // them would trade one invisible failure (a wrong card) for another (a student waiting forever with no
+  // signal). "Graceful is not silent": count them, and record the oldest, so a teacher sitting on a
+  // re-opened submission is visible in the health stream instead of only to the student.
+  try {
+    const { data: staleRows } = await admin
+      .from("homework_submissions")
+      .select("id, submitted_at")
+      .eq("score_is_stale", true)
+      .not("score", "is", null)
+      .gte("scored_at", cutoff)
+      .order("submitted_at", { ascending: true })
+      .limit(200);
+    if ((staleRows || []).length > 0) {
+      const oldest = (staleRows as any[])[0];
+      const ageH = Math.round((Date.now() - new Date(oldest.submitted_at as string).getTime()) / 3600000);
+      await logHealth(admin, null, "grade_card_stale_pending",
+        { count: (staleRows as any[]).length, oldest_submission_id: oldest.id, oldest_age_hours: ageH,
+          lookback_days: LOOKBACK_DAYS }, null);
+    }
+  } catch (_e) { /* a missing signal must never cost a delivery */ }
+
   const pending = (rows || []).filter((r: any) => {
     const at = (r.attempt_number as number) ?? 1;
     const n = r.grade_card_notified_attempt as number | null;
@@ -121,15 +151,20 @@ Deno.serve(async (req) => {
       .update({ grade_card_notified_attempt: attempt })
       .eq("id", sub.id)
       .or(`grade_card_notified_attempt.is.null,grade_card_notified_attempt.lt.${attempt}`)
-      .select("user_id, assignment_id, score, previous_score, score_feedback, attempt_number")
+      .select("user_id, assignment_id, score, previous_score, score_feedback, attempt_number, score_is_stale")
       .maybeSingle();
     if (!claimed) { skipped++; continue; }
 
     // Fresh-read guard: the row may have been resubmitted/regraded between the batch SELECT and this claim
-    // (a resubmission nulls score + bumps attempt_number; the claim gates only on the marker). Re-verify
-    // against the freshly-returned row — if the score is gone or the attempt moved, the card we'd send from
-    // the stale snapshot would be wrong: back off (restore prior marker) and let a later run re-read cleanly.
-    if (claimed.score == null || ((claimed.attempt_number as number) ?? 1) !== attempt) {
+    // (the claim gates only on the marker). Re-verify against the freshly-returned row — if the score is
+    // gone, STALE, or the attempt moved, the card we'd send from the snapshot would be wrong: back off
+    // (restore prior marker) and let a later run re-read cleanly.
+    //
+    // The score_is_stale check is the one that matters in practice. This guard previously tested only
+    // `score == null`, on the stated assumption that "a resubmission nulls score" — which is FALSE for the
+    // graded branch of start_homework_resubmission() (it keeps the score and flags it stale). So the guard
+    // caught only the narrow race and never the ordinary case it was written for.
+    if (claimed.score == null || claimed.score_is_stale === true || ((claimed.attempt_number as number) ?? 1) !== attempt) {
       await admin.from("homework_submissions").update({ grade_card_notified_attempt: prior }).eq("id", sub.id).eq("grade_card_notified_attempt", attempt);
       skipped++;
       continue;
