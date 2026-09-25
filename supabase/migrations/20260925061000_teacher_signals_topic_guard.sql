@@ -1,6 +1,6 @@
 -- Teacher signals: an ordinary post in a forum topic is not a question directed at the teacher.
 --
--- THE SAME BUG AS 20260925052000, IN FIVE MORE PLACES. Telegram marks every message posted in a forum
+-- THE SAME BUG AS THE COMMUNITY-XP TOPIC GUARD, IN FIVE MORE PLACES. Telegram marks every message posted in a forum
 -- topic as a reply to that topic's creation service message, so `group_message_events.reply_to_user_id`
 -- named a person who was never replied to: the topic's creator. The community XP engine was fixed for
 -- that; these five read the identical signal with the identical assumption and were not.
@@ -24,12 +24,15 @@
 -- replies. The 1,110 existing teacher_answer events (8,880 XP) therefore contain none of this, and
 -- there is nothing to heal.
 --
--- WHY FIX IT ANYWAY, AND WHY IN ITS OWN PR. The bot-side capture fix already stops new rows carrying
--- the bad shape, and award_teacher_engagement_xp only looks back 26 hours, so that path self-cleans
--- within a day of that deploy. This is the belt-and-braces half: it covers the 61,911 rows already
--- stored, and it removes the dependence on a fact about human behaviour ("nobody but the admin taps
--- Create Topic") that no code enforces. It is split out from the capture fix deliberately -- five live
--- functions, one of which pays XP, is too much blast radius to bolt onto that change.
+-- WHY FIX IT ANYWAY, AND WHY IN ITS OWN PR. A companion PR fixes the CAPTURE side, so the bot stops
+-- writing the bad shape at all; combined with award_teacher_engagement_xp's 26-hour lookback, that
+-- path self-cleans within a day of THAT deploy. NOTE THE ORDERING: this migration does not depend on
+-- it and must not be read as assuming it has landed -- the guard here is applied at READ time, so it
+-- neutralises the false positive for old and new rows alike whether or not the capture fix is live
+-- yet. That is also why this is worth doing regardless: it covers the 61,911 rows already stored, and
+-- removes the dependence on a fact about human behaviour ("nobody but the admin taps Create Topic")
+-- that no code enforces. Split from the capture fix deliberately -- five live functions, one of which
+-- pays XP, is too much blast radius to bolt onto that change.
 --
 -- HOW THIS FILE WAS BUILT: each function body was EXTRACTED verbatim from the migration that last
 -- defined it and patched by script with a single asserted string replacement (exactly one match per
@@ -37,7 +40,8 @@
 -- Grants are deliberately NOT restated: CREATE OR REPLACE FUNCTION preserves existing privileges, and
 -- restating them is how a previous migration nearly dropped a service_role grant.
 --
--- Idempotent + replay-safe: create-or-replace only. Awards nothing on its own.
+-- Idempotent + replay-safe: create-or-replace only. The DDL awards nothing; the self-test below
+-- exercises the minting function inside a forced rollback, so a replay cannot mint either.
 
 -- ───── award_teacher_engagement_xp ─────
 -- pays +8 teacher_answer XP, UNCAPPED. The only one of the five that mints.
@@ -612,15 +616,34 @@ $$;
 
 -- ───────────────────────── Deploy self-test (guarded) ─────────────────────────
 -- Exercises all five rewritten functions against real data so a bad predicate surfaces here rather
--- than at the next cron tick. Four are STABLE reporting functions and write nothing. The fifth mints,
--- so it is called with p_lookback_hours => 0, which sets its window start to now() and leaves no row
--- to award -- and, as in 20260925052000, the real backstop is that a raise inside this block rolls
--- back every write made since its implicit savepoint. Recorded, never raised.
+-- than at the next cron tick.
+--
+-- THE MINTER IS RUN AS AN EXPLICIT DRY RUN, and this is the important part. An earlier draft called
+-- `award_teacher_engagement_xp(0)` and claimed that left "no row to award". That was WRONG about half
+-- the function: `p_lookback_hours` feeds `_from`, which gates section (A) (teacher_answer) only.
+-- Section (B) (teacher_queue_clear, +20/day) is not gated by it at all -- it awards to any teacher who
+-- graded today and currently has zero backlog, evaluated against live present-moment data whatever the
+-- argument is. So that call would have minted real XP during a migration, at deploy timing, from a
+-- block described as read-only. Ref-key dedup would have stopped a double-pay, but not the surprise.
+--
+-- It now runs inside a sub-block that raises a sentinel immediately afterwards. PL/pgSQL takes an
+-- implicit savepoint at a block's BEGIN and rolls back to it when the block catches, so every write
+-- the call made -- xp_events and the user_xp rebuild inside award_xp -- is unconditionally reverted on
+-- the SUCCESS path, not only on failure. The function still gets fully exercised. (Safe here because
+-- award_teacher_engagement_xp takes no advisory lock; an advisory lock would NOT be released by a
+-- savepoint rollback.)
+--
+-- The other four are STABLE and write nothing.
 do $selftest$
-declare _n int; _report jsonb := '{}'::jsonb;
+declare _n int; _t uuid; _report jsonb := '{}'::jsonb;
 begin
-  perform public.award_teacher_engagement_xp(0);
-  _report := _report || jsonb_build_object('award_fn', 'ok');
+  -- (1) The minter: exercise, then force a rollback so nothing it wrote can survive.
+  begin
+    perform public.award_teacher_engagement_xp(0);
+    raise exception using errcode = 'XXTST', message = 'dry_run_rollback';
+  exception when sqlstate 'XXTST' then
+    _report := _report || jsonb_build_object('award_fn', 'exercised_rolled_back');
+  end;
 
   select count(*) into _n from public.teacher_daily_report();
   _report := _report || jsonb_build_object('daily_report_rows', _n);
@@ -630,6 +653,20 @@ begin
 
   select count(*) into _n from public.admin_teacher_weekly(7, null);
   _report := _report || jsonb_build_object('admin_weekly_rows', _n);
+
+  -- (2) teacher_weekly_self needs a real teacher id, so it was previously skipped entirely -- meaning
+  -- a typo in ITS predicate would have surfaced only when a teacher opened the Mini App. Exercised
+  -- here against a real teacher, tolerantly: it is an auth-aware RPC, so a refusal is recorded rather
+  -- than failing the whole self-test.
+  select g.teacher_id into _t from groups g where g.teacher_id is not null limit 1;
+  if _t is not null then
+    begin
+      select count(*) into _n from public.teacher_weekly_self(_t, 7);
+      _report := _report || jsonb_build_object('weekly_self_rows', _n);
+    exception when others then
+      _report := _report || jsonb_build_object('weekly_self_note', sqlerrm);
+    end;
+  end if;
 
   insert into public.admin_actions (actor_user_id, action, details)
   values (null, 'teacher_signals_topic_guard_selftest', _report || jsonb_build_object('at', now()));
