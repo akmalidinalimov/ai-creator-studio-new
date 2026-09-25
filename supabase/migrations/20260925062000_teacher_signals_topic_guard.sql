@@ -1,9 +1,11 @@
 -- Teacher signals: an ordinary post in a forum topic is not a question directed at the teacher.
 --
--- THE SAME BUG AS THE COMMUNITY-XP TOPIC GUARD, IN FIVE MORE PLACES. Telegram marks every message posted in a forum
--- topic as a reply to that topic's creation service message, so `group_message_events.reply_to_user_id`
--- named a person who was never replied to: the topic's creator. The community XP engine was fixed for
--- that; these five read the identical signal with the identical assumption and were not.
+-- THE SAME BUG AS THE COMMUNITY-XP TOPIC GUARD, IN FIVE MORE PLACES. Telegram marks every message
+-- posted in a forum topic as a reply to that topic's creation service message, so
+-- `group_message_events.reply_to_user_id` names a person who was never replied to: the topic's
+-- creator. 20260920103000 flagged this as a known open vector in reconcile_community_xp and left it
+-- for its own review; a companion PR does that. These five read the identical signal with the
+-- identical assumption. NOTHING HERE ASSUMES THAT COMPANION HAS LANDED -- see the ordering note below.
 --
 --   award_teacher_engagement_xp  pays +8 teacher_answer XP, UNCAPPED. The only one that mints.
 --   teacher_daily_report         the 21:00 teacher/admin digest.
@@ -633,7 +635,18 @@ $$;
 -- award_teacher_engagement_xp takes no advisory lock; an advisory lock would NOT be released by a
 -- savepoint rollback.)
 --
--- The other four are STABLE and write nothing.
+-- NOT CALLED: admin_teacher_weekly. Its guard is `if not has_role(auth.uid(),'admin') then raise`,
+-- with NO null/service-role bypass (unlike teacher_daily_report, which explicitly allows
+-- `auth.uid() is null`). A migration has no JWT context, so auth.uid() is NULL, has_role(NULL,...) is
+-- false, and the call would raise 'admin only' EVERY time -- writing a deterministic false
+-- `..._selftest_failed` row on every deploy while never actually exercising the function. An earlier
+-- draft did exactly that. Its predicate is covered instead by two stronger checks: CREATE OR REPLACE
+-- validates the body against the catalog at apply time (check_function_bodies is on, so a bad column
+-- reference fails the migration outright), and the pre-merge regression replayed the shared predicate
+-- across all history. teacher_weekly_self is exercised below because it takes an explicit uid and its
+-- guard accepts one.
+--
+-- The reporting functions called here are STABLE and write nothing.
 do $selftest$
 declare _n int; _t uuid; _report jsonb := '{}'::jsonb;
 begin
@@ -650,9 +663,6 @@ begin
 
   select count(*) into _n from public.teacher_nudge_signals(24, 7);
   _report := _report || jsonb_build_object('nudge_rows', _n);
-
-  select count(*) into _n from public.admin_teacher_weekly(7, null);
-  _report := _report || jsonb_build_object('admin_weekly_rows', _n);
 
   -- (2) teacher_weekly_self needs a real teacher id, so it was previously skipped entirely -- meaning
   -- a typo in ITS predicate would have surfaced only when a teacher opened the Mini App. Exercised
