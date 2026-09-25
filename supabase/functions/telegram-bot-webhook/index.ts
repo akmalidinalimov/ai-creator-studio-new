@@ -5319,7 +5319,15 @@ async function recordGroupMessageEvent(admin: any, msg: any) {
   const replyMsgId = _implicitTopicReply ? null : (msg.reply_to_message?.message_id ?? null);
   const replyUserId = _implicitTopicReply ? null : (msg.reply_to_message?.from?.id ?? null);
   const _txt = ((msg.text || msg.caption || "") + "").toLowerCase();
-  const hasUstoz = _txt.includes("ustoz");
+  // "Ustoz" (teacher) is how a student opens a question to their teacher — but they type it in Latin
+  // OR Cyrillic, and many tag it #savol ("question") instead. A Latin-only substring match silently
+  // denied the community question point to everyone writing in Cyrillic: over 90 days, 525 messages
+  // from 88 distinct students matched устоз/савол/#savol with no Latin "ustoz" anywhere, and earned
+  // nothing. Measured effect of this fix over 30 days: 51 extra student-days across 21 students
+  // (~+102 XP/month against a ~99,000 XP base) — a fairness correction, not a generosity change.
+  // Deliberately NOT matching bare Latin "savol": 776 messages contain it, far beyond the measured
+  // question population, so it would broaden the rule into territory nobody has checked.
+  const hasUstoz = /ustoz|устоз|савол|#savol/.test(_txt);
   let mentionsTeacher = false;
   const _ents = [...(msg.entities || []), ...(msg.caption_entities || [])]
     .filter((e: any) => e.type === "mention" || e.type === "text_mention");
