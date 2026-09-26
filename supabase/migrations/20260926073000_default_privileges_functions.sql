@@ -28,8 +28,9 @@
 -- ═══ SCOPE: FUNCTIONS ONLY, DELIBERATELY ═══
 -- TABLES and SEQUENCES are left alone tonight even though their defaults are worse on paper
 -- (anon=arwdDxtm is full insert/update/delete on any new table). Two reasons:
---   1. They are currently mitigated: verified that ZERO public tables have an anon DML grant while
---      relrowsecurity is false — RLS is carrying it, and RLS is applied consistently here.
+--   1. They are currently mitigated, and the check is stronger than 'mostly': ALL 81 public tables
+--      have relrowsecurity ON. Zero tables without RLS, therefore zero anon-reachable unprotected
+--      tables. RLS is genuinely carrying this today.
 --   2. Revoking the TABLE default changes how every future table must be set up, and a table with no
 --      grant is invisible regardless of its RLS policies. That is a bigger behavioural change than
 --      belongs in an unattended migration.
@@ -78,41 +79,58 @@ exception when others then
 end $$;
 
 -- ───────────────────────── Deploy self-test (fails loud) ─────────────────────────
--- Asserts BOTH directions: the default no longer grants anon, and no existing function lost anything.
--- Allowed to abort — this migration has no irreversible effect, and a silent half-application would
--- leave the class half-open while looking fixed.
+-- TESTS THE OUTCOME, NOT A PROXY. An earlier draft only inspected the pg_default_acl catalog row for
+-- an 'anon=X' substring. That is a proxy with a real blind spot: Postgres DELETES the row entirely
+-- when a customised ACL converges back to the built-in default ({owner=X, PUBLIC=X}), so a future
+-- change could leave PUBLIC holding EXECUTE again while a `row is not null and row like '%anon=X%'`
+-- check reported success. (This migration is not exposed to that — revoking PUBLIC and granting
+-- service_role both differ from the built-in default, so the row must persist — but a test that only
+-- works because of a property of today's statements is a test waiting to go wrong.)
+--
+-- So: actually create a throwaway function and ask the question directly. If a brand-new function is
+-- still anon-executable, the whole point of this migration has failed, whatever the catalog says.
+-- The scratch function is dropped immediately, and would vanish with the rollback regardless.
 do $selftest$
-declare _bad text := ''; _acl text; _anon_secdef int; _has_role_ok boolean;
+declare _bad text := ''; _acl text; _anon_secdef int;
 begin
+  -- 1. THE REAL TEST: what does a function created right now actually inherit?
+  execute 'create or replace function public._dp_scratch_probe() returns int language sql as $q$ select 1 $q$';
+
+  if has_function_privilege('anon', 'public._dp_scratch_probe()', 'EXECUTE') then
+    _bad := _bad || 'a NEWLY CREATED function is still anon-executable; ';
+  end if;
+  if has_function_privilege('authenticated', 'public._dp_scratch_probe()', 'EXECUTE') then
+    _bad := _bad || 'a NEWLY CREATED function is still authenticated-executable; ';
+  end if;
+  if not has_function_privilege('service_role', 'public._dp_scratch_probe()', 'EXECUTE') then
+    _bad := _bad || 'a NEWLY CREATED function is NOT service_role-executable (breaks edge functions); ';
+  end if;
+
+  execute 'drop function if exists public._dp_scratch_probe()';
+
+  -- 2. Existing functions must be untouched. has_role() is the canary: 91 of 113 RLS policies across
+  -- 63 tables reference it (verified live) and anon MUST keep EXECUTE or every logged-out page breaks
+  -- (precedent: 20260705110000_grant_has_role_to_anon.sql).
+  if not has_function_privilege('anon', 'public.has_role(uuid, public.app_role)', 'EXECUTE') then
+    _bad := _bad || 'anon LOST has_role -- this breaks every anonymous RLS read; ';
+  end if;
+  if not has_function_privilege('anon', 'public.get_public_setting(text)', 'EXECUTE') then
+    _bad := _bad || 'anon LOST get_public_setting (breaks LessonPage for logged-out visitors); ';
+  end if;
+
   select array_to_string(d.defaclacl, ' | ') into _acl
   from pg_default_acl d join pg_namespace n on n.oid = d.defaclnamespace
   where n.nspname = 'public' and d.defaclobjtype = 'f'
     and pg_get_userbyid(d.defaclrole) = 'postgres';
-
-  if _acl is not null and _acl like '%anon=X%' then
-    _bad := _bad || 'postgres FUNCTION default still grants anon (' || _acl || '); ';
-  end if;
-  if _acl is not null and _acl like '%authenticated=X%' then
-    _bad := _bad || 'postgres FUNCTION default still grants authenticated; ';
-  end if;
-
-  -- Existing functions must be untouched. has_role() is the canary: 91 of 113 RLS policies reference
-  -- it and anon MUST keep EXECUTE or every logged-out page breaks (precedent:
-  -- 20260705110000_grant_has_role_to_anon.sql).
-  select has_function_privilege('anon', 'public.has_role(uuid, app_role)', 'EXECUTE') into _has_role_ok;
-  if not _has_role_ok then
-    _bad := _bad || 'anon LOST has_role -- this breaks every anonymous RLS read; ';
-  end if;
-
-  if not has_function_privilege('anon', 'public.get_public_setting(text)', 'EXECUTE') then
-    _bad := _bad || 'anon LOST get_public_setting (breaks LessonPage for logged-out visitors); ';
-  end if;
 
   select count(*) into _anon_secdef
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public' and p.prosecdef and p.prokind = 'f'
     and has_function_privilege('anon', p.oid, 'EXECUTE');
 
+  -- NOTE: on failure this row is rolled back with everything else -- the raise below aborts the same
+  -- transaction it was written in. The durable failure signal is the pipeline's: the migration is not
+  -- ledgered and the deploy step goes red. Recorded here only for the success path.
   begin
     insert into public.admin_actions (actor_user_id, action, details)
     values (null, case when _bad = '' then 'default_privileges_hardened'
@@ -120,7 +138,7 @@ begin
             jsonb_build_object('failures', nullif(_bad, ''),
                                'postgres_function_default_acl', _acl,
                                'anon_secdef_still_open', _anon_secdef,
-                               'note', 'existing functions unchanged by design; TABLE/SEQUENCE defaults left for the owner',
+                               'note', 'existing functions unchanged by design; TABLE/SEQUENCE defaults left for the owner (all 81 public tables have RLS on)',
                                'at', now()));
   exception when others then null; end;
 
