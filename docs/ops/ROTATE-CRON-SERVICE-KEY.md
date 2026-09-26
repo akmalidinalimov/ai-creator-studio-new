@@ -12,7 +12,7 @@ roughly **83 days** anyone at all could fetch that secret with one HTTP request.
 
 The vault's own description for it reads **"service_role key for pg_cron edge-function calls"**, and
 `20260705200000_canary_cron.sql:25-26` uses it as both the `apikey` and the `Authorization: Bearer`
-header. So the exposed value is a **service_role credential: it bypasses every RLS policy and has
+header, and **18 active cron jobs depend on it** (see step 1). So the exposed value is a **service_role credential: it bypasses every RLS policy and has
 full read/write on the whole database.**
 
 Closed by PR #175 (migration `20260925201000`). Reconciled into version control by PR #176
@@ -63,9 +63,25 @@ where command like '%cron_service_key%'
 order by jobname;
 ```
 
-Expect 9 jobs (canary, inactive30/teacher digest, reputation/traffic watchdog, admin broadcast,
-internal-notify attribution, teacher daily digest, teacher engagement nudge, grade-card backfill,
-bitrix lead sync).
+**Expect 18 active jobs** (measured 2026-09-26). An earlier draft of this runbook said 9 — that was
+the number of migration FILES that reference the function, not the number of jobs they schedule.
+The real list, and why step 3 is the dangerous one to skip:
+
+| every minute | every 15-30 min | daily / weekly |
+|---|---|---|
+| broadcast-drainer-every-minute | canary-15min | teacher-daily-digest (16:00) |
+| notify-badge-award-every-minute | bitrix-lead-sync | student-of-week (Mon) |
+| notify-homework-submission-every-minute | grade-card-reconcile | teacher-weekly-digest (Mon) |
+| | cron-admin-digest-30min | weekly_digest (Sun) |
+| | cron-engagement-every-30-min | weekly-admin-topic-check (Sun) |
+| | import-digest-30min | reputation-check-12h |
+| | detect_and_nudge (hourly) | |
+| | teacher-engagement-nudge-hourly | |
+| | ungraded-homework-reminder-hourly | |
+
+**Three of these run every minute.** If you rotate the dashboard key and forget the Vault copy, those
+three start failing within 60 seconds and the other fifteen follow. That is loud rather than silent —
+`ops_http_failure_watchdog` will DM you — but it is avoidable by doing step 3 in the same sitting.
 
 To see the key's *shape* without printing it (tells you legacy JWT vs modern `sb_secret_`):
 
