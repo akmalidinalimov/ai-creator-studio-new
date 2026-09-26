@@ -19,21 +19,34 @@
 --      baseline. Baselining 55 would enshrine rows we intend to remove and make every later closure
 --      look like drift. Clean first, baseline the stable 27 after.
 --
--- WHY THIS IS SAFE, PROVEN EMPIRICALLY IN THIS DATABASE RATHER THAN ASSERTED FROM MEMORY. The claim
--- it rests on is that EXECUTE on a trigger function is checked at CREATE TRIGGER time, not when the
--- trigger fires. That is a high-consequence assumption — this list includes
--- `homework_submissions_guard`, `lesson_progress_guard` and `validate_hw_submission`, so being wrong
--- would break every student submission and lesson completion. The proof is that the shape already
--- exists here and works: **12 triggers are already attached to functions that `authenticated` and
--- `anon` CANNOT execute**, on the hottest tables in the product —
---   homework_submissions : trg_xp_homework (xp_on_homework), trg_xp_teacher_grade, trg_award_perfect_score
---   lesson_progress      : trg_xp_lesson_complete (xp_on_lesson_complete), trg_lesson_progress_streak
---   profiles, streaks, user_xp, enrollments, daily_watch_summary : 7 more
--- and they are demonstrably firing: 26 `lesson:` xp_events in the 48h before this migration was
--- written, the most recent minutes earlier, every one produced by `xp_on_lesson_complete()` off an
--- INSERT made by an `authenticated` student. Privileges are not consulted at fire time. Their ACLs
--- are exactly `postgres=X/postgres | service_role=X/postgres`, which is the shape this migration
--- applies, so the 17 end up matching the 12 that already work.
+-- WHY THIS IS SAFE — PROVEN FROM THIS DATABASE, NOT ASSERTED FROM MEMORY. The claim it rests on is
+-- that EXECUTE on a trigger function is checked at CREATE TRIGGER time, not when the trigger fires.
+-- That is a high-consequence assumption: this list includes `homework_submissions_guard`,
+-- `lesson_progress_guard` and `validate_hw_submission`, so being wrong breaks every student homework
+-- submission and lesson completion for ~694 students. Two live precedents, both with the EXACT ACL
+-- shape this migration applies (`postgres=X/postgres | service_role=X/postgres`):
+--
+--   * BEFORE-timing, guard-shaped, the closest possible analogue:
+--     `trg_enrollments_tier_from_group` → `enforce_enrollment_tier_from_group()` on `enrollments` is a
+--     **BEFORE INSERT OR UPDATE guard that RAISEs to block bad writes** — structurally identical to the
+--     three guards above. `authenticated` and `anon` have been unable to execute it since 2026-07-05
+--     (20260705170000_tier_invariant_guarantee.sql), the trigger is enabled, and `enrollments` holds
+--     668 rows with the most recent 3 days before this migration. Every student signup routes through
+--     it via handle_new_user.
+--   * Five months of continuous traffic on the hottest table:
+--     `trg_lesson_progress_streak` → `update_streak_for_user()` on `lesson_progress` has had public,
+--     anon and authenticated revoked since **2026-04-28** (20260428162429_105e6ed5…sql), whose own
+--     comment already said "Trigger functions don't need any EXECUTE grants". `lesson_progress` took
+--     39 updates in the 24h before this migration, the most recent minutes earlier.
+--
+-- Why the inference holds rather than merely fitting: the ACL check happens once, in CreateTrigger(),
+-- against the role that ran CREATE TRIGGER; the firing path invokes the function by OID through fmgr
+-- and never performs pg_proc_aclcheck. That is independent of BEFORE vs AFTER, ROW vs STATEMENT, and
+-- whether the trigger is currently enabled — none of which affect WHEN the check happens. The BEFORE
+-- precedent above is cited specifically because an earlier draft of this header cited only AFTER
+-- triggers (the xp_on_* family), which left exactly that gap open while three of the 17 are BEFORE
+-- guards. There are also no CONSTRAINT TRIGGERs anywhere in this codebase, so that variant cannot be
+-- lurking.
 --
 -- ── PART B: the 11 callable RPCs with zero callers. ──
 --
@@ -57,13 +70,29 @@
 --     same prefix, real callers. Another reason not to sweep by prefix.
 --   * `can_see_group(uuid, uuid)` — the guard helper itself. Its only callers are the SECURITY
 --     DEFINER staff_group_* functions, which run it AS OWNER, so they are unaffected. Leaving it
---     anon-callable let anyone probe "is user X a teacher of group Y" directly.
+--     anon-callable let anyone probe "is user X a teacher of group Y" directly. (The two hits for it
+--     in src/pages/teacher/ are CODE COMMENTS explaining that staff_group_members is gated by it, not
+--     calls — the distinction that matters, since a name in a comment is not a caller.)
 --   * `verify_rls_hws()` / `verify_stats_parity(integer)` — internal verification helpers.
 --     verify_stats_parity is the notable one: it returns per-student score/rank rows AND calls
 --     `recalc_leaderboard_v2()` as owner, so it is the bypass route around the revoke that
 --     20260926101000 just applied. Its `IF NOT has_role(auth.uid(),'admin') THEN RAISE` does hold —
 --     `has_role` is `SELECT EXISTS(...)` and EXISTS never returns NULL, so a NULL caller gets false,
 --     not NULL, and the RAISE fires — but a guard is a worse boundary than an absent grant.
+--
+-- ── Why this self-test does NOT write an admin_actions row before raising ──
+--
+-- Review suggested copying tranche 1's pattern (20260925201000:172-186), which inserts a
+-- `..._selftest_failed` row inside a swallowed-exception block before the raise, under the comment
+-- "so the reason survives the rollback in the logs". **That comment is wrong, and the pattern is a
+-- no-op.** The insert and the raise are in the SAME transaction — the pipeline POSTs each migration
+-- file as one query string — so an uncaught raise aborts the transaction and takes the audit row with
+-- it. Nothing survives. This is the identical mistake that made 20260926073000 uninformative and is
+-- already written into CLAUDE.md: "a raise rolls the diagnostics back with everything else". Copying
+-- it here would add code that cannot work. Deliberately NOT adopted; the failure signal is the red
+-- deploy plus the un-ledgered migration, which is loud and correct. Recorded so the next reader does
+-- not "fix" this file to match tranche 1, and so tranche 1's misleading comment is on the record —
+-- migrations are append-only, so it cannot be corrected in place.
 --
 -- ── What is deliberately NOT here ──
 --
@@ -85,10 +114,10 @@
 -- deliberate anon functions still work, and that the 5 same-prefix siblings WITH real callers kept
 -- their grants — the specific way a prefix sweep would have gone wrong.
 --
--- Idempotent + replay-safe: GRANT/REVOKE are declarative. The audit INSERT has no dedupe key, so a
--- pipeline retry appends a second identical row — harmless log noise.
+-- Idempotent + replay-safe: GRANT/REVOKE are declarative. The audit INSERT on the SUCCESS path has no
+-- dedupe key, so a pipeline retry appends a second identical row — harmless log noise.
 
--- ── PART A: 17 trigger functions (never invocable directly; match the 12 that already work) ──
+-- ── PART A: 17 trigger functions (never invocable directly; match the precedents cited above) ──
 revoke execute on function public.app_settings_audit()                 from public, anon, authenticated;
 grant  execute on function public.app_settings_audit()                 to service_role;
 revoke execute on function public.award_first_homework()               from public, anon, authenticated;
@@ -168,6 +197,7 @@ declare
     'public.staff_top_students(integer)','public.verify_rls_hws()',
     'public.verify_stats_parity(integer)'];
   -- Same-prefix siblings that HAVE real callers. A prefix sweep would have taken these too.
+  -- All five verified to hold `authenticated` BEFORE this migration, so this cannot self-abort.
   _must_keep_authed text[] := array[
     'public.admin_teacher_weekly(integer, uuid)',
     'public.staff_group_members(uuid)',
@@ -192,7 +222,7 @@ begin
     raise exception 'ABORT: owner postgres lost EXECUTE on %.', _bad;
   end if;
 
-  -- 3. service_role must keep all 28 (matches the 12 working precedent triggers).
+  -- 3. service_role must keep all 28 (matches the two working precedents cited in the header).
   select string_agg(f, ', ' order by f) into _bad
   from unnest(_closed) f where not has_function_privilege('service_role', f, 'EXECUTE');
   if _bad is not null then
