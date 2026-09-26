@@ -34,6 +34,16 @@
 // before CUTOFF are scanned and counted so the debt stays visible, but never fail the build.
 // Migrations are append-only and timestamp-named here, so this needs no upkeep.
 //
+// A SECOND CLASS LIVES HERE TOO: HARDCODED FOREIGN INFRASTRUCTURE (E6, E7). On 2026-07-05 production
+// was built by replaying the original project's migrations, and the replay carried forward a
+// track_video_progress() that POSTed to https://wpdztrijasgmxgliwddr.supabase.co — the OLD project —
+// with the old project's anon JWT inlined. For twelve weeks every lesson completion sent production's
+// internal_fn_secret() to infrastructure this project does not control, and not one completion
+// message reached a student (fixed by 20260926160000). Nothing flagged it, because the URL looked
+// exactly like every other correct URL. So a migration now fails if it contains a Supabase project
+// URL for any ref other than production's, or an inline JWT. Both are checked on code and string
+// literals but NOT on comments, so a header may still explain what it removed.
+//
 // CI usage:  node scripts/check-migration-grants.mjs            (fails on errors)
 //            node scripts/check-migration-grants.mjs --strict   (fails on warnings too)
 // It is chained onto `npm run lint:footguns`, which CI already runs as a blocking step — deliberately,
@@ -132,6 +142,56 @@ function blankNonCode(sql) {
 
 const lineOf = (sql, index) => sql.slice(0, index).split("\n").length;
 
+// Blanks COMMENTS ONLY — keeps string literals and dollar-quoted bodies, because a URL or a JWT always
+// lives inside a string literal, which blankNonCode() erases. Comments inside dollar-quoted function
+// bodies are real SQL comments too, so `--` and `/* */` are treated as comments everywhere except
+// inside a single-quoted literal. This lets a migration header explain what it removed (naming the
+// old ref) without tripping E6/E7, while any executable or literal occurrence is still caught.
+function blankCommentsOnly(sql) {
+  const out = sql.split("");
+  const n = sql.length;
+  const blank = (from, to) => {
+    for (let k = from; k < to && k < n; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  let i = 0;
+  while (i < n) {
+    if (sql[i] === "'") {
+      let j = i + 1;
+      while (j < n) {
+        if (sql[j] === "'" && sql[j + 1] === "'") { j += 2; continue; }
+        if (sql[j] === "'") { j++; break; }
+        j++;
+      }
+      i = j;
+      continue;
+    }
+    if (sql[i] === "-" && sql[i + 1] === "-") {
+      let j = i;
+      while (j < n && sql[j] !== "\n") j++;
+      blank(i, j);
+      i = j;
+      continue;
+    }
+    if (sql[i] === "/" && sql[i + 1] === "*") {
+      let depth = 1;
+      let j = i + 2;
+      while (j < n && depth > 0) {
+        if (sql[j] === "/" && sql[j + 1] === "*") { depth++; j += 2; continue; }
+        if (sql[j] === "*" && sql[j + 1] === "/") { depth--; j += 2; continue; }
+        j++;
+      }
+      blank(i, j);
+      i = j;
+      continue;
+    }
+    i++;
+  }
+  return out.join("");
+}
+
+// Production's Supabase project ref. Any OTHER ref in a migration is foreign infrastructure.
+const PRODUCTION_REF = "cdyidatkegxwhtuoqxly";
+
 // ─────────────────────────── rules ───────────────────────────
 const errors = [];
 const warnings = [];
@@ -145,6 +205,28 @@ function checkFile(file, raw) {
     if (!enforced) debt.push(entry);
     else bucket.push(entry);
   };
+
+  // E6 (ERROR): a Supabase project URL for any ref other than production's. This is the exact shape
+  // the 2026-07-05 replay carried into track_video_progress(). Scanned on code AND string literals
+  // (where URLs live) but not on comments, so a header may name the old ref when explaining a fix.
+  const noComments = blankCommentsOnly(raw);
+  for (const m of noComments.matchAll(/https?:\/\/([a-z0-9]{20})\.supabase\.co/gi)) {
+    if (m[1].toLowerCase() === PRODUCTION_REF) continue;
+    push(errors, lineOf(noComments, m.index),
+      `hardcodes the Supabase project "${m[1]}", which is not production (${PRODUCTION_REF}). ` +
+      `Calls to it leave this project entirely — on 2026-07-05 exactly this sent internal_fn_secret() ` +
+      `to the old project on every lesson completion for twelve weeks. Use the production ref.`);
+  }
+
+  // E7 (ERROR): an inline JWT. Whichever project it belongs to, a key does not belong in a migration:
+  // an anon key goes stale when the project moves (the one removed by 20260926160000 was the OLD
+  // project's), and a service_role key there would be a full-database credential in git history.
+  for (const m of noComments.matchAll(/eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g)) {
+    push(errors, lineOf(noComments, m.index),
+      // Never echo any part of the token: CI logs are not a place for credentials, even fragments.
+      `contains an inline JWT. Read credentials at runtime — ` +
+      `public.cron_service_key() / public.internal_fn_secret() from Vault — never embed them.`);
+  }
 
   // E1 (ERROR, always): a blanket grant over every function in the schema. There is no legitimate
   // use of this here, and it silently re-opens everything previous migrations closed.
