@@ -2,7 +2,14 @@
 // button — runs INSIDE Telegram with no Supabase session. It reads Telegram's signed initData and
 // sends it to the tg-group-board edge function, which validates it and checks admin/teacher role.
 // Built to be screenshotted and dropped into the group chat: big medals, clean cards, branded header.
+//
+// i18n: every visible string comes from `miniapp.groupBoard.*` (uz/ru/en) and follows the app's normal
+// language resolution (the `lng` localStorage choice, else the device language — this page has no
+// session, so no profile.preferred_language). The Uzbek strings are byte-identical to the original
+// hard-coded ones (src/test/TgGroupBoard.test.tsx pins them); "XP" and the brand line are not
+// translated on purpose.
 import { useEffect, useRef, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { Loader2, Trophy, Flame, Users as UsersIcon, Camera } from "lucide-react";
 
@@ -34,12 +41,15 @@ interface LoadResult {
 
 const medal = (r: number) => (r === 1 ? "🥇" : r === 2 ? "🥈" : r === 3 ? "🥉" : `${r}`);
 const fullName = (r: BoardRow) => `${r.first_name}${r.last_initial ? " " + r.last_initial + "." : ""}`;
-const todayTashkent = () =>
-  new Date().toLocaleDateString("uz-UZ", { timeZone: "Asia/Tashkent", day: "numeric", month: "long", year: "numeric" });
+// Date in the UI language; Uzbek keeps the exact "uz-UZ" formatting the board always used.
+const DATE_LOCALE: Record<string, string> = { uz: "uz-UZ", ru: "ru-RU", en: "en-US" };
+const todayTashkent = (lng: string) =>
+  new Date().toLocaleDateString(DATE_LOCALE[lng] ?? "uz-UZ", { timeZone: "Asia/Tashkent", day: "numeric", month: "long", year: "numeric" });
 
 function BoardCard({ title, icon, accent, rows, unit }: {
   title: string; icon: React.ReactNode; accent: string; rows: BoardRow[]; unit: string;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="rounded-2xl border border-border bg-card shadow-soft overflow-hidden">
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border" style={{ background: accent }}>
@@ -47,7 +57,7 @@ function BoardCard({ title, icon, accent, rows, unit }: {
         <h3 className="text-sm font-bold text-white tracking-wide">{title}</h3>
       </div>
       {rows.length === 0 ? (
-        <div className="px-4 py-6 text-center text-sm text-muted-foreground">Hali ma'lumot yo'q</div>
+        <div className="px-4 py-6 text-center text-sm text-muted-foreground">{t("miniapp.groupBoard.empty")}</div>
       ) : (
         <ol className="divide-y divide-border/60">
           {rows.map((r) => (
@@ -80,10 +90,13 @@ function StatChip({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 export default function TgGroupBoard() {
+  const { t, i18n } = useTranslation();
+  const lng = (i18n.resolvedLanguage || i18n.language || "uz").slice(0, 2);
   const [initData, setInitData] = useState<string | null | undefined>(undefined); // undefined=loading, null=not in TG
   const [res, setRes] = useState<LoadResult | null>(null);
   const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  // A flag, not a message: the text is rendered via t() so it follows a language change.
+  const [err, setErr] = useState(false);
   const [courseId, setCourseId] = useState<string>("");
   const [groupIdx, setGroupIdx] = useState(0);
   const pollRef = useRef<number | null>(null);
@@ -114,12 +127,12 @@ export default function TgGroupBoard() {
 
   const load = async (cid?: string) => {
     if (!initData) return;
-    setLoading(true); setErr(null);
+    setLoading(true); setErr(false);
     const { data, error } = await supabase.functions.invoke("tg-group-board", {
       body: { initData, ...(cid ? { course_id: cid } : {}) },
     });
     setLoading(false);
-    if (error) { setErr("Ruxsat yo'q yoki xatolik"); return; }
+    if (error) { setErr(true); return; }
     const r = data as LoadResult;
     setRes(r);
     setGroupIdx(0);
@@ -134,7 +147,7 @@ export default function TgGroupBoard() {
   if (initData === null) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 text-center text-sm text-muted-foreground">
-        Bu sahifani Telegram bot ichidagi <b>📊 Guruh reytingi</b> tugmasi orqali oching.
+        <Trans i18nKey="miniapp.groupBoard.openInTelegram" components={{ b: <b /> }} />
       </div>
     );
   }
@@ -147,8 +160,8 @@ export default function TgGroupBoard() {
       <div className="max-w-lg mx-auto space-y-4">
         <div className="flex items-center gap-2">
           <Trophy className="h-5 w-5 text-yellow-500" />
-          <h1 className="text-xl font-semibold">Guruh reytingi</h1>
-          <span className="ml-auto text-xs text-muted-foreground">{todayTashkent()}</span>
+          <h1 className="text-xl font-semibold">{t("miniapp.groupBoard.title")}</h1>
+          <span className="ml-auto text-xs text-muted-foreground">{todayTashkent(lng)}</span>
         </div>
 
         {/* Admin course picker */}
@@ -182,12 +195,12 @@ export default function TgGroupBoard() {
         {loading && <div className="py-10 flex justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
         {err && !loading && (
           <div className="py-8 text-center space-y-3">
-            <p className="text-sm text-muted-foreground">{err}</p>
-            <button onClick={() => load(courseId || undefined)} className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted">Qayta urinish</button>
+            <p className="text-sm text-muted-foreground">{t("miniapp.groupBoard.loadError")}</p>
+            <button onClick={() => load(courseId || undefined)} className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted">{t("miniapp.retry")}</button>
           </div>
         )}
         {!loading && !err && groups.length === 0 && (
-          <div className="py-10 text-center text-sm text-muted-foreground">Guruh topilmadi.</div>
+          <div className="py-10 text-center text-sm text-muted-foreground">{t("miniapp.groupBoard.noGroups")}</div>
         )}
 
         {!loading && !err && g && (
@@ -202,18 +215,18 @@ export default function TgGroupBoard() {
 
             {/* Stats strip */}
             <div className="grid grid-cols-4 gap-2">
-              <StatChip label="Faol" value={`${g.stats.active_students}/${g.stats.total_students}`} />
-              <StatChip label="Tugallanish" value={`${g.stats.avg_completion_pct}%`} />
-              <StatChip label="Nishon" value={g.stats.badges_earned} />
-              <StatChip label="Kutilmoqda" value={g.stats.pending_homework} />
+              <StatChip label={t("miniapp.groupBoard.statActive")} value={`${g.stats.active_students}/${g.stats.total_students}`} />
+              <StatChip label={t("miniapp.groupBoard.statCompletion")} value={`${g.stats.avg_completion_pct}%`} />
+              <StatChip label={t("miniapp.groupBoard.statBadges")} value={g.stats.badges_earned} />
+              <StatChip label={t("miniapp.groupBoard.statPending")} value={g.stats.pending_homework} />
             </div>
 
             {/* The two boards — weekly first (the fresh race) */}
-            <BoardCard title="🔥 SHU HAFTA" icon={<Flame className="h-4 w-4" />} accent="hsl(20 90% 50%)" rows={g.weekly} unit="XP" />
-            <BoardCard title="🏆 UMUMIY TOP" icon={<Trophy className="h-4 w-4" />} accent="hsl(var(--primary))" rows={g.alltime} unit="XP" />
+            <BoardCard title={t("miniapp.groupBoard.weekly")} icon={<Flame className="h-4 w-4" />} accent="hsl(20 90% 50%)" rows={g.weekly} unit="XP" />
+            <BoardCard title={t("miniapp.groupBoard.allTime")} icon={<Trophy className="h-4 w-4" />} accent="hsl(var(--primary))" rows={g.alltime} unit="XP" />
 
             <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground pt-1">
-              <Camera className="h-3.5 w-3.5" /> Skrinshot qiling va guruhga ulashing
+              <Camera className="h-3.5 w-3.5" /> {t("miniapp.groupBoard.shareHint")}
             </div>
             <div className="flex items-center justify-center gap-1 text-[11px] text-muted-foreground/70">
               <UsersIcon className="h-3 w-3" /> aicreator.academy
