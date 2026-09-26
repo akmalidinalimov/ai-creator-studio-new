@@ -6,12 +6,21 @@
 -- or a group-owning teacher's uuid and you get that person's data — the role check passes, because it
 -- is checking the uuid you supplied, not you.
 --
--- EXPLOITABLE TODAY, by signed-in students, without anything exotic:
--- `homework_submissions.scored_by` holds the uuid of the teacher who graded you, and the RLS policy
--- "hws own select" deliberately lets a student read their own submission rows. 143 students have a
--- graded submission, so 143 students can read a group-owning teacher's uuid and then call this
--- function as them. It is also anon-executable, though anon additionally needs a uuid from somewhere
--- out of band (staff uuids were verified NOT anonymously harvestable).
+-- EXPLOITABLE TODAY, AND THE BLAST RADIUS IS WIDER THAN IT FIRST LOOKED.
+-- Two populations, not one:
+--   1. ANY UNAUTHENTICATED CALLER. anon has held EXECUTE on this since it was created on 2026-05-06
+--      (20260506222608, re-created by 20260613250000) — neither migration ever revoked PUBLIC/anon,
+--      and the schema default grants anon=X to every new function (see 20260926071000). For anon,
+--      auth.uid() is NULL, so `COALESCE(p_caller_profile_id, auth.uid())` resolves to the SUPPLIED
+--      uuid outright — it even satisfies the `v_caller IS NULL` check. So the public anon key, which
+--      ships in the browser bundle, was enough. They need a staff uuid from somewhere out of band
+--      (verified staff uuids are NOT anonymously harvestable), which is the only thing that made this
+--      harder than trivial.
+--   2. 143 SIGNED-IN STUDENTS, for whom the uuid is not out of band at all.
+--      `homework_submissions.scored_by` holds the uuid of the teacher who graded you, and the RLS
+--      policy "hws own select" deliberately lets a student read their own submission rows. 143
+--      students have a graded submission, so 143 students can read a group-owning teacher's uuid and
+--      then call this as them.
 -- Confirmed by execution with auth.uid() NULL: admin uuid -> 24 rows; group-owning teacher uuid ->
 -- 8 rows. It returns per-group, per-module student counts and submission counts.
 --
@@ -34,10 +43,18 @@
 --   src/pages/admin/GroupDetail.tsx:137 — passes { p_group_id: id } ONLY, on the browser client, so it
 --     falls through to auth.uid() exactly as before.
 --
--- CLASS FANNED OUT, and it is a single instance. Searched every SECURITY DEFINER function in public
--- for `coalesce(<caller-supplied param>, auth.uid())`: this is the only one lacking a service_role
--- gate. Its siblings (admin_group_engagement_stats, get_visible_student_ids and the rest of the
--- 20260820100000 set) were hardened with exactly this pattern already.
+-- CLASS FANNED OUT — searched BOTH argument orders, because the first search missed one.
+-- `coalesce(<param>, auth.uid())` AND `coalesce(auth.uid(), <param>)` across every SECURITY DEFINER
+-- function in public: this is the only one still lacking a service_role gate. The reversed order
+-- matters — the sibling used it, so a search for one form alone would have looked clean.
+--
+-- WHY THIS SURVIVED A PREVIOUS AUDIT, worth recording: 20260820090000 fixed
+-- admin_group_engagement_stats and teacher_group_statistics for this exact bug, and its own header
+-- says these functions "were EXECUTE-able by `anon` ... an anonymous PostgREST call could assert ANY
+-- admin/teacher identity". So the shape was known and understood a month ago. But
+-- admin_group_module_submissions was created in the SAME original migration (20260506222608), one
+-- function below admin_group_engagement_stats, and was not in that sweep. A fix applied by name
+-- rather than by shape leaves siblings behind.
 --
 -- ALSO: anon loses EXECUTE. There is no anonymous caller — the web page is behind <RequireAuth> and
 -- the bot is service_role. PUBLIC is named in the revoke because that is where the grant actually
@@ -54,11 +71,17 @@ security definer
 set search_path to 'public'
 as $function$
 DECLARE
-  -- THE FIX. A caller-supplied identity is honoured ONLY for service_role (the Telegram bot's
-  -- /thomework path). Everyone else is themselves, whatever they pass.
-  v_caller uuid := CASE WHEN auth.role() = 'service_role'
-                        THEN COALESCE(p_caller_profile_id, auth.uid())
-                        ELSE auth.uid()
+  -- THE FIX, in the exact shape this repo already shipped for the sibling function
+  -- (20260820090000_harden_group_analytics_rpcs.sql:39-43). A REAL authenticated identity always
+  -- wins; only the trusted service_role backend may assert an identity via the parameter; anything
+  -- else resolves to NULL and is rejected below.
+  -- Note the ordering matters even though every caller today behaves the same either way: preferring
+  -- auth.uid() FIRST means a future service_role caller that also forwards a user JWT cannot assert
+  -- someone else's identity. Matching the house pattern rather than inventing a second one.
+  v_caller uuid := CASE
+                     WHEN auth.uid() IS NOT NULL THEN auth.uid()
+                     WHEN auth.role() = 'service_role' THEN p_caller_profile_id
+                     ELSE NULL
                    END;
   v_is_admin boolean := false;
   v_is_teacher boolean := false;
