@@ -1,8 +1,8 @@
 -- OBSERVABILITY: every outbound HTTP call from SQL now goes through public.ops_net_post(), so a
 -- failure names its caller instead of arriving as "unattributed".
 --
--- SUPERSEDES 20260926170000, 20260926180000 and 20260926190000 (same intent; none was merged or
--- applied). Three rounds of adversarial review each reproduced a FALSE PASS in the previous version's
+-- SUPERSEDES 20260926170000, 20260926180000, 20260926190000 and 20260926200000 (same intent; none was
+-- merged or applied). Three rounds of adversarial review each reproduced a FALSE PASS in the previous version's
 -- proofs on crafted input — never on today's live data, but each a case where a proof passed while the
 -- property it claimed was false: a ';' inside a string; a `headers :=` in a comment, string or nested
 -- call; a string continued across a line break; a bare-CR comment; a non-ASCII dollar-quote tag; a '$'
@@ -20,6 +20,11 @@
 -- rebuilt by replaying migrations (as production was on 2026-07-05), the deploy ABORTS with a message
 -- naming the object. The fix is to re-run the read-only dry-run and regenerate this migration — a loud
 -- stop, instead of a text rewrite applied to text nobody verified.
+-- The pin is re-checked where the text is USED, not only where it is selected (a fourth review found
+-- the gap): a function's definition is re-read for the rewrite, so it must still embed exactly the pinned
+-- body; a cron command is re-read just before cron.alter_job and must still equal the pinned command. A
+-- concurrent edit during the deploy therefore aborts instead of being converted unverified. No pin may
+-- match more than one object.
 --
 -- WHY. The twelve-week stale-project incident fixed in 20260926161000 was not silent — it was
 -- UNTRACEABLE. ops_http_failure_watchdog fired 159 times ("403 × N unattributed"), DMing admins each
@@ -51,7 +56,8 @@
 -- cannot be logged). That insert is exception-swallowed, so attribution failing never blocks a send.
 --
 -- CHECKS. For each object the migration raises (rolling everything back) unless ALL of these hold:
---   0. PINNED: it is one of the 37 verified texts (md5 of the function body / cron command).
+--   0. PINNED: it is one of the 37 verified texts (md5 of the function body / cron command), no pin
+--      matches twice, and the text actually rewritten is still that pinned text (see above).
 --   1. AT THE CALL'S OWN LEVEL. A scan walks each call's argument list tracking bracket depth and what
 --      is code versus a '...' string (E'...' backslash escapes included), a "quoted identifier", a
 --      $tag$ string, or a comment (-- to LF or CR; nested /* */). Counting ONLY code at the call's own
@@ -189,6 +195,7 @@ declare
   _u int; _b int; _h int; _commas int;
   _fns int := 0; _jobs int := 0; _calls int := 0;
   _left int;
+  _key text; _seen text[] := '{}'; _cur text;
 begin
   -- The scan treats a backslash as literal outside E'...' strings, which is only true with
   -- standard_conforming_strings on (the default since PG 9.1, and on in production).
@@ -231,9 +238,14 @@ begin
     end if;
 
     -- ── Check 0: only the texts verified on 2026-09-26 may be rewritten. ──
-    if not ((r.kind || '|' || r.name || '|' || md5(r.src)) = any (_pins)) then
+    _key := r.kind || '|' || r.name || '|' || md5(r.src);
+    if not (_key = any (_pins)) then
       raise exception 'ABORT: % % is not one of the 37 definitions verified on 2026-09-26 (it changed or is new; md5 %). Re-run the read-only dry-run and regenerate this migration.', r.kind, r.name, md5(r.src);
     end if;
+    if _key = any (_seen) then
+      raise exception 'ABORT: % % matches a pin that another object already matched (an overload or a same-named job) — regenerate this migration', r.kind, r.name;
+    end if;
+    _seen := _seen || _key;
 
     _old := r.src;
     _purpose := 'p_purpose := ' || quote_literal(r.name) || ', ';
@@ -388,6 +400,11 @@ begin
       select pg_get_functiondef(p.oid), coalesce(array_to_string(p.proacl, ','), ''), p.proowner, p.prosecdef
         into _old_def, _old_acl, _old_owner, _secdef
       from pg_proc p where p.oid = r.id::oid;
+      -- Check 0, where the text is USED: the definition re-read here (after the loop's snapshot) must
+      -- still embed exactly the pinned body, or a concurrent edit would be rewritten unverified.
+      if _old_def is null or strpos(_old_def, 'AS $function$' || r.src || '$function$') = 0 then
+        raise exception 'ABORT: function % changed while this migration ran (its definition no longer embeds the pinned body)', r.name;
+      end if;
       if not _secdef then
         raise exception 'ABORT: function % is SECURITY INVOKER — it would call ops_net_post with its CALLER''s rights, which anon/authenticated do not have', r.name;
       end if;
@@ -459,6 +476,12 @@ begin
         raise exception 'ABORT: cron job % — the rewritten command does not resolve (% %)', r.name, sqlstate, sqlerrm;
       end;
 
+      -- Check 0, where the text is USED: the command must still be the pinned one right before it is
+      -- replaced, or alter_job would overwrite an edit made during the deploy.
+      select command into _cur from cron.job where jobid = r.id;
+      if _cur is distinct from r.src then
+        raise exception 'ABORT: cron job % changed while this migration ran', r.name;
+      end if;
       perform cron.alter_job(job_id := r.id, command := _new);
 
       if (select command from cron.job where jobid = r.id) is distinct from _new then
@@ -493,6 +516,7 @@ begin
            'functions_converted', _fns,
            'cron_jobs_converted', _jobs,
            'calls_converted', _calls,
+           'pins_matched', coalesce(array_length(_seen, 1), 0),
            'left_raw_deliberately', 'bot-warmth-ping (net.http_get; ops_net_post is POST-only)',
            'why', 'ops_http_failure_watchdog fired 159x as "403 × N unattributed" and could not name the caller; ~790 unattributed timeouts in the 7 days before this',
            'at', now())

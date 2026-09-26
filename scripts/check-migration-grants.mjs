@@ -339,12 +339,113 @@ function shapeMatches(list) {
     return s === "int" || s === "int4" ? "integer" : s;
   };
   return params.every((p, k) => {
-    const m = /^\s*(?:(?:in|variadic)\s+)?("(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*)\s+([\s\S]*?)(\s+default\s+[\s\S]*|\s*=[\s\S]*)?\s*$/i.exec(p);
+    // [mode] name [mode] type [DEFAULT ...|= ...] — Postgres accepts the mode on either side of the name.
+    const m = /^\s*(?:(?:in|variadic)\s+)?("(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*)\s+(?:(?:in|variadic)\s+)?([\s\S]*?)(\s+default\b[\s\S]*|\s*=[\s\S]*)?\s*$/i.exec(p);
     if (!m) return false;
     const name = m[1].startsWith('"') ? m[1].slice(1, -1).replace(/""/g, '"') : m[1].toLowerCase();
     const want = OPS_NET_POST_SHAPE[k];
     return name === want.name && normType(m[2]) === want.type && (!want.needsDefault || Boolean(m[3]));
   });
+}
+
+// Does one argument of a DROP/ALTER argument list ("[mode] [name] type") have type T? Compared on the
+// last word, which is the whole type for text/jsonb/integer; int and int4 are integer.
+const argHasType = (arg, T) => {
+  const a = arg.replace(/"/g, "").toLowerCase().replace(/\s+/g, " ").trim()
+    .replace(/\s+default\b.*$|\s*=.*$/, "");
+  const last = (a.split(" ").pop() || "").replace(/^(?:pg_catalog|public)\./, "");
+  return (last === "int" || last === "int4" ? "integer" : last) === T;
+};
+
+// Does this DROP statement target THE ops_net_post (OPS_NET_POST_SHAPE's types, or no argument list)?
+// Dropping a different overload is the remedy when a stray one makes every call ambiguous, so it is not
+// an E9 violation.
+function dropsRealOpsNetPost(stmt) {
+  for (const m of stmt.matchAll(/(?:^|[\s,.('])"?ops_net_post["']?(?![A-Za-z0-9_$])/gi)) {
+    const after = m.index + m[0].length;
+    const open = /^\s*\(/.exec(stmt.slice(after));
+    if (!open) return true;                                   // no argument list: whichever one exists
+    const o = after + open[0].length - 1;
+    const close = balancedClose(stmt, o);
+    if (close === -1) return true;
+    const args = splitParams(stmt.slice(o + 1, close));
+    if (args.length === OPS_NET_POST_SHAPE.length && args.every((a, k) => argHasType(a, OPS_NET_POST_SHAPE[k].type))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Blanks comments and single-quoted '...' literals but KEEPS dollar-quoted bodies, lexing them as code
+// (a DO block's body is code). E9 uses it to tell executable DDL from prose that merely mentions it:
+// `drop function ...` in code or in a DO body counts, and so does one that STARTS a '...' literal
+// (dynamic DDL handed to EXECUTE or format); "never drop function ops_net_post" inside a COMMENT ON
+// string does not.
+function blankQuotedProse(sql) {
+  const out = sql.split("");
+  const blank = (from, to) => {
+    for (let k = from; k < to && k < sql.length; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  const lex = (start, end) => {
+    let i = start;
+    while (i < end) {
+      const c = sql[i];
+      if (c === "'") {
+        const isE = isEString(sql, i);
+        let j = i + 1;
+        while (j < end) {
+          if (isE && sql[j] === "\\") { j += 2; continue; }
+          if (sql[j] === "'" && sql[j + 1] === "'") { j += 2; continue; }
+          if (sql[j] === "'") { j++; break; }
+          j++;
+        }
+        blank(i, j);
+        i = j;
+        continue;
+      }
+      if (c === '"') {
+        let j = i + 1;
+        while (j < end && !(sql[j] === '"' && sql[j + 1] !== '"')) j += sql[j] === '"' ? 2 : 1;
+        i = j + 1;
+        continue;
+      }
+      if (c === "$" && !IDENT_CHAR.test(sql[i - 1] || "")) {
+        const m = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i, Math.min(end, i + 64)));
+        if (m) {
+          const tag = m[0];
+          const close = sql.indexOf(tag, i + tag.length);
+          const bodyEnd = close === -1 || close >= end ? end : close;
+          blank(i, i + tag.length);
+          lex(i + tag.length, bodyEnd);                      // the body is code with its own strings
+          if (bodyEnd < end) blank(bodyEnd, bodyEnd + tag.length);
+          i = bodyEnd === end ? end : close + tag.length;
+          continue;
+        }
+      }
+      if (c === "-" && sql[i + 1] === "-") {
+        let j = i;
+        while (j < end && sql[j] !== "\n" && sql[j] !== "\r") j++;
+        blank(i, j);
+        i = j;
+        continue;
+      }
+      if (c === "/" && sql[i + 1] === "*") {
+        let depth = 1;
+        let j = i + 2;
+        while (j < end && depth > 0) {
+          if (sql[j] === "/" && sql[j + 1] === "*") { depth++; j += 2; continue; }
+          if (sql[j] === "*" && sql[j + 1] === "/") { depth--; j += 2; continue; }
+          j++;
+        }
+        blank(i, j);
+        i = j;
+        continue;
+      }
+      i++;
+    }
+  };
+  lex(0, sql.length);
+  return out.join("");
 }
 
 // The role list of a REVOKE, stopping at GRANTED BY / CASCADE / RESTRICT.
@@ -511,20 +612,26 @@ function checkFile(file, raw) {
   // checking every caller in pg_proc and cron.job. A `lint:allow E9: <reason>` comment also works.
   const e9 = (index, msg) => {
     if (lintAllowed(raw, noComments, index, "E9")) return;
-    push(errors, lineOf(noComments, index), msg);
+    push(errors, lineOf(noComments, index),
+      msg + ` If this text only MENTIONS the operation (a comment string, a notice), add a comment on ` +
+      `the same line: "lint:allow E9: <reason>".`);
   };
+  // Executable DDL only: in code (including a DO body), or as the first word of a '...' literal.
+  const prose = blankQuotedProse(raw);
+  const isDdl = (idx) => prose[idx] !== " " || /'\s*$/.test(noComments.slice(Math.max(0, idx - 40), idx));
   const goodCreates = opsNetPostCreates.filter((c) => c.good);
   const opsRevokes = [...noComments.matchAll(/\brevoke\b[^;]*\bon\s+(?:function|routine)s?\b[^;]*/gi)]
-    .filter((m) => NAMES_OPS_NET_POST.test(m[0]))
+    .filter((m) => isDdl(m.index) && NAMES_OPS_NET_POST.test(m[0]))
     .map((m) => ({ index: m.index, roles: revokeRoles(m[0]) }));
   // null when the file restores ops_net_post after `index`; otherwise what is missing.
   const missingAfter = (index) => {
     const c = goodCreates.find((g) => g.index > index);
     if (!c) return `without recreating it (${OPS_NET_POST_SIGNATURE}) later in the same migration`;
     if (!opsRevokes.some((v) => v.index > c.index && /\bauthenticated\b/i.test(v.roles))) {
-      return `and recreates it, but never revokes EXECUTE from authenticated afterwards — under this ` +
-        `project's default privileges the new function is callable by every signed-in user, and it can ` +
-        `POST anywhere (20260925201000 revoked it for exactly that)`;
+      return `and recreates it, but never revokes EXECUTE from authenticated afterwards (a static ` +
+        `REVOKE naming public.ops_net_post; a dynamic loop is not recognised) — under this project's ` +
+        `default privileges the new function is callable by every signed-in user, and it can POST ` +
+        `anywhere (20260925201000 revoked it for exactly that)`;
     }
     return null;
   };
@@ -538,7 +645,7 @@ function checkFile(file, raw) {
       `their calls ambiguous.`);
   }
   for (const m of noComments.matchAll(/\bdrop\s+(?:function|routine)\b[^;]*/gi)) {
-    if (!NAMES_OPS_NET_POST.test(m[0])) continue;
+    if (!isDdl(m.index) || !NAMES_OPS_NET_POST.test(m[0]) || !dropsRealOpsNetPost(m[0])) continue;
     const missing = missingAfter(m.index);
     if (!missing) continue;
     e9(m.index,
@@ -546,10 +653,11 @@ function checkFile(file, raw) {
       `resolve it at run time and nothing in pg_depend stops the drop.`);
   }
   for (const m of noComments.matchAll(/\balter\s+(?:function|routine)\b[^;]*/gi)) {
-    if (!NAMES_OPS_NET_POST.test(m[0])) continue;
+    if (!isDdl(m.index) || !NAMES_OPS_NET_POST.test(m[0]) || !dropsRealOpsNetPost(m[0])) continue;
     const owner = /\bowner\s+to\s+"?([A-Za-z_][A-Za-z0-9_]*)"?/i.exec(m[0]);
     if (owner) {
-      if (owner[1].toLowerCase() !== "postgres") {
+      // Migrations run as postgres, so current_user/session_user/current_role name postgres here.
+      if (!["postgres", "current_user", "session_user", "current_role"].includes(owner[1].toLowerCase())) {
         e9(m.index, `changes the owner of public.ops_net_post to ${owner[1]}. Its callers run it as postgres; do not move it.`);
       }
     } else if (/\b(?:rename|set\s+schema)\b/i.test(m[0])) {
@@ -569,7 +677,7 @@ function checkFile(file, raw) {
   for (const m of noComments.matchAll(
     /\brevoke\b[^;]*\bon\s+all\s+(?:functions|routines)\s+in\s+schema\s+"?public"?\b[^;]*/gi
   )) {
-    if (!revokesFromOwnerRoles(revokeRoles(m[0]))) continue;
+    if (!isDdl(m.index) || !revokesFromOwnerRoles(revokeRoles(m[0]))) continue;
     e9(m.index,
       `revokes EXECUTE on every function in schema public from postgres or service_role — that ` +
       `includes public.ops_net_post, which every converted watchdog and cron job runs as those roles.`);
