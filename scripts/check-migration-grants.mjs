@@ -243,6 +243,91 @@ const PRODUCTION_REF = "cdyidatkegxwhtuoqxly";
 // ORIGINAL Lovable-hosted project: still alive, not controlled by this codebase (see 20260926161000).
 const KNOWN_FOREIGN_REFS = ["wpdztrijasgmxgliwddr"];
 
+// ─────────────────────────── ops_net_post (E8, E9) ───────────────────────────
+// The exact parameter list every caller of public.ops_net_post depends on — by NAME
+// (anon_execute_watchdog passes p_timeout_ms :=), by POSITION (six cron jobs pass all five in order)
+// and by TYPE. Verified against the live catalog on 2026-09-26. Change it only together with a
+// deliberate, caller-checked signature change.
+const OPS_NET_POST_SHAPE = [
+  ["p_url", "text"],
+  ["p_body", "jsonb"],
+  ["p_headers", "jsonb"],
+  ["p_purpose", "text"],
+  ["p_timeout_ms", "integer"],
+];
+const OPS_NET_POST_CREATE_RE =
+  /\bcreate\s+(?:or\s+replace\s+)?(?:function|procedure)\s+(?:"?public"?\s*\.\s*)?"?ops_net_post"?\s*\(/gi;
+// Names ops_net_post as an object (bare, schema-qualified, quoted, or inside a list) — not ops_net_post_x.
+const NAMES_OPS_NET_POST = /(?:^|[\s,.(])"?ops_net_post"?(?![A-Za-z0-9_$])/i;
+
+// Index of the ')' matching the '(' at `open`, skipping '...' strings (E'...' backslash escapes
+// included) and "quoted identifiers"; -1 if it never closes.
+function balancedClose(text, open) {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    const c = text[i];
+    if (c === "'") {
+      const isE = /[eE]/.test(text[i - 1] || "") && !/[A-Za-z0-9_]/.test(text[i - 2] || "");
+      i++;
+      while (i < text.length) {
+        if (isE && text[i] === "\\") { i += 2; continue; }
+        if (text[i] === "'" && text[i + 1] === "'") { i += 2; continue; }
+        if (text[i] === "'") break;
+        i++;
+      }
+    } else if (c === '"') {
+      i++;
+      while (i < text.length && !(text[i] === '"' && text[i + 1] !== '"')) i += text[i] === '"' ? 2 : 1;
+    } else if (c === "(") {
+      depth++;
+    } else if (c === ")") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+// Does a parameter list (the text between the parentheses) have exactly OPS_NET_POST_SHAPE?
+function shapeMatches(list) {
+  const params = [];
+  let depth = 0, cur = "", quote = null;
+  for (let i = 0; i < list.length; i++) {
+    const c = list[i];
+    if (quote) {
+      cur += c;
+      if (c === quote && list[i + 1] === quote) { cur += list[++i]; continue; }
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === "'" || c === '"') { quote = c; cur += c; continue; }
+    if (c === "(") depth++;
+    if (c === ")") depth--;
+    if (c === "," && depth === 0) { params.push(cur); cur = ""; continue; }
+    cur += c;
+  }
+  if (cur.trim()) params.push(cur);
+  if (params.length !== OPS_NET_POST_SHAPE.length) return false;
+  const norm = (t) => {
+    const s = t.toLowerCase().replace(/\s+/g, " ").trim().replace(/^(?:pg_catalog|public)\./, "");
+    return s === "int" || s === "int4" ? "integer" : s;
+  };
+  return params.every((p, k) => {
+    const m = /^\s*(?:(?:in|variadic)\s+)?("?[A-Za-z_][A-Za-z0-9_]*"?)\s+([\s\S]*?)(?:\s+default\s+[\s\S]*|\s*=[\s\S]*)?$/i.exec(p);
+    if (!m) return false;
+    return m[1].replace(/"/g, "").toLowerCase() === OPS_NET_POST_SHAPE[k][0] && norm(m[2]) === OPS_NET_POST_SHAPE[k][1];
+  });
+}
+
+// `lint:allow <rule>: <reason of 20+ characters>` on the same line as the finding suppresses it. The
+// marker lives in the diff, so every use is visible to a reviewer.
+function lintAllowed(raw, index, rule) {
+  const start = raw.lastIndexOf("\n", index - 1) + 1;
+  const end = raw.indexOf("\n", index);
+  const line = raw.slice(start, end === -1 ? raw.length : end);
+  return new RegExp(`lint:allow ${rule}:\\s*\\S.{19,}`).test(line);
+}
+
 // ─────────────────────────── rules ───────────────────────────
 const errors = [];
 const warnings = [];
@@ -314,49 +399,109 @@ function checkFile(file, raw) {
     }
   }
 
-  // E8: a raw net.http_post / net.http_get from SQL. Use public.ops_net_post(), which records the URL
-  // and a purpose in ops_http_calls. This is the lesson of the incident that 20260926161000 fixes:
-  // ops_http_failure_watchdog DID fire — 159 times, "403 × N unattributed" — but a raw call records no
-  // URL, so no alert ever said WHERE the requests were going, and twelve weeks passed.
-  // net.http_post is an ERROR: since 20260926180000 there are none left in production, and the repo
+  // Every `create [or replace] function|procedure ops_net_post(`, with the offset of its '(' — shared by
+  // the E8 exemption and E9. Strings are scanned too: dynamic DDL in EXECUTE '...' is real DDL.
+  const opsNetPostCreates = [...noComments.matchAll(OPS_NET_POST_CREATE_RE)].map((m) => {
+    const open = m.index + m[0].length - 1;
+    const close = balancedClose(noComments, open);
+    return { index: m.index, open, close, list: close === -1 ? null : noComments.slice(open + 1, close) };
+  });
+
+  // E8: a raw net.http_post / net.http_get / net.http_delete from SQL. Use public.ops_net_post(), which
+  // records the URL and a purpose in ops_http_calls. This is the lesson of the incident that
+  // 20260926161000 fixes: ops_http_failure_watchdog DID fire — 159 times, "403 × N unattributed" — but a
+  // raw call records no URL, so no alert ever said WHERE the requests were going, and twelve weeks passed.
+  // net.http_post is an ERROR: since 20260926190000 there are none left in production, and the repo
   // still holds the PRE-conversion bodies of those 25 functions — a migration that copies one forward
-  // would silently revert its attribution. net.http_get stays a WARNING: ops_net_post is POST-only, so
-  // there is no attributed alternative to demand yet.
-  // The one legitimate raw call is inside ops_net_post itself, so its own definition is exempt.
+  // would silently revert its attribution. http_get/http_delete stay WARNINGS: ops_net_post is
+  // POST-only, so there is no attributed alternative to demand yet.
+  // Matched in the same forms the migration's own final invariant treats as raw: any case, spaces
+  // around the dot, quoted identifiers ("net".http_post). Two exemptions:
+  //   * the body of ops_net_post's own definition — the one legitimate raw call. Only a dollar-quoted
+  //     body whose `as $tag$` sits in the same statement as the create, bounded by its closing tag.
+  //   * a line carrying `lint:allow E8: <reason>` (a reason of 20+ characters), for text that names the
+  //     call without making it — e.g. a detector's pattern, or a parser check that never runs. The
+  //     marker is in the diff, so a reviewer sees every use.
   const opsNetPostBodies = [];
-  for (const m of noComments.matchAll(
-    /create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?ops_net_post\s*\([\s\S]*?\bas\s+(\$[A-Za-z_]*\$)/gi
-  )) {
-    const close = noComments.indexOf(m[1], m.index + m[0].length);
-    opsNetPostBodies.push([m.index, close === -1 ? noComments.length : close]);
+  for (const c of opsNetPostCreates) {
+    if (c.close === -1) continue;
+    const header = /^[^;]*?\bas\s+(\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$)/i.exec(noComments.slice(c.close + 1));
+    if (!header) continue;                              // 'quoted' or BEGIN ATOMIC body: no exemption
+    const bodyStart = c.close + 1 + header[0].length;
+    const bodyEnd = noComments.indexOf(header[1], bodyStart);
+    if (bodyEnd !== -1) opsNetPostBodies.push([bodyStart, bodyEnd]);
   }
-  for (const m of noComments.matchAll(/\bnet\.http_(post|get)\s*\(/gi)) {
-    if (opsNetPostBodies.some(([a, b]) => m.index > a && m.index < b)) continue;
-    const isPost = m[1].toLowerCase() === "post";
-    push(isPost ? errors : warnings, lineOf(noComments, m.index),
-      `calls ${m[0].replace(/\s*\($/, "")} directly. Use public.ops_net_post(p_url, p_body, p_headers, ` +
+  for (const m of noComments.matchAll(
+    /(^|[^A-Za-z0-9_$])("?net"?\s*\.\s*"?http_(post|get|delete)"?)\s*\(/gi
+  )) {
+    const at = m.index + m[1].length;
+    if (opsNetPostBodies.some(([a, b]) => at >= a && at < b)) continue;
+    if (lintAllowed(raw, at, "E8")) continue;
+    const isPost = m[3].toLowerCase() === "post";
+    push(isPost ? errors : warnings, lineOf(noComments, at),
+      `calls ${m[2].replace(/\s+/g, "")} directly. Use public.ops_net_post(p_url, p_body, p_headers, ` +
       `p_purpose, p_timeout_ms) so a failure is attributed to a URL and a purpose instead of surfacing ` +
       `as an unattributed 403 that no one can trace.` +
       (isPost ? ` If you copied a function body from an older migration, take the LIVE definition ` +
-        `instead (pg_get_functiondef) — production was converted by 20260926180000 and the repo was not.` : ""));
+        `instead (pg_get_functiondef) — production was converted by 20260926190000 and the repo was not. ` +
+        `If this text only NAMES the call, mark the line "lint:allow E8: <reason>".` : ""));
   }
 
-  // E9 (ERROR): dropping or renaming ops_net_post without recreating it. Since 20260926180000 about 52
-  // call sites — every watchdog's own alert channel among them — resolve public.ops_net_post BY NAME at
-  // run time. pg_depend records no dependency from a PL/pgSQL body or a cron command, so Postgres would
-  // allow the DROP and every one of them would fail at its next send, including the alarms that should
-  // report it. A migration that drops or renames it must recreate it in the same file with the
-  // named-argument shape the callers use: p_url, p_body, p_headers, p_purpose.
-  const dropsOrRenames = /(?:drop\s+function\s+(?:if\s+exists\s+)?(?:public\.)?ops_net_post\b|alter\s+function\s+(?:public\.)?ops_net_post\b[^;]*\b(?:rename|set\s+schema)\b)/gi;
-  const recreated = [...noComments.matchAll(
-    /create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?ops_net_post\s*\(([^)]*)\)/gi
-  )].some((m) => ["p_url", "p_body", "p_headers", "p_purpose"].every((p) => new RegExp(`\\b${p}\\b`, "i").test(m[1])));
-  for (const m of noComments.matchAll(dropsOrRenames)) {
-    if (recreated) continue;
-    push(errors, lineOf(noComments, m.index),
-      `drops or renames public.ops_net_post without recreating it (with p_url, p_body, p_headers, ` +
-      `p_purpose) in the same migration. ~52 callers, including every watchdog's alert channel, resolve ` +
-      `it by name at run time and nothing in pg_depend would stop this — they would all fail silently.`);
+  // E9 (ERROR): anything that removes or reshapes public.ops_net_post. Since 20260926190000 about 52
+  // call sites — every watchdog's own alert channel among them — depend on it, and in three different
+  // ways: by name (anon_execute_watchdog passes p_timeout_ms :=), POSITIONALLY (six cron jobs pass all
+  // five arguments in order) and by type. pg_depend records no dependency from a PL/pgSQL body or a cron
+  // command, so Postgres allows a DROP, a RENAME or a reshaped recreate, and every caller fails at its
+  // next send — including the alarms that should report it. So:
+  //   (a) every create of ops_net_post must have EXACTLY OPS_NET_POST_SHAPE — names, types and order. A
+  //       different shape is either a broken replacement or a second overload, and an overload makes
+  //       every call that fits both ambiguous ("function is not unique");
+  //   (b) a DROP FUNCTION/ROUTINE naming it (alone or in a list, quoted or not), or an ALTER that
+  //       renames it or moves its schema, must be followed LATER in the same file by a create with
+  //       that exact shape;
+  //   (c) changing its owner, or revoking EXECUTE from postgres/service_role (the roles every converted
+  //       caller runs it as), is always an error.
+  // A deliberate signature change updates OPS_NET_POST_SHAPE in this file in the same PR, after
+  // checking every caller in pg_proc and cron.job. `lint:allow E9: <reason>` on the line also works.
+  const e9 = (index, msg) => {
+    if (lintAllowed(raw, index, "E9")) return;
+    push(errors, lineOf(noComments, index), msg);
+  };
+  const shapeText = OPS_NET_POST_SHAPE.map(([n, t]) => `${n} ${t}`).join(", ");
+  const goodCreates = opsNetPostCreates.filter((c) => c.list !== null && shapeMatches(c.list));
+  for (const c of opsNetPostCreates) {
+    if (c.list !== null && shapeMatches(c.list)) continue;
+    e9(c.index,
+      `creates public.ops_net_post with parameters (${c.list === null ? "unbalanced" : c.list.replace(/\s+/g, " ").trim()}). ` +
+      `Its ~52 callers need exactly (${shapeText}) — by name, by position and by type. A different ` +
+      `shape breaks them or adds an overload that makes their calls ambiguous.`);
+  }
+  for (const m of noComments.matchAll(/\bdrop\s+(?:function|routine)\b[^;]*/gi)) {
+    if (!NAMES_OPS_NET_POST.test(m[0])) continue;
+    if (goodCreates.some((c) => c.index > m.index)) continue;
+    e9(m.index,
+      `drops public.ops_net_post without recreating it (${shapeText}) later in the same migration. ` +
+      `~52 callers, including every watchdog's alert channel, resolve it at run time and nothing in ` +
+      `pg_depend stops the drop — they would all fail at their next send, the alarms included.`);
+  }
+  for (const m of noComments.matchAll(/\balter\s+(?:function|routine)\b[^;]*/gi)) {
+    if (!NAMES_OPS_NET_POST.test(m[0])) continue;
+    if (/\bowner\s+to\b/i.test(m[0])) {
+      e9(m.index, `changes the owner of public.ops_net_post. Its callers run it as postgres; do not move it.`);
+    } else if (/\b(?:rename|set\s+schema)\b/i.test(m[0]) && !goodCreates.some((c) => c.index > m.index)) {
+      e9(m.index,
+        `renames or moves public.ops_net_post without recreating it (${shapeText}) later in the same ` +
+        `migration — every caller resolves it by that name at run time.`);
+    }
+  }
+  for (const m of noComments.matchAll(/\brevoke\b[^;]*\bon\s+(?:function|routine)s?\b[^;]*/gi)) {
+    if (!NAMES_OPS_NET_POST.test(m[0])) continue;
+    const from = /\bfrom\b([\s\S]*)$/i.exec(m[0]);
+    if (from && /\b(?:postgres|service_role)\b/i.test(from[1])) {
+      e9(m.index,
+        `revokes EXECUTE on public.ops_net_post from postgres or service_role — the roles every ` +
+        `converted watchdog and cron job runs it as.`);
+    }
   }
 
   // E1 (ERROR, always): a blanket grant over every function in the schema. There is no legitimate
