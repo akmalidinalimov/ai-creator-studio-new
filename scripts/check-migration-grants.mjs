@@ -43,9 +43,10 @@
 // fired 159 times ("403 × N unattributed") — but a raw net.http_post records no URL, so no alert could
 // say where the requests were going; the URL itself looked exactly like every correct URL. So a
 // migration now fails if it contains a Supabase project URL for any ref other than production's (E6),
-// or an inline credential (E7), and it warns on a raw net.http_post that would leave any future failure
-// just as untraceable (E8). E6 skips comments, so a header may explain what it removed; E7 does not,
-// because a key in a comment is still a key in git history.
+// or an inline credential (E7), or a raw net.http_post that would leave any future failure just as
+// untraceable (E8), or drops the attributed wrapper every caller now depends on (E9). E6 skips
+// comments, so a header may explain what it removed; E7 does not, because a key in a comment is still
+// a key in git history.
 //
 // CI usage:  node scripts/check-migration-grants.mjs            (fails on errors)
 //            node scripts/check-migration-grants.mjs --strict   (fails on warnings too)
@@ -313,16 +314,49 @@ function checkFile(file, raw) {
     }
   }
 
-  // E8 (WARNING): a raw net.http_post / net.http_get from SQL. Use public.ops_net_post(), which records
-  // the URL and a purpose in ops_http_calls. This is the lesson of the incident that 20260926161000
-  // fixes: ops_http_failure_watchdog DID fire — 159 times, "403 × N unattributed" — but a raw call
-  // records no URL, so no alert ever said WHERE the requests were going, and twelve weeks passed. An
-  // alarm nobody can act on is barely better than none.
-  for (const m of noComments.matchAll(/\bnet\.http_(?:post|get)\s*\(/gi)) {
-    push(warnings, lineOf(noComments, m.index),
+  // E8: a raw net.http_post / net.http_get from SQL. Use public.ops_net_post(), which records the URL
+  // and a purpose in ops_http_calls. This is the lesson of the incident that 20260926161000 fixes:
+  // ops_http_failure_watchdog DID fire — 159 times, "403 × N unattributed" — but a raw call records no
+  // URL, so no alert ever said WHERE the requests were going, and twelve weeks passed.
+  // net.http_post is an ERROR: since 20260926180000 there are none left in production, and the repo
+  // still holds the PRE-conversion bodies of those 25 functions — a migration that copies one forward
+  // would silently revert its attribution. net.http_get stays a WARNING: ops_net_post is POST-only, so
+  // there is no attributed alternative to demand yet.
+  // The one legitimate raw call is inside ops_net_post itself, so its own definition is exempt.
+  const opsNetPostBodies = [];
+  for (const m of noComments.matchAll(
+    /create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?ops_net_post\s*\([\s\S]*?\bas\s+(\$[A-Za-z_]*\$)/gi
+  )) {
+    const close = noComments.indexOf(m[1], m.index + m[0].length);
+    opsNetPostBodies.push([m.index, close === -1 ? noComments.length : close]);
+  }
+  for (const m of noComments.matchAll(/\bnet\.http_(post|get)\s*\(/gi)) {
+    if (opsNetPostBodies.some(([a, b]) => m.index > a && m.index < b)) continue;
+    const isPost = m[1].toLowerCase() === "post";
+    push(isPost ? errors : warnings, lineOf(noComments, m.index),
       `calls ${m[0].replace(/\s*\($/, "")} directly. Use public.ops_net_post(p_url, p_body, p_headers, ` +
       `p_purpose, p_timeout_ms) so a failure is attributed to a URL and a purpose instead of surfacing ` +
-      `as an unattributed 403 that no one can trace.`);
+      `as an unattributed 403 that no one can trace.` +
+      (isPost ? ` If you copied a function body from an older migration, take the LIVE definition ` +
+        `instead (pg_get_functiondef) — production was converted by 20260926180000 and the repo was not.` : ""));
+  }
+
+  // E9 (ERROR): dropping or renaming ops_net_post without recreating it. Since 20260926180000 about 52
+  // call sites — every watchdog's own alert channel among them — resolve public.ops_net_post BY NAME at
+  // run time. pg_depend records no dependency from a PL/pgSQL body or a cron command, so Postgres would
+  // allow the DROP and every one of them would fail at its next send, including the alarms that should
+  // report it. A migration that drops or renames it must recreate it in the same file with the
+  // named-argument shape the callers use: p_url, p_body, p_headers, p_purpose.
+  const dropsOrRenames = /(?:drop\s+function\s+(?:if\s+exists\s+)?(?:public\.)?ops_net_post\b|alter\s+function\s+(?:public\.)?ops_net_post\b[^;]*\b(?:rename|set\s+schema)\b)/gi;
+  const recreated = [...noComments.matchAll(
+    /create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?ops_net_post\s*\(([^)]*)\)/gi
+  )].some((m) => ["p_url", "p_body", "p_headers", "p_purpose"].every((p) => new RegExp(`\\b${p}\\b`, "i").test(m[1])));
+  for (const m of noComments.matchAll(dropsOrRenames)) {
+    if (recreated) continue;
+    push(errors, lineOf(noComments, m.index),
+      `drops or renames public.ops_net_post without recreating it (with p_url, p_body, p_headers, ` +
+      `p_purpose) in the same migration. ~52 callers, including every watchdog's alert channel, resolve ` +
+      `it by name at run time and nothing in pg_depend would stop this — they would all fail silently.`);
   }
 
   // E1 (ERROR, always): a blanket grant over every function in the schema. There is no legitimate
