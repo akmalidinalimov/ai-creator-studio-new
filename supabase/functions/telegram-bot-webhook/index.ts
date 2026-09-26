@@ -3,7 +3,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { computeLeaves, displayStepNumber, pickNextLeaf } from "./homework-routing.ts";
 import { effectiveLeafGrades, summarizeHomework } from "./homework-stats.ts";
+import { fanOutBroadcast } from "./broadcast-fanout.ts";
 import { isRecipientError, isTerminal, tgResult } from "../_shared/telegram-classify.ts";
+import { sendTelegram } from "../_shared/telegram-send.ts";
+import { logHealth } from "../_shared/edge.ts";
 import { redactJson, redactSecrets } from "../_shared/redact.ts";
 import {
   checksAllGreen, ghAddLabel, ghClosePr, ghFetchChecks, ghFetchPr, ghMergePr,
@@ -257,7 +260,11 @@ const T = {
     teacherPanel: "👩‍🏫 O'qituvchi paneli",
     teacherNoGroups: "Sizga hali guruh biriktirilmagan. Admin bilan bog'laning.",
     teacherBroadcastPrompt: "Guruhingizga yubormoqchi bo'lgan xabarni yozing (300 belgigacha). Bekor qilish uchun /cancel.",
-    teacherBroadcastSent: (n: number) => `✅ ${n} ta talabaga yuborildi.`,
+    // Real delivery count (Telegram's `ok`), not "attempted" — see handleTeacherSession.
+    teacherBroadcastSent: (gn: string, sent: number, failed: number, total: number) =>
+      `${failed ? "⚠️" : "✅"} <b>${csvEscapeHtml(gn)}</b> — xabar natijasi\n` +
+      `Yuborildi: <b>${sent}</b> / yetib bormadi: <b>${failed}</b> (jami ${total})` +
+      (failed ? `\n\n<i>Odatda sabab: talaba botda Start bosmagan yoki botni bloklagan. Ularga guruhda yozib qo'ying.</i>` : ""),
     teacherBroadcastEmpty: "Guruhingizda talaba yo'q.",
     teacherBroadcastTooLong: "Xabar 300 belgidan oshmasligi kerak.",
     teacherBroadcastRate: "Soatiga 1 ta xabar yuborish mumkin. Iltimos keyinroq urinib ko'ring.",
@@ -550,7 +557,10 @@ const T = {
     teacherPanel: "👩‍🏫 Панель преподавателя",
     teacherNoGroups: "К вам пока не прикреплена группа. Свяжитесь с админом.",
     teacherBroadcastPrompt: "Напишите сообщение для вашей группы (до 300 символов). /cancel — отменить.",
-    teacherBroadcastSent: (n: number) => `✅ Отправлено ${n} студентам.`,
+    teacherBroadcastSent: (gn: string, sent: number, failed: number, total: number) =>
+      `${failed ? "⚠️" : "✅"} <b>${csvEscapeHtml(gn)}</b> — итог рассылки\n` +
+      `Доставлено: <b>${sent}</b> / не доставлено: <b>${failed}</b> (всего ${total})` +
+      (failed ? `\n\n<i>Обычно причина: студент не нажал Start в боте или заблокировал бота. Напишите им в группе.</i>` : ""),
     teacherBroadcastEmpty: "В вашей группе нет студентов.",
     teacherBroadcastTooLong: "Сообщение не должно превышать 300 символов.",
     teacherBroadcastRate: "Можно отправлять 1 сообщение в час. Попробуйте позже.",
@@ -834,7 +844,10 @@ const T = {
     teacherPanel: "👩‍🏫 Teacher panel",
     teacherNoGroups: "No group assigned to you yet. Please contact the admin.",
     teacherBroadcastPrompt: "Type the message to send to your group (up to 300 chars). /cancel to abort.",
-    teacherBroadcastSent: (n: number) => `✅ Sent to ${n} students.`,
+    teacherBroadcastSent: (gn: string, sent: number, failed: number, total: number) =>
+      `${failed ? "⚠️" : "✅"} <b>${csvEscapeHtml(gn)}</b> — broadcast result\n` +
+      `Delivered: <b>${sent}</b> / not delivered: <b>${failed}</b> (total ${total})` +
+      (failed ? `\n\n<i>Usually the student never pressed Start in the bot or blocked it. Reach them in the group chat.</i>` : ""),
     teacherBroadcastEmpty: "Your group has no students.",
     teacherBroadcastTooLong: "Message must be 300 chars or less.",
     teacherBroadcastRate: "Only 1 broadcast per hour allowed. Try again later.",
@@ -4688,23 +4701,48 @@ async function handleTeacherSession(admin: any, msg: any, profileId: string, loc
     return true;
   }
   const body = `${t.teacherFromTeacher(csvEscapeHtml(groupName || "—"))}${csvEscapeHtml(text)}`;
-  let sent = 0;
-  for (const r of recipients) {
-    try {
-      await sendMessage(r.telegram_id, body);
-      await admin.from("bot_broadcast_rate").insert({ actor_user_id: profileId, recipient_user_id: r.id, scope: "recipient" });
-      sent++;
-    } catch (e) {
-      // A genuine exception here (not a Telegram-side "blocked bot", which never throws) is a
-      // real delivery fault — capture it DB-visibly instead of letting it vanish silently.
-      await logError(admin, "telegram-bot-webhook", e, {
-        action: "teacher_broadcast_dm", user_id: r.id, telegram_id: r.telegram_id,
-      });
-    }
-  }
+  // Delivery = Telegram's own verdict (HTTP ok AND the JSON `ok`) via the shared sendTelegram() classifier.
+  // The old loop counted every send that didn't THROW as "sent" — but a blocked bot / a student who never
+  // pressed Start / a deactivated account comes back as an ordinary 403/400 with {ok:false}, which never
+  // throws, so the teacher was told those students got the message. Same bug the Mini App broadcast had
+  // (teacher-broadcast-group, fixed in #93). Counting rule lives in broadcast-fanout.ts (CI-tested).
+  //
+  // record:false — NO health row per recipient-class miss (never pressed Start / blocked / deactivated):
+  // that is expected for part of any group, and one row per student would turn routine member reach into
+  // anomaly noise (member-forgiveness: member behaviour must never inflate a health flag). Instead ONE
+  // summary admin_actions row per broadcast (below). A NON-recipient failure (transport / flood control /
+  // unparseable content) is a real fault, so it IS written as `telegram_send_failed` with
+  // recipient_error:false — the exact shape sendTelegram records — which the existing "Telegram itself is
+  // failing" detectors already count (grade_delivery_watchdog[_fast], hw_dm_health_stats; baseline ~0).
+  const tally = await fanOutBroadcast(
+    recipients,
+    (r: any) => sendTelegram(BOT_TOKEN, "sendMessage", {
+      chat_id: Number(r.telegram_id), text: body, parse_mode: "HTML", disable_web_page_preview: true,
+    }, { record: false }),
+    // Ledger row only for a DM Telegram actually accepted (same as the Mini App path).
+    (r: any) => admin.from("bot_broadcast_rate").insert({ actor_user_id: profileId, recipient_user_id: r.id, scope: "recipient" }),
+    (r: any, out) => logHealth(admin, "telegram_send_failed", {
+      method: "sendMessage", purpose: "teacher_broadcast_bot", recipient: Number(r.telegram_id),
+      error: out.error, terminal: out.terminal, recipient_error: out.recipient, content_error: out.content,
+    }, { source: "telegram-bot-webhook", actorUserId: profileId }),
+  );
   await admin.from("bot_broadcast_rate").insert({ actor_user_id: profileId, scope: "teacher" });
   await admin.from("bot_sessions").delete().eq("user_id", profileId);
-  await sendWithKeyboard(msg.chat.id, t.teacherBroadcastSent(sent), locale, false, "teacher");
+
+  // One DB-visible summary row per broadcast (mirrors the Mini App's `teacher_broadcast_miniapp` row).
+  // logHealth is best-effort and never throws, so the teacher still gets their result message below.
+  await logHealth(admin, "teacher_broadcast_bot", {
+    group_id: sessGroupId || null, ...tally,
+    skipped_no_telegram: (profs || []).length - recipients.length,
+  }, {
+    actorUserId: profileId, source: "telegram-bot-webhook",
+    targetResourceType: "group", targetResourceId: sessGroupId || null,
+  });
+
+  await sendWithKeyboard(
+    msg.chat.id, t.teacherBroadcastSent(groupName || "—", tally.sent, tally.failed, tally.total),
+    locale, false, "teacher",
+  );
   return true;
 }
 
