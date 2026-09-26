@@ -29,10 +29,13 @@
 // ERROR is what default privileges cannot protect against: an EXPLICIT grant to anon, a blanket
 // grant, and the PUBLIC-omitting revoke above.
 //
-// GRANDFATHERING. ~200 migrations predate this script and many would fail it. Rather than a baseline
-// file that has to be maintained, enforcement is keyed on the migration's own timestamp: files named
-// before CUTOFF are scanned and counted so the debt stays visible, but never fail the build.
-// Migrations are append-only and timestamp-named here, so this needs no upkeep.
+// GRANDFATHERING. 275 migrations predate this script and many would fail it. Enforcement is keyed on
+// the migration's own timestamp: files named before CUTOFF are scanned and counted so the debt stays
+// visible, but never fail the build. That alone had a hole: a NEW migration simply NAMED with an old
+// timestamp would be treated as debt by every rule here, while the deploy pipeline — which applies any
+// added file that is not yet in its ledger, whatever its name — would still run it. So a pre-cutoff
+// name is grandfathered only if it is one of the 275 files in scripts/migrations-grandfathered.txt,
+// a list frozen by its sha256 below. It needs no upkeep: nothing is ever added to it.
 //
 // A SECOND CLASS LIVES HERE TOO: HARDCODED FOREIGN INFRASTRUCTURE (E6, E7). On 2026-07-05 production
 // was built by replaying the original project's migrations, and the replay carried forward a
@@ -55,6 +58,7 @@
 // to land a real gate.
 
 import { readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -72,6 +76,13 @@ const strict = process.argv.includes("--strict");
 // Bump only to grandfather a deliberate exception you have argued for in the migration header —
 // never to silence a finding.
 const CUTOFF = "20260926120000";
+
+// The ONLY files allowed to be named before CUTOFF: every migration that existed when the rules were
+// introduced. Frozen — the sha256 of the list (line endings normalised to LF) is pinned here, so adding
+// a name to the list to smuggle in a backdated migration fails the build too. GRANDFATHERED_LIST exists,
+// like MIGRATIONS_DIR, so the check can be pointed at a fixture and seen to fail.
+const GRANDFATHERED_LIST = process.env.GRANDFATHERED_LIST || join(root, "scripts", "migrations-grandfathered.txt");
+const GRANDFATHERED_SHA256 = "406640e6679c67f4fc8f3b0110c66781e6495d9741958298b8b53ddfcf9a6a48";
 
 // Functions deliberately reachable by `anon`. An entry MUST carry a reason: the point is that the
 // next person reads why, not that the check goes quiet.
@@ -478,9 +489,28 @@ const errors = [];
 const warnings = [];
 const debt = [];
 
+// E10 (ERROR): the grandfathered list must be exactly the frozen one.
+const grandfatheredText = readFileSync(GRANDFATHERED_LIST, "utf8").replace(/\r\n/g, "\n");
+if (createHash("sha256").update(grandfatheredText).digest("hex") !== GRANDFATHERED_SHA256) {
+  errors.push(
+    `scripts/migrations-grandfathered.txt — the list of pre-cutoff migrations is FROZEN and has changed. ` +
+    `Adding a name to it would exempt a backdated migration from every rule while the deploy pipeline ` +
+    `still applies it. Name a new migration with the current timestamp instead.`);
+}
+const grandfathered = new Set(grandfatheredText.split("\n").map((s) => s.trim()).filter(Boolean));
+
 function checkFile(file, raw) {
   const code = blankNonCode(raw);
   const enforced = file.slice(0, 14) >= CUTOFF;
+  // E10 (ERROR): a pre-cutoff NAME on a file that is not one of the grandfathered 275 is a backdated
+  // new migration — it would skip every rule here and still be applied on merge.
+  if (!enforced && !grandfathered.has(file)) {
+    errors.push(
+      `${file} — is named before the enforcement cutoff (${CUTOFF}) but is not one of the migrations ` +
+      `that existed when these rules were introduced (scripts/migrations-grandfathered.txt). A backdated ` +
+      `name would exempt it from every rule while the deploy pipeline still applies it. Rename it with ` +
+      `the current timestamp.`);
+  }
   const push = (bucket, line, msg) => {
     const entry = `${file}:${line} — ${msg}`;
     if (!enforced) debt.push(entry);
