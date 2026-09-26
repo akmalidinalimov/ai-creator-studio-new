@@ -23,7 +23,9 @@ The sheet stays **private** — student data is sent over an authenticated HTTPS
 A row is imported once it has all the required fields **and** an empty Status. To re-import a row,
 clear its **Status** cell.
 
-Re-imports are safe: a student already on the platform shows `✔️ Already on platform`, never a duplicate.
+Re-imports never create a duplicate: a student already on the platform shows `✔️ Already on platform`.
+They are not a no-op, though. The row is applied again, so the student is put back into the row's group
+with that group's tier, and the row's phone (if filled) replaces theirs.
 
 ## One-time setup (owner)
 
@@ -36,8 +38,13 @@ Re-imports are safe: a student already on the platform shows `✔️ Already on 
 3. **Add the script.** Extensions → Apps Script → delete the default code → paste all of
    `apps-script.gs` → Save.
 4. **Set the secret.** In Apps Script: Project Settings (⚙️) → Script properties → Add property →
-   name `SHEET_SYNC_SECRET`, value = the **same secret** set in Supabase (`SHEET_SYNC_SECRET`). The
-   secret never goes in a cell or in the code.
+   name `SHEET_SYNC_SECRET`, value = the **same secret** set in Supabase (`SHEET_SYNC_SECRET`, under
+   Edge Functions → Secrets in the production project `cdyidatkegxwhtuoqxly`). The secret never goes
+   in a cell or in the code.
+
+   *Where rows go:* the script sends to production's `sheet-sync` by default. Only to aim it somewhere
+   else (e.g. a staging project) add a second Script property `SHEET_SYNC_ENDPOINT` = the full
+   `https://<project>.supabase.co/functions/v1/sheet-sync` URL. Normally leave it unset.
 5. **Start the automation.** In the Apps Script editor, select the function **`installTrigger`** and
    click ▶ Run once; approve the permission prompt. This creates the every-15-minutes trigger.
 6. **Share** the sheet with the sales team (Editor access). They only fill columns A–H.
@@ -52,7 +59,24 @@ platform: the student exists in 5.0 with a Premium enrollment and that group.
 - `✔️ Already on platform` — that @username already existed (no duplicate created).
 - `⚠️ missing_field` — a required column is blank.
 - `⚠️ unknown_course` / `⚠️ unknown_tier` — the Course/Tier value doesn't match the platform (check the dropdown).
-- `❌ Error` — see the Notes cell.
+- `❌ Error` — see the Notes cell. `Server HTTP 403` means the `SHEET_SYNC_SECRET` Script property does
+  not match the one in Supabase (or Supabase has none set).
+
+## Sheets set up before 2026-09-27: re-point to production
+Until 2026-09-27 `apps-script.gs` sent rows to the **old** pre-migration project, not production. A sheet
+running that older copy shows `✅ Imported` for students who never reached the platform. To fix one:
+1. Paste the current `apps-script.gs` over the old code (Extensions → Apps Script) → Save.
+2. Make sure `SHEET_SYNC_SECRET` in Script properties equals production's `SHEET_SYNC_SECRET`.
+3. Filter the sheet for rows whose **Imported at** is after **2026-07-05 14:04 UTC** (19:04 Tashkent) and
+   whose Status is `✅ Imported` or `✔️ Already on platform`. Those students went to the old project.
+4. For each of those rows, look the @username up on the platform (Admin → Users search). Clear the
+   **Status** cell **only for students who are NOT on the platform**. The next run creates them in
+   production.
+
+   Do not clear the Status of a student who is already on the platform. Re-sending never creates a
+   duplicate, but it does re-apply the row: the student is **moved back into the sheet's group**, their
+   tier is reset to that group's tier, and their phone is overwritten if the row has one. If they were
+   moved or upgraded on the platform since, that change would be undone.
 
 ## Platform side (already deployed)
 - `sheet-sync` edge function receives the rows (secret-gated) and creates each student via the existing

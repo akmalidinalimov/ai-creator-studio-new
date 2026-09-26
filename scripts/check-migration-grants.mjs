@@ -57,6 +57,8 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+// Shared with scripts/check-foreign-refs.mjs, which applies the same deny-list to the rest of the repo.
+import { PRODUCTION_REF, KNOWN_FOREIGN_REFS } from "./supabase-refs.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 // MIGRATIONS_DIR exists so this script can be pointed at fixtures and proved to actually CATCH the
@@ -234,14 +236,12 @@ function blankCommentsOnly(sql) {
   return out.join("");
 }
 
-// Production's Supabase project ref. Any OTHER ref in a migration is foreign infrastructure.
-const PRODUCTION_REF = "cdyidatkegxwhtuoqxly";
-
-// Refs KNOWN to be foreign. These are denied anywhere in non-comment text, not only inside a URL, so
-// that concatenation ('https://' || ref || '.supabase.co'), format('https://%s.supabase.co', ref) and a
+// PRODUCTION_REF and KNOWN_FOREIGN_REFS are imported from ./supabase-refs.mjs (see the imports above).
+// Production's ref: any OTHER ref in a migration is foreign infrastructure.
+// Known-foreign refs are denied anywhere in non-comment text, not only inside a URL, so that
+// concatenation ('https://' || ref || '.supabase.co'), format('https://%s.supabase.co', ref) and a
 // bare ref variable are all caught for the one ref we know is dangerous. wpdztrijasgmxgliwddr is the
 // ORIGINAL Lovable-hosted project: still alive, not controlled by this codebase (see 20260926161000).
-const KNOWN_FOREIGN_REFS = ["wpdztrijasgmxgliwddr"];
 
 // ─────────────────────────── ops_net_post (E8, E9) ───────────────────────────
 // The exact parameter list every caller of public.ops_net_post depends on, verified against the live
