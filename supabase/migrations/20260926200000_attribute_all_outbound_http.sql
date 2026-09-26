@@ -1,17 +1,25 @@
 -- OBSERVABILITY: every outbound HTTP call from SQL now goes through public.ops_net_post(), so a
 -- failure names its caller instead of arriving as "unattributed".
 --
--- SUPERSEDES 20260926170000 and 20260926180000 (same intent; neither was merged or applied). Two rounds
--- of adversarial review reproduced FALSE PASSES in their proofs — none on today's live data, but each
--- a case where the proof passed while the property it claimed was false:
---   * 170000 cut each call at the first ';', which a '&amp;' inside a body literal defeats, and counted
---     argument names per body rather than per call.
---   * 180000 found each call's real closing ')' but then counted url/body/headers ANYWHERE inside it —
---     so a `headers :=` in a comment, a string or a nested call satisfied the "every call passes
---     headers" proof for a call that had none. It also read E'x'<newline>'y\'' (a string Postgres glues
---     across the line break, keeping E mode) as two plain strings, and ended a -- comment only at LF.
--- This version counts only real code at the call's own level, refuses what it does not model, and
--- asks Postgres's own parser to confirm every argument list it found.
+-- SUPERSEDES 20260926170000, 20260926180000 and 20260926190000 (same intent; none was merged or
+-- applied). Three rounds of adversarial review each reproduced a FALSE PASS in the previous version's
+-- proofs on crafted input — never on today's live data, but each a case where a proof passed while the
+-- property it claimed was false: a ';' inside a string; a `headers :=` in a comment, string or nested
+-- call; a string continued across a line break; a bare-CR comment; a non-ASCII dollar-quote tag; a '$'
+-- inside an identifier. The lesson is architectural: re-implementing Postgres's lexer inside a migration
+-- always has one more corner. So this version no longer depends on the lexer being complete:
+--
+-- IT CONVERTS ONLY THE 37 TEXTS VERIFIED ON 2026-09-26, PINNED BY md5. Every function body and cron
+-- command it selects must match one of the checksums below, or the migration aborts. Those 37 texts
+-- were checked four independent times against production — the author's dry-runs and three reviewers'
+-- reruns — and each of their 38 calls was confirmed to have exactly url, body and headers at its own
+-- level, with Postgres's parser accepting every argument list. The scan and proofs below still run on
+-- them (defence in depth, and they now also refuse every construct the reviews found), but no crafted,
+-- changed or newly added text can reach the rewrite.
+-- TRADE-OFF, deliberate: if any of these 37 definitions changes before this merges, or on a database
+-- rebuilt by replaying migrations (as production was on 2026-07-05), the deploy ABORTS with a message
+-- naming the object. The fix is to re-run the read-only dry-run and regenerate this migration — a loud
+-- stop, instead of a text rewrite applied to text nobody verified.
 --
 -- WHY. The twelve-week stale-project incident fixed in 20260926161000 was not silent — it was
 -- UNTRACEABLE. ops_http_failure_watchdog fired 159 times ("403 × N unattributed"), DMing admins each
@@ -26,79 +34,64 @@
 -- from the repo before, so the repo was not trusted for the inventory):
 --   * 26 calls in 25 public functions — every one SECURITY DEFINER owned by postgres, none a trigger,
 --     none callable by anon or authenticated. They are admin-alert watchdogs, digests and the SQL
---     fallback deliverer: badge_dm_watchdog, badge_orphan_watchdog, broadcast_watchdog,
---     client_error_watchdog, community_xp_watchdog, enrollment_watchdog, flush_new_student_alerts,
---     grade_delivery_watchdog, grade_delivery_watchdog_fast, grade_orphan_watchdog,
---     homework_attribution_watchdog, hw_dm_fallback_deliver (2 calls), hw_dm_queue_watchdog,
---     leads_watchdog, lesson_media_guard_enforce, miniapp_entry_watchdog, ops_daily_digest,
---     platform_anomaly_digest, send_resubmit_campaign_once, tier_config_watchdog,
---     username_link_stuck_watchdog, verify_student_stats_integrity, watch_gate_watchdog,
---     web_traffic_watchdog, xp_award_integrity_watchdog. All 26 go to api.telegram.org.
---   * 12 pg_cron jobs, all POSTing to this project's edge functions and all running as postgres:
---     notify-badge-award-every-minute, canary-15min, cron-admin-digest-30min,
---     cron-engagement-every-30-min, import-digest-30min, detect_and_nudge,
---     ungraded-homework-reminder-hourly, reputation-check-12h, student-of-week, teacher-weekly-digest,
---     weekly_digest, weekly-admin-topic-check. INACTIVE jobs are converted too (none hold a raw call
---     today), so re-enabling a paused job can never bring an unattributed call back.
+--     fallback deliverer (hw_dm_fallback_deliver has 2 calls). All 26 go to api.telegram.org.
+--   * 12 pg_cron jobs, all POSTing to this project's edge functions and all running as postgres.
+--     INACTIVE jobs are selected too (none hold a raw call today), so re-enabling a paused job can
+--     never bring an unattributed call back.
+--   The pinned list below names all 37 objects.
 --   NOT converted: `bot-warmth-ping` — it is a net.http_get, and ops_net_post only POSTs. It is a
 --   fire-and-forget keep-alive whose failures carry no information; left as is, deliberately.
 --   Already on ops_net_post before this migration: 8 functions and 6 cron jobs.
 --
--- THE TRANSFORM. Each call is rewritten mechanically, on each LIVE definition inside this migration
--- rather than from 25 hand-copied bodies (~75KB of source is where transcription errors creep in, and
--- the live text is the only authoritative version):
+-- THE TRANSFORM. Each call is rewritten mechanically, on each LIVE definition:
 --     net.http_post(url := U, body := B, headers := H)
 --  →  public.ops_net_post(p_purpose := '<function or job name>', p_url := U, p_body := B, p_headers := H)
 -- ops_net_post calls net.http_post with those arguments, then records the call in ops_http_calls with a
 -- URL that ops_sanitize_url() has scrubbed (/bot<digits>:<token> → /bot<redacted>, so the bot token
 -- cannot be logged). That insert is exception-swallowed, so attribution failing never blocks a send.
 --
--- EVERY CALL IS PROVEN BEFORE IT IS CHANGED. For each function and job the migration raises (rolling
--- everything back) unless ALL of these hold:
+-- CHECKS. For each object the migration raises (rolling everything back) unless ALL of these hold:
+--   0. PINNED: it is one of the 37 verified texts (md5 of the function body / cron command).
 --   1. AT THE CALL'S OWN LEVEL. A scan walks each call's argument list tracking bracket depth and what
 --      is code versus a '...' string (E'...' backslash escapes included), a "quoted identifier", a
---      $tag$ string, or a comment (-- to the end of the line at LF or CR; nested /* */). Counting ONLY
---      code at the call's own depth, the call must have exactly three arguments — url, body and
---      headers, each by name. A `headers :=` in a comment, a string or a nested call does not count.
---      That is what guarantees EVERY call passes headers, and it matters: net.http_post DEFAULTS
---      headers to {"Content-Type":"application/json"} but ops_net_post defaults p_headers to {}, so a
---      call relying on the default would silently lose Content-Type and Telegram would stop parsing the
---      JSON body of every converted alert. What the scan does not model, it refuses: a string continued
---      across a line break, and a ';' (a statement boundary can never be inside an argument list).
---   2. POSTGRES AGREES. Each argument list the scan found is compiled by Postgres inside a DO block
---      whose body RETURNs before reaching it: every SQL expression is syntax-checked, and nothing runs
---      (verified: a 1/0 and a smuggled second statement placed after the RETURN never execute). If the
---      scan and Postgres's lexer ever disagree about where a call ends, this rejects it.
---   3. IN TOTAL. url/body/headers name matches across the whole text = 3 × calls. With (1) finding
---      exactly 3 top-level ones per call, that proves every occurrence the rename touches IS one of
---      those top-level arguments — never `r.url :=`, a string, a comment or another function's argument.
+--      $tag$ string, or a comment (-- to LF or CR; nested /* */). Counting ONLY code at the call's own
+--      depth, the call must have exactly three arguments — url, body and headers, each by name. That is
+--      what guarantees every call passes headers: net.http_post DEFAULTS headers to
+--      {"Content-Type":"application/json"} but ops_net_post defaults p_headers to {}, so a call relying
+--      on the default would silently lose Content-Type and Telegram would stop parsing the JSON body of
+--      every converted alert. The scan REFUSES what it does not model: a string continued across a line
+--      break, a ';' inside a call, any non-ASCII character in code, and a '$' that is neither part of an
+--      identifier, an ASCII dollar-quote tag nor a $1 parameter.
+--   2. POSTGRES PARSES IT THE SAME WAY. Each argument list the scan found is compiled by Postgres as
+--      `perform (net.http_post(<list>))` inside a DO block whose body RETURNs first — syntax-checked by
+--      the real lexer, nothing run (verified: a 1/0 and a smuggled second statement after the RETURN
+--      never execute). The extra parentheses make a list that Postgres would end somewhere else fail to
+--      parse. This proves the list is valid as ONE call's arguments; check 0 is what rules out the
+--      remaining exotic disagreements.
+--   3. IN TOTAL. url/body/headers name matches across the whole text = 3 × calls, so every occurrence
+--      the rename touches IS one of those top-level arguments.
 --   4. No call uses `params` or `timeout_milliseconds`, which ops_net_post has no equivalent for.
 --   5. Reversing the rewrite reproduces the original BYTE FOR BYTE (md5) before anything is executed.
 --   6. WHOEVER RUNS IT CAN RUN IT. A function must be SECURITY DEFINER (an invoker function would call
 --      ops_net_post with its CALLER's rights, and anon/authenticated have none) and its owner must have
 --      EXECUTE on ops_net_post. A cron job must run in this database, as a role with that EXECUTE.
---   7. Functions: after CREATE OR REPLACE, the stored pg_get_functiondef() must EQUAL the text executed
---      — covering SECURITY DEFINER, search_path, volatility and every other attribute, not only the body
---      — owner and ACL are unchanged, and there are 0 raw calls and exactly as many ops_net_post calls.
+--   7. Functions: after CREATE OR REPLACE (bodies validated: check_function_bodies is forced on), the
+--      stored pg_get_functiondef() must EQUAL the text executed — covering SECURITY DEFINER, search_path
+--      and every other attribute — owner and ACL are unchanged, and there are 0 raw calls and exactly as
+--      many ops_net_post calls.
 --   8. Cron jobs: each rewritten command is EXPLAINed before cron.alter_job stores it (resolves every
 --      function and checks EXECUTE; runs nothing — ops_net_post is VOLATILE and the secret readers are
---      STABLE, so the planner folds none of them). cron.alter_job does not validate a command, so
---      without this a mistake would surface as a failed run, up to a week later for the weekly jobs.
---      Only a single statement is EXPLAINed (a ';' aborts). Schedule, active, database, username and
---      node must be unchanged afterwards.
+--      STABLE). Only a single statement is EXPLAINed (a ';' aborts). Schedule, active, database,
+--      username and node must be unchanged afterwards.
 -- Plus, once, an EXPLAIN of the exact call shape used inside functions (PL/pgSQL resolves calls only at
 -- run time, so a wrong signature would otherwise fail the first real alert with 42883). The final
--- invariant is BROADER than the selection — case- and whitespace-insensitive, quoted identifiers
--- included — so a raw call in a form this migration does not rewrite aborts it instead of surviving.
+-- invariant is BROADER than the selection: any case, spaces AND comments between the tokens, quoted
+-- identifiers — so a raw call in a form this migration does not rewrite aborts it. Live, it matches
+-- exactly the 25 functions and 12 jobs, and not the one other function that merely MENTIONS
+-- net.http_post in a comment (anon_execute_watchdog).
 --
--- DRY-RUN, read-only against production on 2026-09-26 (every step above except the writes): 25
--- functions, 12 jobs, 38 calls, 0 failures; every call has exactly url/body/headers at top level and
--- Postgres's parser accepts every argument list. The scan was also run against 27 crafted inputs — the
--- 15 that must abort did (including all 8 attacks the reviews reproduced: headers in a line comment, a
--- string, a nested call or a block comment; the E-string continuation; the bare-CR comment; a
--- positional url behind a nested `url :=`; an extra positional argument) and the 12 legitimate shapes
--- that must pass did. The parser check was shown to fire on its own (a span the counts accept but
--- Postgres rejects → 42601).
+-- DRY-RUN, read-only against production on 2026-09-26 (every step above except the writes): 37 objects
+-- pinned and matched, 25 functions, 12 jobs, 38 calls, 0 failures.
 --
 -- WHAT CHANGES IN ALERTING, precisely.
 --   * REAL failures (4xx/5xx/transport errors) are grouped by ops_http_failure_watchdog under the
@@ -113,14 +106,16 @@
 --
 -- KNOWN COSTS, accepted.
 --   * Concentration: ~52 call sites, including every watchdog's own alert channel, now resolve
---     public.ops_net_post at run time — some by name (anon_execute_watchdog passes p_timeout_ms :=), six
---     cron jobs POSITIONALLY with a fifth argument. pg_depend records no dependency from a PL/pgSQL body
---     or a cron command, so a DROP, RENAME or reshaped recreate would succeed and break them at their
---     next send. scripts/check-migration-grants.mjs now fails a migration that drops, renames, re-owns
---     or narrows ops_net_post, or creates any version of it whose parameters are not exactly
---     (p_url text, p_body jsonb, p_headers jsonb, p_purpose text, p_timeout_ms integer) in that order
---     (E9); and it fails a new raw net.http_post (E8, promoted from a warning) — the repo still holds
---     the pre-conversion bodies of these 25 functions, and copying one forward would revert it.
+--     public.ops_net_post at run time — by name, by position (six cron jobs pass all five arguments),
+--     by type, and by arity (the converted calls pass four and rely on p_timeout_ms's default).
+--     pg_depend records no dependency from a PL/pgSQL body or a cron command, so a DROP, RENAME or
+--     reshaped recreate would succeed and break them at their next send. scripts/check-migration-grants.mjs
+--     now fails a migration that drops, renames, re-owns or narrows ops_net_post, that creates any
+--     version of it other than a FUNCTION with exactly (p_url text, p_body jsonb DEFAULT, p_headers
+--     jsonb DEFAULT, p_purpose text DEFAULT, p_timeout_ms integer DEFAULT), or that recreates it without
+--     revoking EXECUTE from authenticated again (E9); and it fails a new raw net.http_post (E8) — the
+--     repo still holds the pre-conversion bodies of these 25 functions, and copying one forward would
+--     revert it.
 --   * hw_dm_fallback_deliver runs each of up to 50 rows in its own exception block; the ops_http_calls
 --     insert adds a nested one, so a full run holds up to ~100 subtransaction XIDs, past the 64-entry
 --     per-backend cache. Only on the fallback path (the edge stack is down), bounded by its LIMIT 50.
@@ -131,14 +126,56 @@
 --   * Security: ops_net_post stays revoked from anon/authenticated (20260925201000 — it is an SSRF
 --     primitive); every converted caller runs it as postgres, which never needed that grant.
 --
--- IDEMPOTENT + REPLAY-SAFE: the loop selects only definitions that still contain a raw net.http_post,
--- so a replay finds nothing to do. The audit row is guarded by NOT EXISTS.
+-- IDEMPOTENT + REPLAY-SAFE on this database: the loop selects only definitions that still contain a raw
+-- net.http_post, so a second run finds nothing to do. The audit row is guarded by NOT EXISTS.
 
 do $attr$
 declare
   r record;
   _call_re  constant text := '\mnet\.http_post\s*\(';
   _named_re constant text := '\m(url|body|headers)\s*(:=|=>)';
+  -- Tokens may be separated by whitespace or comments, in any case, with quoted identifiers.
+  _raw_re   constant text := '(^|[^[:alnum:]_$])"?net"?(\s|--[^\r\n]*|/\*([^*]|\*+[^*/])*\*+/)*\.(\s|--[^\r\n]*|/\*([^*]|\*+[^*/])*\*+/)*"?http_post"?(\s|--[^\r\n]*|/\*([^*]|\*+[^*/])*\*+/)*\(';
+  -- kind|name|md5(function body or cron command), as verified read-only on production 2026-09-26.
+  _pins constant text[] := array[
+    'cron job|canary-15min|d14f8b96a549d46d67ccf1b4b1be7b79',
+    'cron job|cron-admin-digest-30min|b9b665113ded8ec89b579bb5ea03696a',
+    'cron job|cron-engagement-every-30-min|e76556fc7f750b76da4036e0c52ca091',
+    'cron job|detect_and_nudge|d942ef090c97ea4241e003e95b620a1a',
+    'cron job|import-digest-30min|84407f1db33f376200d83ef36288bb03',
+    'cron job|notify-badge-award-every-minute|8cd1338ede27c32c8ca171bc1abca04a',
+    'cron job|reputation-check-12h|da42d7ed203c706defa9efad8ca3cb5a',
+    'cron job|student-of-week|8eb42b542482b8e1fe0b0428cb9299ad',
+    'cron job|teacher-weekly-digest|8fe997e21061b9119625b2362b70f0e5',
+    'cron job|ungraded-homework-reminder-hourly|4fdd5aba2c0141687493d5bc9cbf913d',
+    'cron job|weekly-admin-topic-check|5e3f5cce9dd2172b512c397d85533d61',
+    'cron job|weekly_digest|9909423d56d141c0ef84c6bd0467df42',
+    'function|badge_dm_watchdog|86b3b91957e3b5632133395404b613fe',
+    'function|badge_orphan_watchdog|1d9d6d8226af187a415a67843c19658a',
+    'function|broadcast_watchdog|be425068b84ea1737a48e137d689c59d',
+    'function|client_error_watchdog|8e548b4d8098686d8e6b126542019139',
+    'function|community_xp_watchdog|c098292ba92a6e077127a122847d1ea0',
+    'function|enrollment_watchdog|d50fcbff21b02217413c73fc46946dcb',
+    'function|flush_new_student_alerts|aa5b38e2124b32e91c4cc759c0d99c04',
+    'function|grade_delivery_watchdog|b892ace3b4a3fe0dcf9a151c1a4ae819',
+    'function|grade_delivery_watchdog_fast|e5dbaf10bb674841d990bd0e50f4891f',
+    'function|grade_orphan_watchdog|2a2b5d879b2db8ca464631ebf138651e',
+    'function|homework_attribution_watchdog|6f2feecf2cfd0a0e68e6568e87521064',
+    'function|hw_dm_fallback_deliver|ec1d807630516dcb4860ee399eac4b9a',
+    'function|hw_dm_queue_watchdog|41e5929337a1bdb4b80580985630b4c5',
+    'function|leads_watchdog|bdcda2f3cfe85f78c3293db783990da6',
+    'function|lesson_media_guard_enforce|581c265b01620b29fcfc76e0c97dd085',
+    'function|miniapp_entry_watchdog|e100d9647b249e977cb4850fd49b2254',
+    'function|ops_daily_digest|f9d7b5c2038979a95be10f7b52985b9e',
+    'function|platform_anomaly_digest|f2eae338819e21ac604a545a023aee08',
+    'function|send_resubmit_campaign_once|0b8d2ece2545e96a926fccd6c0ebd67d',
+    'function|tier_config_watchdog|6b2a47755dd1ce74799e460736f86846',
+    'function|username_link_stuck_watchdog|5d1d5a2055325139769d0388129049b7',
+    'function|verify_student_stats_integrity|f7145fd2985035bf1754ed622d011420',
+    'function|watch_gate_watchdog|bcfaa4737b3f39a7392baff30878f6cb',
+    'function|web_traffic_watchdog|e7a4b0b81a5dd3781176909ec187fb92',
+    'function|xp_award_integrity_watchdog|7b0fe3721551a8e1bc58e04654fdea4b'
+  ];
   _onp regprocedure;             -- public.ops_net_post, by exact signature
   _purpose text;                 -- 'p_purpose := ''<name>'', ' — inserted before each call's arguments
   _old text; _new text;          -- the text the proofs run on: prosrc (function) or command (cron job)
@@ -158,6 +195,8 @@ begin
   if current_setting('standard_conforming_strings') <> 'on' then
     raise exception 'ABORT: standard_conforming_strings is off — the call scanner would misread string literals';
   end if;
+  -- Check 2 and the CREATE OR REPLACE below both rely on plpgsql validating bodies at creation.
+  perform set_config('check_function_bodies', 'on', true);
 
   _onp := to_regprocedure('public.ops_net_post(text,jsonb,jsonb,text,integer)');
   if _onp is null then
@@ -190,6 +229,12 @@ begin
     if r.name is null then
       raise exception 'ABORT: a % (id %) makes a raw net.http_post but has no name to attribute it to', r.kind, r.id;
     end if;
+
+    -- ── Check 0: only the texts verified on 2026-09-26 may be rewritten. ──
+    if not ((r.kind || '|' || r.name || '|' || md5(r.src)) = any (_pins)) then
+      raise exception 'ABORT: % % is not one of the 37 definitions verified on 2026-09-26 (it changed or is new; md5 %). Re-run the read-only dry-run and regenerate this migration.', r.kind, r.name, md5(r.src);
+    end if;
+
     _old := r.src;
     _purpose := 'p_purpose := ' || quote_literal(r.name) || ', ';
 
@@ -222,8 +267,10 @@ begin
         if _c = '''' then
           -- In an E'...' string a backslash escapes the next character (E'\n', E'\''); 14 of these
           -- functions build their Telegram text that way. In a plain '...' string it does not
-          -- (standard_conforming_strings, checked above), and '' is the escaped quote in both.
-          _estr := _i > 1 and lower(_chars[_i - 1]) = 'e' and (_i = 2 or _chars[_i - 2] !~ '[[:alnum:]_]');
+          -- (standard_conforming_strings, checked above), and '' is the escaped quote in both. The E
+          -- must start a token: Postgres counts letters, digits, _, $ and non-ASCII as identifier chars.
+          _estr := _i > 1 and lower(_chars[_i - 1]) = 'e'
+                   and (_i = 2 or (_chars[_i - 2] !~ '[[:alnum:]_$]' and ascii(_chars[_i - 2]) < 128));
           _i := _i + 1;
           loop
             if _i > _len then
@@ -277,14 +324,26 @@ begin
             end if;
           end loop;
           _i := _i - 1;                               -- the common step below lands just past '*/'
-        elsif _c = '$' and (_i = 1 or _chars[_i - 1] !~ '[[:alnum:]_]') then
-          _tag := substring(substr(_old, _i) from '^(\$([A-Za-z_][A-Za-z_0-9]*)?\$)');
-          if _tag is not null then                    -- a dollar quote; $1 and friends are not
-            _end := strpos(substr(_old, _i + length(_tag)), _tag);
-            if _end = 0 then
-              raise exception 'ABORT: % % — call % has an unterminated dollar quote', r.kind, r.name, _k;
+        elsif ascii(_c) > 127 then
+          -- Postgres treats non-ASCII in code as identifier characters (and in dollar-quote tags); the
+          -- scan does not model that, so it refuses it. Strings and comments were consumed above.
+          raise exception 'ABORT: % % — call % has a non-ASCII character outside strings and comments; convert it by hand', r.kind, r.name, _k;
+        elsif _c = '$' then
+          if _i > 1 and _chars[_i - 1] ~ '[[:alnum:]_$]' then
+            null;                                     -- part of an identifier (x$y is legal)
+          else
+            _tag := substring(substr(_old, _i) from '^(\$([A-Za-z_][A-Za-z_0-9]*)?\$)');
+            if _tag is not null then                  -- a dollar-quoted string
+              _end := strpos(substr(_old, _i + length(_tag)), _tag);
+              if _end = 0 then
+                raise exception 'ABORT: % % — call % has an unterminated dollar quote', r.kind, r.name, _k;
+              end if;
+              _i := _i + length(_tag) + _end - 1 + length(_tag) - 1;   -- last character of the closing tag
+            elsif _i < _len and _chars[_i + 1] ~ '[0-9]' then
+              null;                                   -- a $1 parameter
+            else
+              raise exception 'ABORT: % % — call % has a $ this scan does not model; convert it by hand', r.kind, r.name, _k;
             end if;
-            _i := _i + length(_tag) + _end - 1 + length(_tag) - 1;   -- last character of the closing tag
           end if;
         elsif _c = '(' then
           _depth := _depth + 1;
@@ -312,13 +371,14 @@ begin
       if _span ~ _call_re then
         raise exception 'ABORT: % % — call % contains another net.http_post call', r.kind, r.name, _k;
       end if;
-      -- Postgres's own parser must accept the argument list the scan found. The DO body RETURNs before
-      -- the call, so it is compiled (syntax-checked) in full and nothing in it ever runs.
+      -- Postgres's own parser must accept the list as ONE call's arguments. The DO body RETURNs before
+      -- the call, so it is compiled (syntax-checked) in full and nothing in it ever runs; the extra
+      -- parentheses make a list Postgres would end elsewhere fail to parse.
       if strpos(_span, '$span_check$') > 0 then
         raise exception 'ABORT: % % — call % contains the parser-check delimiter', r.kind, r.name, _k;
       end if;
       begin
-        execute 'do $span_check$ begin return; perform net.http_post(' || _span || '); end $span_check$';  -- lint:allow E8: compiled only to syntax-check the span; RETURN comes first, so it never runs
+        execute 'do $span_check$ begin return; perform (net.http_post(' || _span || ')); end $span_check$';  -- lint:allow E8: compiled only to syntax-check the span; RETURN comes first, so it never runs
       exception when others then
         raise exception 'ABORT: % % — Postgres''s parser rejects the argument list the scan found for call % (% %)', r.kind, r.name, _k, sqlstate, sqlerrm;
       end;
@@ -415,17 +475,14 @@ begin
   end loop;
 
   -- ── The invariant this migration establishes, checked directly and BROADER than the selection
-  --    (case- and whitespace-insensitive, quoted identifiers), so an unconverted form aborts. ──
+  --    (any case; spaces or comments between tokens; quoted identifiers), so an unconverted form aborts. ──
   select count(*) into _left
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-  where n.nspname = 'public' and p.proname <> 'ops_net_post'
-    and p.prosrc ~* '(^|[^[:alnum:]_$])"?net"?\s*\.\s*"?http_post"?\s*\(';
+  where n.nspname = 'public' and p.proname <> 'ops_net_post' and p.prosrc ~* _raw_re;
   if _left <> 0 then
     raise exception 'ABORT: % public function(s) still make a raw net.http_post call, possibly in a form this migration does not rewrite', _left;
   end if;
-  select count(*) into _left
-  from cron.job
-  where command ~* '(^|[^[:alnum:]_$])"?net"?\s*\.\s*"?http_post"?\s*\(';
+  select count(*) into _left from cron.job where command ~* _raw_re;
   if _left <> 0 then
     raise exception 'ABORT: % cron job(s) still make a raw net.http_post call', _left;
   end if;

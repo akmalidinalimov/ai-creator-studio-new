@@ -93,10 +93,10 @@ function blankNonCode(sql) {
   };
 
   while (i < n) {
-    // line comment
+    // line comment — Postgres ends it at LF or CR
     if (sql[i] === "-" && sql[i + 1] === "-") {
       let j = i;
-      while (j < n && sql[j] !== "\n") j++;
+      while (j < n && sql[j] !== "\n" && sql[j] !== "\r") j++;
       blank(i, j);
       i = j;
       continue;
@@ -175,7 +175,7 @@ function blankCommentsOnly(sql) {
       const c = sql[i];
       if (c === "'") {
         // E'...' uses backslash escapes; plain '...' uses doubled quotes.
-        const isE = i > start && /[eE]/.test(sql[i - 1]) && !/[A-Za-z0-9_]/.test(sql[i - 2] || "");
+        const isE = i > start && isEString(sql, i);
         let j = i + 1;
         while (j < end) {
           if (isE && sql[j] === "\\") { j += 2; continue; }
@@ -209,7 +209,7 @@ function blankCommentsOnly(sql) {
       }
       if (c === "-" && sql[i + 1] === "-" && atBoundary(i, start)) {
         let j = i;
-        while (j < end && sql[j] !== "\n") j++;
+        while (j < end && sql[j] !== "\n" && sql[j] !== "\r") j++;             // Postgres: LF or CR
         blank(i, j);
         i = j;
         continue;
@@ -244,21 +244,33 @@ const PRODUCTION_REF = "cdyidatkegxwhtuoqxly";
 const KNOWN_FOREIGN_REFS = ["wpdztrijasgmxgliwddr"];
 
 // ─────────────────────────── ops_net_post (E8, E9) ───────────────────────────
-// The exact parameter list every caller of public.ops_net_post depends on — by NAME
-// (anon_execute_watchdog passes p_timeout_ms :=), by POSITION (six cron jobs pass all five in order)
-// and by TYPE. Verified against the live catalog on 2026-09-26. Change it only together with a
-// deliberate, caller-checked signature change.
+// The exact parameter list every caller of public.ops_net_post depends on, verified against the live
+// catalog on 2026-09-26. Callers depend on it FOUR ways: by NAME (anon_execute_watchdog passes
+// p_timeout_ms :=), by POSITION (six cron jobs pass all five in order), by TYPE, and by ARITY — the 38
+// calls converted by 20260926200000 pass four arguments and rely on p_timeout_ms's DEFAULT, and other
+// callers omit the later ones too. So every parameter after p_url must keep a default. Change this
+// only together with a deliberate, caller-checked signature change.
 const OPS_NET_POST_SHAPE = [
-  ["p_url", "text"],
-  ["p_body", "jsonb"],
-  ["p_headers", "jsonb"],
-  ["p_purpose", "text"],
-  ["p_timeout_ms", "integer"],
+  { name: "p_url", type: "text", needsDefault: false },
+  { name: "p_body", type: "jsonb", needsDefault: true },
+  { name: "p_headers", type: "jsonb", needsDefault: true },
+  { name: "p_purpose", type: "text", needsDefault: true },
+  { name: "p_timeout_ms", type: "integer", needsDefault: true },
 ];
+const OPS_NET_POST_SIGNATURE =
+  "p_url text, p_body jsonb DEFAULT '{}'::jsonb, p_headers jsonb DEFAULT '{}'::jsonb, " +
+  "p_purpose text DEFAULT NULL, p_timeout_ms integer DEFAULT 5000";
+// m[1] is "function" or "procedure" — a PROCEDURE named ops_net_post is never a valid replacement.
 const OPS_NET_POST_CREATE_RE =
-  /\bcreate\s+(?:or\s+replace\s+)?(?:function|procedure)\s+(?:"?public"?\s*\.\s*)?"?ops_net_post"?\s*\(/gi;
-// Names ops_net_post as an object (bare, schema-qualified, quoted, or inside a list) — not ops_net_post_x.
-const NAMES_OPS_NET_POST = /(?:^|[\s,.(])"?ops_net_post"?(?![A-Za-z0-9_$])/i;
+  /\bcreate\s+(?:or\s+replace\s+)?(function|procedure)\s+(?:"?public"?\s*\.\s*)?"?ops_net_post"?\s*\(/gi;
+// Names ops_net_post as an object — bare, schema-qualified, "quoted", inside a list, or as a string
+// literal (format('drop function %I(...)', 'ops_net_post')) — but not ops_net_post_x.
+const NAMES_OPS_NET_POST = /(?:^|[\s,.('])"?ops_net_post["']?(?![A-Za-z0-9_$])/i;
+// Identifier characters for Postgres's lexer: ASCII letters, digits, _, $ and every non-ASCII char.
+const IDENT_CHAR = /[A-Za-z0-9_$\u0080-￿]/;
+
+// Is the quote at text[i] the start of an E'...' string (backslash escapes)?
+const isEString = (text, i) => /[eE]/.test(text[i - 1] || "") && !IDENT_CHAR.test(text[i - 2] || "");
 
 // Index of the ')' matching the '(' at `open`, skipping '...' strings (E'...' backslash escapes
 // included) and "quoted identifiers"; -1 if it never closes.
@@ -267,7 +279,7 @@ function balancedClose(text, open) {
   for (let i = open; i < text.length; i++) {
     const c = text[i];
     if (c === "'") {
-      const isE = /[eE]/.test(text[i - 1] || "") && !/[A-Za-z0-9_]/.test(text[i - 2] || "");
+      const isE = isEString(text, i);
       i++;
       while (i < text.length) {
         if (isE && text[i] === "\\") { i += 2; continue; }
@@ -288,44 +300,76 @@ function balancedClose(text, open) {
   return -1;
 }
 
-// Does a parameter list (the text between the parentheses) have exactly OPS_NET_POST_SHAPE?
-function shapeMatches(list) {
+// Splits a parameter list at top-level commas, keeping strings (E'...' included), "identifiers" and
+// nested parentheses intact.
+function splitParams(list) {
   const params = [];
-  let depth = 0, cur = "", quote = null;
+  let depth = 0, cur = "";
   for (let i = 0; i < list.length; i++) {
     const c = list[i];
-    if (quote) {
-      cur += c;
-      if (c === quote && list[i + 1] === quote) { cur += list[++i]; continue; }
-      if (c === quote) quote = null;
+    if (c === "'" || c === '"') {
+      const isE = c === "'" && isEString(list, i);
+      let j = i + 1;
+      while (j < list.length) {
+        if (isE && list[j] === "\\") { j += 2; continue; }
+        if (list[j] === c && list[j + 1] === c) { j += 2; continue; }
+        if (list[j] === c) break;
+        j++;
+      }
+      cur += list.slice(i, j + 1);
+      i = j;
       continue;
     }
-    if (c === "'" || c === '"') { quote = c; cur += c; continue; }
     if (c === "(") depth++;
     if (c === ")") depth--;
     if (c === "," && depth === 0) { params.push(cur); cur = ""; continue; }
     cur += c;
   }
   if (cur.trim()) params.push(cur);
+  return params;
+}
+
+// Does a parameter list (the text between the parentheses) have exactly OPS_NET_POST_SHAPE — names
+// (a "quoted" name is case-sensitive, as in Postgres), types, order, and a default where one is needed?
+function shapeMatches(list) {
+  const params = splitParams(list);
   if (params.length !== OPS_NET_POST_SHAPE.length) return false;
-  const norm = (t) => {
-    const s = t.toLowerCase().replace(/\s+/g, " ").trim().replace(/^(?:pg_catalog|public)\./, "");
+  const normType = (t) => {
+    const s = t.replace(/"/g, "").toLowerCase().replace(/\s+/g, " ").trim().replace(/^(?:pg_catalog|public)\./, "");
     return s === "int" || s === "int4" ? "integer" : s;
   };
   return params.every((p, k) => {
-    const m = /^\s*(?:(?:in|variadic)\s+)?("?[A-Za-z_][A-Za-z0-9_]*"?)\s+([\s\S]*?)(?:\s+default\s+[\s\S]*|\s*=[\s\S]*)?$/i.exec(p);
+    const m = /^\s*(?:(?:in|variadic)\s+)?("(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*)\s+([\s\S]*?)(\s+default\s+[\s\S]*|\s*=[\s\S]*)?\s*$/i.exec(p);
     if (!m) return false;
-    return m[1].replace(/"/g, "").toLowerCase() === OPS_NET_POST_SHAPE[k][0] && norm(m[2]) === OPS_NET_POST_SHAPE[k][1];
+    const name = m[1].startsWith('"') ? m[1].slice(1, -1).replace(/""/g, '"') : m[1].toLowerCase();
+    const want = OPS_NET_POST_SHAPE[k];
+    return name === want.name && normType(m[2]) === want.type && (!want.needsDefault || Boolean(m[3]));
   });
 }
 
-// `lint:allow <rule>: <reason of 20+ characters>` on the same line as the finding suppresses it. The
-// marker lives in the diff, so every use is visible to a reviewer.
-function lintAllowed(raw, index, rule) {
+// The role list of a REVOKE, stopping at GRANTED BY / CASCADE / RESTRICT.
+const revokeRoles = (stmt) => {
+  const from = /\bfrom\b([\s\S]*)$/i.exec(stmt);
+  return from ? from[1].split(/\b(?:granted\s+by|cascade|restrict)\b/i)[0] : "";
+};
+
+// `lint:allow <rule>: <reason>` suppresses a finding on the same line — but only when the marker sits
+// INSIDE A COMMENT (so it cannot be satisfied by code or a string), and only with a real reason: at
+// least 20 characters, taken from that comment alone (a /* */ marker ends at its */). The marker is in
+// the diff, so every use is visible to a reviewer.
+function lintAllowed(raw, noComments, index, rule) {
   const start = raw.lastIndexOf("\n", index - 1) + 1;
-  const end = raw.indexOf("\n", index);
-  const line = raw.slice(start, end === -1 ? raw.length : end);
-  return new RegExp(`lint:allow ${rule}:\\s*\\S.{19,}`).test(line);
+  const endNl = raw.indexOf("\n", index);
+  const line = raw.slice(start, endNl === -1 ? raw.length : endNl);
+  const marker = `lint:allow ${rule}:`;
+  const at = line.indexOf(marker);
+  if (at === -1) return false;
+  if (noComments.slice(start + at, start + at + marker.length).trim() !== "") return false; // not in a comment
+  let reason = line.slice(at + marker.length);
+  const close = reason.indexOf("*/");
+  if (close !== -1) reason = reason.slice(0, close);
+  reason = reason.trim();
+  return reason.length >= 20 && /[A-Za-z]{3}/.test(reason);
 }
 
 // ─────────────────────────── rules ───────────────────────────
@@ -404,14 +448,16 @@ function checkFile(file, raw) {
   const opsNetPostCreates = [...noComments.matchAll(OPS_NET_POST_CREATE_RE)].map((m) => {
     const open = m.index + m[0].length - 1;
     const close = balancedClose(noComments, open);
-    return { index: m.index, open, close, list: close === -1 ? null : noComments.slice(open + 1, close) };
+    const list = close === -1 ? null : noComments.slice(open + 1, close);
+    const kind = m[1].toLowerCase();
+    return { index: m.index, open, close, list, kind, good: kind === "function" && list !== null && shapeMatches(list) };
   });
 
   // E8: a raw net.http_post / net.http_get / net.http_delete from SQL. Use public.ops_net_post(), which
   // records the URL and a purpose in ops_http_calls. This is the lesson of the incident that
   // 20260926161000 fixes: ops_http_failure_watchdog DID fire — 159 times, "403 × N unattributed" — but a
   // raw call records no URL, so no alert ever said WHERE the requests were going, and twelve weeks passed.
-  // net.http_post is an ERROR: since 20260926190000 there are none left in production, and the repo
+  // net.http_post is an ERROR: since 20260926200000 there are none left in production, and the repo
   // still holds the PRE-conversion bodies of those 25 functions — a migration that copies one forward
   // would silently revert its attribution. http_get/http_delete stay WARNINGS: ops_net_post is
   // POST-only, so there is no attributed alternative to demand yet.
@@ -419,9 +465,8 @@ function checkFile(file, raw) {
   // around the dot, quoted identifiers ("net".http_post). Two exemptions:
   //   * the body of ops_net_post's own definition — the one legitimate raw call. Only a dollar-quoted
   //     body whose `as $tag$` sits in the same statement as the create, bounded by its closing tag.
-  //   * a line carrying `lint:allow E8: <reason>` (a reason of 20+ characters), for text that names the
-  //     call without making it — e.g. a detector's pattern, or a parser check that never runs. The
-  //     marker is in the diff, so a reviewer sees every use.
+  //   * a line carrying a `lint:allow E8: <reason>` comment (see lintAllowed), for text that names the
+  //     call without making it — e.g. a detector's pattern, or a parser check that never runs.
   const opsNetPostBodies = [];
   for (const c of opsNetPostCreates) {
     if (c.close === -1) continue;
@@ -436,72 +481,98 @@ function checkFile(file, raw) {
   )) {
     const at = m.index + m[1].length;
     if (opsNetPostBodies.some(([a, b]) => at >= a && at < b)) continue;
-    if (lintAllowed(raw, at, "E8")) continue;
+    if (lintAllowed(raw, noComments, at, "E8")) continue;
     const isPost = m[3].toLowerCase() === "post";
     push(isPost ? errors : warnings, lineOf(noComments, at),
       `calls ${m[2].replace(/\s+/g, "")} directly. Use public.ops_net_post(p_url, p_body, p_headers, ` +
       `p_purpose, p_timeout_ms) so a failure is attributed to a URL and a purpose instead of surfacing ` +
       `as an unattributed 403 that no one can trace.` +
       (isPost ? ` If you copied a function body from an older migration, take the LIVE definition ` +
-        `instead (pg_get_functiondef) — production was converted by 20260926190000 and the repo was not. ` +
-        `If this text only NAMES the call, mark the line "lint:allow E8: <reason>".` : ""));
+        `instead (pg_get_functiondef) — production was converted by 20260926200000 and the repo was not. ` +
+        `If this text only NAMES the call, add a comment on the line: "lint:allow E8: <reason>".` : ""));
   }
 
-  // E9 (ERROR): anything that removes or reshapes public.ops_net_post. Since 20260926190000 about 52
-  // call sites — every watchdog's own alert channel among them — depend on it, and in three different
-  // ways: by name (anon_execute_watchdog passes p_timeout_ms :=), POSITIONALLY (six cron jobs pass all
-  // five arguments in order) and by type. pg_depend records no dependency from a PL/pgSQL body or a cron
-  // command, so Postgres allows a DROP, a RENAME or a reshaped recreate, and every caller fails at its
-  // next send — including the alarms that should report it. So:
-  //   (a) every create of ops_net_post must have EXACTLY OPS_NET_POST_SHAPE — names, types and order. A
-  //       different shape is either a broken replacement or a second overload, and an overload makes
-  //       every call that fits both ambiguous ("function is not unique");
-  //   (b) a DROP FUNCTION/ROUTINE naming it (alone or in a list, quoted or not), or an ALTER that
-  //       renames it or moves its schema, must be followed LATER in the same file by a create with
-  //       that exact shape;
-  //   (c) changing its owner, or revoking EXECUTE from postgres/service_role (the roles every converted
-  //       caller runs it as), is always an error.
+  // E9 (ERROR): anything that removes, reshapes or re-opens public.ops_net_post. Since 20260926200000
+  // about 52 call sites — every watchdog's own alert channel among them — depend on it by name, by
+  // position, by type and by arity (see OPS_NET_POST_SHAPE). pg_depend records no dependency from a
+  // PL/pgSQL body or a cron command, so Postgres allows a DROP, a RENAME or a reshaped recreate, and every
+  // caller fails at its next send — including the alarms that should report it. So:
+  //   (a) every create of ops_net_post must be a FUNCTION with exactly OPS_NET_POST_SHAPE — names,
+  //       types, order and the defaults callers rely on. Anything else is a broken replacement or a
+  //       second overload, and an overload makes every call that fits both ambiguous;
+  //   (b) a DROP FUNCTION/ROUTINE naming it (alone, in a list, quoted, or as a string literal fed to
+  //       format/EXECUTE), or an ALTER that renames it or moves its schema, must be followed LATER in the
+  //       same file by such a create AND, after that, a revoke of EXECUTE from `authenticated`: a new
+  //       function is born callable by every signed-in user under this project's default privileges
+  //       (20260926093000), and ops_net_post can POST anywhere (revoked for that reason in 20260925201000);
+  //   (c) changing its owner (to anyone but postgres), or revoking EXECUTE from postgres/service_role —
+  //       by name or by a blanket "on all functions in schema public" — is always an error.
   // A deliberate signature change updates OPS_NET_POST_SHAPE in this file in the same PR, after
-  // checking every caller in pg_proc and cron.job. `lint:allow E9: <reason>` on the line also works.
+  // checking every caller in pg_proc and cron.job. A `lint:allow E9: <reason>` comment also works.
   const e9 = (index, msg) => {
-    if (lintAllowed(raw, index, "E9")) return;
+    if (lintAllowed(raw, noComments, index, "E9")) return;
     push(errors, lineOf(noComments, index), msg);
   };
-  const shapeText = OPS_NET_POST_SHAPE.map(([n, t]) => `${n} ${t}`).join(", ");
-  const goodCreates = opsNetPostCreates.filter((c) => c.list !== null && shapeMatches(c.list));
+  const goodCreates = opsNetPostCreates.filter((c) => c.good);
+  const opsRevokes = [...noComments.matchAll(/\brevoke\b[^;]*\bon\s+(?:function|routine)s?\b[^;]*/gi)]
+    .filter((m) => NAMES_OPS_NET_POST.test(m[0]))
+    .map((m) => ({ index: m.index, roles: revokeRoles(m[0]) }));
+  // null when the file restores ops_net_post after `index`; otherwise what is missing.
+  const missingAfter = (index) => {
+    const c = goodCreates.find((g) => g.index > index);
+    if (!c) return `without recreating it (${OPS_NET_POST_SIGNATURE}) later in the same migration`;
+    if (!opsRevokes.some((v) => v.index > c.index && /\bauthenticated\b/i.test(v.roles))) {
+      return `and recreates it, but never revokes EXECUTE from authenticated afterwards — under this ` +
+        `project's default privileges the new function is callable by every signed-in user, and it can ` +
+        `POST anywhere (20260925201000 revoked it for exactly that)`;
+    }
+    return null;
+  };
   for (const c of opsNetPostCreates) {
-    if (c.list !== null && shapeMatches(c.list)) continue;
+    if (c.good) continue;
     e9(c.index,
-      `creates public.ops_net_post with parameters (${c.list === null ? "unbalanced" : c.list.replace(/\s+/g, " ").trim()}). ` +
-      `Its ~52 callers need exactly (${shapeText}) — by name, by position and by type. A different ` +
-      `shape breaks them or adds an overload that makes their calls ambiguous.`);
+      `creates public.ops_net_post${c.kind === "procedure" ? " as a PROCEDURE" : ""} with parameters ` +
+      `(${c.list === null ? "unbalanced" : c.list.replace(/\s+/g, " ").trim()}). Its ~52 callers need a ` +
+      `FUNCTION with exactly (${OPS_NET_POST_SIGNATURE}) — names, types, order and defaults (the ` +
+      `converted calls pass four arguments). Anything else breaks them or adds an overload that makes ` +
+      `their calls ambiguous.`);
   }
   for (const m of noComments.matchAll(/\bdrop\s+(?:function|routine)\b[^;]*/gi)) {
     if (!NAMES_OPS_NET_POST.test(m[0])) continue;
-    if (goodCreates.some((c) => c.index > m.index)) continue;
+    const missing = missingAfter(m.index);
+    if (!missing) continue;
     e9(m.index,
-      `drops public.ops_net_post without recreating it (${shapeText}) later in the same migration. ` +
-      `~52 callers, including every watchdog's alert channel, resolve it at run time and nothing in ` +
-      `pg_depend stops the drop — they would all fail at their next send, the alarms included.`);
+      `drops public.ops_net_post ${missing}. ~52 callers, including every watchdog's alert channel, ` +
+      `resolve it at run time and nothing in pg_depend stops the drop.`);
   }
   for (const m of noComments.matchAll(/\balter\s+(?:function|routine)\b[^;]*/gi)) {
     if (!NAMES_OPS_NET_POST.test(m[0])) continue;
-    if (/\bowner\s+to\b/i.test(m[0])) {
-      e9(m.index, `changes the owner of public.ops_net_post. Its callers run it as postgres; do not move it.`);
-    } else if (/\b(?:rename|set\s+schema)\b/i.test(m[0]) && !goodCreates.some((c) => c.index > m.index)) {
-      e9(m.index,
-        `renames or moves public.ops_net_post without recreating it (${shapeText}) later in the same ` +
-        `migration — every caller resolves it by that name at run time.`);
+    const owner = /\bowner\s+to\s+"?([A-Za-z_][A-Za-z0-9_]*)"?/i.exec(m[0]);
+    if (owner) {
+      if (owner[1].toLowerCase() !== "postgres") {
+        e9(m.index, `changes the owner of public.ops_net_post to ${owner[1]}. Its callers run it as postgres; do not move it.`);
+      }
+    } else if (/\b(?:rename|set\s+schema)\b/i.test(m[0])) {
+      const missing = missingAfter(m.index);
+      if (missing) {
+        e9(m.index, `renames or moves public.ops_net_post ${missing} — every caller resolves it by that name at run time.`);
+      }
     }
   }
-  for (const m of noComments.matchAll(/\brevoke\b[^;]*\bon\s+(?:function|routine)s?\b[^;]*/gi)) {
-    if (!NAMES_OPS_NET_POST.test(m[0])) continue;
-    const from = /\bfrom\b([\s\S]*)$/i.exec(m[0]);
-    if (from && /\b(?:postgres|service_role)\b/i.test(from[1])) {
-      e9(m.index,
-        `revokes EXECUTE on public.ops_net_post from postgres or service_role — the roles every ` +
-        `converted watchdog and cron job runs it as.`);
-    }
+  const revokesFromOwnerRoles = (roles) => /\b(?:postgres|service_role)\b/i.test(roles);
+  for (const v of opsRevokes) {
+    if (!revokesFromOwnerRoles(v.roles)) continue;
+    e9(v.index,
+      `revokes EXECUTE on public.ops_net_post from postgres or service_role — the roles every ` +
+      `converted watchdog and cron job runs it as.`);
+  }
+  for (const m of noComments.matchAll(
+    /\brevoke\b[^;]*\bon\s+all\s+(?:functions|routines)\s+in\s+schema\s+"?public"?\b[^;]*/gi
+  )) {
+    if (!revokesFromOwnerRoles(revokeRoles(m[0]))) continue;
+    e9(m.index,
+      `revokes EXECUTE on every function in schema public from postgres or service_role — that ` +
+      `includes public.ops_net_post, which every converted watchdog and cron job runs as those roles.`);
   }
 
   // E1 (ERROR, always): a blanket grant over every function in the schema. There is no legitimate
