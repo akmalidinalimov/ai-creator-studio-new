@@ -3,9 +3,11 @@
 // sends it to the tg-group-board edge function, which validates it and checks admin/teacher role.
 // Built to be screenshotted and dropped into the group chat: big medals, clean cards, branded header.
 //
-// i18n: every visible string comes from `miniapp.groupBoard.*` (uz/ru/en) and follows the app's normal
-// language resolution (the `lng` localStorage choice, else the device language — this page has no
-// session, so no profile.preferred_language). The Uzbek strings are byte-identical to the original
+// i18n: every visible string comes from `miniapp.groupBoard.*` (uz/ru/en). This page has no session,
+// so tg-group-board returns the CALLER's own language (profile preferred_language, else the bot's
+// preferred_locale, else Uzbek) and the page switches to it once loaded — NOT the phone's language,
+// which would turn the board Russian/English for most staff and for the screenshots they post into
+// Uzbek groups (all 9 staff on Telegram chose Uzbek, 2026-09-27). The Uzbek strings are byte-identical to the original
 // hard-coded ones (src/test/TgGroupBoard.test.tsx pins them); "XP" and the brand line are not
 // translated on purpose.
 import { useEffect, useRef, useState } from "react";
@@ -34,6 +36,7 @@ interface GroupBoard {
 interface Course { id: string; title: string }
 interface LoadResult {
   role: "admin" | "teacher";
+  lang?: string; // the caller's own saved language (uz/ru/en), resolved server-side
   courses?: Course[];
   course_id?: string;
   groups: GroupBoard[];
@@ -134,6 +137,7 @@ export default function TgGroupBoard() {
     setLoading(false);
     if (error) { setErr(true); return; }
     const r = data as LoadResult;
+    if (r.lang && ["uz", "ru", "en"].includes(r.lang) && r.lang !== lng) void i18n.changeLanguage(r.lang);
     setRes(r);
     setGroupIdx(0);
     if (r.role === "admin" && r.course_id) setCourseId(r.course_id);

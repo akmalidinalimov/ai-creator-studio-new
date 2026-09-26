@@ -9,6 +9,8 @@ type DbError = { code?: string; message: string } | null;
 const h = vi.hoisted(() => ({
   subs: { data: [] as unknown[] | null, error: null as DbError },
   count: { count: 0 as number | null, error: null as DbError },
+  // The head-only "pending submitted in the last 24h" count (the query that adds .gte on submitted_at).
+  new24: { count: 0 as number | null, error: null as DbError },
   students: { data: [] as unknown[], error: null as DbError },
   beacon: vi.fn(),
   writes: [] as string[],
@@ -37,13 +39,15 @@ vi.mock("@/integrations/supabase/client", () => {
       rpc: (fn: string) => Promise.resolve(fn === "staff_list_students" ? h.students : { data: RPC[fn] ?? null, error: null }),
       from: (table: string) => {
         let head = false;
+        let since = false;
         const b: Record<string, unknown> = {
           select: (_cols: string, opts?: { head?: boolean }) => { head = !!opts?.head; return b; },
           update: () => { h.writes.push(table); return b; },
           or: () => b, order: () => b, limit: () => b, eq: () => b, maybeSingle: () => b,
+          gte: () => { since = true; return b; },
           then: (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) => Promise.resolve(
             table === "profiles" ? { data: { name: "Ustoz", last_name: null, active_teacher_group_id: "g1" }, error: null }
-              : head ? h.count : h.subs,
+              : head ? (since ? h.new24 : h.count) : h.subs,
           ).then(res, rej),
         };
         return b;
@@ -74,6 +78,7 @@ beforeEach(async () => {
   await i18n.changeLanguage("en");
   h.subs = { data: [], error: null };
   h.count = { count: 0, error: null };
+  h.new24 = { count: 0, error: null };
   h.students = { data: [{ id: "u1", name: "Ali", last_name: "Valiyev", group_id: "g1" }], error: null };
   h.beacon.mockReset();
   h.writes = [];
@@ -118,6 +123,26 @@ describe("TeacherProfile grading queue — capped page indicator", () => {
     expect(screen.getByText("Something went wrong")).toBeInTheDocument();
     expect(screen.queryByText(/No ungraded homework/)).not.toBeInTheDocument();
     expect(h.beacon).toHaveBeenCalledWith(expect.objectContaining({ message: "teacher_queue_load_failed" }));
+  });
+
+  it("queue overflows → the Home digest's 'new in 24h' comes from the server, not the capped page", async () => {
+    // The page holds the OLDEST 100 (all from Sept 1 here), so counting it would say 0 new — exactly
+    // when the backlog is largest. The server count of pending rows from the last 24h is shown instead.
+    h.subs = { data: rows(100), error: null };
+    h.count = { count: 150, error: null };
+    h.new24 = { count: 7, error: null };
+    render(<MemoryRouter><TeacherProfile /></MemoryRouter>);
+    const label = await screen.findByText(/new submissions/);
+    expect(label.querySelector("b")?.textContent).toBe("7");
+  });
+
+  it("no overflow → the Home digest still counts the loaded queue (updates live as the teacher grades)", async () => {
+    h.subs = { data: rows(3), error: null };
+    h.count = { count: 3, error: null };
+    h.new24 = { count: 99, error: null }; // must be ignored when nothing is hidden
+    render(<MemoryRouter><TeacherProfile /></MemoryRouter>);
+    const label = await screen.findByText(/new submissions/);
+    expect(label.querySelector("b")?.textContent).toBe("0");
   });
 
   it("genuinely empty → the 🎉 empty state, no beacon", async () => {

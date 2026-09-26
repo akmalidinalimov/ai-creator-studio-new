@@ -73,6 +73,10 @@ export default function TeacherProfile() {
   const [queueLoading, setQueueLoading] = useState(true);
   // Pending rows the QUEUE_PAGE cap left out at the last load (0 = the queue is complete).
   const [queueHidden, setQueueHidden] = useState(0);
+  // Pending submissions from the last 24h per the server (null = unknown). Used by the Home digest
+  // ONLY when the cap hid rows: the page holds the OLDEST pending rows, so when it overflows the
+  // newest ones — exactly the "new in 24h" ones — are the hidden ones, and counting the page shows 0.
+  const [newPending24h, setNewPending24h] = useState<number | null>(null);
   // The queue (or the student list it's joined with) failed to load — never shown as "all graded".
   const [queueError, setQueueError] = useState(false);
   const [roster, setRoster] = useState<RosterRow[]>([]);
@@ -119,7 +123,8 @@ export default function TeacherProfile() {
   const loadQueue = async () => {
     setQueueLoading(true);
     try {
-      const [subsRes, studentsRes, countRes] = await Promise.all([
+      const since24h = new Date(Date.now() - 86400_000).toISOString();
+      const [subsRes, studentsRes, countRes, new24Res] = await Promise.all([
         supabase.from("homework_submissions")
           // score_feedback_voice_path (Task 3, voice-homework-feedback): not in the generated
           // types yet (Task 1's migration), but PostgREST doesn't need a typed column list — the
@@ -131,7 +136,10 @@ export default function TeacherProfile() {
         supabase.rpc("staff_list_students" as any),
         // Display-only: total pending under the same filter + RLS. head:true → no rows transferred.
         supabase.from("homework_submissions").select("id", { count: "exact", head: true }).or(PENDING_FILTER),
+        // Display-only, same filter + RLS: pending ones submitted in the last 24h (see newPending24h).
+        supabase.from("homework_submissions").select("id", { count: "exact", head: true }).or(PENDING_FILTER).gte("submitted_at", since24h),
       ]);
+      setNewPending24h(new24Res.error ? null : (new24Res.count ?? null));
       // Graceful is not silent: a failed load must not render as "🎉 nothing to grade".
       const loadFailed = !!subsRes.error || !!studentsRes.error;
       setQueueError(loadFailed);
@@ -402,7 +410,7 @@ export default function TeacherProfile() {
             {/* daily digest: what happened in the last 24h (from loaded data) */}
             <Card className="p-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
               <span className="text-[11px] uppercase tracking-wide text-muted-foreground">🕐 {t("profile.tDigest")}</span>
-              <span>📝 <b className="tabular-nums">{queue.filter((q) => (daysSince(q.submitted_at) ?? 9) < 1).length}</b> {t("profile.tDigestNew")}</span>
+              <span>📝 <b className="tabular-nums">{queueHidden > 0 && newPending24h != null ? newPending24h : queue.filter((q) => (daysSince(q.submitted_at) ?? 9) < 1).length}</b> {t("profile.tDigestNew")}</span>
               <span>✅ <b className="tabular-nums">{roster.filter((r) => (daysSince(r.last_activity_at) ?? 9) < 1).length}</b> {t("profile.tDigestActive")}</span>
             </Card>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

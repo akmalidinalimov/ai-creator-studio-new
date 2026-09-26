@@ -111,6 +111,18 @@ describe("TgGroupBoard rendering", () => {
     expect(document.body.textContent).not.toMatch(/miniapp\./); // no raw i18n key leaked
   });
 
+  it("follows the caller's own saved language from the server, not the phone's (en phone, uz profile → Uzbek)", async () => {
+    // All 9 staff on Telegram chose Uzbek; their phones are often en/ru. The board is screenshotted into
+    // Uzbek groups, so the profile's choice (returned as `lang` by tg-group-board) must win.
+    await i18n.changeLanguage("en");
+    inTelegram();
+    h.invoke.mockResolvedValue({ data: { ...BOARD, lang: "uz" }, error: null });
+    render(<TgGroupBoard />);
+    expect(await screen.findByText("5.0 · A")).toBeInTheDocument();
+    for (const s of UZ_VISIBLE) expect(await screen.findByText(s)).toBeInTheDocument();
+    expect(i18n.language).toBe("uz");
+  });
+
   it("shows the translated error + retry when the edge function refuses", async () => {
     await i18n.changeLanguage("uz");
     inTelegram();
