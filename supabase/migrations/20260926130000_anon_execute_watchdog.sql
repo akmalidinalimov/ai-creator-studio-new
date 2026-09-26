@@ -14,7 +14,7 @@
 -- ── WHAT IT WATCHES ──
 --
 -- Primary signal: a SET DIFFERENCE against a ledgered baseline of the 27 anon-executable SECURITY
--- DEFINER functions that exist and are accounted for as of today (77 → 64 → 55 → 27 across
+-- DEFINER routines that exist and are accounted for as of today (77 → 64 → 55 → 27 across
 -- 20260925201000, 20260926101000 and 20260926111000). Anything anon-executable that is NOT in the
 -- baseline alarms.
 --
@@ -25,17 +25,27 @@
 --
 -- Two CLASS checks that are BASELINE-INDEPENDENT and cannot be silenced by editing the baseline,
 -- because they encode the two failure shapes that actually hurt:
---   C1 (critical): an anon-executable SECURITY DEFINER function whose body touches `vault.` or
+--   C1 (critical): an anon-executable SECURITY DEFINER routine whose body touches `vault.` or
 --       `decrypted_secret`. This is the cron_service_key() shape, verbatim. There is no legitimate
---       reason for anon to reach a function that reads the Vault.
---   C2 (warning): an anon-executable SECURITY DEFINER function that reads `platform_settings` but
---       does NOT construct its result with jsonb_build_object — i.e. it likely returns a settings row
---       VERBATIM. This is the distinction between `challenge_config()` (revoked in 20260926101000 —
---       returned its row whole, and will hold a Meta token once Instagram Phase 2 lands) and
---       `get_public_setting()` (deliberately anon-callable and safe precisely because it enumerates
---       the fields it returns, so a secret added to its row cannot widen it).
---       **Labelled a HEURISTIC in the output, because it is one** — a function could build a safe
+--       reason for anon to reach a routine that reads the Vault.
+--   C2 (warning): one that reads `platform_settings` but does NOT construct its result with
+--       jsonb_build_object — i.e. it likely returns a settings row VERBATIM. This is the distinction
+--       between `challenge_config()` (revoked in 20260926101000 — returned its row whole, and will
+--       hold a Meta token once Instagram Phase 2 lands) and `get_public_setting()` (deliberately
+--       anon-callable and safe precisely because it enumerates the fields it returns, so a secret
+--       added to its row cannot widen it).
+--       **Labelled a HEURISTIC in the output, because it is one** — a routine could build a safe
 --       result another way and trip this. It warns; it does not cry critical.
+-- VERIFIED BEFORE MERGE: both predicates were run against production and match NOTHING today, so this
+-- detector does not cry wolf on day one. That mattered enough to check — a detector that alarms
+-- spuriously on its first run gets muted, and a muted detector is worse than none.
+--
+-- C3 (the known blind spot, made LOUD instead of left silent). C1 and C2 read `pg_proc.prosrc`, and a
+-- standard-conforming SQL routine written with `BEGIN ATOMIC` stores its body in `prosqlbody` with
+-- `prosrc` NULL — so such a routine is invisible to both. Rather than pretend otherwise, the report
+-- carries `bodies_unreadable_by_class_checks`, and a non-empty value alarms. Measured today: zero such
+-- routines are anon-executable, so this starts clean and only speaks if the blind spot becomes real.
+-- ("Graceful is not silent" — a known gap that emits no counter is a gap that hides.)
 --
 -- ── BOTH OF THIS PROJECT'S PAST WATCHDOG FAILURES ARE DESIGNED OUT ──
 --
@@ -48,6 +58,18 @@
 --     code path ever inserts, so it would have read 0 forever and looked healthy. Every number here
 --     comes from `pg_proc` + `has_function_privilege()` — the authoritative catalog, which cannot be
 --     "0 because the writer is broken" and has no intermediate table to go stale.
+--
+-- A THIRD TRAP, found by testing this file's own logic before merge and worth recording because it is
+-- generic: `array_length(array[]::text[], 1)` returns **NULL, not 0**, so `array_length(x,1) > 0` is
+-- NULL for an empty array. The alarm still fired correctly in every case (three-valued OR yields true
+-- whenever any operand is true), but the report and state row recorded `"alarm": null` instead of
+-- `false` — an ambiguity between "no alarm" and "the check did not run", which is precisely the kind
+-- of health-signal fog this project has been bitten by. Every such comparison is now wrapped in
+-- coalesce(..., 0). Verified against the live database rather than assumed.
+--
+-- SCOPE: prokind in ('f','p') — FUNCTIONS and PROCEDURES. An earlier draft checked only 'f', which
+-- would have been blind to a SECURITY DEFINER procedure; PostgREST exposes those too. None exists
+-- today (verified), so this costs nothing now and removes a gap later.
 --
 -- IT ALSO PROVES ITS OWN ALARM PATH. On its first run (no state row yet) it DMs admins unconditionally,
 -- even on a completely clean surface, saying so. A watchdog that has never delivered a message is
@@ -64,9 +86,16 @@
 -- "never deployed" rather than "stale".
 --
 -- Idempotent + replay-safe: the baseline is inserted ONLY IF ABSENT (so a replay, or a considered
--- human edit, is never clobbered); the function is CREATE OR REPLACE; the state row is an upsert.
+-- human edit, is never clobbered); the function is CREATE OR REPLACE; the state row is an upsert;
+-- cron.unschedule precedes cron.schedule so a retry cannot duplicate the job.
 
 -- ── The ledgered baseline: the 27 accounted-for as of 2026-09-26 ──
+-- VERIFIED before merge: these 27 literals set-difference to EXACTLY nothing against live
+-- oid::regprocedure::text, in both directions. They were generated FROM the catalog rather than typed
+-- by hand, which is why `uuid[]` is not `_uuid`, `timestamp with time zone` is spelled out, and there
+-- are no spaces after commas. A single formatting mismatch here would make that routine read as
+-- `unexpected` forever — a permanent false alarm, and the fastest way to train people to ignore this.
+--
 -- Of these, exactly two are DELIBERATELY anon-callable and must stay: has_role (124 RLS policy
 -- expressions across 63 tables, 151 pg_depend entries — revoking it once broke every policy that
 -- called it, see 20260705110000) and get_public_setting (field-whitelisted, never returns the token).
@@ -106,7 +135,7 @@ select 'anon_execute_watchdog_baseline', jsonb_build_object(
     'student_assignable_homework()'
   ),
   'sealed_at', now(),
-  'note', 'Set by 20260926120000. To approve a NEW anon-executable SECURITY DEFINER function, add its oid::regprocedure signature here AND say why in the migration that adds it. Removing one is always safe.')
+  'note', 'Set by 20260926130000. To approve a NEW anon-executable SECURITY DEFINER routine, add its oid::regprocedure signature here AND say why in the migration that adds it. Removing one is always safe. Editing this row CANNOT silence the C1/C2/C3 class checks.')
 where not exists (select 1 from public.app_settings where key = 'anon_execute_watchdog_baseline');
 
 create or replace function public.anon_execute_watchdog()
@@ -122,6 +151,7 @@ declare
   _closed text[];
   _vault_leaks text[];
   _settings_verbatim text[];
+  _unreadable text[];
   _alarm boolean;
   _critical boolean;
   _report jsonb;
@@ -136,11 +166,12 @@ begin
   where s.key = 'anon_execute_watchdog_baseline';
 
   -- The authoritative source: the live catalog. Not a table some other job has to keep fresh.
+  -- prokind in ('f','p') so a SECURITY DEFINER PROCEDURE cannot hide from this.
   select coalesce(array_agg(sig order by sig), array[]::text[]) into _live
   from (
     select p.oid::regprocedure::text as sig
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public' and p.prosecdef and p.prokind = 'f'
+    where n.nspname = 'public' and p.prosecdef and p.prokind in ('f','p')
       and has_function_privilege('anon', p.oid, 'EXECUTE')
   ) s;
 
@@ -155,7 +186,7 @@ begin
   select coalesce(array_agg(p.oid::regprocedure::text order by p.oid::regprocedure::text), array[]::text[])
     into _vault_leaks
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-  where n.nspname = 'public' and p.prosecdef and p.prokind = 'f'
+  where n.nspname = 'public' and p.prosecdef and p.prokind in ('f','p')
     and has_function_privilege('anon', p.oid, 'EXECUTE')
     and coalesce(p.prosrc, '') ~* '(vault\.|decrypted_secret)';
 
@@ -163,15 +194,29 @@ begin
   select coalesce(array_agg(p.oid::regprocedure::text order by p.oid::regprocedure::text), array[]::text[])
     into _settings_verbatim
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-  where n.nspname = 'public' and p.prosecdef and p.prokind = 'f'
+  where n.nspname = 'public' and p.prosecdef and p.prokind in ('f','p')
     and has_function_privilege('anon', p.oid, 'EXECUTE')
     and coalesce(p.prosrc, '') ~* 'platform_settings'
     and coalesce(p.prosrc, '') !~* 'jsonb_build_object';
 
-  _critical := array_length(_vault_leaks, 1) > 0;
+  -- C3 (the class checks' own blind spot, made loud): a BEGIN ATOMIC body lives in prosqlbody with
+  -- prosrc NULL, so C1 and C2 cannot read it. Anything here means those two checks are not covering
+  -- everything they appear to cover.
+  select coalesce(array_agg(p.oid::regprocedure::text order by p.oid::regprocedure::text), array[]::text[])
+    into _unreadable
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.prosecdef and p.prokind in ('f','p')
+    and has_function_privilege('anon', p.oid, 'EXECUTE')
+    and p.prosrc is null;
+
+  -- coalesce(array_length(...), 0): array_length on an EMPTY array is NULL, not 0, so a bare
+  -- `> 0` yields NULL and would record "alarm": null instead of false — indistinguishable from
+  -- "the check did not run". Verified against the live database, not assumed.
+  _critical := coalesce(array_length(_vault_leaks, 1), 0) > 0;
   _alarm := _critical
-         or array_length(_unexpected, 1) > 0
-         or array_length(_settings_verbatim, 1) > 0;
+         or coalesce(array_length(_unexpected, 1), 0) > 0
+         or coalesce(array_length(_settings_verbatim, 1), 0) > 0
+         or coalesce(array_length(_unreadable, 1), 0) > 0;
 
   _report := jsonb_build_object(
     'live_count', coalesce(array_length(_live, 1), 0),
@@ -180,6 +225,7 @@ begin
     'closed_since_baseline', to_jsonb(_closed),
     'vault_reachable_by_anon_CRITICAL', to_jsonb(_vault_leaks),
     'settings_verbatim_heuristic', to_jsonb(_settings_verbatim),
+    'bodies_unreadable_by_class_checks', to_jsonb(_unreadable),
     'alarm', _alarm,
     'critical', _critical,
     'checked_at', now());
@@ -209,14 +255,18 @@ begin
         _msg := '🚨 XAVFSIZLIK: anon roli VAULT sirlarini oʻqiydigan funksiyani chaqira oladi: '
              || array_to_string(_vault_leaks, ', ')
              || E'\nBu cron_service_key() bilan bir xil sinf. Darhol REVOKE qiling.';
-      elsif array_length(_unexpected, 1) > 0 then
+      elsif coalesce(array_length(_unexpected, 1), 0) > 0 then
         _msg := '⚠️ XAVFSIZLIK: anon uchun ochiq YANGI SECURITY DEFINER funksiya(lar) paydo boʻldi: '
              || array_to_string(_unexpected, ', ')
              || E'\nBu baseline da yoʻq — migratsiyada yoki DB drift orqali qoʻshilgan.';
-      elsif array_length(_settings_verbatim, 1) > 0 then
+      elsif coalesce(array_length(_settings_verbatim, 1), 0) > 0 then
         _msg := '⚠️ anon chaqira oladigan funksiya platform_settings ni butunligicha qaytarayotgan '
              || 'boʻlishi mumkin: ' || array_to_string(_settings_verbatim, ', ')
              || ' (evristika — tekshirib koʻring).';
+      elsif coalesce(array_length(_unreadable, 1), 0) > 0 then
+        _msg := '⚠️ anon uchun ochiq funksiya(lar) tanasini tekshira olmadim (BEGIN ATOMIC): '
+             || array_to_string(_unreadable, ', ')
+             || E'\nVault/platform_settings tekshiruvlari bu funksiyalarni KOʻRMAYDI — qoʻlda tekshiring.';
       elsif _recovered then
         _msg := '✅ anon-execute holati normallashdi ('
              || coalesce(array_length(_live, 1), 0) || ' ta funksiya, baseline ga mos).';
