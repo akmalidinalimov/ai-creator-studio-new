@@ -4,7 +4,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { computeLeaves, displayStepNumber, pickNextLeaf } from "./homework-routing.ts";
 import { effectiveLeafGrades, summarizeHomework } from "./homework-stats.ts";
 import { fanOutBroadcast } from "./broadcast-fanout.ts";
-import { isRecipientError, isTerminal, tgResult } from "../_shared/telegram-classify.ts";
+import { isContentError, isRecipientError, isTerminal, tgResult } from "../_shared/telegram-classify.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { logHealth } from "../_shared/edge.ts";
 import { redactJson, redactSecrets } from "../_shared/redact.ts";
@@ -1623,16 +1623,30 @@ async function sendDocument(chatId: number, filename: string, content: string, c
 }
 
 // Re-send a Telegram voice note by its file_id (grade voice feedback). file_id-based → the audio
-// stays on Telegram's servers, no download/upload, robust re-delivery. Returns true on success.
-async function sendVoice(chatId: number, fileId: string, caption?: string): Promise<boolean> {
+// stays on Telegram's servers, no download/upload, robust re-delivery.
+//
+// Returns the CLASSIFIED outcome, not a bare boolean. It used to return `!!j?.ok` and throw Telegram's
+// reason away, so every grade_voice_delivery_failed row said only "failed": a student who blocked the bot
+// (expected, ~70% reach) looked exactly like a broken voice path, and no detector could count one without
+// the other. Callers now record error + recipient_error, the same contract as grade_card_dm_failed, so
+// grade_delivery_watchdog_fast / hw_dm_health_stats can alarm on the non-recipient class only.
+// Never throws; a transport failure (tgApi already stripped the token) is recorded as "transport_error".
+type VoiceSendOutcome = { ok: boolean; error: string | null; recipient: boolean; terminal: boolean; content: boolean };
+async function sendVoice(chatId: number, fileId: string, caption?: string): Promise<VoiceSendOutcome> {
+  let status = 0;
+  let j: any = null;
   try {
     const resp = await tgApi("sendVoice", {
       chat_id: chatId, voice: fileId,
       ...(caption ? { caption, parse_mode: "HTML" } : {}),
     });
-    const j: any = await resp.json().catch(() => null);
-    return !!j?.ok;
-  } catch (_e) { return false; }
+    status = resp.status;
+    j = await resp.json().catch(() => null);
+  } catch (_e) {
+    j = { ok: false, description: "transport_error" };
+  }
+  const { ok, error } = tgResult(j, status);
+  return { ok, error, recipient: isRecipientError(error), terminal: isTerminal(error), content: isContentError(error) };
 }
 
 // DB-visible error capture — a caught exception / genuine failure lands in platform_error_log so
@@ -4496,12 +4510,15 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
       studentName = [stu?.name, stu?.last_name].filter(Boolean).join(" ");
       if (stu?.telegram_id) {
         const stuT = T[normLocale(stu.preferred_locale)];
-        delivered = await sendVoice(Number(stu.telegram_id), voiceFileId, stuT.gradeVoiceNote);
-        if (!delivered) {
+        const vo = await sendVoice(Number(stu.telegram_id), voiceFileId, stuT.gradeVoiceNote);
+        delivered = vo.ok;
+        if (!vo.ok) {
+          // Classified, so the watchdogs can tell "student blocked the bot" (expected) from a broken path.
           await admin.from("admin_actions").insert({
             actor_user_id: profileId, action: "grade_voice_delivery_failed",
             target_user_id: sub.user_id, target_resource_type: "homework_submission",
-            target_resource_id: submissionId, details: { source: "miniapp_voice_bridge" },
+            target_resource_id: submissionId,
+            details: { source: "miniapp_voice_bridge", error: vo.error, recipient_error: vo.recipient, terminal: vo.terminal, content_error: vo.content },
           });
         }
       }
@@ -4641,15 +4658,17 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
             }
           } catch (_e) { /* delivery recording is best-effort — never block the grade */ }
           if (voiceFileId) {
-            const vok = await sendVoice(Number(stu.telegram_id), voiceFileId, tt.gradeVoiceNote);
-            if (!vok) {
-              // DB-visible signal (doctrine): a dropped voice note must not be invisible.
-              console.error("grade voice delivery failed", { submission_id: submissionId, student: sub.user_id });
+            const vo = await sendVoice(Number(stu.telegram_id), voiceFileId, tt.gradeVoiceNote);
+            if (!vo.ok) {
+              // DB-visible signal (doctrine): a dropped voice note must not be invisible. Classified (error +
+              // recipient_error) so a blocked student is not counted as a broken voice path.
+              console.error("grade voice delivery failed", { submission_id: submissionId, student: sub.user_id, error: vo.error });
               try {
                 await admin.from("admin_actions").insert({
                   actor_user_id: profileId, action: "grade_voice_delivery_failed",
                   target_user_id: sub.user_id, target_resource_type: "homework_submission",
-                  target_resource_id: submissionId, details: { has_text: !!feedback },
+                  target_resource_id: submissionId,
+                  details: { has_text: !!feedback, error: vo.error, recipient_error: vo.recipient, terminal: vo.terminal, content_error: vo.content },
                 });
               } catch (_e) { /* audit best-effort */ }
             }
