@@ -18,7 +18,17 @@ const students = rows.map(r => ({
 console.log('Total rows to send:', students.length);
 console.log('First 3:', JSON.stringify(students.slice(0,3), null, 2));
 
-const r = await fetch('https://wpdztrijasgmxgliwddr.supabase.co/functions/v1/admin-create-students', {
+// The target project must be named explicitly on every run. This used to hardcode the ORIGINAL
+// project's URL while sending SUPABASE_SERVICE_ROLE_KEY — so running it with production's key in the
+// shell sent a full-database credential to a project this codebase no longer controls. It is not
+// defaulted to production either: this bulk-creates students, and aiming it at the live database
+// should be a deliberate choice, not the fallback. See 20260926161000.
+const SUPABASE_URL = process.env.SUPABASE_URL;
+if (!SUPABASE_URL || !/^https:\/\/[a-z0-9]{20}\.supabase\.co$/.test(SUPABASE_URL)) {
+  console.error('Refusing to run: set SUPABASE_URL=https://<project-ref>.supabase.co explicitly.');
+  process.exit(1);
+}
+const r = await fetch(`${SUPABASE_URL}/functions/v1/admin-create-students`, {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',

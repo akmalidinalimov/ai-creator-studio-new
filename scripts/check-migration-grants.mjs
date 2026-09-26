@@ -34,6 +34,19 @@
 // before CUTOFF are scanned and counted so the debt stays visible, but never fail the build.
 // Migrations are append-only and timestamp-named here, so this needs no upkeep.
 //
+// A SECOND CLASS LIVES HERE TOO: HARDCODED FOREIGN INFRASTRUCTURE (E6, E7). On 2026-07-05 production
+// was built by replaying the original project's migrations, and the replay carried forward a
+// track_video_progress() that POSTed to https://wpdztrijasgmxgliwddr.supabase.co — the OLD project —
+// with the old project's anon JWT inlined. For twelve weeks every lesson completion sent production's
+// internal_fn_secret() to infrastructure this project does not control, and not one completion
+// message reached a student (fixed by 20260926161000). Something DID flag it — ops_http_failure_watchdog
+// fired 159 times ("403 × N unattributed") — but a raw net.http_post records no URL, so no alert could
+// say where the requests were going; the URL itself looked exactly like every correct URL. So a
+// migration now fails if it contains a Supabase project URL for any ref other than production's (E6),
+// or an inline credential (E7), and it warns on a raw net.http_post that would leave any future failure
+// just as untraceable (E8). E6 skips comments, so a header may explain what it removed; E7 does not,
+// because a key in a comment is still a key in git history.
+//
 // CI usage:  node scripts/check-migration-grants.mjs            (fails on errors)
 //            node scripts/check-migration-grants.mjs --strict   (fails on warnings too)
 // It is chained onto `npm run lint:footguns`, which CI already runs as a blocking step — deliberately,
@@ -132,6 +145,103 @@ function blankNonCode(sql) {
 
 const lineOf = (sql, index) => sql.slice(0, index).split("\n").length;
 
+// Blanks COMMENTS ONLY — keeps string literals and dollar-quoted bodies, because a URL or a JWT always
+// lives inside a string literal, which blankNonCode() erases. This lets a migration header explain what
+// it removed (naming the old ref) without tripping E6, while any executable or literal occurrence is
+// still caught.
+//
+// Dollar-quoted bodies are LEXED RECURSIVELY WITHIN THEIR OWN BOUNDS, because a function body is SQL
+// with its own comments and strings. An earlier version tracked only single-quote parity across the
+// whole file, so one apostrophe inside a body (`$c$Don't$c$`) flipped the parity for everything after
+// it — hiding a real foreign URL further down, or treating a comment as code. Review found it doing
+// exactly that on a real repo file. Bounding the recursion to the body means an unterminated quote
+// inside a body can no longer leak past its closing tag.
+//
+// A comment only starts at a boundary (line start, whitespace, `(`, `,` or `;`). Real SQL comments
+// always do; requiring it stops `'a--b'`-style data and dollar-quoted JSON such as `"storage/*"` from
+// being mistaken for comments and blanking a URL that follows them.
+function blankCommentsOnly(sql) {
+  const out = sql.split("");
+  const n = sql.length;
+  const blank = (from, to) => {
+    for (let k = from; k < to && k < n; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  const atBoundary = (i, start) => i === start || /[\s(,;]/.test(sql[i - 1]);
+
+  const lex = (start, end) => {
+    let i = start;
+    while (i < end) {
+      const c = sql[i];
+      if (c === "'") {
+        // E'...' uses backslash escapes; plain '...' uses doubled quotes.
+        const isE = i > start && /[eE]/.test(sql[i - 1]) && !/[A-Za-z0-9_]/.test(sql[i - 2] || "");
+        let j = i + 1;
+        while (j < end) {
+          if (isE && sql[j] === "\\") { j += 2; continue; }
+          if (sql[j] === "'" && sql[j + 1] === "'") { j += 2; continue; }
+          if (sql[j] === "'") { j++; break; }
+          j++;
+        }
+        i = j;
+        continue;
+      }
+      if (c === '"') {
+        let j = i + 1;
+        while (j < end) {
+          if (sql[j] === '"' && sql[j + 1] === '"') { j += 2; continue; }
+          if (sql[j] === '"') { j++; break; }
+          j++;
+        }
+        i = j;
+        continue;
+      }
+      if (c === "$") {
+        const m = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i, Math.min(end, i + 64)));
+        if (m) {
+          const tag = m[0];
+          const close = sql.indexOf(tag, i + tag.length);
+          const bodyEnd = close === -1 || close >= end ? end : close;
+          lex(i + tag.length, bodyEnd);            // recurse: the body is SQL with its own comments
+          i = bodyEnd === end ? end : close + tag.length;
+          continue;
+        }
+      }
+      if (c === "-" && sql[i + 1] === "-" && atBoundary(i, start)) {
+        let j = i;
+        while (j < end && sql[j] !== "\n") j++;
+        blank(i, j);
+        i = j;
+        continue;
+      }
+      if (c === "/" && sql[i + 1] === "*" && atBoundary(i, start)) {
+        let depth = 1;
+        let j = i + 2;
+        while (j < end && depth > 0) {
+          if (sql[j] === "/" && sql[j + 1] === "*") { depth++; j += 2; continue; }
+          if (sql[j] === "*" && sql[j + 1] === "/") { depth--; j += 2; continue; }
+          j++;
+        }
+        blank(i, j);
+        i = j;
+        continue;
+      }
+      i++;
+    }
+  };
+
+  lex(0, n);
+  return out.join("");
+}
+
+// Production's Supabase project ref. Any OTHER ref in a migration is foreign infrastructure.
+const PRODUCTION_REF = "cdyidatkegxwhtuoqxly";
+
+// Refs KNOWN to be foreign. These are denied anywhere in non-comment text, not only inside a URL, so
+// that concatenation ('https://' || ref || '.supabase.co'), format('https://%s.supabase.co', ref) and a
+// bare ref variable are all caught for the one ref we know is dangerous. wpdztrijasgmxgliwddr is the
+// ORIGINAL Lovable-hosted project: still alive, not controlled by this codebase (see 20260926161000).
+const KNOWN_FOREIGN_REFS = ["wpdztrijasgmxgliwddr"];
+
 // ─────────────────────────── rules ───────────────────────────
 const errors = [];
 const warnings = [];
@@ -145,6 +255,75 @@ function checkFile(file, raw) {
     if (!enforced) debt.push(entry);
     else bucket.push(entry);
   };
+
+  // E6 (ERROR): a Supabase project URL for any ref other than production's. This is the exact shape
+  // the 2026-07-05 replay carried into track_video_progress(). Scanned on code AND string literals
+  // (where URLs live) but not on comments, so a header may name the old ref when explaining a fix.
+  // Covers the legacy edge-function host (<ref>.functions.supabase.co — the same service this incident
+  // called), the direct DB host (db.<ref>.supabase.co) and supabase.in, not only <ref>.supabase.co.
+  const noComments = blankCommentsOnly(raw);
+  const e6Lines = new Set();
+  for (const m of noComments.matchAll(
+    /https?:\/\/(?:db\.)?([a-z0-9]{20})\.(?:functions\.)?supabase\.(?:co|in)/gi
+  )) {
+    if (m[1].toLowerCase() === PRODUCTION_REF) continue;
+    const line = lineOf(noComments, m.index);
+    e6Lines.add(line);
+    push(errors, line,
+      `hardcodes the Supabase project "${m[1]}", which is not production (${PRODUCTION_REF}). ` +
+      `Calls to it leave this project entirely — on 2026-07-05 exactly this sent internal_fn_secret() ` +
+      `to the old project on every lesson completion for twelve weeks. Use the production ref.`);
+  }
+  // …and the known-foreign refs ANYWHERE in non-comment text, which catches the forms a URL regex
+  // cannot: string concatenation, format(), a ref held in a variable.
+  for (const ref of KNOWN_FOREIGN_REFS) {
+    for (const m of noComments.matchAll(new RegExp(ref, "gi"))) {
+      const line = lineOf(noComments, m.index);
+      if (e6Lines.has(line)) continue;                 // already reported as a URL on this line
+      e6Lines.add(line);
+      push(errors, line,
+        `references "${ref}", the ORIGINAL project that production replaced on 2026-07-05. It is still ` +
+        `alive and not controlled by this codebase; nothing here should address it, in any form.`);
+    }
+  }
+
+  // E7 (ERROR): an inline credential. Whichever project it belongs to, a key does not belong in a
+  // migration: an anon key goes stale when the project moves (the one removed by 20260926161000 was the
+  // OLD project's), and a service_role key would be a full-database credential in git history.
+  // Scanned on the RAW text, comments INCLUDED — unlike E6. A key pasted into a comment is just as
+  // permanently in git history; only a URL in a comment is harmless. (An earlier version exempted
+  // comments here too, which review caught: its own stated reason was git history.)
+  // Also: Supabase's non-JWT key formats (sb_secret_…, and sbp_… personal access tokens), and the JWT
+  // header prefix on its own, which catches a token split across `||` to dodge the full pattern.
+  const e7Lines = new Set();
+  const credentialPatterns = [
+    /eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,  // a whole JWT
+    /eyJhbGciOi[A-Za-z0-9_-]{4,}/g,                                   // a JWT header ({"alg":…) on its own
+    /\b(?:sb_secret_|sbp_)[A-Za-z0-9_]{8,}/g,                          // Supabase secret key / access token
+  ];
+  for (const re of credentialPatterns) {
+    for (const m of raw.matchAll(re)) {
+      const line = lineOf(raw, m.index);
+      if (e7Lines.has(line)) continue;
+      e7Lines.add(line);
+      push(errors, line,
+        // Never echo any part of the token: CI logs are not a place for credentials, even fragments.
+        `contains an inline credential. Read credentials at runtime — public.cron_service_key() / ` +
+        `public.internal_fn_secret() from Vault — never embed them, not even in a comment.`);
+    }
+  }
+
+  // E8 (WARNING): a raw net.http_post / net.http_get from SQL. Use public.ops_net_post(), which records
+  // the URL and a purpose in ops_http_calls. This is the lesson of the incident that 20260926161000
+  // fixes: ops_http_failure_watchdog DID fire — 159 times, "403 × N unattributed" — but a raw call
+  // records no URL, so no alert ever said WHERE the requests were going, and twelve weeks passed. An
+  // alarm nobody can act on is barely better than none.
+  for (const m of noComments.matchAll(/\bnet\.http_(?:post|get)\s*\(/gi)) {
+    push(warnings, lineOf(noComments, m.index),
+      `calls ${m[0].replace(/\s*\($/, "")} directly. Use public.ops_net_post(p_url, p_body, p_headers, ` +
+      `p_purpose, p_timeout_ms) so a failure is attributed to a URL and a purpose instead of surfacing ` +
+      `as an unattributed 403 that no one can trace.`);
+  }
 
   // E1 (ERROR, always): a blanket grant over every function in the schema. There is no legitimate
   // use of this here, and it silently re-opens everything previous migrations closed.
