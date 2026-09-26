@@ -50,9 +50,11 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const migrationsDir = process.env.MIGRATIONS_DIR || join(root, "supabase", "migrations");
 const strict = process.argv.includes("--strict");
 
-// Everything named at or after this applies the rules. Set to the anon-execute watchdog migration,
-// which is the first file written under these rules and therefore the first one enforced — rather
-// than a future date, which would leave today's work unchecked by its own guard.
+// Everything named at or after this timestamp has the rules enforced. It is a FLOOR, not a filename —
+// no file needs to carry this exact stamp. Set to midday 2026-09-26 so that everything written from
+// the introduction of these rules onward is covered, including the anon-execute watchdog migration
+// that this guard exists to protect. A future date was the first draft and was wrong: it would have
+// left today's own work unchecked by its own guard.
 // Bump only to grandfather a deliberate exception you have argued for in the migration header —
 // never to silence a finding.
 const CUTOFF = "20260926120000";
