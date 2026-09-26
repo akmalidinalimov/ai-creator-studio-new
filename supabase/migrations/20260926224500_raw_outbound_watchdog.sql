@@ -35,9 +35,15 @@
 --   * admin_actions gets a row only on ALARM or RECOVERY — not 24 identical "all clear" rows a day.
 --   * array_length() of an empty array is NULL; every comparison is coalesce(..., 0).
 --
--- KNOWN LIMITS: only the public schema and cron.job are scanned (the one raw caller elsewhere today is
+-- KNOWN LIMITS: only functions and procedures (prokind f/p, as in anon_execute_watchdog) in the public
+-- schema, and cron.job, are scanned (the one raw caller elsewhere today is
 -- Supabase's own extensions.grant_pg_net_access). A raw call built dynamically ('net.http_' || 'post')
 -- is invisible to any text scan; the report-only unattributed-failure count is the backstop for it.
+-- The deploy run can race the first :23 cron tick and send the first-run info DM twice; one duplicate
+-- informational message is not worth an advisory lock (the same trade anon_execute_watchdog makes).
+--
+-- SUPERSEDES 20260926223000 (never merged or applied): a migration-safety review found the scan
+-- missing the prokind filter its sibling uses, and the tick race above undocumented.
 --
 -- Idempotent + replay-safe: CREATE OR REPLACE; state is an upsert; cron.unschedule precedes
 -- cron.schedule so a retry cannot duplicate the job.
@@ -68,7 +74,7 @@ begin
   select coalesce(array_agg(p.oid::regprocedure::text order by p.oid::regprocedure::text), array[]::text[])
     into _fns
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-  where n.nspname = 'public' and p.proname <> 'ops_net_post'
+  where n.nspname = 'public' and p.prokind in ('f','p') and p.proname <> 'ops_net_post'
     and (case when p.prosqlbody is not null then coalesce(pg_get_function_sqlbody(p.oid), '')
               else coalesce(p.prosrc, '') end) ~* _raw_re;
 
