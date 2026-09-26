@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendTelegram } from "../_shared/telegram-send.ts";
+import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,21 +12,12 @@ const corsHeaders = {
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 
 const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-let __sec: string | null = null;
-async function __internalSecret(): Promise<string> {
-  if (__sec) return __sec;
-  const { data, error } = await __admin.rpc("internal_fn_secret");
-  if (error) throw error;
-  __sec = data as string;
-  return __sec;
-}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
-  const __p = req.headers.get("x-internal-secret");
-  const __s = await __internalSecret();
-  if (!__p || __p !== __s) {
+  // Shared rotation-safe verifier (_shared/internal-secret.ts): cached, re-fetched once on mismatch.
+  if (!(await verifyInternalSecret(req, __admin))) {
     return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 

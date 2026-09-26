@@ -5,6 +5,7 @@
 // admins (accountability). After the teacher loop, admins get one aggregate summary.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
+import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -14,19 +15,6 @@ const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 const SITE_URL = Deno.env.get("SITE_URL") || "https://aicreator.academy";
 
 const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-// Rotation-safe internal-secret check (re-fetch once on mismatch, debounced) — matches the fix for
-// the stale-cached-secret 403 class.
-let __sec: string | null = null;
-let __lastFetch = 0;
-async function __internalSecret(force = false): Promise<string> {
-  const now = Date.now();
-  if (__sec && (!force || now - __lastFetch < 15_000)) return __sec;
-  __lastFetch = now;
-  const { data, error } = await __admin.rpc("internal_fn_secret");
-  if (error) throw error;
-  __sec = data as string;
-  return __sec;
-}
 
 function randomToken(len = 32): string {
   const b = new Uint8Array(len / 2);
@@ -104,10 +92,8 @@ async function sendTg(chatId: number, text: string, buttons?: Btn[][], purpose =
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-  const __p = req.headers.get("x-internal-secret");
-  let __s = await __internalSecret();
-  if (!__p || __p !== __s) __s = await __internalSecret(true);
-  if (!__p || __p !== __s) {
+  // Shared rotation-safe verifier (_shared/internal-secret.ts): cached, re-fetched once on mismatch.
+  if (!(await verifyInternalSecret(req, __admin))) {
     return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   const admin = __admin;
