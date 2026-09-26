@@ -50,9 +50,12 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const migrationsDir = process.env.MIGRATIONS_DIR || join(root, "supabase", "migrations");
 const strict = process.argv.includes("--strict");
 
-// Everything named at or after this applies the rules. Bump only to grandfather a deliberate
-// exception you have argued for in the migration header — never to silence a finding.
-const CUTOFF = "20260927000000";
+// Everything named at or after this applies the rules. Set to the anon-execute watchdog migration,
+// which is the first file written under these rules and therefore the first one enforced — rather
+// than a future date, which would leave today's work unchecked by its own guard.
+// Bump only to grandfather a deliberate exception you have argued for in the migration header —
+// never to silence a finding.
+const CUTOFF = "20260926120000";
 
 // Functions deliberately reachable by `anon`. An entry MUST carry a reason: the point is that the
 // next person reads why, not that the check goes quiet.
