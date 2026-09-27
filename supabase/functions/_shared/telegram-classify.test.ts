@@ -68,6 +68,10 @@ const RECIPIENT_STRINGS = [
   "Bad Request: chat_id is empty",
   "Forbidden: bots can't send messages to bots",
   "USER_IS_BLOCKED",
+  // sendVoice to a user whose privacy settings refuse voice messages. The student's own choice, so it is
+  // expected reach: the voice-feedback detectors (grade_delivery_watchdog_fast / hw_dm_health_stats
+  // voice_dm_failed_24h, 20260926235000) exclude it only because this reads as recipient-class.
+  "Bad Request: VOICE_MESSAGES_FORBIDDEN",
 ];
 
 const CONTENT_STRINGS = [
