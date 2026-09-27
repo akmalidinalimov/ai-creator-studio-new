@@ -6,7 +6,21 @@
     "notLinkedLogin": "Log in with your account",
     "errorTitle": "Something went wrong",
     "errorBody": "We couldn't sign you in. Please try again.",
-    "retry": "Try again"
+    "retry": "Try again",
+    "groupBoard": {
+      "title": "Group board",
+      "openInTelegram": "Open this page with the <b>📊 Group board</b> button in the Telegram bot.",
+      "loadError": "No access, or something went wrong",
+      "noGroups": "No groups found.",
+      "empty": "No data yet",
+      "statActive": "Active",
+      "statCompletion": "Completion",
+      "statBadges": "Badges",
+      "statPending": "Pending",
+      "weekly": "🔥 THIS WEEK",
+      "allTime": "🏆 ALL-TIME TOP",
+      "shareHint": "Take a screenshot and share it with the group"
+    }
   },
   "common": {
     "save": "Save",
@@ -1400,6 +1414,8 @@
     "tShowPrompt": "Show the assignment prompt",
     "tAllStudents": "All",
     "tBulkNudge": "Remind all ({{n}})",
-    "tBulkDone": "Sent: {{ok}} · skipped: {{skipped}} (already today or no Telegram)"
+    "tBulkDone": "Sent: {{ok}} · skipped: {{skipped}} (already today or no Telegram)",
+    "tQueueTruncated": "Showing {{shown}} of {{total}} waiting (oldest first). Grade these, then refresh the queue to load the other {{hidden}}.",
+    "tQueueRefresh": "Refresh queue"
   }
 }

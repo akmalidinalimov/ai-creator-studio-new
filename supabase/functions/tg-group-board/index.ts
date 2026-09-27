@@ -120,8 +120,14 @@ Deno.serve(async (req) => {
 
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
-  const { data: prof } = await admin.from("profiles").select("id").eq("telegram_id", userId).maybeSingle();
+  const { data: prof } = await admin.from("profiles")
+    .select("id, preferred_language, preferred_locale").eq("telegram_id", userId).maybeSingle();
   if (!prof?.id) return json({ error: "forbidden" }, 403);
+  // The caller's OWN language, so the board follows the choice they made, not their phone's language.
+  // Web-app choice first, then the bot's, then Uzbek (the language of the groups the board is posted to).
+  const LANGS = ["uz", "ru", "en"];
+  const pick = (v: unknown) => { const s = String(v || "").slice(0, 2).toLowerCase(); return LANGS.includes(s) ? s : ""; };
+  const lang = pick((prof as any).preferred_language) || pick((prof as any).preferred_locale) || "uz";
   const { data: roleRows } = await admin.from("user_roles").select("role")
     .eq("user_id", prof.id).in("role", ["admin", "superadmin", "teacher"]);
   const roles = new Set(((roleRows || []) as any[]).map((r) => r.role));
@@ -140,10 +146,10 @@ Deno.serve(async (req) => {
       : { data: [] as any[] };
     const courses = ((courseRows || []) as any[]).map((c) => ({ id: c.id, title: c.title }));
     const courseId = String(body?.course_id || "") || (courses[0]?.id || "");
-    if (!courseId) return json({ role: "admin", courses, course_id: "", groups: [], window_days: windowDays });
+    if (!courseId) return json({ role: "admin", lang, courses, course_id: "", groups: [], window_days: windowDays });
     const { data: grps } = await admin.from("groups").select("id, course_id").eq("course_id", courseId);
     const groups = await buildGroups(admin, ((grps || []) as any[]), windowDays);
-    return json({ role: "admin", courses, course_id: courseId, groups, window_days: windowDays });
+    return json({ role: "admin", lang, courses, course_id: courseId, groups, window_days: windowDays });
   }
 
   // Teacher: only their own groups — junction-aware (primary ∪ co-teachers), matching the webhook's
@@ -161,5 +167,5 @@ Deno.serve(async (req) => {
     ? await admin.from("groups").select("id, course_id").in("id", gids)
     : { data: [] as any[] };
   const groups = await buildGroups(admin, ((grps || []) as any[]), windowDays);
-  return json({ role: "teacher", groups, window_days: windowDays });
+  return json({ role: "teacher", lang, groups, window_days: windowDays });
 });

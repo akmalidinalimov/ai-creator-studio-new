@@ -6,7 +6,21 @@
     "notLinkedLogin": "Hisobingiz bilan kirish",
     "errorTitle": "Xatolik yuz berdi",
     "errorBody": "Tizimga kirishda muammo boʻldi. Qayta urinib koʻring.",
-    "retry": "Qayta urinish"
+    "retry": "Qayta urinish",
+    "groupBoard": {
+      "title": "Guruh reytingi",
+      "openInTelegram": "Bu sahifani Telegram bot ichidagi <b>📊 Guruh reytingi</b> tugmasi orqali oching.",
+      "loadError": "Ruxsat yo'q yoki xatolik",
+      "noGroups": "Guruh topilmadi.",
+      "empty": "Hali ma'lumot yo'q",
+      "statActive": "Faol",
+      "statCompletion": "Tugallanish",
+      "statBadges": "Nishon",
+      "statPending": "Kutilmoqda",
+      "weekly": "🔥 SHU HAFTA",
+      "allTime": "🏆 UMUMIY TOP",
+      "shareHint": "Skrinshot qiling va guruhga ulashing"
+    }
   },
   "common": {
     "save": "Saqlash",
@@ -1400,6 +1414,8 @@
     "tShowPrompt": "Topshiriq shartini ko'rish",
     "tAllStudents": "Hammasi",
     "tBulkNudge": "Barchasiga eslatma ({{n}})",
-    "tBulkDone": "Yuborildi: {{ok}} · o'tkazildi: {{skipped}} (bugun allaqachon yuborilgan yoki Telegram yo'q)"
+    "tBulkDone": "Yuborildi: {{ok}} · o'tkazildi: {{skipped}} (bugun allaqachon yuborilgan yoki Telegram yo'q)",
+    "tQueueTruncated": "{{total}} ta kutayotgan vazifadan {{shown}} tasi ko'rsatilmoqda (eng eskilari birinchi). Bularni baholang, so'ng qolgan {{hidden}} tasini yuklash uchun navbatni yangilang.",
+    "tQueueRefresh": "Navbatni yangilash"
   }
 }

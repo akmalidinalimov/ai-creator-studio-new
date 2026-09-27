@@ -12,9 +12,20 @@ import { toast } from "sonner";
 import { VoiceRecorder } from "@/components/homework/VoiceRecorder";
 import { uploadFeedbackVoice, removeFeedbackVoice } from "@/lib/homeworkAudio";
 import { notifyGradeVoice } from "@/lib/teacherApi";
+import { reportClientError } from "@/lib/beacon";
+import { rowsBeyondPage } from "@/lib/queuePage";
 
 /* Mission Control (design A) with the cross-group grading queue (design B).
    Group context is ALWAYS visible as chips; grading is one tap per score. */
+
+// The queue loads the oldest QUEUE_PAGE pending rows. A parallel head-only exact count of the SAME
+// filter (same RLS scope) tells the UI how many the cap left out, so a teacher with more than
+// QUEUE_PAGE pending sees "showing N of M" instead of a silently truncated queue. Kept as a capped
+// page + indicator (not pagination) on purpose: grading removes rows locally and undo re-inserts them,
+// so offset paging over a shrinking set would skip rows; "refresh" re-reads the oldest page instead.
+const QUEUE_PAGE = 100;
+// Pending = never scored OR resubmitted after grading (stale score).
+const PENDING_FILTER = "score.is.null,score_is_stale.eq.true";
 
 interface TeacherStats { groups_count: number; students_total: number; graded_total: number; avg_score_given: number | null }
 interface TeacherGroup {
@@ -60,6 +71,14 @@ export default function TeacherProfile() {
   const [tab, setTab] = useState<Tab>("home");
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [queueLoading, setQueueLoading] = useState(true);
+  // Pending rows the QUEUE_PAGE cap left out at the last load (0 = the queue is complete).
+  const [queueHidden, setQueueHidden] = useState(0);
+  // Pending submissions from the last 24h per the server (null = unknown). Used by the Home digest
+  // ONLY when the cap hid rows: the page holds the OLDEST pending rows, so when it overflows the
+  // newest ones — exactly the "new in 24h" ones — are the hidden ones, and counting the page shows 0.
+  const [newPending24h, setNewPending24h] = useState<number | null>(null);
+  // The queue (or the student list it's joined with) failed to load — never shown as "all graded".
+  const [queueError, setQueueError] = useState(false);
   const [roster, setRoster] = useState<RosterRow[]>([]);
   const [rosterLoading, setRosterLoading] = useState(false);
   const [search, setSearch] = useState("");
@@ -104,21 +123,41 @@ export default function TeacherProfile() {
   const loadQueue = async () => {
     setQueueLoading(true);
     try {
-      const [subsRes, studentsRes] = await Promise.all([
+      const since24h = new Date(Date.now() - 86400_000).toISOString();
+      const [subsRes, studentsRes, countRes, new24Res] = await Promise.all([
         supabase.from("homework_submissions")
-          // Pending = never scored OR resubmitted after grading (stale score).
           // score_feedback_voice_path (Task 3, voice-homework-feedback): not in the generated
           // types yet (Task 1's migration), but PostgREST doesn't need a typed column list — the
           // `as any` cast on the mapped row below covers it.
           .select("id, user_id, submitted_text, submitted_image_url, submitted_at, score, score_is_stale, previous_attempts, media, telegram_message_url, score_feedback_voice_path, homework_assignments(max_score, title, description, modules(position, title))")
-          .or("score.is.null,score_is_stale.eq.true")
+          .or(PENDING_FILTER)
           .order("submitted_at", { ascending: true })
-          .limit(100),
+          .limit(QUEUE_PAGE),
         supabase.rpc("staff_list_students" as any),
+        // Display-only: total pending under the same filter + RLS. head:true → no rows transferred.
+        supabase.from("homework_submissions").select("id", { count: "exact", head: true }).or(PENDING_FILTER),
+        // Display-only, same filter + RLS: pending ones submitted in the last 24h (see newPending24h).
+        supabase.from("homework_submissions").select("id", { count: "exact", head: true }).or(PENDING_FILTER).gte("submitted_at", since24h),
       ]);
+      setNewPending24h(new24Res.error ? null : (new24Res.count ?? null));
+      // Graceful is not silent: a failed load must not render as "🎉 nothing to grade".
+      const loadFailed = !!subsRes.error || !!studentsRes.error;
+      setQueueError(loadFailed);
+      if (loadFailed) {
+        reportClientError({
+          type: "other", message: "teacher_queue_load_failed",
+          extra: { subs: subsRes.error?.code ?? subsRes.error?.message ?? null, students: studentsRes.error?.code ?? studentsRes.error?.message ?? null },
+        });
+      } else if (countRes.error) {
+        // Count failed but the queue loaded: the view degrades to the pre-indicator behaviour
+        // (rowsBeyondPage → 0), and this beacon makes that degradation DB-visible.
+        reportClientError({ type: "other", message: "teacher_queue_count_failed", extra: { code: countRes.error.code ?? countRes.error.message ?? null } });
+      }
+      const rawRows = (((subsRes.data as any) || []) as any[]);
+      setQueueHidden(rowsBeyondPage(countRes.error ? null : countRes.count, rawRows.length, QUEUE_PAGE));
       const byId = new Map((((studentsRes.data as any) || []) as any[]).map((s) => [s.id, s]));
       const groupName = (gid: string | null) => groups.find((g) => g.group_id === gid)?.group_name || "";
-      const items: QueueItem[] = (((subsRes.data as any) || []) as any[])
+      const items: QueueItem[] = rawRows
         .filter((r) => byId.has(r.user_id)) // only students visible to this teacher
         .map((r) => {
           const st = byId.get(r.user_id);
@@ -256,6 +295,8 @@ export default function TeacherProfile() {
   const lvlEmoji = LVL_EMOJI[Math.min(lvl, LVL_EMOJI.length) - 1] || "🎓";
   const inactive3d = useMemo(() => roster.filter((r) => (daysSince(r.last_activity_at) ?? 99) >= 3), [roster]);
   const oldestDays = queue.length ? daysSince(queue[0].submitted_at) : null;
+  // What's really waiting: the loaded page (shrinks as the teacher grades) + what the cap left out.
+  const queueTotal = queue.length + queueHidden;
   // Inactivity range filter: null = everyone, 3/7/14 = inactive >= N days.
   const [inactFilter, setInactFilter] = useState<number | null>(null);
   const filteredRoster = useMemo(() => {
@@ -351,7 +392,7 @@ export default function TeacherProfile() {
         <div className="flex gap-1 border-b overflow-x-auto" role="tablist">
           {([
             ["home", `🏠 ${t("profile.tTabHome")}`],
-            ["queue", `📝 ${t("profile.tTabQueue")}${queue.length ? ` · ${queue.length}` : ""}`],
+            ["queue", `📝 ${t("profile.tTabQueue")}${queueTotal ? ` · ${queueTotal}` : ""}`],
             ["roster", `👥 ${t("profile.tTabRoster")}`],
             ["stats", `📊 ${t("profile.tTabStats")}`],
           ] as [Tab, string][]).map(([id, label]) => (
@@ -369,7 +410,7 @@ export default function TeacherProfile() {
             {/* daily digest: what happened in the last 24h (from loaded data) */}
             <Card className="p-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
               <span className="text-[11px] uppercase tracking-wide text-muted-foreground">🕐 {t("profile.tDigest")}</span>
-              <span>📝 <b className="tabular-nums">{queue.filter((q) => (daysSince(q.submitted_at) ?? 9) < 1).length}</b> {t("profile.tDigestNew")}</span>
+              <span>📝 <b className="tabular-nums">{queueHidden > 0 && newPending24h != null ? newPending24h : queue.filter((q) => (daysSince(q.submitted_at) ?? 9) < 1).length}</b> {t("profile.tDigestNew")}</span>
               <span>✅ <b className="tabular-nums">{roster.filter((r) => (daysSince(r.last_activity_at) ?? 9) < 1).length}</b> {t("profile.tDigestActive")}</span>
             </Card>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -394,7 +435,7 @@ export default function TeacherProfile() {
               <button onClick={() => setTab("queue")} className="rounded-xl border bg-card p-4 text-left hover:border-primary transition-colors">
                 <div className="text-xl">📝</div>
                 <div className="font-semibold text-sm mt-1">{t("profile.tTabQueue")}</div>
-                <div className="text-xs text-muted-foreground">{queue.length ? t("profile.tQueueCount", { n: queue.length }) : t("profile.tQueueEmpty")}</div>
+                <div className="text-xs text-muted-foreground">{queueTotal ? t("profile.tQueueCount", { n: queueTotal }) : queueError ? t("common.errorTitle") : t("profile.tQueueEmpty")}</div>
               </button>
               <button onClick={() => setTab("roster")} className="rounded-xl border bg-card p-4 text-left hover:border-primary transition-colors">
                 <div className="text-xl">👥</div>
@@ -432,7 +473,7 @@ export default function TeacherProfile() {
                     <Button size="sm" variant="outline" onClick={() => { setTab("roster"); setSearch(""); setInactFilter(3); }}>{t("common.more")}</Button>
                   </li>
                 )}
-                {queue.length === 0 && inactive3d.length === 0 && (
+                {queueTotal === 0 && !queueError && inactive3d.length === 0 && (
                   <li className="text-muted-foreground">✅ {t("profile.tAllGood")}</li>
                 )}
               </ul>
@@ -446,10 +487,30 @@ export default function TeacherProfile() {
             <p className="text-xs text-muted-foreground">{t("profile.tQueueNote")}</p>
             {queueLoading ? (
               <Card className="h-32 animate-pulse bg-muted/40" />
-            ) : queue.length === 0 ? (
-              <Card className="p-8 text-center text-sm text-muted-foreground">🎉 {t("profile.tQueueEmpty")}</Card>
+            ) : queueError ? (
+              <Card className="p-6 text-center space-y-3">
+                <p className="text-sm text-muted-foreground">{t("common.errorTitle")}</p>
+                <Button size="sm" variant="outline" onClick={() => void loadQueue()}>{t("common.retry")}</Button>
+              </Card>
             ) : (
-              queue.map((item) => <QueueCard key={item.id} item={item} onGrade={grade} t={t} />)
+              <>
+                {/* More pending than the page holds: say so, never present page one as the whole queue. */}
+                {queueHidden > 0 && (
+                  <Card role="status" className="p-3 flex flex-wrap items-center gap-2 border-amber-500/40 bg-amber-500/10 text-sm">
+                    <span className="flex-1 min-w-0">
+                      {t("profile.tQueueTruncated", { shown: queue.length, total: queueTotal, hidden: queueHidden })}
+                    </span>
+                    <Button size="sm" variant="outline" onClick={() => void loadQueue()}>{t("profile.tQueueRefresh")}</Button>
+                  </Card>
+                )}
+                {queue.length === 0 ? (
+                  queueHidden > 0 ? null : (
+                    <Card className="p-8 text-center text-sm text-muted-foreground">🎉 {t("profile.tQueueEmpty")}</Card>
+                  )
+                ) : (
+                  queue.map((item) => <QueueCard key={item.id} item={item} onGrade={grade} t={t} />)
+                )}
+              </>
             )}
           </div>
         )}
