@@ -1,6 +1,11 @@
 -- SECURITY: five SECURITY DEFINER RPCs that anyone (two of them) or any signed-in student (the other
 -- three) could call, with nothing in the body checking who the caller is.
 --
+-- SUPERSEDES 20260926233000 (never merged or applied): its header listed
+-- enforce_enrollment_tier_from_group as a caller of has_module_access; the live catalog shows it is not
+-- (the four real callers are listed below). It also gains a deploy-time pin: the hand-copied
+-- recalc_leaderboard body is replaced only if the live one still matches the md5 verified today.
+--
 -- ── WHAT WAS WRONG (verified read-only against production 2026-09-26) ──
 --
 --   recalc_leaderboard()            EXECUTE: PUBLIC, anon, authenticated. No caller check.
@@ -55,8 +60,9 @@
 --   has_module_access(uuid, uuid)
 --     * Edge functions lesson-video-url and study-assistant — service-role clients. Edge logs: every
 --       call over 2026-09-23..26 (~265) used the service key and returned 200; none from a browser.
---     * Function bodies: get_quiz_questions_for_module, grade_quiz_attempt, is_module_tier_locked,
---       enforce_enrollment_tier_from_group (trigger), student_assignable_homework. ALL five are
+--     * Function bodies — read from the LIVE catalog (pg_proc.prosrc), 2026-09-27, not from the repo:
+--       get_quiz_questions_for_module, grade_quiz_attempt, is_module_tier_locked and
+--       student_assignable_homework. ALL four are
 --       SECURITY DEFINER and owned by postgres, so their nested call is privilege-checked as
 --       postgres, not as the student — the quiz gate (20260926150000) keeps working. (SECURITY
 --       DEFINER SQL functions are never inlined, so get_quiz_questions_for_module, a LANGUAGE sql
@@ -118,6 +124,20 @@
 -- this file's body with the marked guard block removed.
 
 -- ═══════════════════════ 1. recalc_leaderboard(): revoke + caller guard ═══════════════════════
+-- The body below was copied from the LIVE definition on 2026-09-26. Replace it only if the live body
+-- still matches that copy (md5, CR stripped): otherwise a change made since would be silently undone.
+-- Already guarded (a replay) → nothing to check.
+do $pin$
+declare _src text := (select prosrc from pg_proc where oid = to_regprocedure('public.recalc_leaderboard()'));
+begin
+  if _src is null then
+    raise exception 'ABORT: public.recalc_leaderboard() does not exist';
+  end if;
+  if _src !~ '>>> caller guard' and md5(replace(_src, E'\r', '')) <> '3b2222d43a3d005e498f38f3694c821d' then
+    raise exception 'ABORT: recalc_leaderboard changed since it was copied into this migration (md5 %); regenerate it from the live definition', md5(replace(_src, E'\r', ''));
+  end if;
+end $pin$;
+
 CREATE OR REPLACE FUNCTION public.recalc_leaderboard()
  RETURNS void
  LANGUAGE plpgsql
@@ -128,7 +148,7 @@ DECLARE
   max_lessons int; max_minutes int; weights jsonb;
   w_lessons numeric; w_homework numeric; w_streak numeric; w_minutes numeric; w_no_hw_total numeric;
 BEGIN
-  -- >>> caller guard (20260926233000): only contexts where user_homework_avg10_effective() answers
+  -- >>> caller guard (20260926233500): only contexts where user_homework_avg10_effective() answers
   -- for EVERY student; any other caller would rebuild the whole board without homework.
   IF NOT (auth.role() IS NULL OR auth.role() = 'service_role'
           OR public.has_role(auth.uid(), 'admin'::app_role)
@@ -254,7 +274,7 @@ set value = jsonb_set(
                 from jsonb_array_elements_text(s.value->'approved') x
                 where x not in ('recalc_leaderboard()', 'has_module_access(uuid,uuid)')),
                '[]'::jsonb))
-    || jsonb_build_object('amended_by_20260926233000',
+    || jsonb_build_object('amended_by_20260926233500',
          'removed recalc_leaderboard() and has_module_access(uuid,uuid): anon EXECUTE revoked, so any re-grant now alarms')
 where s.key = 'anon_execute_watchdog_baseline'
   and (s.value->'approved') ?| array['recalc_leaderboard()', 'has_module_access(uuid,uuid)'];
@@ -380,7 +400,7 @@ begin
   insert into public.admin_actions (actor_user_id, action, details)
   values (null, 'rpc_exposure_hardened',
           jsonb_build_object(
-            'migration', '20260926233000',
+            'migration', '20260926233500',
             'locked_to_service_role', to_jsonb(_locked),
             'guarded_admin_only', to_jsonb(_guarded),
             'anon_secdef_remaining', _remaining,
