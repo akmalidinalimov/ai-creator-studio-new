@@ -69,14 +69,19 @@ running that older copy shows `✅ Imported` for students who never reached the 
 2. Make sure `SHEET_SYNC_SECRET` in Script properties equals production's `SHEET_SYNC_SECRET`.
 3. Filter the sheet for rows whose **Imported at** is after **2026-07-05 14:04 UTC** (19:04 Tashkent) and
    whose Status is `✅ Imported` or `✔️ Already on platform`. Those students went to the old project.
-4. For each of those rows, look the @username up on the platform (Admin → Users search). Clear the
-   **Status** cell **only for students who are NOT on the platform**. The next run creates them in
-   production.
+4. For each of those rows, look the @username up on the platform (Admin → Users search). There are
+   three cases:
+   - **Not on the platform** → clear the **Status** cell. The next run creates them in production.
+   - **On the platform AND already enrolled in the row's course** → leave the row alone.
+   - **On the platform but NOT enrolled in the row's course** (e.g. a 4.0 student who bought 5.0 through
+     the sheet after the cutover) → that purchase never reached production. Clear the **Status** cell
+     so the next run enrolls them — **unless** someone deliberately moved or re-tiered this student on
+     the platform since; then add the enrollment by hand instead.
 
-   Do not clear the Status of a student who is already on the platform. Re-sending never creates a
-   duplicate, but it does re-apply the row: the student is **moved back into the sheet's group**, their
-   tier is reset to that group's tier, and their phone is overwritten if the row has one. If they were
-   moved or upgraded on the platform since, that change would be undone.
+   Why the care: re-sending never creates a duplicate, but it does re-apply the row — the student is
+   **moved into the sheet's group**, their tier is set to that group's tier, and their phone is
+   overwritten if the row has one. For someone moved or upgraded on the platform since, that change
+   would be undone.
 
 ## Platform side (already deployed)
 - `sheet-sync` edge function receives the rows (secret-gated) and creates each student via the existing
