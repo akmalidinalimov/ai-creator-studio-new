@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { mutate, type SaveResult } from "@/lib/mutate";
 import { reportClientError } from "@/lib/beacon";
+import { trackVideoProgress } from "@/lib/videoProgress";
 import { SB_BASE } from "@/lib/supabaseBase";
 import { watchedEnough } from "@/lib/watchGate";
 import { useAuth } from "@/contexts/AuthContext";
@@ -234,12 +235,11 @@ export default function LessonPage() {
       const now = Date.now();
       const delta = lastNativeTickRef.current ? Math.min(10, (now - lastNativeTickRef.current) / 1000) : 5;
       lastNativeTickRef.current = now;
-      const { data } = await supabase.rpc("track_video_progress", {
-        p_lesson_id: lessonId, p_current_time: cur, p_duration: dur, p_delta_seconds: delta,
-      });
+      // Guarded tick: an RPC error is beaconed (once per lesson), an impersonation preview is a no-op.
+      const tick = await trackVideoProgress(lessonId, { currentTime: cur, duration: dur, deltaSeconds: delta });
       if (cur > watchMaxPosRef.current) watchMaxPosRef.current = cur;
       if (dur > 0) watchDurRef.current = dur;
-      if ((data as any)?.completed) setCompleted((s) => new Set(s).add(lessonId));
+      if (tick.ok && tick.data?.completed) setCompleted((s) => new Set(s).add(lessonId));
       // Near-end fallback: mark complete if we're within 5s of the end.
       if (dur > 0 && cur >= dur - 5) {
         const r = await mutate(() => supabase.from("lesson_progress").upsert({
@@ -274,12 +274,10 @@ export default function LessonPage() {
     const now = Date.now();
     const delta = lastBunnyTickRef.current ? Math.min(10, (now - lastBunnyTickRef.current) / 1000) : 5;
     lastBunnyTickRef.current = now;
-    const { data } = await supabase.rpc("track_video_progress", {
-      p_lesson_id: lessonId, p_current_time: seconds, p_duration: duration, p_delta_seconds: delta,
-    });
+    const tick = await trackVideoProgress(lessonId, { currentTime: seconds, duration, deltaSeconds: delta });
     if (seconds > watchMaxPosRef.current) watchMaxPosRef.current = seconds;
     if (duration > 0) watchDurRef.current = duration;
-    if ((data as any)?.completed) setCompleted((s) => new Set(s).add(lessonId!));
+    if (tick.ok && tick.data?.completed) setCompleted((s) => new Set(s).add(lessonId));
   }, [user, lessonId]);
   const onBunnyEnded = useCallback(async () => {
     if (!user || !lessonId) return;

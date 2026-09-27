@@ -38,8 +38,10 @@ export type SaveManyResult<T = { id: string }> =
   | { ok: true; rows: T[] }
   | { ok: false; reason: SaveManyReason; count?: number; message?: string };
 
-/** True while an admin is previewing as a student (writes are blocked read-only). */
-function impersonatingReadonly(): boolean {
+/** True while an admin is previewing as a student (writes are blocked read-only). Exported so other
+ *  write paths that aren't table writes (e.g. the track_video_progress RPC in lib/videoProgress.ts)
+ *  apply the SAME impersonation rule instead of re-deriving it. */
+export function impersonatingReadonly(): boolean {
   try {
     return typeof window !== "undefined" && !!window.localStorage?.getItem("impersonating");
   } catch {
@@ -47,7 +49,8 @@ function impersonatingReadonly(): boolean {
   }
 }
 
-const IMPERSONATION_RE = /read-only impersonation/i;
+/** The message src/lib/impersonationGuard.ts rejects a blocked write/RPC with. */
+export const IMPERSONATION_RE = /read-only impersonation/i;
 
 /**
  * Guarded SINGLE-row write. Pass a THUNK that builds a Supabase update/insert/upsert/delete query
