@@ -259,7 +259,7 @@ const OPS_NET_POST_SHAPE = [
 ];
 const OPS_NET_POST_SIGNATURE =
   "p_url text, p_body jsonb DEFAULT '{}'::jsonb, p_headers jsonb DEFAULT '{}'::jsonb, " +
-  "p_purpose text DEFAULT NULL, p_timeout_ms integer DEFAULT 5000";
+  "p_purpose text DEFAULT NULL, p_timeout_ms integer DEFAULT 30000";
 // m[1] is "function" or "procedure" — a PROCEDURE named ops_net_post is never a valid replacement.
 const OPS_NET_POST_CREATE_RE =
   /\bcreate\s+(?:or\s+replace\s+)?(function|procedure)\s+(?:"?public"?\s*\.\s*)?"?ops_net_post"?\s*\(/gi;
