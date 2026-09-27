@@ -6,6 +6,7 @@
 // couldn't recover — last_inactive_warning_day >= 7), with a magic link into their profile.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
+import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,10 +25,11 @@ function randomToken(len = 32): string {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-  if (req.headers.get("x-internal-secret") !== Deno.env.get("INTERNAL_FN_SECRET")) {
+  const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  // Rotation-safe: re-fetches internal_fn_secret() on mismatch (was a raw env-var compare → env/Vault drift risk).
+  if (!(await verifyInternalSecret(req, admin))) {
     return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
-  const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
   const { data: tRoles } = await admin.from("user_roles").select("user_id").eq("role", "teacher");
   const tIds = (((tRoles || []) as any[]).map((r) => r.user_id));

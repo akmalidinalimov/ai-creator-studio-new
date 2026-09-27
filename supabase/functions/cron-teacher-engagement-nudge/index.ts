@@ -8,6 +8,7 @@
 // separate, already-live job — this one covers the two NEW triggers.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
+import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -27,14 +28,6 @@ const WAIT_COOLDOWN_H = 8;      // at most one "waiting" nudge per teacher per 8
 const OFFLINE_COOLDOWN_H = 47;  // at most one "offline" nudge per teacher per ~2 days
 
 const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-let __sec: string | null = null;
-async function internalSecret(): Promise<string> {
-  if (__sec) return __sec;
-  const { data, error } = await __admin.rpc("internal_fn_secret");
-  if (error) throw error;
-  __sec = data as string;
-  return __sec;
-}
 
 type Locale = "uz" | "ru" | "en";
 const normLocale = (c?: string | null): Locale => {
@@ -86,8 +79,8 @@ function randomToken(len = 32): string {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-  const provided = req.headers.get("x-internal-secret");
-  if (!provided || provided !== (await internalSecret())) {
+  // Shared rotation-safe verifier (_shared/internal-secret.ts): cached, re-fetched once on mismatch.
+  if (!(await verifyInternalSecret(req, __admin))) {
     return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   if (!BOT_TOKEN) {

@@ -2,6 +2,7 @@
 // Triggered by pg_cron every minute. Respects notifications_enabled, quiet hours, RBAC.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
+import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -23,30 +24,16 @@ const MSG = {
 };
 
 const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-let __sec: string | null = null;
-let __lastFetch = 0;
-async function __internalSecret(force = false): Promise<string> {
-  const now = Date.now();
-  // Cache the Vault secret, but allow a forced re-fetch on mismatch (rotation self-heal). Debounce the
-  // forced path to ≤1 RPC / 15s so a wrong-secret flood on this verify_jwt=false endpoint can't amplify.
-  if (__sec && (!force || now - __lastFetch < 15_000)) return __sec;
-  __lastFetch = now;
-  const { data, error } = await __admin.rpc("internal_fn_secret");
-  if (error) throw error;
-  __sec = data as string;
-  return __sec;
-}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-  const __p = req.headers.get("x-internal-secret");
-  let __s = await __internalSecret();
-  // Cached for the instance's lifetime; if internal_fn_secret was rotated, a warm instance holds the
-  // stale value and would 403 valid cron calls — re-fetch once on mismatch before rejecting (self-heals).
-  if (!__p || __p !== __s) __s = await __internalSecret(true);
-  if (!__p || __p !== __s) {
+  // Shared rotation-safe verifier (_shared/internal-secret.ts): cached, re-fetched once on mismatch.
+  if (!(await verifyInternalSecret(req, __admin))) {
     return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
+  // Verified above: the presented header IS the current internal_fn_secret(), so forward it as-is.
+  // eslint-disable-next-line no-restricted-syntax -- forwarding the header verified above, not checking it
+  const __s = req.headers.get("x-internal-secret")!;
   if (!BOT_TOKEN) {
     return new Response(JSON.stringify({ ok: false, error: "bot not configured" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
