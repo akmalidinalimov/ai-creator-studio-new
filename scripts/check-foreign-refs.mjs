@@ -49,6 +49,9 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 // over docs/ would have exempted apps-script.gs, the file this guard was written for. Every entry needs
 // a reason. mayLink:true additionally lets the file contain the ref as an address (host / link).
 const ALLOWLIST = {
+  "CLAUDE.md": {
+    reason: "Project instructions every session reads. They name the old project ref so a future session recognises it as foreign and never points anything at it (the stale-project incident). Prose only; no URL.",
+  },
   "scripts/supabase-refs.mjs": {
     reason: "The single definition of KNOWN_FOREIGN_REFS that this guard and E6 both import. A deny-list has to name what it denies.",
   },
