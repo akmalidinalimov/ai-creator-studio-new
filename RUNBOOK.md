@@ -25,8 +25,9 @@ All times are UTC unless noted; the platform's day-math is Asia/Tashkent (UTC+5)
 
 ### ⚠️ "HTTP faults (last 45m)" — `ops_http_failure_watchdog`
 **Means:** one or more automated HTTP calls returned a real fault (5xx, our-own `{"error":"forbidden"}`,
-401, a Telegram payload 4xx, a DNS/connection error) or timeouts spiked above threshold. Expected
-Telegram "user blocked the bot" noise is already suppressed.
+401, a Telegram payload 4xx, a DNS/connection error), or more than `timeout_threshold` calls in the
+window ran past their wait limit (the "⏱ Slow edge responses (over the wait limit)" line, which names
+the top callers). Expected Telegram "user blocked the bot" noise is already suppressed.
 **Confirm / triage:**
 ```sql
 select occurred_at, status_code, timed_out, classification, coalesce(purpose,url,'unattributed') as who,
@@ -46,9 +47,16 @@ select public.ops_http_health();
   calling code; fix and redeploy.
 - **`Could not resolve host` / connection errors** → transient network, or a wrong hostname in a caller.
   If it recurs for one `who`, correct that URL.
-- **Timeout burst** → usually pg_net queue congestion when many crons fire at `:00`/`:30`; benign unless
-  sustained. If sustained for one endpoint, that endpoint is slow — consider staggering its cron or
-  raising its `timeout_milliseconds`.
+- **⏱ Slow edge responses (over the wait limit)** → the named callers' edge functions answered slower
+  than pg_net waited (`ops_net_post`'s default wait: 5 s, 30 s once #193 is merged; a caller can pass
+  `p_timeout_ms`). pg_net stops
+  waiting, but the edge function usually keeps running and finishes — check that function's edge logs
+  for the same minute before assuming work was lost. Ignore the "DNS time: N ms" wording in
+  `error_msg`: it is pg_net's text for any timeout, not a DNS problem (a "DNS time: 30000" row was a
+  call that ran 38 s and returned 200). If one caller dominates, that function is slow: make it do
+  less per call, or stagger its cron away from `:00`/`:30`, where ~13 calls start in the same second.
+  `unattributed` = the failure has no `ops_http_calls` row, so no purpose (a call not made through
+  `ops_net_post`).
 **Silence (false alarm):** raise `timeout_threshold`, add a phrase to `tg_expected_regex`, or set
 `enabled=false` (all in `platform_settings.ops_http_watchdog`). Cooldown is `cooldown_hours` (3h).
 
@@ -81,6 +89,20 @@ VT daily, until cleared.
 **Caveat:** this only catches SQL/exec failures — it does **not** catch `net.http_post` HTTP failures
 (that's exactly what `ops_http_failure_watchdog` above now covers).
 **Confirm:** `select * from cron.job_run_details where status <> 'succeeded' order by start_time desc limit 20;`
+
+### 🔗 "Kirish havolasi xatolari" — a line of `ops_daily_digest`
+**Means:** bot sign-in links (magic links) that did NOT sign the student in, on the previous Tashkent
+day, as logged by `magic-link-redeem`: *allaqachon ishlatilgan* = the link was opened again after its
+2-minute grace, so the student saw "already used" (usually an old lesson button from an earlier
+message); *muddati o'tgan* = expired; *noma'lum* = a token we never issued (logged at a 10% sample, so
+shown ×10 with ≈); *⚠️ ishlatildi deb belgilanmadi* = a first use could not be marked used, so that
+link stays reusable until it expires — a bug, act on it. The first three are a baseline (about 2–22
+"already used" a day in September 2026), not an incident; watch the trend.
+**Confirm:**
+```sql
+select created_at, action, details from admin_actions
+where action like 'magic_link%' and created_at > now() - interval '2 days' order by created_at desc;
+```
 
 ---
 
