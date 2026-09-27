@@ -598,10 +598,12 @@ async function run(ctx: Ctx, stats: Stats): Promise<Response> {
           }
           inline.push([{ text: locale === "ru" ? "Не сегодня" : locale === "en" ? "Not today" : "Bugun emas", callback_data: "ack:not_today" }]);
           const out = await tg(ctx, "sendMessage", { chat_id: chatId, text, reply_markup: { inline_keyboard: inline } }, "daily_reminder");
-          if (!out.ok) stats.not_delivered++;
+          // sent.* counts DELIVERED messages only (it is a health signal in engagement_run_done); a failed
+          // send is not_delivered. The dedup stamp below is written either way, as it always was: a student
+          // who never pressed Start or blocked the bot must not be retried every tick.
+          if (out.ok) stats.sent.daily++; else stats.not_delivered++;
           await admin.from("profiles").update({ last_daily_reminder_at: new Date().toISOString() }).eq("id", u.id);
           await logNotif(ctx, stats, u.id, "daily_reminder", {});
-          stats.sent.daily++;
         }
       }
 
@@ -622,10 +624,9 @@ async function run(ctx: Ctx, stats: Stats): Promise<Response> {
               inline.push([{ text: tpl.button_label, url }]);
             }
             const out = await tg(ctx, "sendMessage", { chat_id: chatId, text, reply_markup: inline.length ? { inline_keyboard: inline } : undefined }, "streak_warning");
-            if (!out.ok) stats.not_delivered++;
+            if (out.ok) stats.sent.streak++; else stats.not_delivered++;
             await admin.from("profiles").update({ last_streak_warning_at: new Date().toISOString() }).eq("id", u.id);
             await logNotif(ctx, stats, u.id, "streak_warning", { streak: cs });
-            stats.sent.streak++;
           }
         }
       }
@@ -675,13 +676,12 @@ async function run(ctx: Ctx, stats: Stats): Promise<Response> {
           const url = await magicLink(admin, u.id, path);
           const reply_markup = tpl.button_label ? { inline_keyboard: [[{ text: tpl.button_label, url }]] } : undefined;
           const out = await tg(ctx, "sendMessage", { chat_id: chatId, text, reply_markup }, "reengagement_drip");
-          if (!out.ok) stats.not_delivered++;
+          if (out.ok) stats.sent.drip++; else stats.not_delivered++;
           await admin.from("profiles").update({
             last_inactive_warning_at: new Date().toISOString(),
             last_inactive_warning_day: stage,
           }).eq("id", u.id);
           await logNotif(ctx, stats, u.id, key, { days: daysSinceActivity });
-          stats.sent.drip++;
         }
       }
     } catch (e) {

@@ -7,7 +7,7 @@
 -- 09-26. Nothing alarmed: a killed edge function leaves only a line in the function logs, which no
 -- watchdog reads. The function fix (same PR) makes it cheap and budgeted; this makes the class LOUD:
 -- the function now writes `engagement_run_started` when a run begins and `engagement_run_done` (with
--- processed / sent per kind / skipped / deferred / partial / errors / requests / duration_ms) when it
+-- processed / delivered per kind / skipped / deferred / partial / errors / requests / duration_ms) when it
 -- ends, both to admin_actions, paired by details.run_id. A start with no done = a killed run.
 --
 -- WHAT ALARMS (DM to up to 3 admins via public.ops_net_post, re-alert every 6 h while it persists,
@@ -24,6 +24,12 @@
 --                internal-secret check 403-ing every call, the function failing to boot).
 --   never_started — the watchdog has existed for 2 hours and has never seen a run at all (the new
 --                function version never deployed).
+--   prefetch_failed — a run's bulk reads (activity / streaks / progress / enrollments) failed, so it fell
+--                back to the slow per-student path. Reminders still go out, but that is exactly the load
+--                that got the old function killed, and a persistent failure means a schema or join broke.
+--
+-- SUPERSEDES 20260926232000 (never merged or applied): review found prefetch failures recorded but not
+-- alarmed, and the "sent" counters counting failed sends (fixed in the function: sent = delivered).
 --
 -- ABSENCE BEFORE THE FIRST RUN DOES NOT ALARM. Today there are zero engagement_run_* rows (verified).
 -- unfinished/partial/errored count rows that exist, so they are 0. `silent` needs `ever_seen_run`, which
@@ -141,6 +147,7 @@ begin
          or coalesce(_partial, 0) > 0
          or coalesce(_errored, 0) > 0
          or coalesce(_user_errors, 0) > 0
+         or coalesce(_prefetch_failed, 0) > 0
          or coalesce(_silent, false)
          or coalesce(_never_started, false);
 
@@ -222,6 +229,11 @@ begin
           _msg := _msg || '⚠️ cron-engagement xatolar bilan tugadi: ' || (_r->>'errored_runs') || ' ta yugurish xatosi, '
                || (_r->>'user_errors') || ' ta talaba xatosi'
                || coalesce(' — ' || (_r->>'error_sample'), '') || '.' || E'\n';
+        end if;
+        if coalesce((_r->>'prefetch_failed_runs')::int, 0) > 0 then
+          _msg := _msg || '⚠️ cron-engagement: ' || (_r->>'prefetch_failed_runs') || ' ta yugurishda ommaviy oʻqish '
+               || 'muvaffaqiyatsiz boʻldi va sekin zaxira yoʻl ishladi. Eslatmalar ketdi, lekin takrorlansa — '
+               || 'jadval yoki ustun oʻzgargan boʻlishi mumkin (funksiya loglarini tekshiring).' || E'\n';
         end if;
         if coalesce(_r->>'silent', '') = 'true' then
           _msg := _msg || '🚨 cron-engagement 2 soatdan beri ishga tushmayapti (oxirgi: '
@@ -320,7 +332,7 @@ begin
     'last_alert_ms', 0,
     'ever_seen_run', coalesce(_r->>'ever_seen_run', '') = 'true',
     'first_checked_at', now(),
-    'seeded_by', '20260926232000',
+    'seeded_by', '20260926232500',
     'last_report', _r,
     'checked_at', now()))
   on conflict (key) do nothing;
