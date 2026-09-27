@@ -101,6 +101,42 @@ wrong, with correct-looking code written to satisfy it. `grade-card-reconcile` c
 guard never fired for the case it existed for and a student was told their replaced grade three
 times. Read the function, the trigger, or the raw payload — then write the guard.
 
+## SQL, grants and outbound HTTP — rules the lint enforces
+
+`npm run lint:footguns` (CI, blocking) runs `scripts/check-migration-grants.mjs`, rules E1–E10, on
+every migration named at or after its cutoff. Each rule exists because the mistake reached production:
+
+- **Grants go to PUBLIC.** anon/authenticated inherit PUBLIC, so `REVOKE ... FROM anon` alone is a
+  no-op that looks exactly like a fix. Write `revoke execute on function f(...) from public, anon,
+  authenticated;` then grant only the roles that need it. When reading `proacl`, the PUBLIC entry is
+  the one with an EMPTY grantee (`=X/postgres`); `LIKE '%=X%'` also matches `postgres=X` and has
+  produced a wrong answer here. Default privileges: only the GLOBAL form
+  (`alter default privileges for role postgres revoke execute on functions from public`) works; the
+  `IN SCHEMA` form merges onto the global default and is a no-op.
+- **No raw `net.http_post` — use `public.ops_net_post(p_url, p_body, p_headers, p_purpose,
+  p_timeout_ms)`.** A raw call records no URL, so its failures arrive "unattributed" and cannot be
+  traced (159 untraceable alerts during the stale-project incident). E8 fails a raw call in a
+  migration; `raw_outbound_watchdog` alarms on one created outside migrations (dashboard cron jobs).
+  Always pass `p_headers` with `Content-Type` — ops_net_post's default is `{}`.
+- **Never drop, rename or reshape `ops_net_post`** (E9). ~52 call sites — every watchdog's alert
+  channel — depend on its exact name, parameter order (cron jobs call it positionally), types and
+  defaults, and pg_depend cannot see them, so Postgres would allow the drop. A deliberate change
+  updates `OPS_NET_POST_SHAPE` in the lint and checks every caller in `pg_proc` and `cron.job`.
+- **Name a migration with the current timestamp.** An older name is grandfathered only if it is in
+  the frozen `scripts/migrations-grandfathered.txt` (E10); otherwise it would skip every rule while
+  the pipeline still applies it.
+- **No foreign project refs, no inline credentials** (E6, E7). Production was built on 2026-07-05 by
+  replaying the original project's migrations, and a function kept POSTing a secret to the OLD
+  project (`wpdztrijasgmxgliwddr`, still alive, not ours) for twelve weeks.
+- A line that only NAMES a forbidden call (a detector pattern, a notice) can carry a
+  `-- lint:allow E8: <reason>` comment — in a comment, with a real reason, visible in review.
+
+**Migrations that rewrite live function text:** start from the LIVE definition
+(`pg_get_functiondef`), never the repo's copy — the database drifts from the repo. And pin the exact
+inputs you verified (md5 of each body) instead of trying to prove arbitrary text safe with a
+hand-written SQL lexer: three review rounds of #189 each found a new lexer corner until the migration
+pinned its 37 verified texts and refused everything else.
+
 ## Verification bar
 
 - E2E-verify on prod with synthetic users (create via `admin-create-students` with
