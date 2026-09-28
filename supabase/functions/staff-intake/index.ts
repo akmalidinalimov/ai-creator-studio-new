@@ -46,7 +46,9 @@ Deno.serve(async (req) => {
     // Dropdown options for the form (no login → served here, code-gated).
     if (body?.action === "options") {
       const [{ data: courses }, { data: tiers }, { data: groups }] = await Promise.all([
-        admin.from("courses").select("id, title").order("title"),
+        // Open (published) courses first; closed ones stay listed so sales can pre-enroll a cohort
+        // before launch — the form marks them, because their modules stay locked until published.
+        admin.from("courses").select("id, title, published").order("published", { ascending: false }).order("title"),
         admin.from("course_tiers").select("id, course_id, name, position").order("position"),
         admin.from("groups").select("course_id, name").order("name"),
       ]);

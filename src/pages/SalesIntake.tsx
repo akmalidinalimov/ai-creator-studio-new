@@ -10,7 +10,7 @@ import { UserPlus, CheckCircle2, Loader2, AlertTriangle, Info, X, Lock } from "l
 import { supabase } from "@/integrations/supabase/client";
 
 type TierOpt = { id: string; name: string };
-type CourseOpt = { id: string; title: string; tiers: TierOpt[]; groups: string[] };
+type CourseOpt = { id: string; title: string; published: boolean; tiers: TierOpt[]; groups: string[] };
 type Recent = { name: string; status: string; cls: string };
 type ResultKind = "success" | "duplicate" | "exists" | "error";
 type Result = { kind: ResultKind; title: string; detail: string };
@@ -67,6 +67,7 @@ export default function SalesIntake() {
         const built: CourseOpt[] = (oc as any[]).map((c) => ({
           id: c.id,
           title: c.title,
+          published: c.published !== false,
           tiers: (ot as any[]).filter((t) => t.course_id === c.id).map((t) => ({ id: t.id, name: t.name })),
           groups: (og as any[]).filter((g) => g.course_id === c.id).map((g) => g.name),
         }));
@@ -81,10 +82,12 @@ export default function SalesIntake() {
 
   const selCourse = useMemo(() => courses.find((c) => c.title === course), [courses, course]);
   const tierOpts = selCourse ? [...selCourse.tiers.map((t) => t.name), "Full"] : ["Full"];
+  // A course without tiers (e.g. Challenge 6.0) has nothing to choose: tier_id null = every module.
+  const hasTiers = !!selCourse && selCourse.tiers.length > 0;
 
   const runIntake = async (opts: { confirmMove: boolean; groupName: string }) => {
     if (!selCourse) { toast.error("Kursni tanlang"); return; }
-    const tier_id = tier === "Full" ? null : (selCourse.tiers.find((t) => t.name === tier)?.id ?? null);
+    const tier_id = !hasTiers || tier === "Full" ? null : (selCourse.tiers.find((t) => t.name === tier)?.id ?? null);
     setSubmitting(true);
     setResult(null);
     // Capture the human-readable details now, before we clear the fields.
@@ -168,8 +171,10 @@ export default function SalesIntake() {
   };
 
   const submit = () => {
-    if (!first.trim() || !username.trim() || !course || !tier || !group.trim()) {
-      toast.error("Majburiy maydonlarni to'ldiring: ism, @username, kurs, tarif, guruh");
+    if (!first.trim() || !username.trim() || !course || (hasTiers && !tier) || !group.trim()) {
+      toast.error(hasTiers
+        ? "Majburiy maydonlarni to'ldiring: ism, @username, kurs, tarif, guruh"
+        : "Majburiy maydonlarni to'ldiring: ism, @username, kurs, guruh");
       return;
     }
     setMovePrompt(null);
@@ -277,27 +282,46 @@ export default function SalesIntake() {
             <Select value={course} onValueChange={(v) => { setCourse(v); setTier(""); setGroup(""); }}>
               <SelectTrigger><SelectValue placeholder="Kursni tanlang" /></SelectTrigger>
               <SelectContent>
-                {courses.map((c) => <SelectItem key={c.id} value={c.title}>{c.title}</SelectItem>)}
+                {courses.map((c) => (
+                  <SelectItem key={c.id} value={c.title}>{c.published ? c.title : `${c.title} (yopiq)`}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
+            {selCourse && !selCourse.published && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 leading-snug">
+                Bu kurs hali yopiq. Talaba qo'shiladi, lekin darslar kurs ochilgandan keyin ko'rinadi.
+              </p>
+            )}
+            {selCourse && !hasTiers && (
+              <p className="text-xs text-muted-foreground leading-snug">
+                Bu kursda tarif yo'q — talaba barcha modullarga to'liq kirish oladi.
+              </p>
+            )}
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1.5">
-              <Label>Tarif <span className="text-rose-500">*</span></Label>
-              <Select value={tier} onValueChange={setTier} disabled={!course}>
-                <SelectTrigger><SelectValue placeholder="Tarif" /></SelectTrigger>
-                <SelectContent>
-                  {tierOpts.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className={hasTiers ? "grid grid-cols-2 gap-2" : ""}>
+            {hasTiers && (
+              <div className="space-y-1.5">
+                <Label>Tarif <span className="text-rose-500">*</span></Label>
+                <Select value={tier} onValueChange={setTier} disabled={!course}>
+                  <SelectTrigger><SelectValue placeholder="Tarif" /></SelectTrigger>
+                  <SelectContent>
+                    {tierOpts.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label>Guruh <span className="text-rose-500">*</span></Label>
               <Input value={group} onChange={(e) => setGroup(e.target.value)} list="grp-list" placeholder="Guruh nomi" disabled={!course} />
               <datalist id="grp-list">
                 {(selCourse?.groups || []).map((g) => <option key={g} value={g} />)}
               </datalist>
+              {selCourse && selCourse.groups.length === 0 && (
+                <p className="text-xs text-muted-foreground leading-snug">
+                  Bu kursda hali guruh yo'q — yozilgan nom bilan yangi guruh yaratiladi.
+                </p>
+              )}
             </div>
           </div>
 
