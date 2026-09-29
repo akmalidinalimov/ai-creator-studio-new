@@ -12,6 +12,7 @@ import {
   checksAllGreen, ghAddLabel, ghClosePr, ghFetchChecks, ghFetchPr, ghMergePr,
   OPS_REPO, parseOpsCallback, verifyOpsPr,
 } from "./ops-approve.ts";
+import { likeEscape } from "../_shared/username.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1860,7 +1861,7 @@ async function findProfileByUsername(admin: any, username: string) {
     .from("profiles")
     .select("id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id, status, account_type")
     .is("telegram_id", null)
-    .ilike("telegram_username", cleaned)
+    .ilike("telegram_username", likeEscape(cleaned))
     .order("updated_at", { ascending: false })
     .limit(2);
   if (!data || data.length === 0) return null;
@@ -4814,7 +4815,7 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
         const { data } = await admin
           .from("profiles")
           .select("id, name, last_name, telegram_username")
-          .ilike("telegram_username", uname)
+          .ilike("telegram_username", likeEscape(uname))
           .limit(2);
         if (data && data.length === 1) target = data[0];
         else if (data && data.length > 1) ambiguous = true;

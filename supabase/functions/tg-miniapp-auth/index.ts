@@ -16,7 +16,8 @@ import { validateInitData } from "../_shared/telegram-initdata.ts";
 import { isChatMember } from "../_shared/telegram-membership.ts";
 import { mintSessionForUser } from "../_shared/mint-session.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";
-import { resolveProfile, type ResolveDeps, type StudentMatch } from "./resolve.ts";
+import { chatIdFromTopicUrl, resolveProfile, type ResolveDeps, type StudentMatch } from "./resolve.ts";
+import { likeEscape } from "../_shared/username.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -102,7 +103,7 @@ function makeDeps(admin: SupabaseClient): ResolveDeps {
       const { data: rows } = await admin.from("profiles")
         .select("id, email, group_id")
         .is("telegram_id", null)
-        .ilike("telegram_username", username); // exact (no wildcards) = case-insensitive exact match
+        .ilike("telegram_username", likeEscape(username)); // escaped → case-insensitive EXACT match
       if (!rows || rows.length === 0) return null;
       if (rows.length > 1) return { ambiguous: true };
       const s = rows[0] as { id: string; email: string; group_id: string | null };
@@ -114,13 +115,20 @@ function makeDeps(admin: SupabaseClient): ResolveDeps {
       const isStaff = roleList.some((r) => r === "teacher" || r === "admin" || r === "superadmin");
       if (!isStudent || isStaff) return null;
 
-      // Resolve the group's telegram chat id from the latest captured message in that group.
+      // Resolve the group's telegram chat id. The configured homework topic link
+      // (t.me/c/<internal>/<thread>) is authoritative and exists from the moment the group is set up;
+      // the latest captured message is the fallback. Message-only lookup failed closed for a brand-new
+      // group nobody had posted in yet (Challenge 6.0 groups 1 and 4), locking its students out.
       let chatId: number | null = null;
       if (s.group_id) {
-        const { data: gme } = await admin.from("group_message_events")
-          .select("telegram_chat_id").eq("group_id", s.group_id)
-          .order("sent_at", { ascending: false }).limit(1).maybeSingle();
-        chatId = (gme?.telegram_chat_id as number) ?? null;
+        const { data: g } = await admin.from("groups").select("homework_topic_url").eq("id", s.group_id).maybeSingle();
+        chatId = chatIdFromTopicUrl(g?.homework_topic_url as string | null);
+        if (chatId === null) {
+          const { data: gme } = await admin.from("group_message_events")
+            .select("telegram_chat_id").eq("group_id", s.group_id)
+            .order("sent_at", { ascending: false }).limit(1).maybeSingle();
+          chatId = (gme?.telegram_chat_id as number) ?? null;
+        }
       }
       return { id: s.id, email: s.email, group_id: s.group_id, group_chat_id: chatId } as StudentMatch;
     },

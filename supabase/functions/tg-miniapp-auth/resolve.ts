@@ -15,6 +15,14 @@ export type ResolveOutcome =
   | { kind: "signin"; profileId: string; email: string; backfilled: boolean }
   | { kind: "not_linked" };
 
+// A group's supergroup chat id from its configured topic link: https://t.me/c/<internal>/<thread>
+// → -100<internal>. Same parse the webhook membership sweep and submit-homework use. Invite links
+// (t.me/+…) carry no chat id → null.
+export function chatIdFromTopicUrl(url: string | null | undefined): number | null {
+  const m = /^https?:\/\/t\.me\/c\/(\d+)(?:\/|$)/.exec(String(url || "").trim());
+  return m ? Number(`-100${m[1]}`) : null;
+}
+
 export interface StudentMatch {
   id: string;
   email: string;
