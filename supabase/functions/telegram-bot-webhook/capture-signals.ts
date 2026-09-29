@@ -21,12 +21,12 @@ export type CaptureSkipReason =
   | "autoreg_off"                // unknown sender, auto_register flag off (kill-switch)
   | "topic_course_out_of_scope"  // unknown sender, the topic's group course is not in homework_capture.course_ids
   | "chat_admin"                 // unknown sender is a chat admin/creator (U4: staff never auto-register)
-  | "anonymous_sender"           // posted as the group/channel; hinted in-thread, cannot be attributed
+  | "anonymous_sender"           // posted as the group/channel, not as a reply; cannot be attributed (details.sender_kind)
   | "sender_has_no_group"        // registered profile with no group_id
   | "assignment_unresolved"      // registered profile, no assignment resolvable for this topic
   | "tier_locked"                // module beyond the student's tier
   | "already_graded"             // auto path: the task is graded (✅ + "already scored" DM, post not filed)
-  | "media_cap_reached"          // 11th+ file of one submission/pending post (🙈 reaction)
+  | "media_cap_reached"          // 11th+ file of one submission/pending post (🙈 reaction); step=finalize_append: the picker's merge
   | "album_item_after_finalize"  // album tail arrived after its pending post was finalized
   | "guess_already_graded"       // picker ignored; the auto-guess hit a graded task, post consumed unfiled
   | "guess_tier_locked"          // picker ignored; the auto-guess hit a tier-locked module, post expired
@@ -87,6 +87,31 @@ export function pendingAppendDrop(n: unknown):
   if (n === -1) return { kind: "skipped", reason: "media_cap_reached" };
   if (n === -2) return { kind: "skipped", reason: "album_item_after_finalize" };
   return { kind: "failed", reason: "pending_append_failed" };
+}
+
+// One submission holds at most 10 media items: the same cap as append_pending_media and
+// append_submission_media (both refuse at jsonb_array_length(media) >= 10, live bodies verified 2026-09-29).
+export const SUBMISSION_MEDIA_CAP = 10;
+
+// The picker's APPEND finalize (➕ add files, the sweep's guess onto an ungraded submission, an unscreened
+// fresh pick) merges a pending post's files into the existing submission. Prior files are kept first, so
+// whatever does not fit is the tail of the NEW files. `dropped` is exactly what the old
+// `priorMedia.concat(addMedia).slice(0, 10)` threw away with no signal. `added` is how many new files fit.
+export function mergeCappedMedia<T>(prior: T[], add: T[], cap = SUBMISSION_MEDIA_CAP): { merged: T[]; added: number; dropped: T[] } {
+  const all = prior.concat(add);
+  const merged = all.slice(0, cap);
+  const dropped = all.slice(cap);
+  return { merged, added: add.length - dropped.length, dropped };
+}
+
+// True when a message replies to a REAL message. Telegram sets reply_to_message on every post in a forum
+// topic, pointing at the topic's creation service message (reply_to_message.forum_topic_created), so
+// `!msg.reply_to_message` does not identify a fresh post there (the #170/#171 class). Verified on
+// webhook_inbox 2026-09-29: of 13 anonymous media posts in registered homework topics in 90 days, 7 were
+// fresh posts carrying that implicit reply, 6 were real replies, and 0 had no reply_to_message at all.
+export function isRealReply(msg: any): boolean {
+  const r = msg?.reply_to_message;
+  return !!r && !r.forum_topic_created;
 }
 
 export async function recordPendingAppendDrop(admin: any, n: unknown, d: DropDetails): Promise<void> {

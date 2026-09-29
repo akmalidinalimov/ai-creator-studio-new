@@ -1,8 +1,8 @@
 // Tests for the homework-capture drop signals. Run: deno test supabase/functions/telegram-bot-webhook/capture-signals.test.ts
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
-  isRegisteredHomeworkTopic, pendingAppendDrop, recordAutoRegisterFailed, recordCaptureFailed, recordCaptureSkipped,
-  recordPendingAppendDrop,
+  isRealReply, isRegisteredHomeworkTopic, mergeCappedMedia, pendingAppendDrop, recordAutoRegisterFailed, recordCaptureFailed,
+  recordCaptureSkipped, recordPendingAppendDrop, SUBMISSION_MEDIA_CAP,
 } from "./capture-signals.ts";
 
 // Service-role client stub: an in-memory admin_actions table honouring logHealthOnce's filter chain, plus
@@ -155,4 +155,78 @@ Deno.test("recordPendingAppendDrop: a successful append writes nothing; each dro
   ]);
   assertEquals(rows[0].details.pending_id, "p-1");
   assertEquals(rows[0].target_user_id, "u-3");
+});
+
+// mergeCappedMedia: the picker's append finalize. Shapes are the three July posts whose tails vanished
+// (prior 8 + 5, prior 8 + 9, prior 9 + 10), plus the edges.
+const items = (tag: string, n: number) => Array.from({ length: n }, (_, i) => ({ msg_url: `${tag}/${i + 1}` }));
+
+Deno.test("mergeCappedMedia: under the cap nothing is dropped", () => {
+  const r = mergeCappedMedia(items("p", 3), items("a", 4));
+  assertEquals(r.merged.length, 7);
+  assertEquals(r.added, 4);
+  assertEquals(r.dropped, []);
+  assertEquals(mergeCappedMedia([], items("a", 10)).dropped, []);
+});
+
+Deno.test("mergeCappedMedia: prior files are kept first; the tail of the NEW files is what drops", () => {
+  const a = items("a", 5);
+  const r = mergeCappedMedia(items("p", 8), a); // pending 75474039: 2 kept, 3 lost
+  assertEquals(r.merged.length, SUBMISSION_MEDIA_CAP);
+  assertEquals(r.merged.slice(8), a.slice(0, 2));
+  assertEquals(r.added, 2);
+  assertEquals(r.dropped, a.slice(2));
+  assertEquals(mergeCappedMedia(items("p", 8), items("a", 9)).dropped.length, 7); // 7b912d5f
+  const r3 = mergeCappedMedia(items("p", 9), items("a", 10)); // 304bec62
+  assertEquals([r3.added, r3.dropped.length], [1, 9]);
+});
+
+Deno.test("mergeCappedMedia: a full submission takes none of the new files (added 0 → 🙈, not ✅)", () => {
+  const r = mergeCappedMedia(items("p", 10), items("a", 3));
+  assertEquals(r.added, 0);
+  assertEquals(r.dropped.map((x) => x.msg_url), ["a/1", "a/2", "a/3"]);
+});
+
+Deno.test("media_cap_reached from the finalize merge: one row with step/added/dropped/urls, deduped per sender-day", async () => {
+  const { admin, rows } = fakeAdmin();
+  const chatId = chat();
+  const d = {
+    chatId, threadId: 8, messageId: 5478, fromId: 444, userId: "u-4", pending_id: "p-4", submission_id: "s-4",
+    step: "finalize_append", added: 2, dropped: 3, dropped_msg_urls: ["a/3", "a/4", "a/5"],
+  };
+  await recordCaptureSkipped(admin, "media_cap_reached", d);
+  // The same sender hitting the cap again that day (either path) is the same counter row.
+  await recordCaptureSkipped(admin, "media_cap_reached", { chatId, threadId: 8, messageId: 5490, fromId: 444, userId: "u-4" });
+  assertEquals(rows.length, 1);
+  assertEquals(rows[0].action, "hw_capture_skipped");
+  assertEquals(rows[0].details.step, "finalize_append");
+  assertEquals(rows[0].details.dropped, 3);
+  assertEquals(rows[0].details.dropped_msg_urls, ["a/3", "a/4", "a/5"]);
+});
+
+// isRealReply fixtures copy the SHAPE of real webhook_inbox payloads (2026-08-31 and 2026-09-03, anonymous
+// admin posts in a homework topic); ids and text are placeholders.
+const topicCreation = {
+  message_id: 7, date: 1, chat: { id: -1001, type: "supergroup" }, from: { id: 5, is_bot: false, first_name: "A" },
+  is_topic_message: true, message_thread_id: 7,
+  forum_topic_created: { name: "UYGA VAZIFA", icon_color: 16766590, icon_custom_emoji_id: "1" },
+};
+const anonPost = (reply_to_message?: unknown) => ({
+  message_id: 100, date: 1, chat: { id: -1001, type: "supergroup" },
+  from: { id: 1087968824, is_bot: true, first_name: "Group", username: "GroupAnonymousBot" },
+  sender_chat: { id: -1001, type: "supergroup", title: "G", is_forum: true },
+  is_topic_message: true, message_thread_id: 7, video: { file_id: "x" }, caption: "c",
+  ...(reply_to_message ? { reply_to_message } : {}),
+});
+
+Deno.test("isRealReply: a fresh forum-topic post carries an implicit reply to the topic creation — not a reply", () => {
+  assertEquals(isRealReply(anonPost(topicCreation)), false);
+});
+
+Deno.test("isRealReply: a reply to an actual message is a reply; no reply_to_message / no message is not", () => {
+  const studentPost = { message_id: 4960, date: 1, chat: { id: -1001, type: "supergroup" }, from: { id: 9, is_bot: false }, is_topic_message: true, message_thread_id: 7 };
+  assertEquals(isRealReply(anonPost(studentPost)), true);
+  assertEquals(isRealReply(anonPost()), false);
+  assertEquals(isRealReply(null), false);
+  assertEquals(isRealReply({}), false);
 });

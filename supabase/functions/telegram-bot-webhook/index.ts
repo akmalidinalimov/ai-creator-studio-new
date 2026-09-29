@@ -9,8 +9,8 @@ import { sendTelegram } from "../_shared/telegram-send.ts";
 import { logHealth } from "../_shared/edge.ts";
 import { recordGradeCardSkipped } from "../_shared/grade-card-signals.ts";
 import {
-  type AutoRegisterSource, isRegisteredHomeworkTopic, recordAutoRegisterFailed, recordCaptureFailed, recordCaptureSkipped,
-  recordPendingAppendDrop,
+  type AutoRegisterSource, isRealReply, isRegisteredHomeworkTopic, mergeCappedMedia, recordAutoRegisterFailed,
+  recordCaptureFailed, recordCaptureSkipped, recordPendingAppendDrop,
 } from "./capture-signals.ts";
 import { redactJson, redactSecrets } from "../_shared/redact.ts";
 import {
@@ -331,6 +331,7 @@ const T = {
     pkExistingAsk: (lbl: string, n: number, gradeLine: string) => `📎 <b>${lbl}</b> — bu vazifaga allaqachon topshirilgan (${n} ta fayl).${gradeLine}\nNima qilamiz?`,
     pkAddFiles: "➕ Fayl qo'shish (avvalgisiga)",
     pkAppended: (lbl: string, n: number) => `✅ <b>${lbl}</b> — fayl qo'shildi (jami ${n} ta).`,
+    pkCapDropped: (n: number) => `⚠️ ${n} ta fayl qo'shilmadi: bitta vazifaga jami 10 tagacha fayl qabul qilinadi.`,
     pkWelcome: (name: string) => `👋 <b>${name}</b>, siz AI Creators platformasiga qo'shildingiz (sinov hisobi). Vazifalaringiz qabul qilinadi, ball va statistika yuritiladi. Darsliklar to'liq to'lovdan so'ng ochiladi — administrator bilan bog'laning.`,
     pkWelcomeBtn: "🤖 Botga ulanish",
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ hammasi" : `${n} vazifa baholanmagan`}`,
@@ -626,6 +627,7 @@ const T = {
     pkExistingAsk: (lbl: string, n: number, gradeLine: string) => `📎 <b>${lbl}</b> — по этому заданию уже сдано (${n} файл(ов)).${gradeLine}\nЧто делаем?`,
     pkAddFiles: "➕ Добавить файл (к прежней сдаче)",
     pkAppended: (lbl: string, n: number) => `✅ <b>${lbl}</b> — файл добавлен (всего ${n}).`,
+    pkCapDropped: (n: number) => `⚠️ Не добавлено файлов: ${n} — к одному заданию принимается не больше 10 файлов.`,
     pkWelcome: (name: string) => `👋 <b>${name}</b>, вы добавлены на платформу AI Creators (пробный аккаунт). Ваши работы принимаются, баллы и статистика ведутся. Уроки откроются после полной оплаты — свяжитесь с администратором.`,
     pkWelcomeBtn: "🤖 Подключить бота",
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ всё" : `${n} не оценено`}`,
@@ -913,6 +915,7 @@ const T = {
     pkExistingAsk: (lbl: string, n: number, gradeLine: string) => `📎 <b>${lbl}</b> — you already submitted this task (${n} file(s)).${gradeLine}\nWhat shall we do?`,
     pkAddFiles: "➕ Add file (to the existing one)",
     pkAppended: (lbl: string, n: number) => `✅ <b>${lbl}</b> — file added (${n} total).`,
+    pkCapDropped: (n: number) => `⚠️ ${n} file(s) not added: one task accepts at most 10 files.`,
     pkWelcome: (name: string) => `👋 <b>${name}</b>, you've been added to the AI Creators platform (trial account). Your homework is accepted and your points/statistics are tracked. Lessons unlock after full payment — contact the administrator.`,
     pkWelcomeBtn: "🤖 Connect the bot",
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ all done" : `${n} ungraded`}`,
@@ -5668,7 +5671,9 @@ async function finalizePendingPost(
     if (prior && prior.score == null && action !== "replace") {
       const priorMedia = Array.isArray((prior as any).media) ? (prior as any).media : [];
       const addMedia = Array.isArray(pending.media) ? pending.media : [];
-      const mergedMedia = priorMedia.concat(addMedia).slice(0, 10);
+      // Capped at 10 like every other media path. What does not fit is the tail of the NEW files; it used to
+      // vanish behind a clean ✅ (3 posts / 19 unique files in July), so it is now counted and told.
+      const { merged: mergedMedia, added: addedN, dropped: capDropped } = mergeCappedMedia(priorMedia, addMedia);
       const addText = (pending.submitted_text || "").slice(0, 4000);
       const priorText = ((prior as any).submitted_text || "") as string;
       const mergedText = priorText && addText && !priorText.includes(addText)
@@ -5687,10 +5692,20 @@ async function finalizePendingPost(
       await admin.from("hw_pending_posts")
         .update({ state: "done", expires_at: new Date(Date.now() + 90_000).toISOString() })
         .eq("id", pending.id);
-      try { await setMessageReaction(chatId, firstMsgId, "✅"); } catch (_e) { /* ignore */ }
-      await morphReceipt(t.pkAppended(lbl0, mergedMedia.length));
+      // Over the cap: the same two Telegram calls, but they say so. 🙈 when none of this post's files fit
+      // (as the auto path and the pending post react at the cap), and the receipt names the count left out.
+      try { await setMessageReaction(chatId, firstMsgId, addedN > 0 ? "✅" : "🙈"); } catch (_e) { /* ignore */ }
+      await morphReceipt(capDropped.length
+        ? `${addedN > 0 ? t.pkAppended(lbl0, mergedMedia.length) : `🙈 <b>${lbl0}</b>`}\n${t.pkCapDropped(capDropped.length)}`
+        : t.pkAppended(lbl0, mergedMedia.length));
+      if (capDropped.length) {
+        await recordCaptureSkipped(admin, "media_cap_reached", {
+          ...dropAt, submission_id: (prior as any).id, step: "finalize_append", added: addedN, dropped: capDropped.length,
+          dropped_msg_urls: capDropped.map((it: any) => it?.msg_url ?? null),
+        });
+      }
       cacheInvalidateUser(pending.user_id);
-      console.log("pk:appended", JSON.stringify({ pending_id: pending.id, submission_id: (prior as any).id, n: mergedMedia.length, guessed }));
+      console.log("pk:appended", JSON.stringify({ pending_id: pending.id, submission_id: (prior as any).id, n: mergedMedia.length, dropped: capDropped.length, guessed }));
       return "appended";
     }
 
@@ -6240,30 +6255,43 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     }
 
     // U5: ANONYMOUS posts (send-as-group / send-as-channel) can't be attributed to a student —
-    // they used to vanish with zero feedback. Hint ONLY for fresh non-reply posts in a REGISTERED
-    // homework topic (teachers commonly answer anonymously WITH media as replies — never hint at
-    // those), throttled to one per topic per 15 min.
+    // they used to vanish with zero feedback. Teachers commonly answer anonymously WITH media as
+    // replies, so neither the hint nor the signal fires for a real reply.
+    // SIGNAL: every other anonymous media post in a REGISTERED homework topic. It must not be gated on
+    // `!msg.reply_to_message`: Telegram points every forum-topic post at the topic-creation message, so
+    // that gate recorded none of the 7 fresh anonymous posts of the last 90 days (see isRealReply).
+    // HINT: keeps its original `!msg.reply_to_message` gate on purpose, which in a forum topic means it
+    // does not fire in practice (in 90 days of webhook_inbox, the only topic messages without
+    // reply_to_message were service messages: pins and topic creations). All 7 of those posts came from
+    // GroupAnonymousBot (group admins posting as the group), and the captioned ones were staff
+    // instructions/announcements, so widening the hint would answer staff with "anonymous homework is
+    // not accepted". Changing that is an owner decision.
     if (isAnon || msg.sender_chat) {
-      if (!msg.reply_to_message) {
+      if (!isRealReply(msg)) {
         const stripped0 = String(chatId).replace(/^-100/, "");
         const { data: hwg } = await admin.from("groups").select("id")
           .eq("homework_topic_id", threadId)
           .ilike("homework_topic_url", `%/c/${stripped0}/%`).limit(1);
         if (hwg && hwg.length) {
-          const k = `${chatId}:${threadId}`;
-          if ((Date.now() - (__anonHintAt.get(k) || 0)) > 15 * 60_000) {
-            __anonHintAt.set(k, Date.now());
-            try {
-              await tgApi("sendMessage", {
-                chat_id: chatId, message_thread_id: threadId, reply_to_message_id: messageId,
-                text: "⚠️ Anonim rejimda yuborilgan vazifa qabul qilinmaydi. Iltimos, anonim rejimni o'chirib, o'z nomingizdan qaytadan yuboring.",
-              });
-            } catch (_e) { /* best-effort */ }
+          if (!msg.reply_to_message) {
+            const k = `${chatId}:${threadId}`;
+            if ((Date.now() - (__anonHintAt.get(k) || 0)) > 15 * 60_000) {
+              __anonHintAt.set(k, Date.now());
+              try {
+                await tgApi("sendMessage", {
+                  chat_id: chatId, message_thread_id: threadId, reply_to_message_id: messageId,
+                  text: "⚠️ Anonim rejimda yuborilgan vazifa qabul qilinmaydi. Iltimos, anonim rejimni o'chirib, o'z nomingizdan qaytadan yuboring.",
+                });
+              } catch (_e) { /* best-effort */ }
+            }
+            console.log("hw:group:anon-poster-hinted", JSON.stringify({ chatId, threadId, messageId }));
           }
-          console.log("hw:group:anon-poster-hinted", JSON.stringify({ chatId, threadId, messageId }));
-          // The hint is the graceful half; the post itself is still dropped, so count it too.
+          // The post itself is dropped (hinted or not), so count it. sender_kind separates an admin posting
+          // as the group (anonymous_admin: staff) from a user posting as a channel ("channel"), which is the
+          // case a student can produce.
           await recordCaptureSkipped(admin, "anonymous_sender", {
             chatId, threadId, messageId, fromId: null, sender_chat_id: senderChatId ?? null, group_id: hwg[0].id,
+            sender_kind: isAnon ? "anonymous_admin" : (msg.sender_chat?.type ?? "unknown"),
           });
         }
       }
