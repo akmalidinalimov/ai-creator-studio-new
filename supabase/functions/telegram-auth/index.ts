@@ -2,6 +2,7 @@
 // then issues a magic link and redirects the user to it (signing them in).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { createHash, createHmac } from "node:crypto";
+import { likeEscape } from "../_shared/username.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -75,7 +76,7 @@ Deno.serve(async (req) => {
           .from("profiles")
           .select("id, email, telegram_id, telegram_username")
           .is("telegram_id", null)
-          .ilike("telegram_username", cleaned)
+          .ilike("telegram_username", likeEscape(cleaned))
           .order("updated_at", { ascending: false })
           .limit(2);
         if (data && data.length > 0) {

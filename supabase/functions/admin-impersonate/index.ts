@@ -1,5 +1,6 @@
 // Admin "log in as" — issues a short-lived magic link for a teacher/student.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { likeEscape } from "../_shared/username.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -61,7 +62,7 @@ Deno.serve(async (req) => {
       query = query.eq("telegram_id", Number(digits));
     } else if (telegram_username) {
       const uname = telegram_username.replace(/^@/, "").toLowerCase();
-      query = query.ilike("telegram_username", uname);
+      query = query.ilike("telegram_username", likeEscape(uname));
     } else {
       return new Response(JSON.stringify({ error: "missing_target" }), {
         status: 400,

@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { resolveProfile, type ResolveDeps } from "./resolve.ts";
+import { chatIdFromTopicUrl, resolveProfile, type ResolveDeps } from "./resolve.ts";
 
 // A base set of deps where nothing matches; each test overrides only what it needs.
 const base = (): ResolveDeps => ({
@@ -76,4 +76,14 @@ Deno.test("student match but no group_chat_id → not_linked (fail closed, nothi
     findStudentUsernameOnly: async () => ({ id: "p8", email: "e", group_id: "g", group_chat_id: null }),
   };
   assertEquals(await resolveProfile(d, { id: 8, username: "x" }), { kind: "not_linked" });
+});
+
+Deno.test("chatIdFromTopicUrl: topic link → -100<internal>; invite link / junk → null", () => {
+  assertEquals(chatIdFromTopicUrl("https://t.me/c/4440955972/3"), -1004440955972);
+  assertEquals(chatIdFromTopicUrl("https://t.me/c/3714608284/5/120"), -1003714608284);
+  assertEquals(chatIdFromTopicUrl("  https://t.me/c/4463424516  "), -1004463424516);
+  assertEquals(chatIdFromTopicUrl("https://t.me/+d58xyKDXtHJhYzdk"), null);
+  assertEquals(chatIdFromTopicUrl("https://evil.example/t.me/c/1/2"), null);
+  assertEquals(chatIdFromTopicUrl(null), null);
+  assertEquals(chatIdFromTopicUrl(""), null);
 });

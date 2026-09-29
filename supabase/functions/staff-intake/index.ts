@@ -5,6 +5,7 @@
 // (action:"options") and adds ONE student (course + tier + group) via the proven
 // admin-create-students engine, then sets tier + phone and audit-logs (no staff actor).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { likeEscape } from "../_shared/username.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -91,7 +92,7 @@ Deno.serve(async (req) => {
       const unameNorm = username.replace(/^@/, "").toLowerCase();
       const { data: cands } = await admin
         .from("profiles").select("id, group_id, telegram_username")
-        .ilike("telegram_username", `%${unameNorm}%`).limit(10);
+        .ilike("telegram_username", `%${likeEscape(unameNorm)}`).limit(10);
       const existing = (cands || []).find(
         (p: any) => String(p.telegram_username ?? "").replace(/^@/, "").toLowerCase() === unameNorm,
       );

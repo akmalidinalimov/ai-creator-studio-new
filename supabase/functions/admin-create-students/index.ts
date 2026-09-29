@@ -1,5 +1,6 @@
 // Admin-only: create / delete users + send magic-link invites + audit logging.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { likeEscape } from "../_shared/username.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -336,7 +337,15 @@ Deno.serve(async (req) => {
         if (e1) { existingId = (e1 as any).id; existingGroupId = (e1 as any).group_id || null; existingTgUsername = (e1 as any).telegram_username ?? null; }
       }
       if (!existingId && tgUserNorm) {
-        const { data: e2 } = await admin.from("profiles").select("id, group_id, telegram_username").or(`telegram_username.eq.${tgUserNorm},telegram_username.eq.@${tgUserNorm}`).maybeSingle();
+        // Case-INSENSITIVE: tgUserNorm is lowercased but stored usernames keep their case (110 profiles
+        // are mixed-case). An exact .eq() missed every one of them, so re-adding such a student fell
+        // through to createUser → duplicate account or a uniq_profiles_telegram_username_lower error.
+        // ilike with LIKE metacharacters escaped (usernames contain "_"), then an exact compare in JS.
+        const { data: e2rows } = await admin.from("profiles").select("id, group_id, telegram_username")
+          .ilike("telegram_username", `%${likeEscape(tgUserNorm)}`).limit(20);
+        const e2 = (e2rows || []).find(
+          (p: any) => String(p.telegram_username ?? "").replace(/^@+/, "").toLowerCase() === tgUserNorm,
+        ) ?? null;
         if (e2) { existingId = (e2 as any).id; existingGroupId = (e2 as any).group_id || null; existingTgUsername = (e2 as any).telegram_username ?? null; }
       }
       // Soft re-import dedupe by (lower(name), lower(last_name)) — ONLY when CSV row has

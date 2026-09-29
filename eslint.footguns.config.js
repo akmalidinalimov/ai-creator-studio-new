@@ -20,6 +20,19 @@ const SECRET_MSG =
 const WRITE_MSG =
   "Direct supabase .update()/.upsert() — route through mutate()/mutateMany()/saveWithToast() from @/lib/mutate so a 0-row (RLS-filtered) write can't read as success.";
 
+// Rule 4 — an ilike on telegram_username must go through likeEscape() (_shared/username.ts): "_" is a LIKE
+// wildcard and Telegram usernames contain it, so an unescaped value is not an exact match — on the
+// first-time username→profile link paths that let one user claim another student's unlinked account.
+const USERNAME_MSG =
+  "Unescaped ilike on telegram_username — wrap the value in likeEscape() from _shared/username.ts. '_' is a LIKE wildcard, so \"a_ice1\" would match the profile \"alice1\".";
+const USERNAME_SELECTORS = [
+  {
+    selector:
+      "CallExpression[callee.property.name='ilike'][arguments.0.value='telegram_username']:not(:has(CallExpression[callee.name='likeEscape']))",
+    message: USERNAME_MSG,
+  },
+];
+
 const TELEGRAM_SELECTORS = [
   { selector: "Literal[value=/api\\.telegram\\.org/]", message: TELEGRAM_MSG },
   { selector: "TemplateElement[value.raw=/api\\.telegram\\.org/]", message: TELEGRAM_MSG },
@@ -55,7 +68,7 @@ export default tseslint.config(
     languageOptions: { parser: tseslint.parser },
     // Rule 3 rides in the same list: flat config REPLACES (doesn't merge) a rule's options when two
     // blocks configure it for one file, so the two rule families share one no-restricted-syntax entry.
-    rules: { "no-restricted-syntax": ["error", ...TELEGRAM_SELECTORS, ...SECRET_SELECTORS] },
+    rules: { "no-restricted-syntax": ["error", ...TELEGRAM_SELECTORS, ...SECRET_SELECTORS, ...USERNAME_SELECTORS] },
   },
 
   // Rule 3 — no hand-rolled x-internal-secret RECEIVER check in edge functions. BLOCKING ("error").
@@ -78,7 +91,7 @@ export default tseslint.config(
       "supabase/functions/notify-completion/index.ts",           // no caller since #188 (deletion candidate)
     ],
     languageOptions: { parser: tseslint.parser },
-    rules: { "no-restricted-syntax": ["error", ...TELEGRAM_SELECTORS] },
+    rules: { "no-restricted-syntax": ["error", ...TELEGRAM_SELECTORS, ...USERNAME_SELECTORS] },
   },
 
   // Rule 2 — no UNWRAPPED supabase write in src/. `mutate()` WRAPS the write (`mutate(() => x.update())`)
