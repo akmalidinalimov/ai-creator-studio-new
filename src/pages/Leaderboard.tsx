@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { cn } from "@/lib/utils";
 import { formatXp } from "@/lib/xp";
+import { reportClientError } from "@/lib/beacon";
 import {
   Card,
   SectionHeader,
@@ -150,9 +151,12 @@ export default function Leaderboard() {
     setError(false);
     (async () => {
       try {
-        const [boardRes, pubRes] = await Promise.all([
+        const [boardRes, pubRes, courseRes] = await Promise.all([
           supabase.rpc("group_leaderboard" as any, { uid: user.id, _limit: GROUP_LEADERBOARD_LIMIT }),
           supabase.rpc("public_profile" as any, { _uid: user.id }),
+          // The course this group's rating is scored by — the same lookup group_leaderboard() does
+          // server-side. The page can't read it itself: `groups` is admin-only under RLS.
+          supabase.rpc("group_rating_course_id" as any, { uid: user.id }),
         ]);
         if (boardRes.error) throw boardRes.error;
         if (cancelled) return;
@@ -161,25 +165,37 @@ export default function Leaderboard() {
         const pub: any = Array.isArray(pubRes.data) ? pubRes.data[0] : pubRes.data;
         setGroupName(pub?.group_name || null);
 
+        // NULL is a legitimate answer (a group without a course) and matches group_leaderboard()'s
+        // own no-course fallback. A FAILED lookup also degrades to NULL — the pre-fix behaviour, where
+        // another course's lessons count this week — so it is beaconed rather than hidden.
+        let courseId: string | null = null;
+        if (courseRes.error) {
+          reportClientError({
+            type: "other",
+            message: "leaderboard_course_unresolved",
+            extra: { code: courseRes.error.code ?? courseRes.error.message ?? null },
+          });
+        } else if (typeof courseRes.data === "string") {
+          courseId = courseRes.data;
+        }
+
         // Haftalik board: same member roster, re-scored with the windowed primitive
         // (granted to `authenticated`, computes the exact Monday-Tashkent boundary the
         // teacher/admin digest boards already use — 20260810205006_group_student_leaderboard.sql).
         // No batched "my group, this week" RPC exists for a plain student — group_student_leaderboard
         // is admin/teacher-only (checked via has_role/teacher_id, not callable by a regular
         // student's own session) — so this is N parallel per-member calls, paid once per page
-        // load (not per toggle click). _course_id is null ON PURPOSE: since migration
-        // 20260929192000 a null course means "this member's own group course", and every row
-        // here is a member of the viewer's group, so each score is scoped to the viewer's course —
-        // the same number the Monday Telegram board and the Umumiy tab use. The page cannot pass
-        // the id itself: `groups` is admin-only under RLS and no student-callable RPC returns
-        // course_id. (Before that migration null meant "subtract nothing": an unscoped weekly total.)
+        // load (not per toggle click). Every member is in the viewer's group, so they all share
+        // courseId — the SAME course the Umumiy tab, the Monday group post and the challenge prize
+        // snapshot score by. (Passing null here used to subtract nothing: a student enrolled in two
+        // courses had the other course's lessons counted on this tab only.)
         if (members.length > 0) {
           const sinceIso = tashkentWeekStartIso();
           const weeklyScores = await Promise.all(
             members.map(async (r) => {
               try {
                 const { data, error: rpcError } = await supabase
-                  .rpc("user_group_rating_xp_since" as any, { _uid: r.user_id, _course_id: null, _since: sinceIso });
+                  .rpc("user_group_rating_xp_since" as any, { _uid: r.user_id, _course_id: courseId, _since: sinceIso });
                 return rpcError || typeof data !== "number" ? 0 : data;
               } catch {
                 return 0;
