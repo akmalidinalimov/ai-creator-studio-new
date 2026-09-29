@@ -167,11 +167,12 @@ export default function Leaderboard() {
         // No batched "my group, this week" RPC exists for a plain student — group_student_leaderboard
         // is admin/teacher-only (checked via has_role/teacher_id, not callable by a regular
         // student's own session) — so this is N parallel per-member calls, paid once per page
-        // load (not per toggle click). _course_id is passed null: the function's own contract
-        // says a null course yields the plain windowed total, the same graceful fallback
-        // group_leaderboard() itself uses for a student with no resolvable course — acceptable
-        // for a v1 frontend-only task (only affects the rare dual-enrolled student, and only on
-        // the Haftalik tab; the Umumiy board is byte-for-byte the existing, exact RPC).
+        // load (not per toggle click). _course_id is null ON PURPOSE: since migration
+        // 20260929192000 a null course means "this member's own group course", and every row
+        // here is a member of the viewer's group, so each score is scoped to the viewer's course —
+        // the same number the Monday Telegram board and the Umumiy tab use. The page cannot pass
+        // the id itself: `groups` is admin-only under RLS and no student-callable RPC returns
+        // course_id. (Before that migration null meant "subtract nothing": an unscoped weekly total.)
         if (members.length > 0) {
           const sinceIso = tashkentWeekStartIso();
           const weeklyScores = await Promise.all(
