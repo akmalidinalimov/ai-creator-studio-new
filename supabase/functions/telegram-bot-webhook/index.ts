@@ -6,7 +6,8 @@ import { effectiveLeafGrades, summarizeHomework } from "./homework-stats.ts";
 import { fanOutBroadcast } from "./broadcast-fanout.ts";
 import { isContentError, isRecipientError, isTerminal, tgResult } from "../_shared/telegram-classify.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";
-import { logHealth } from "../_shared/edge.ts";
+import { logHealth, recordGradeCardSkipped } from "../_shared/edge.ts";
+import { isRegisteredHomeworkTopic, recordAutoRegisterFailed, recordCaptureDrop } from "./capture-signals.ts";
 import { redactJson, redactSecrets } from "../_shared/redact.ts";
 import {
   checksAllGreen, ghAddLabel, ghClosePr, ghFetchChecks, ghFetchPr, ghMergePr,
@@ -2104,6 +2105,11 @@ async function sendUnregisteredReply(
           await sendWithKeyboard(chatId, text, locale, false, "student");
           return;
         }
+        // Engine matched a profile it did not link (see autoRegisterProvisionalPoster): the member falls
+        // through to the enrollment form below. Graceful for them, but it must not be silent for us.
+        await recordAutoRegisterFailed(admin, "profile_not_linked", from as any, membership.group, "dm_start_member", {
+          engine_status: reg.status ?? null, matched_user_id: reg.userId ?? null,
+        });
       }
     }
   }
@@ -4688,6 +4694,12 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
             });
           } catch (_e2) { /* audit best-effort */ }
         }
+      } else {
+        // No telegram_id: the card cannot be sent by anyone. Expected reach, but counted, not silent.
+        await recordGradeCardSkipped(admin, {
+          submissionId, studentId: sub.user_id, attempt: (sub as any).attempt_number ?? 1,
+          source: "telegram-bot-webhook", actorUserId: profileId, details: { score, max, has_voice: !!voiceFileId },
+        });
       }
       await sendWithKeyboard(msg.chat.id, t.gradeSaved(score, max), locale, isAdmin, isAdmin ? "admin" : "teacher");
     }
@@ -5853,11 +5865,14 @@ async function autoRegisterProvisionalPoster(
   chatId: number,
   threadId: number,
 ): Promise<any | null> {
+  let regGrp: { id: string } | null = null;
   try {
     const from = msg.from;
     if (!from?.id || from.is_bot) return null;
     const cfg = await getHomeworkCaptureConfig(admin);
-    if (!cfg.autoRegister) { console.log("hw:autoreg:skip", JSON.stringify({ reason: "flag_off" })); return null; }
+    // The flag is checked AFTER the topic lookup below (it used to return first): only the lookup can
+    // tell a homework post that the kill-switch drops from general chat, which must stay silent. That
+    // costs the group lookup on a flag-off day; it changes nothing while the flag is on.
     // COURSE-AWARE chat→group resolution. One Telegram chat can host TWO platform groups (real
     // case: 9-GURUH 4.0 and 1-GURUH PRE 5.0 share t.me/c/3718576417 — the chat was reused for the
     // new cohort). resolveGroupFromChatId's limit(1) picked the finished-4.0 group and the course
@@ -5883,13 +5898,22 @@ async function autoRegisterProvisionalPoster(
     }
     const grp = withTopic.find((g: any) => cfg.courseIds.length === 0 || cfg.courseIds.includes(g.course_id))
       ?? null;
-    if (!grp) {
+    const drop = { chatId, threadId, messageId: msg.message_id, fromId: from.id };
+    if (!cfg.autoRegister || !grp) {
+      const reason = !cfg.autoRegister ? "flag_off" : "no_in_scope_group_for_topic";
       console.log("hw:autoreg:skip", JSON.stringify({
-        reason: "no_in_scope_group_for_topic", chatId, threadId,
+        reason, chatId, threadId,
         candidates: all.map((g: any) => ({ id: g.id, course: g.course_id })),
       }));
+      // withTopic non-empty = this thread IS a registered homework topic, so real homework was dropped.
+      if (withTopic.length > 0) {
+        await recordCaptureDrop(admin, "skipped", !cfg.autoRegister ? "autoreg_off" : "topic_course_out_of_scope", {
+          ...drop, group_ids: withTopic.map((g: any) => g.id),
+        });
+      }
       return null;
     }
+    regGrp = grp;
 
     // U4: never auto-register the CHAT'S ADMINS as students — unregistered staff posting an
     // example image in the homework topic must not become a provisional student + submission.
@@ -5899,11 +5923,13 @@ async function autoRegisterProvisionalPoster(
       const st = cm?.result?.status;
       if (st === "administrator" || st === "creator") {
         console.log("hw:autoreg:skip", JSON.stringify({ reason: "chat_admin", tg: from.id }));
+        // Recorded so every unknown-sender post in a homework topic is explained by exactly one row.
+        await recordCaptureDrop(admin, "skipped", "chat_admin", { ...drop, group_id: grp.id });
         return null;
       }
     } catch (_e) { /* best-effort — proceed */ }
 
-    // Shared creation engine (also used by the DM /start membership path).
+    // Shared creation engine (also used by the DM /start membership path). It records its own failures.
     const reg = await registerProvisionalViaEngine(admin, from, grp, "homework_topic_post");
     if (!reg) return null;
     if (reg.created) {
@@ -5920,9 +5946,25 @@ async function autoRegisterProvisionalPoster(
         });
       } catch (_e) { /* welcome is best-effort */ }
     }
-    return await findProfileByTelegramId(admin, from.id);
+    const prof = await findProfileByTelegramId(admin, from.id);
+    if (!prof) {
+      // The engine answered with a profile id, but no profile carries this telegram_id. It happens when
+      // the engine MATCHES an existing profile without linking it: status 'already_in_group' (matched by
+      // username in the same group) and 'role_conflict' (a staff profile) both return before the
+      // telegram_id patch in admin-create-students. The post is dropped either way.
+      console.log("hw:autoreg:profile-not-linked", JSON.stringify({ tg: from.id, status: reg.status, group_id: grp.id }));
+      await recordAutoRegisterFailed(admin, "profile_not_linked", from, grp, "homework_topic_post", {
+        engine_status: reg.status ?? null, matched_user_id: reg.userId ?? null, chat_id: chatId, message_id: msg.message_id,
+      });
+    }
+    return prof;
   } catch (e) {
     console.error("hw:autoreg:err", String(e));
+    if (msg?.from?.id) {
+      await recordAutoRegisterFailed(admin, "error", msg.from, regGrp, "homework_topic_post", {
+        error: redactSecrets(e).slice(0, 200), chat_id: chatId, message_id: msg.message_id,
+      });
+    }
     return null;
   }
 }
@@ -5937,9 +5979,13 @@ async function registerProvisionalViaEngine(
   from: { id: number; username?: string; first_name?: string; last_name?: string },
   grp: { id: string; course_id: string },
   source: string,
-): Promise<{ created: boolean } | null> {
+): Promise<{ created: boolean; status?: string; userId?: string } | null> {
   const { data: sec } = await admin.rpc("internal_fn_secret");
-  if (!sec) return null;
+  if (!sec) {
+    console.error("hw:autoreg:no-internal-secret", JSON.stringify({ tg: from.id, source }));
+    await recordAutoRegisterFailed(admin, "internal_secret_missing", from, grp, source);
+    return null;
+  }
   const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/admin-create-students`, {
     method: "POST",
     headers: {
@@ -5964,6 +6010,9 @@ async function registerProvisionalViaEngine(
   const r0 = (out?.results || [])[0] || {};
   if (!r0.userId) {
     console.log("hw:autoreg:engine-refused", JSON.stringify({ tg: from.id, status: r0.status, err: r0.error, source }));
+    await recordAutoRegisterFailed(admin, "engine_refused", from, grp, source, {
+      http_status: resp.status, engine_status: r0.status ?? null, engine_error: String(r0.error ?? out?.error ?? "").slice(0, 200) || null,
+    });
     return null;
   }
   if (r0.status === "created") {
@@ -5977,10 +6026,10 @@ async function registerProvisionalViaEngine(
       });
     } catch (_e) { /* audit best-effort */ }
     console.log("hw:autoreg:created", JSON.stringify({ user_id: r0.userId, tg: from.id, group_id: grp.id, source }));
-    return { created: true };
+    return { created: true, status: r0.status, userId: r0.userId };
   }
   console.log("hw:autoreg:matched-existing", JSON.stringify({ user_id: r0.userId, tg: from.id, status: r0.status, source }));
-  return { created: false };
+  return { created: false, status: r0.status, userId: r0.userId };
 }
 
 // A media post under picker mode: append to the live pending post (albums) or create one + ask.
@@ -6009,8 +6058,12 @@ async function handlePickerPost(
       try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "🙈" }] }); } catch (_e) { /* ignore */ }
     } else {
       // -2: the pending finalized between our select and the append (album tail) — the file
-      // remains visible in the topic thread; log only.
-      console.log("pk:append-after-finalize-ignored", JSON.stringify({ pending_id: live.id, messageId }));
+      // remains visible in the topic thread but is in no pending post or submission. null: the RPC
+      // itself failed. Both leave the item out of the submission, so both are DB-visible.
+      console.log("pk:append-after-finalize-ignored", JSON.stringify({ pending_id: live.id, messageId, n }));
+      await recordCaptureDrop(admin, n === -2 ? "skipped" : "failed", n === -2 ? "album_item_after_finalize" : "pending_append_failed", {
+        chatId, threadId, messageId, fromId: Number(profile.telegram_id) || null, userId: profile.id, pending_id: live.id,
+      });
     }
     return;
   }
@@ -6037,9 +6090,19 @@ async function handlePickerPost(
       const emoji = (typeof n2 === "number" && n2 >= 0) ? "👍" : (n2 === -1 ? "🙈" : null);
       if (emoji) {
         try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji }] }); } catch (_e) { /* ignore */ }
+      } else {
+        // Same outcomes as the append branch above: no pending post or submission holds this item.
+        await recordCaptureDrop(admin, n2 === -2 ? "skipped" : "failed", n2 === -2 ? "album_item_after_finalize" : "pending_append_failed", {
+          chatId, threadId, messageId, fromId: Number(profile.telegram_id) || null, userId: profile.id, pending_id: live2.id,
+        });
       }
     } else {
+      // No pending row was created and none exists to append to: the post is in nothing.
       console.error("pk:insert-err", insErr);
+      await recordCaptureDrop(admin, "failed", "pending_insert_failed", {
+        chatId, threadId, messageId, fromId: Number(profile.telegram_id) || null, userId: profile.id,
+        group_id: grp.id, error: String(insErr?.message ?? "no_row").slice(0, 200),
+      });
     }
     return;
   }
@@ -6161,6 +6224,8 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     if (!profile) {
       profile = await autoRegisterProvisionalPoster(admin, msg, chatId, threadId);
       if (!profile) {
+        // Not re-recorded here: autoRegisterProvisionalPoster already wrote the one row that explains a
+        // drop in a homework topic, and a post outside one is general chat (silent by design).
         console.log("hw:group:unknown-sender-ignored", JSON.stringify({ fromId, isAnon, chatId, threadId, messageId }));
         return;
       }
@@ -6268,6 +6333,14 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       const resolved = grp ? await resolveAssignmentForTopic(admin, grp, threadId, profile.id) : null;
       if (!resolved) {
         console.log("hw:group:no-intent-unresolved-ignored", JSON.stringify({ profile_id: profile.id, groupId, chatId, threadId, messageId }));
+        // Reached by a profile with no group, or one whose course is outside picker scope. The
+        // uncaptured_24h detector joins groups by profile.group_id, so a group-less sender is invisible
+        // to it. Recorded only when this thread IS a homework topic; general chat stays silent.
+        if (await isRegisteredHomeworkTopic(admin, chatId, threadId)) {
+          await recordCaptureDrop(admin, "skipped", grp ? "assignment_unresolved" : "sender_has_no_group", {
+            chatId, threadId, messageId, fromId, userId: profile.id, group_id: grp?.id ?? null,
+          });
+        }
         return;
       }
       // Create a real intent row so album/follow-up files append to one submission.
@@ -6313,6 +6386,9 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     if (await isModuleBlocked(admin, profile.id, intent.module_id)) {
       console.log("hw:group:tier-locked-ignored", JSON.stringify({ profile_id: profile.id, module_id: intent.module_id }));
       if (intent.id) await admin.from("bot_homework_intents").delete().eq("id", intent.id);
+      await recordCaptureDrop(admin, "skipped", "tier_locked", {
+        chatId, threadId, messageId, fromId, userId: profile.id, module_id: intent.module_id ?? null,
+      });
       return;
     }
 
@@ -6400,6 +6476,10 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       .maybeSingle();
     if (upErr) {
       console.error("hw upsert error", upErr);
+      await recordCaptureDrop(admin, "failed", "submission_upsert_failed", {
+        chatId, threadId, messageId, fromId, userId: profile.id, assignment_id: intent.assignment_id,
+        error: String(upErr.message ?? upErr).slice(0, 200),
+      });
       return;
     }
 
@@ -6481,6 +6561,14 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     cacheInvalidateUser(profile.id);
   } catch (e) {
     console.error("handleGroupTopicMessage error", e);
+    // An unexpected throw on a media post. The submission may or may not have been saved before it,
+    // so the row says only that the handler crashed; baseline 0 either way.
+    if (msg?.chat?.id) {
+      await recordCaptureDrop(admin, "failed", "handler_error", {
+        chatId: msg.chat.id, threadId: msg.message_thread_id ?? null, messageId: msg.message_id ?? null,
+        fromId: msg.from?.id ?? null, error: redactSecrets(e).slice(0, 200),
+      });
+    }
   }
 }
 
