@@ -111,37 +111,3 @@ export async function logHealthOnce(
   if (!ok) healthOnceSeen.delete(memoKey); // let a later call retry the write
   return ok;
 }
-
-/** How far back a grade_card_dm_skipped row suppresses another for the same attempt (= reconciler lookback). */
-export const GRADE_CARD_SKIP_WINDOW_DAYS = 14;
-
-/**
- * A grade card was owed for this graded attempt, but the student has no telegram_id, so no sender can
- * deliver it. Three paths send the card (bot grading in telegram-bot-webhook, notify-grade-voice for
- * app/web grading, and the grade-card-reconcile backstop every 30 min), and each skips such a student.
- * All three call this, so they share one key and one window: an attempt yields ONE row whichever path
- * sees it first, and the reconciler re-seeing it every run for 14 days adds nothing. An expected reach
- * gap, not a fault: a countable signal that no watchdog alarms on. Never throws.
- */
-export function recordGradeCardSkipped(
-  admin: any,
-  p: {
-    submissionId: string;
-    studentId: string | null;
-    attempt: number;
-    source: string;
-    actorUserId?: string | null;
-    details?: Record<string, unknown>;
-  },
-): Promise<boolean> {
-  return logHealthOnce(admin, "grade_card_dm_skipped", `no_telegram:${p.submissionId}:${p.attempt}`, {
-    reason: "no_telegram", submission_id: p.submissionId, attempt: p.attempt, ...(p.details ?? {}),
-  }, {
-    source: p.source,
-    actorUserId: p.actorUserId ?? null,
-    targetUserId: p.studentId,
-    targetResourceType: "homework_submission",
-    targetResourceId: p.submissionId,
-    sinceIso: new Date(Date.now() - GRADE_CARD_SKIP_WINDOW_DAYS * DAY_MS).toISOString(),
-  });
-}

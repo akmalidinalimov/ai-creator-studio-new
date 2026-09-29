@@ -1,6 +1,6 @@
 // Tests for the deduped health signal. Run: deno test supabase/functions/_shared/edge.test.ts
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { logHealth, logHealthOnce, recordGradeCardSkipped, tashkentDayStartIso } from "./edge.ts";
+import { logHealth, logHealthOnce, tashkentDayStartIso } from "./edge.ts";
 
 const realError = console.error;
 function quiet<T>(fn: () => Promise<T>): Promise<T> {
@@ -132,35 +132,6 @@ Deno.test("logHealthOnce: a failed insert releases the memo so a later call can 
   const healthy = fakeAdmin();
   assertEquals(await logHealthOnce(healthy.admin, "hw_capture_failed", key, {}), true);
   assertEquals(healthy.rows.length, 1);
-});
-
-Deno.test("recordGradeCardSkipped: one row per graded attempt whichever sender sees it first", async () => {
-  const student = crypto.randomUUID();
-  // Row shape, from the first sender to see the attempt.
-  const sub1 = crypto.randomUUID();
-  const bot = fakeAdmin();
-  assertEquals(await recordGradeCardSkipped(bot.admin, { submissionId: sub1, studentId: student, attempt: 1, source: "telegram-bot-webhook" }), true);
-  const row = bot.rows[0];
-  assertEquals(row.action, "grade_card_dm_skipped");
-  assertEquals(row.target_user_id, student);
-  assertEquals(row.target_resource_type, "homework_submission");
-  assertEquals(row.target_resource_id, sub1);
-  assertEquals(row.details.reason, "no_telegram");
-  assertEquals(row.details.dedupe_key, `no_telegram:${sub1}:1`);
-  assertEquals(row.details.source, "telegram-bot-webhook");
-
-  // Another sender, in another isolate, days later: the DB row (not the memo) suppresses it. The key
-  // below was never used in this isolate, so only the existence check can answer.
-  const sub2 = crypto.randomUUID();
-  const fiveDaysAgo = new Date(Date.now() - 5 * 86_400_000).toISOString();
-  const reconciler = fakeAdmin({
-    seed: [{ action: "grade_card_dm_skipped", details: { dedupe_key: `no_telegram:${sub2}:1` }, created_at: fiveDaysAgo }],
-  });
-  assertEquals(await recordGradeCardSkipped(reconciler.admin, { submissionId: sub2, studentId: student, attempt: 1, source: "grade-card-reconcile" }), false);
-  assertEquals(reconciler.rows.length, 1);
-  // A resubmission is a new attempt: its card is owed again, so it is a new row.
-  assertEquals(await recordGradeCardSkipped(reconciler.admin, { submissionId: sub2, studentId: student, attempt: 2, source: "grade-card-reconcile" }), true);
-  assertEquals(reconciler.rows.length, 2);
 });
 
 Deno.test("logHealth: resolves true on insert, false on an insert error (never throws)", async () => {

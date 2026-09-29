@@ -6,8 +6,12 @@ import { effectiveLeafGrades, summarizeHomework } from "./homework-stats.ts";
 import { fanOutBroadcast } from "./broadcast-fanout.ts";
 import { isContentError, isRecipientError, isTerminal, tgResult } from "../_shared/telegram-classify.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";
-import { logHealth, recordGradeCardSkipped } from "../_shared/edge.ts";
-import { isRegisteredHomeworkTopic, recordAutoRegisterFailed, recordCaptureDrop } from "./capture-signals.ts";
+import { logHealth } from "../_shared/edge.ts";
+import { recordGradeCardSkipped } from "../_shared/grade-card-signals.ts";
+import {
+  type AutoRegisterSource, isRegisteredHomeworkTopic, recordAutoRegisterFailed, recordCaptureFailed, recordCaptureSkipped,
+  recordPendingAppendDrop,
+} from "./capture-signals.ts";
 import { redactJson, redactSecrets } from "../_shared/redact.ts";
 import {
   checksAllGreen, ghAddLabel, ghClosePr, ghFetchChecks, ghFetchPr, ghMergePr,
@@ -5571,6 +5575,12 @@ async function finalizePendingPost(
   // picker (the old 5-min post-finalize append window is gone — it hijacked the next post).
   action: "fresh" | "append" | "replace" = "fresh",
 ): Promise<"created" | "appended" | "already_graded" | "tier_locked" | "error"> {
+  // Coordinates for the capture-drop signals below (plain reads of the row, so the catch can use them too).
+  const dropAt = {
+    chatId: Number(pending.telegram_chat_id), threadId: Number(pending.telegram_thread_id),
+    messageId: Number(pending.first_message_id), fromId: Number(pending.from_tg_id) || null,
+    userId: pending.user_id ?? null, pending_id: pending.id, assignment_id: assignmentId, guessed,
+  };
   try {
     const chatId = Number(pending.telegram_chat_id);
     const threadId = Number(pending.telegram_thread_id);
@@ -5617,6 +5627,9 @@ async function finalizePendingPost(
       await deletePicker();
       try { await setMessageReaction(chatId, firstMsgId, "✅"); } catch (_e) { /* ignore */ }
       if (profile?.telegram_id) { try { await sendMessage(Number(profile.telegram_id), t.hwIntentAlreadyScored); } catch (_e) { /* ignore */ } }
+      // The row now reads state='done' like a filed post, but its media is in no submission (the guess
+      // falls back to the most recent leaf when every task is graded). Say so.
+      await recordCaptureSkipped(admin, "guess_already_graded", dropAt);
       return "already_graded";
     }
     // Tier gate (defense-in-depth).
@@ -5624,6 +5637,7 @@ async function finalizePendingPost(
       if (!guessed) return "tier_locked"; // explicit pick: picker stays open, pick another module
       await admin.from("hw_pending_posts").update({ state: "expired" }).eq("id", pending.id);
       await deletePicker();
+      await recordCaptureSkipped(admin, "guess_tier_locked", dropAt);
       return "tier_locked";
     }
 
@@ -5661,7 +5675,12 @@ async function finalizePendingPost(
         ? `${priorText}\n${addText}`.slice(0, 4000) : (priorText || addText);
       const { error: mergeErr } = await admin.from("homework_submissions")
         .update({ media: mergedMedia, submitted_text: mergedText }).eq("id", (prior as any).id);
-      if (mergeErr) { console.error("pk:append-err", mergeErr); await revertClaim(); return "error"; }
+      if (mergeErr) {
+        console.error("pk:append-err", mergeErr);
+        await revertClaim();
+        await recordCaptureFailed(admin, "finalize_write_failed", { ...dropAt, step: "append", error: String(mergeErr.message ?? mergeErr).slice(0, 200) });
+        return "error";
+      }
       const { data: a0 } = await admin.from("homework_assignments")
         .select("task_number, sap_number, parent_id, modules:module_id(position)").eq("id", assignmentId).maybeSingle();
       const lbl0 = `M${(((a0 as any)?.modules?.position ?? 0) as number) + 1} · V${a0 ? displayStepNumber(a0 as any) : ""}`;
@@ -5699,7 +5718,12 @@ async function finalizePendingPost(
       media,
       source: "telegram_topic",
     }, { onConflict: "user_id,assignment_id" }).select("id").maybeSingle();
-    if (upErr || !upserted?.id) { console.error("pk:finalize-upsert-err", upErr); await revertClaim(); return "error"; }
+    if (upErr || !upserted?.id) {
+      console.error("pk:finalize-upsert-err", upErr);
+      await revertClaim();
+      await recordCaptureFailed(admin, "finalize_write_failed", { ...dropAt, step: "upsert", error: String(upErr?.message ?? "no_row").slice(0, 200) });
+      return "error";
+    }
 
     // NOTE: no post-finalize intent window anymore. It made the NEXT image silently append to
     // this submission (owner-reported). Now every new post opens its own picker; adding files to
@@ -5749,6 +5773,9 @@ async function finalizePendingPost(
     return "created";
   } catch (e) {
     console.error("pk:finalize-err", String(e));
+    // Before the atomic claim the row stays pending (the sweep retries, and would throw again); after it
+    // and before the write, the row is left state='done' with its media in no submission. Either way, say so.
+    await recordCaptureFailed(admin, "finalize_error", { ...dropAt, error: redactSecrets(e).slice(0, 200) });
     return "error";
   }
 }
@@ -5825,10 +5852,21 @@ async function sweepExpiredPendingPosts(admin: any) {
           await admin.from("hw_pending_posts").update({ state: "expired" }).eq("id", p.id);
           if (p.picker_message_id) { try { await tgApi("deleteMessage", { chat_id: Number(p.telegram_chat_id), message_id: Number(p.picker_message_id) }); } catch (_e) { /* ignore */ } }
           console.log("pk:sweep-unresolved", JSON.stringify({ pending_id: p.id }));
+          await recordCaptureSkipped(admin, "sweep_unresolved", {
+            chatId: Number(p.telegram_chat_id), threadId: Number(p.telegram_thread_id), messageId: Number(p.first_message_id),
+            fromId: Number(p.from_tg_id) || null, userId: p.user_id ?? null, pending_id: p.id, group_id: p.group_id ?? null,
+          });
           continue;
         }
         await finalizePendingPost(admin, p, resolved.assignment.id, resolved.moduleId, true);
-      } catch (e) { console.error("pk:sweep-row-err", String(e)); }
+      } catch (e) {
+        console.error("pk:sweep-row-err", String(e));
+        // The row stays pending, so the next sweep retries it; a persistent throw would loop unseen.
+        await recordCaptureFailed(admin, "sweep_error", {
+          chatId: Number(p.telegram_chat_id), threadId: Number(p.telegram_thread_id), messageId: Number(p.first_message_id),
+          fromId: Number(p.from_tg_id) || null, userId: p.user_id ?? null, pending_id: p.id, error: redactSecrets(e).slice(0, 200),
+        });
+      }
     }
     // Reminder backstop: pending posts whose ~10s pick-reminder never fired (this instance died
     // before waitUntil). Still pending, not yet reminded/engaged, past the delay, not yet expired.
@@ -5907,7 +5945,7 @@ async function autoRegisterProvisionalPoster(
       }));
       // withTopic non-empty = this thread IS a registered homework topic, so real homework was dropped.
       if (withTopic.length > 0) {
-        await recordCaptureDrop(admin, "skipped", !cfg.autoRegister ? "autoreg_off" : "topic_course_out_of_scope", {
+        await recordCaptureSkipped(admin, !cfg.autoRegister ? "autoreg_off" : "topic_course_out_of_scope", {
           ...drop, group_ids: withTopic.map((g: any) => g.id),
         });
       }
@@ -5924,7 +5962,7 @@ async function autoRegisterProvisionalPoster(
       if (st === "administrator" || st === "creator") {
         console.log("hw:autoreg:skip", JSON.stringify({ reason: "chat_admin", tg: from.id }));
         // Recorded so every unknown-sender post in a homework topic is explained by exactly one row.
-        await recordCaptureDrop(admin, "skipped", "chat_admin", { ...drop, group_id: grp.id });
+        await recordCaptureSkipped(admin, "chat_admin", { ...drop, group_id: grp.id });
         return null;
       }
     } catch (_e) { /* best-effort — proceed */ }
@@ -5978,7 +6016,7 @@ async function registerProvisionalViaEngine(
   admin: any,
   from: { id: number; username?: string; first_name?: string; last_name?: string },
   grp: { id: string; course_id: string },
-  source: string,
+  source: AutoRegisterSource,
 ): Promise<{ created: boolean; status?: string; userId?: string } | null> {
   const { data: sec } = await admin.rpc("internal_fn_secret");
   if (!sec) {
@@ -5986,32 +6024,42 @@ async function registerProvisionalViaEngine(
     await recordAutoRegisterFailed(admin, "internal_secret_missing", from, grp, source);
     return null;
   }
-  const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/admin-create-students`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-internal-secret": String(sec),
-      "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-      "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    },
-    body: JSON.stringify({
-      students: [{
-        name: (from.first_name || "").slice(0, 60) || (from.username || `tg-${from.id}`),
-        last_name: (from.last_name || "").slice(0, 60) || undefined,
-        telegram_user_id: from.id,
-        telegram_username: from.username || undefined,
-        role: "student",
-      }],
-      target_group_id: grp.id,
-      target_course_id: grp.course_id,
-    }),
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/admin-create-students`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-internal-secret": String(sec),
+        "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      },
+      body: JSON.stringify({
+        students: [{
+          name: (from.first_name || "").slice(0, 60) || (from.username || `tg-${from.id}`),
+          last_name: (from.last_name || "").slice(0, 60) || undefined,
+          telegram_user_id: from.id,
+          telegram_username: from.username || undefined,
+          role: "student",
+        }],
+        target_group_id: grp.id,
+        target_course_id: grp.course_id,
+      }),
+    });
+  } catch (e) {
+    // A transport failure used to throw out of here: the in-topic caller logged it to console only, and
+    // the DM /start caller never reached its enrollment-form fallback. Now both treat it like a refusal.
+    console.error("hw:autoreg:engine-error", JSON.stringify({ tg: from.id, source }));
+    await recordAutoRegisterFailed(admin, "engine_error", from, grp, source, { error: redactSecrets(e).slice(0, 200) });
+    return null;
+  }
   const out = await resp.json().catch(() => ({}));
   const r0 = (out?.results || [])[0] || {};
   if (!r0.userId) {
     console.log("hw:autoreg:engine-refused", JSON.stringify({ tg: from.id, status: r0.status, err: r0.error, source }));
     await recordAutoRegisterFailed(admin, "engine_refused", from, grp, source, {
-      http_status: resp.status, engine_status: r0.status ?? null, engine_error: String(r0.error ?? out?.error ?? "").slice(0, 200) || null,
+      http_status: resp.status, engine_status: r0.status ?? null,
+      engine_error: redactSecrets(r0.error ?? out?.error ?? "").slice(0, 200) || null,
     });
     return null;
   }
@@ -6059,12 +6107,13 @@ async function handlePickerPost(
     } else {
       // -2: the pending finalized between our select and the append (album tail) — the file
       // remains visible in the topic thread but is in no pending post or submission. null: the RPC
-      // itself failed. Both leave the item out of the submission, so both are DB-visible.
+      // itself failed.
       console.log("pk:append-after-finalize-ignored", JSON.stringify({ pending_id: live.id, messageId, n }));
-      await recordCaptureDrop(admin, n === -2 ? "skipped" : "failed", n === -2 ? "album_item_after_finalize" : "pending_append_failed", {
-        chatId, threadId, messageId, fromId: Number(profile.telegram_id) || null, userId: profile.id, pending_id: live.id,
-      });
     }
+    // Every outcome that leaves this item out of the submission (🙈 cap, album tail, RPC error) is DB-visible.
+    await recordPendingAppendDrop(admin, n, {
+      chatId, threadId, messageId, fromId: Number(profile.telegram_id) || null, userId: profile.id, pending_id: live.id,
+    });
     return;
   }
   // Create the pending row. A racing album sibling may win the unique index — append instead.
@@ -6090,16 +6139,15 @@ async function handlePickerPost(
       const emoji = (typeof n2 === "number" && n2 >= 0) ? "👍" : (n2 === -1 ? "🙈" : null);
       if (emoji) {
         try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji }] }); } catch (_e) { /* ignore */ }
-      } else {
-        // Same outcomes as the append branch above: no pending post or submission holds this item.
-        await recordCaptureDrop(admin, n2 === -2 ? "skipped" : "failed", n2 === -2 ? "album_item_after_finalize" : "pending_append_failed", {
-          chatId, threadId, messageId, fromId: Number(profile.telegram_id) || null, userId: profile.id, pending_id: live2.id,
-        });
       }
+      // Same outcomes as the append branch above.
+      await recordPendingAppendDrop(admin, n2, {
+        chatId, threadId, messageId, fromId: Number(profile.telegram_id) || null, userId: profile.id, pending_id: live2.id,
+      });
     } else {
       // No pending row was created and none exists to append to: the post is in nothing.
       console.error("pk:insert-err", insErr);
-      await recordCaptureDrop(admin, "failed", "pending_insert_failed", {
+      await recordCaptureFailed(admin, "pending_insert_failed", {
         chatId, threadId, messageId, fromId: Number(profile.telegram_id) || null, userId: profile.id,
         group_id: grp.id, error: String(insErr?.message ?? "no_row").slice(0, 200),
       });
@@ -6213,6 +6261,10 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
             } catch (_e) { /* best-effort */ }
           }
           console.log("hw:group:anon-poster-hinted", JSON.stringify({ chatId, threadId, messageId }));
+          // The hint is the graceful half; the post itself is still dropped, so count it too.
+          await recordCaptureSkipped(admin, "anonymous_sender", {
+            chatId, threadId, messageId, fromId: null, sender_chat_id: senderChatId ?? null, group_id: hwg[0].id,
+          });
         }
       }
       return;
@@ -6333,11 +6385,12 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       const resolved = grp ? await resolveAssignmentForTopic(admin, grp, threadId, profile.id) : null;
       if (!resolved) {
         console.log("hw:group:no-intent-unresolved-ignored", JSON.stringify({ profile_id: profile.id, groupId, chatId, threadId, messageId }));
-        // Reached by a profile with no group, or one whose course is outside picker scope. The
-        // uncaptured_24h detector joins groups by profile.group_id, so a group-less sender is invisible
-        // to it. Recorded only when this thread IS a homework topic; general chat stays silent.
+        // Reached by a profile with no group, or one outside picker scope (auto mode, e.g. a finished
+        // course) whose next task cannot be resolved. The uncaptured_24h detector joins groups by
+        // profile.group_id, so a group-less sender is invisible to it. Recorded only when this thread IS a
+        // homework topic; a member's general chat stays silent.
         if (await isRegisteredHomeworkTopic(admin, chatId, threadId)) {
-          await recordCaptureDrop(admin, "skipped", grp ? "assignment_unresolved" : "sender_has_no_group", {
+          await recordCaptureSkipped(admin, grp ? "assignment_unresolved" : "sender_has_no_group", {
             chatId, threadId, messageId, fromId, userId: profile.id, group_id: grp?.id ?? null,
           });
         }
@@ -6378,6 +6431,9 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       }
       console.log("hw:group:already-graded", JSON.stringify({ profile_id: profile.id, assignment_id: intent.assignment_id }));
       if (intent.id) await admin.from("bot_homework_intents").delete().eq("id", intent.id);
+      await recordCaptureSkipped(admin, "already_graded", {
+        chatId, threadId, messageId, fromId, userId: profile.id, assignment_id: intent.assignment_id,
+      });
       return;
     }
 
@@ -6386,7 +6442,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     if (await isModuleBlocked(admin, profile.id, intent.module_id)) {
       console.log("hw:group:tier-locked-ignored", JSON.stringify({ profile_id: profile.id, module_id: intent.module_id }));
       if (intent.id) await admin.from("bot_homework_intents").delete().eq("id", intent.id);
-      await recordCaptureDrop(admin, "skipped", "tier_locked", {
+      await recordCaptureSkipped(admin, "tier_locked", {
         chatId, threadId, messageId, fromId, userId: profile.id, module_id: intent.module_id ?? null,
       });
       return;
@@ -6422,6 +6478,9 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
         if (nApp === -1) {
           console.log("hw:group:media-cap-reached", JSON.stringify({ submission_id: cur.id }));
           try { await tgApi("setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "🙈" }] }); } catch (_e) { /* best-effort */ }
+          await recordCaptureSkipped(admin, "media_cap_reached", {
+            chatId, threadId, messageId, fromId, userId: profile.id, submission_id: cur.id,
+          });
           return;
         }
         // -2: row became graded/vanished between the read and the append — fall through to the
@@ -6476,7 +6535,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       .maybeSingle();
     if (upErr) {
       console.error("hw upsert error", upErr);
-      await recordCaptureDrop(admin, "failed", "submission_upsert_failed", {
+      await recordCaptureFailed(admin, "submission_upsert_failed", {
         chatId, threadId, messageId, fromId, userId: profile.id, assignment_id: intent.assignment_id,
         error: String(upErr.message ?? upErr).slice(0, 200),
       });
@@ -6564,7 +6623,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     // An unexpected throw on a media post. The submission may or may not have been saved before it,
     // so the row says only that the handler crashed; baseline 0 either way.
     if (msg?.chat?.id) {
-      await recordCaptureDrop(admin, "failed", "handler_error", {
+      await recordCaptureFailed(admin, "handler_error", {
         chatId: msg.chat.id, threadId: msg.message_thread_id ?? null, messageId: msg.message_id ?? null,
         fromId: msg.from?.id ?? null, error: redactSecrets(e).slice(0, 200),
       });

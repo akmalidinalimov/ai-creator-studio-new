@@ -14,7 +14,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
-import { GRADE_CARD_SKIP_WINDOW_DAYS, recordGradeCardSkipped } from "../_shared/edge.ts";
+import { GRADE_CARD_SKIP_WINDOW_DAYS, recordGradeCardSkipped } from "../_shared/grade-card-signals.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
