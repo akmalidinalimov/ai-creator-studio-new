@@ -195,6 +195,17 @@ Deno.test("capture RPC error → fall through + a DB-visible capture_failed row 
   assertEquals(rows[0].row.details.code, "57014");
 });
 
+Deno.test("the engine refusing the message itself (status error) → fall through + an 'engine_error' signal", async () => {
+  const f = fakeDb({ rpc: { ...baseRpc(ACTIVE), challenge_task_capture: () => ({ data: { status: "error", outcome: "error", reason: "bad_date" } }) } });
+  const r = recorder();
+  const out = await tasks(r.send).dt.onGroupMessage(f.db, msg({ date: undefined }));
+  assertEquals(out, { handled: false, outcome: "error" });
+  assertEquals(r.sent.length, 0);
+  const row = f.inserts.find((i) => i.row.action === "challenge_task_capture_failed");
+  assertEquals(row?.row.details.reason, "engine_error");
+  assertEquals(row?.row.details.engine_reason, "bad_date");
+});
+
 Deno.test("unknown shaped sender → resolveGroupPoster → auto-register → capture again with {welcome:true} → welcome in the receipt", async () => {
   let n = 0;
   const f = fakeDb({

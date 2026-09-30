@@ -114,11 +114,14 @@ export function createDailyTasks(deps: DailyTasksDeps) {
     }
   }
 
-  async function captureFailed(admin: Db, reason: string, details: Record<string, unknown>, dedupe?: string): Promise<void> {
+  // One row per (reason, key) per 10 minutes — a transient RPC failure stays countable without a busy chat flooding
+  // admin_actions. perDay: a standing condition (the config RPC missing = PR-3 not applied) is one row a day.
+  async function captureFailed(
+    admin: Db, reason: string, details: Record<string, unknown>, dedupe?: string, perDay = false,
+  ): Promise<void> {
     const b = tenMinuteBucket(now());
-    await logHealthOnce(admin, "challenge_task_capture_failed", `${reason}:${dedupe ?? "-"}:${b.key}`, { reason, ...details }, {
-      source: "telegram-bot-webhook", sinceIso: b.iso,
-    });
+    await logHealthOnce(admin, "challenge_task_capture_failed", perDay ? `${reason}:${dedupe ?? "-"}` : `${reason}:${dedupe ?? "-"}:${b.key}`,
+      { reason, ...details }, { source: "telegram-bot-webhook", ...(perDay ? {} : { sinceIso: b.iso }) });
   }
 
   async function capture(admin: Db, msg: TgMessage, opts: Record<string, unknown>): Promise<Record<string, any> | null> {
@@ -298,12 +301,19 @@ export function createDailyTasks(deps: DailyTasksDeps) {
       }
       if (route.kind === "inactive") {
         if (route.reason !== "disabled") {
-          await captureFailed(admin, "config_unavailable", { error: route.reason, chat_id: msg.chat.id }, "config");
+          await captureFailed(admin, "config_unavailable", { error: route.reason, chat_id: msg.chat.id }, "config", true);
         }
         return { handled: false };
       }
       let p = await capture(admin, msg, {});
       if (!p) return { handled: false };
+      if (p.status === "error") {
+        // The engine refused the message itself (bad_message / bad_date): today's handler runs, and it is counted.
+        await captureFailed(admin, "engine_error", {
+          engine_reason: p.reason ?? null, chat_id: msg.chat.id, message_id: msg.message_id ?? null,
+        }, String(msg.chat.id));
+        return { handled: false, outcome: "error" };
+      }
       let plan = planCapture(p);
       if (plan.needsIdentity && route.config.autoRegister) {
         const who = await identify(admin, msg, route.topic);
