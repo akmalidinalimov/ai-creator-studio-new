@@ -1232,9 +1232,12 @@ async function buildGroupBoardMessage(admin: any, userId: string, locale: Locale
   })].join("\n");
 }
 
-/** Teacher profile card with per-group stats, one-tap group switching and the teacher-ux.ts action buttons. */
+/** Teacher profile card with per-group stats, one-tap group switching and the teacher-ux.ts action buttons.
+ *  `view.chatId`: the private chat it goes to (its Mini App buttons are built for it); `view.readOnly`: an admin
+ *  impersonating — no TOP / Faolsizlar (their tg:pick callback stores the active group, a write). */
 async function buildTeacherProfileCard(
-  admin: any, teacherId: string, locale: Locale, groupId?: string | null, chatId?: number | null,
+  admin: any, teacherId: string, locale: Locale, groupId?: string | null,
+  view: { chatId?: number | null; readOnly?: boolean } = {},
 ): Promise<{ text: string; keyboard: any }> {
   const p = PROF_T[locale];
   const [{ data: prof }, statsRes, groupsRes, xpRes, weekRes, lbRes] = await Promise.all([
@@ -1314,7 +1317,8 @@ async function buildTeacherProfileCard(
   // 🏆 TOP · 😴 Faolsizlar · ⚙️ Sozlamalar for the group on this card, and 📊 / 📣 into the teacher Mini App.
   const others = groups.filter((g) => g.group_id !== sel.group_id);
   const keyboard = await teacherCardKeyboard(admin, {
-    chatId, locale, groupId: sel.group_id, canPick: (await getPersona(admin, teacherId)) === "teacher",
+    chatId: view.chatId, locale, groupId: sel.group_id,
+    canPick: !view.readOnly && (await getPersona(admin, teacherId)) === "teacher",
     switchRows: others.map((g) => [{ text: `👥 ${g.group_name}`, callback_data: `tprof:g:${g.group_id}` }]),
   });
   if (others.length) lines.push("", p.tSwitchHint);
@@ -5037,7 +5041,7 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
     // students (incl. student impersonation) get the student profile card.
     const persona = effectivePersona || realPersona;
     if (persona === "teacher" || persona === "admin") {
-      const { text, keyboard } = await buildTeacherProfileCard(admin, profile.id, locale, null, chatId);
+      const { text, keyboard } = await buildTeacherProfileCard(admin, profile.id, locale, null, { chatId, readOnly: !!effectivePersona });
       await sendTeacherCard(admin, chatId, text, keyboard);
     } else {
       const { text, keyboard } = await buildProfileCard(admin, profile.id, locale);
@@ -7209,7 +7213,7 @@ async function handleCallback(admin: any, cq: any) {
           { targetUserId: _effId, source: "telegram-bot-webhook" });
       }
     }
-    const { text, keyboard } = await buildTeacherProfileCard(admin, _effId, locale, gid, chatId);
+    const { text, keyboard } = await buildTeacherProfileCard(admin, _effId, locale, gid, { chatId, readOnly: _isImp });
     await answerCallback(cq.id);
     await editTeacherCard(admin, chatId, cq.message?.message_id, text, keyboard);
     return;
