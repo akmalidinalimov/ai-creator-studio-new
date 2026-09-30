@@ -26,8 +26,9 @@ const here = (p: string) => new URL(p, import.meta.url);
 const lf = (s: string) => s.replace(/\r\n/g, "\n"); // a Windows checkout is CRLF; production text is LF
 const md5 = (s: string) => createHash("md5").update(s).digest("hex");
 const LIVE = lf(await Deno.readTextFile(here("./reconcile_community_xp.live-2026-09-30.sql")));
-const MIG_PATH = Deno.env.get("MIG_PATH") ?? new URL("../../../migrations/20260930100000_challenge_social_points.sql", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
-const MIG = lf(await Deno.readTextFile(MIG_PATH));
+// MIG_PATH lets a draft of the migration be tested before it is written into its (edit-guarded) slot.
+const MIG = lf(await Deno.readTextFile(
+  Deno.env.get("MIG_PATH") ?? here("../../../migrations/20260930100000_challenge_social_points.sql")));
 
 const PROD_DEF_MD5 = "449410b40b3bb549612fc11113181717";  // md5(pg_get_functiondef), prod 2026-09-30
 const PROD_BODY_MD5 = "72994ebd6807ed5acea6077223420a95"; // md5(prosrc), the migration's pin
