@@ -18,6 +18,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useAuth } from "@/contexts/AuthContext";
 import { getSiteUrl } from "@/lib/siteUrl";
 import { mutate, mutateMany } from "@/lib/mutate";
+import { DAILY_TOPIC_MSG, dailyTopicError, dailyTopicSaveMessage, parseTopicUrl } from "@/lib/dailyTaskTopic";
 import { toast } from "sonner";
 
 const FN_BASE = `${SB_BASE}/functions/v1`;
@@ -31,9 +32,14 @@ type Group = {
   teacher_id: string | null;
   is_default: boolean;
   created_at: string;
+  daily_task_topic_url?: string | null;
 };
 
 type Course = { id: string; title: string };
+
+/** Challenge scope as platform_settings.challenge defines it (course_ids ∪ group_ids); display-only here. */
+type ChallengeScope = { courses: string[]; groups: string[] };
+const strList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 type CourseTier = { id: string; course_id: string; name: string; position: number };
 
 // Sentinel for "no tier / full access" inside the <Select> (Radix forbids an empty value).
@@ -70,6 +76,7 @@ export default function AdminGroups() {
   const [teachers, setTeachers] = useState<ProfileLite[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [topics, setTopics] = useState<Record<string, { configured: number; total: number }>>({});
+  const [challengeScope, setChallengeScope] = useState<ChallengeScope>({ courses: [], groups: [] });
   const [loading, setLoading] = useState(true);
 
   const [openCreate, setOpenCreate] = useState(false);
@@ -81,12 +88,16 @@ export default function AdminGroups() {
 
   const reload = async () => {
     setLoading(true);
-    const [g, c, p, ct] = await Promise.all([
+    const [g, c, p, ct, ch] = await Promise.all([
       supabase.from("groups").select("*").order("created_at", { ascending: false }),
       supabase.from("courses").select("id,title").order("title"),
       supabase.rpc("admin_list_users"),
       supabase.from("course_tiers").select("id,course_id,name,position").order("position"),
+      // Which groups are in the 6.0 challenge (the daily-task topic badge is shown for those).
+      supabase.from("platform_settings").select("value").eq("key", "challenge").maybeSingle(),
     ]);
+    const chv = ((ch.data as { value?: Record<string, unknown> } | null)?.value) ?? {};
+    setChallengeScope({ courses: strList(chv.course_ids), groups: strList(chv.group_ids) });
     setGroups((g.data as Group[]) || []);
     setCourses((c.data as Course[]) || []);
     setTiers((ct.data as CourseTier[]) || []);
@@ -191,9 +202,23 @@ export default function AdminGroups() {
                   <TableCell><Badge variant="secondary">{counts[g.id] || 0}</Badge></TableCell>
                   <TableCell>{(() => {
                     const tt = topics[g.id] || { configured: 0, total: 0 };
-                    return tt.configured > 0
+                    const hw = tt.configured > 0
                       ? <span className="inline-block px-2 py-0.5 rounded text-xs bg-emerald-500 text-white">✓ Topik sozlangan</span>
                       : <span className="inline-block px-2 py-0.5 rounded text-xs bg-rose-500 text-white">✗ Topik yo'q</span>;
+                    // Daily-task topic: shown for 6.0 challenge groups (and any group that has one set).
+                    const inChallenge = (!!g.course_id && challengeScope.courses.includes(g.course_id)) || challengeScope.groups.includes(g.id);
+                    if (!inChallenge && !g.daily_task_topic_url) return hw;
+                    return (
+                      <div className="flex flex-wrap items-center gap-1">
+                        {hw}
+                        <span
+                          title={g.daily_task_topic_url ? `Kunlik vazifalar topiki: ${g.daily_task_topic_url}` : "Kunlik vazifalar topiki sozlanmagan"}
+                          className={`inline-block px-2 py-0.5 rounded text-xs border ${g.daily_task_topic_url
+                            ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-400"
+                            : "border-amber-500/40 text-amber-700 dark:text-amber-400"}`}
+                        >{g.daily_task_topic_url ? "📅 ✓" : "📅 —"}</span>
+                      </div>
+                    );
                   })()}</TableCell>
                   <TableCell>
                     <Button
@@ -316,6 +341,13 @@ function GroupFormDialog({
   const [tgGroupErr, setTgGroupErr] = useState<string>("");
   const [hwTopicUrl, setHwTopicUrl] = useState<string>("");
   const [hwTopicErr, setHwTopicErr] = useState<string>("");
+  // «KUNLIK VAZIFALAR» topic (6.0 challenge daily tasks). The DB trigger is the authority; dailyTopicError()
+  // mirrors it so the admin sees the same message before saving.
+  const [dailyUrl, setDailyUrl] = useState<string>("");
+  const [dailyErr, setDailyErr] = useState<string>("");
+  // undefined = not looked up (yet), null = the bot never saw this topic, string = its name.
+  const [dailyTopicName, setDailyTopicName] = useState<string | null | undefined>(undefined);
+  const [dailyLookupFailed, setDailyLookupFailed] = useState(false);
 
   // Load existing group telegram_group_url + shared homework topic on edit
   useEffect(() => {
@@ -323,11 +355,12 @@ function GroupFormDialog({
       if (group) {
         const { data: g } = await supabase
           .from("groups")
-          .select("telegram_group_url, homework_topic_url")
+          .select("telegram_group_url, homework_topic_url, daily_task_topic_url")
           .eq("id", group.id)
           .maybeSingle();
         setTgGroupUrl(((g as any)?.telegram_group_url) || "");
         setHwTopicUrl(((g as any)?.homework_topic_url) || "");
+        setDailyUrl(g?.daily_task_topic_url || "");
         // Load current co-teachers (is_primary=false); the primary is shown via the Teacher picker.
         const { data: cts } = await supabase
           .from("group_teachers" as any)
@@ -345,6 +378,24 @@ function GroupFormDialog({
     return m ? Number(m[1]) : null;
   })();
 
+  const parsedDaily = useMemo(() => parseTopicUrl(dailyUrl), [dailyUrl]);
+  const dailyLookupKey = parsedDaily && parsedDaily.topic > 1 ? `${parsedDaily.chatId}:${parsedDaily.topic}` : "";
+  // Confirm the pasted topic by the name the bot recorded when it was created (admin_topic_lookup, admin-only).
+  useEffect(() => {
+    setDailyTopicName(undefined);
+    setDailyLookupFailed(false);
+    if (!dailyLookupKey) return;
+    const [chat, topic] = dailyLookupKey.split(":").map(Number);
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const { data, error } = await supabase.rpc("admin_topic_lookup", { _chat: chat, _topic: topic });
+      if (cancelled) return;
+      if (error) { setDailyLookupFailed(true); return; }
+      setDailyTopicName((data as string | null) ?? null);
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [dailyLookupKey]);
+
   // Tiers offered for the picked course (empty for non-tiered courses → only "To'liq").
   const courseTiers = useMemo(() => tiers.filter((t) => t.course_id === courseId), [tiers, courseId]);
 
@@ -360,9 +411,11 @@ function GroupFormDialog({
     if (hwTopicUrl.trim() && !HW_TOPIC_RE.test(hwTopicUrl.trim())) {
       hwErr = "URL noto'g'ri (https://t.me/c/<chat>/<topic>)";
     }
+    const dErr = dailyTopicError(dailyUrl.trim(), hwTopicUrl.trim()) ?? "";
     setTgGroupErr(groupErr);
     setHwTopicErr(hwErr);
-    if (groupErr || hwErr) { toast.error("URL formatlarini tekshiring"); return; }
+    setDailyErr(dErr);
+    if (groupErr || hwErr || dErr) { toast.error(dErr || "URL formatlarini tekshiring"); return; }
 
     setBusy(true);
     try {
@@ -384,17 +437,19 @@ function GroupFormDialog({
         teacher_id,
         telegram_group_url: tgGroupUrl.trim() || null,
         homework_topic_url: hwTopicUrl.trim() || null,
+        // Saved in the SAME statement as the homework URL: the trigger validates the pair together.
+        daily_task_topic_url: dailyUrl.trim() || null,
       };
       let gid = group?.id as string | undefined;
       if (group) {
         const r = await mutate(() => supabase.from("groups").update(payload).eq("id", group.id));
         if (!r.ok) {
           if (r.reason === "impersonation_readonly") return;
-          throw new Error(r.message ?? "Saqlab bo'lmadi");
+          throw new Error(dailyTopicSaveMessage(r.message) ?? "Saqlab bo'lmadi");
         }
       } else {
         const { data: ins, error } = await supabase.from("groups").insert(payload).select("id").single();
-        if (error) throw error;
+        if (error) throw new Error(dailyTopicSaveMessage(error.message) ?? "Saqlab bo'lmadi");
         gid = (ins as any)?.id;
       }
 
@@ -442,7 +497,10 @@ function GroupFormDialog({
       toast.success("Guruh saqlandi");
       onSaved();
     } catch (e: any) {
-      toast.error(e?.message || "Saqlashda xatolik");
+      const msg: string = e?.message || "Saqlashda xatolik";
+      // A daily-topic refusal from the trigger / unique index is also shown under its field.
+      if ((Object.values(DAILY_TOPIC_MSG) as string[]).some((m) => msg.includes(m))) setDailyErr(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }
@@ -555,6 +613,29 @@ function GroupFormDialog({
               {hwTopicErr && <p className="text-xs text-rose-600 mt-1">{hwTopicErr}</p>}
               {parsedTopicId !== null && (
                 <p className="text-xs text-emerald-600 mt-1">Topik ID: {parsedTopicId}</p>
+              )}
+            </div>
+            <div>
+              <Label className="text-xs">Kunlik vazifalar topiki URL</Label>
+              <Input
+                value={dailyUrl}
+                onChange={(e) => { setDailyUrl(e.target.value); setDailyErr(""); }}
+                placeholder="https://t.me/c/4440955972/144"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Challenge guruhi uchun «KUNLIK VAZIFALAR» topigi. Shu topikdagi xabarlar faqat kunlik vazifa ballarini oladi
+                (chat, media va javob ballari berilmaydi). Bo'sh qoldirilsa — o'chiriladi.
+              </p>
+              {dailyErr && <p className="text-xs text-rose-600 mt-1">{dailyErr}</p>}
+              {!dailyErr && parsedDaily && parsedDaily.topic > 1 && (
+                <p className="text-xs mt-1">
+                  <span className="text-emerald-600">Topik ID: {parsedDaily.topic}</span>
+                  {dailyTopicName && <span className="text-emerald-600"> · Topik: «{dailyTopicName}»</span>}
+                  {dailyTopicName === null && (
+                    <span className="text-amber-600"> · Bu topik bot tomonidan ko‘rilmagan — havolani tekshiring</span>
+                  )}
+                  {dailyLookupFailed && <span className="text-muted-foreground"> · Topik nomini tekshirib bo‘lmadi</span>}
+                </p>
               )}
             </div>
           </div>

@@ -884,6 +884,9 @@ export type Database = {
         Row: {
           course_id: string | null
           created_at: string
+          daily_task_chat_id: number | null
+          daily_task_topic_id: number | null
+          daily_task_topic_url: string | null
           homework_topic_id: number | null
           homework_topic_url: string | null
           id: string
@@ -897,6 +900,9 @@ export type Database = {
         Insert: {
           course_id?: string | null
           created_at?: string
+          daily_task_chat_id?: number | null
+          daily_task_topic_id?: number | null
+          daily_task_topic_url?: string | null
           homework_topic_id?: number | null
           homework_topic_url?: string | null
           id?: string
@@ -910,6 +916,9 @@ export type Database = {
         Update: {
           course_id?: string | null
           created_at?: string
+          daily_task_chat_id?: number | null
+          daily_task_topic_id?: number | null
+          daily_task_topic_url?: string | null
           homework_topic_id?: number | null
           homework_topic_url?: string | null
           id?: string
@@ -2666,6 +2675,10 @@ export type Database = {
           week_messages: number
         }[]
       }
+      admin_topic_lookup: {
+        Args: { _chat: number; _topic: number }
+        Returns: string
+      }
       admin_ungrouped_students: {
         Args: never
         Returns: {
@@ -2873,6 +2886,7 @@ export type Database = {
           similarity: number
         }[]
       }
+      my_daily_task_topic_url: { Args: never; Returns: string }
       my_module_limit: { Args: { _course_id: string }; Returns: number }
       nudge_candidates_inactive: {
         Args: { _days: number }
