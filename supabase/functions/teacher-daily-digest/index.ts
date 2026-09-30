@@ -6,10 +6,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
+import { countLines, rowsByTeacher, type TeacherGroupRow } from "../_shared/teacher-group-lines.ts";
 import { type GroupPrimaryRow, type GroupTeacherRow, mergeGroupTeachers } from "../_shared/group-teachers.ts";
 import { courseShort, scopeTag } from "../_shared/hw-label.ts";
 import { logHealthOnce } from "../_shared/edge.ts";
-import { countLines, rowsByTeacher, type TeacherGroupRow } from "../_shared/teacher-group-lines.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -138,11 +138,9 @@ Deno.serve(async (req) => {
   // report's backlog is SUMMED from (20260930183000), so the lines add up to the total. A failed read only
   // drops the lines -- recorded once a day as teacher_group_lines_failed -- and never costs the report.
   let linesByTeacher = new Map<string, TeacherGroupRow[]>();
-  let groupLines: "ok" | "failed" = "ok";
   if (rows.length) {
     const { data: sig, error: sigErr } = await admin.rpc("teacher_group_signals");
     if (sigErr) {
-      groupLines = "failed";
       await logHealthOnce(admin, "teacher_group_lines_failed", "teacher-daily-digest",
         { part: "teacher_group_signals", error: String(sigErr.message).slice(0, 300) }, { source: "teacher-daily-digest" });
     } else {
@@ -377,7 +375,7 @@ Deno.serve(async (req) => {
 
   await admin.from("admin_actions").insert({
     actor_user_id: null, action: "teacher_daily_report_run",
-    details: { teachers: rows.length, sent, failed, admin_sent: adminSent, board_enabled: boardEnabled, groups: allGroupCards.length, board_sent: boardSent, board_failed: boardFailed, group_lines: groupLines, at: new Date().toISOString() },
+    details: { teachers: rows.length, sent, failed, admin_sent: adminSent, board_enabled: boardEnabled, groups: allGroupCards.length, board_sent: boardSent, board_failed: boardFailed, at: new Date().toISOString() },
   }).then(() => {}, () => {});
 
   return new Response(JSON.stringify({ ok: true, teachers: rows.length, sent, failed, admin_sent: adminSent, board_sent: boardSent, board_failed: boardFailed }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });

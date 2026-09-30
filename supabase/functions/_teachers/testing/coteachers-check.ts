@@ -284,7 +284,8 @@ async function applyMigration(db: PGlite, text = MIG): Promise<string | null> {
     return String((e as Error).message);
   }
 }
-const byTeacher = (rows: Row[], key = "teacher_id") => Object.fromEntries(rows.map((r) => [r[key], r]));
+const byTeacher = (rows: Row[], key = "teacher_id"): Record<string, Row> =>
+  Object.fromEntries(rows.map((r) => [r[key], r]));
 /** Posts made TODAY (Tashkent) -- how many of the fixture's posts fall on "today" depends on the hour it runs. */
 async function todayCounts(db: PGlite) {
   const r = (await q(db, `select
