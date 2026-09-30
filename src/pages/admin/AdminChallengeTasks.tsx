@@ -11,6 +11,7 @@ import {
   POST_STATE_UZ, prettyDate, SOURCE_UZ, STATUS_UZ, type GroupLite, type PostRow, type TaskRow,
 } from "@/components/admin/challengeTasksShared";
 import { ChallengePlanImportDialog } from "@/components/admin/ChallengePlanImportDialog";
+import { ChallengeTaskResults } from "@/components/admin/ChallengeTaskResults";
 import { ChallengeWeekApprove } from "@/components/admin/ChallengeWeekApprove";
 import { weekFromSearch } from "@/lib/weekApproval";
 import {
@@ -60,7 +61,7 @@ export default function AdminChallengeTasks() {
   // PR-9: the bot's «👀 Ko‘rib chiqish» opens …/admin/challenge/tasks?week=YYYY-MM-DD -> the week list, on that week
   const [focusWeek] = useState<string | null>(() => weekFromSearch(typeof window !== "undefined" ? window.location.search : ""));
   const [month, setMonth] = useState((focusWeek ?? today).slice(0, 7));
-  const [view, setView] = useState<"month" | "weeks">(focusWeek ? "weeks" : "month");
+  const [view, setView] = useState<"month" | "weeks" | "results">(focusWeek ? "weeks" : "month");
   const [drawer, setDrawer] = useState<{ open: boolean; taskId: number | null; date: string }>({ open: false, taskId: null, date: today });
   const [importOpen, setImportOpen] = useState(false);
 
@@ -245,12 +246,15 @@ export default function AdminChallengeTasks() {
               {cfg.windowStart && <Badge variant="outline">Challenge: {cfg.windowStart}{cfg.windowEnd ? ` — ${cfg.windowEnd}` : " dan"}</Badge>}
             </div>
 
-            <Tabs value={view} onValueChange={(v) => setView(v as "month" | "weeks")}>
+            <Tabs value={view} onValueChange={(v) => setView(v as "month" | "weeks" | "results")}>
               <TabsList>
                 <TabsTrigger value="month">Oy</TabsTrigger>
                 <TabsTrigger value="weeks">Haftalar ro‘yxati</TabsTrigger>
+                <TabsTrigger value="results">Natijalar</TabsTrigger>
               </TabsList>
             </Tabs>
+
+            {view === "results" && <ChallengeTaskResults tasks={tasks} groups={groups} today={today} />}
 
             {view === "month" && (
               <Card className="p-3 shadow-soft">

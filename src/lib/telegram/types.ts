@@ -40,6 +40,10 @@ export interface TgWebApp {
   openTelegramLink?(url: string): void;
   /** Open an external http(s) link (optionally in the in-app browser). */
   openLink?(url: string, options?: { try_instant_view?: boolean }): void;
+  /** The UNSIGNED view of initData (display hints only — the server trusts the signed initData alone). */
+  initDataUnsafe?: { user?: { id?: number; allows_write_to_pm?: boolean } };
+  /** Bot API 6.9+: ask the user to let the bot message them; the callback says whether they allowed it. */
+  requestWriteAccess?(callback?: (granted: boolean) => void): void;
 }
 
 export interface TelegramNamespace {

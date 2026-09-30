@@ -18,6 +18,8 @@ export interface TgInitUser {
   username?: string;
   first_name?: string;
   last_name?: string;
+  /** Telegram's signed "this user allowed the bot to message them" (the bot can DM them). true only when signed so. */
+  allows_write_to_pm?: boolean;
 }
 
 export interface TgInitResult {
@@ -77,6 +79,7 @@ export async function validateInitData(
         username: user.username || undefined,
         first_name: user.first_name || undefined,
         last_name: user.last_name || undefined,
+        ...(user.allows_write_to_pm === true ? { allows_write_to_pm: true } : {}),
       },
     };
   } catch {
