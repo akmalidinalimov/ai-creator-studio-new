@@ -14,7 +14,7 @@
 
 // A service-role Supabase client (typed loosely, like the rest of the codebase).
 // deno-lint-ignore no-explicit-any
-type Db = any; // eslint-disable-line @typescript-eslint/no-explicit-any
+type Db = any;
 
 export type GroupPrimaryRow = { id: string; teacher_id: string | null };
 export type GroupTeacherRow = { group_id: string; teacher_id: string };
