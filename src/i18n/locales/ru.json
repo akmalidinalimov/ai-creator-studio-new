@@ -432,7 +432,18 @@
     "justNow": "только что",
     "minAgo": "{{n}} мин назад",
     "hourAgo": "{{n}} ч назад",
-    "dayAgo": "{{n}} д назад"
+    "dayAgo": "{{n}} д назад",
+    "instagramHint": "По этому имени начисляются баллы за Instagram-задания челленджа. Укажите имя профиля, например: @imya",
+    "instagramErrors": {
+      "not_profile_link": "Это ссылка на пост или reel, а не на профиль. Укажите имя профиля, например: @imya",
+      "no_handle_in_link": "В ссылке нет имени профиля. Укажите имя, например: @imya",
+      "empty": "Укажите имя в Instagram, например: @imya",
+      "too_long": "Имя в Instagram не длиннее 30 символов",
+      "bad_chars": "В имени Instagram только латинские буквы, цифры, точка (.) и нижнее подчёркивание (_). Без пробелов и кириллицы",
+      "taken": "Это имя Instagram уже указано в другом аккаунте. Проверьте имя или напишите администратору",
+      "notSaved": "Имя Instagram не сохранилось. Проверьте его и сохраните ещё раз",
+      "restSaved": "Имя и остальные данные сохранены."
+    }
   },
   "validation": {
     "required": "Это поле обязательно",
@@ -1280,6 +1291,8 @@
     "settingsLanguage": "Язык",
     "settingsNotifications": "Уведомления",
     "settingsBoardVisibility": "Видимость в рейтинге",
+    "settingsPersonal": "Личные данные",
+    "settingsPersonalHint": "Имя, фамилия, Instagram",
     "boardVisibilityShown": "Отображается в рейтингах группы",
     "boardVisibilityHidden": "Скрыто из рейтингов группы",
     "boardVisibilityFailed": "Ошибка — попробуйте снова",
