@@ -35,6 +35,11 @@ import { boardLines, cardRankBit, statsRankLines } from "./rank-views.ts";
 import {
   bellCallback, hourPickerKeyboard, parseBellTarget, parseReminderHour, parseTimezone, saveBotSetting, tzPickerKeyboard,
 } from "./bot-settings.ts";
+import {
+  messageIdOf, notANumberText, parseStrictScore, replacedSessionNotice, replyElsewhereText, replyMidOf, replyPointsElsewhere,
+} from "./grading-guard.ts";
+import { cancelVoiceRequests, onBridgeVoice, onVoicePick, remainingLine, type VoiceBridgeDeps } from "./voice-bridge.ts";
+import { normalizeVoiceState, restoreVoiceRequest, type VoiceRequest } from "../_shared/voice-requests.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -4332,7 +4337,20 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
     ? `\n${(t as any).pkPrevGrade((sub as any).previous_score, a?.max_score || 10)}`
     : (sub.score != null && (sub as any).score_is_stale
       ? `\n🔄 ${(t as any).pkPrevGrade(sub.score, a?.max_score || 10)}` : "");
-  await sendMessage(chatId, `${header}\n\n${body}${prevLine}`);
+  // One grading target at a time (audit BOT-4): this session replaces whatever the teacher's ONE conversation
+  // row holds. When that loses something — another student's unfinished grade, a typed score, pending Mini App
+  // voice requests — say so on top of the new header, and leave a countable row (grading-guard.ts).
+  const { data: prevRow } = await admin.from("bot_conversation_state")
+    .select("state, context, updated_at, expires_at").eq("telegram_id", graderTgId).maybeSingle();
+  const replaced = replacedSessionNotice(prevRow ?? null, [submissionId], Date.now(), locale);
+  if (replaced) {
+    await logHealth(admin, "grading_session_replaced", { ...replaced.details, to_submission_id: submissionId }, {
+      source: "telegram-bot-webhook", actorUserId: graderId, targetResourceType: "homework_submission", targetResourceId: submissionId,
+    });
+  }
+  // The header's message_id anchors this session: a score / comment that REPLIES to an older message (the
+  // previous student's screen) is refused instead of landing here (replyPointsElsewhere).
+  const anchorMid = await messageIdOf(await sendMessage(chatId, `${replaced ? `${replaced.text}\n\n` : ""}${header}\n\n${body}${prevLine}`));
   // PRIMARY FIX: re-send the actual submitted media so the teacher SEES the image/video/document
   // inline while grading — works for any grader (file_id / signed-URL based, no group membership).
   const media = await sendSubmissionMedia(admin, chatId, (sub as any).media, (sub as any).telegram_file_id, sub.telegram_file_kind, sub.submitted_image_url);
@@ -4374,7 +4392,7 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
     // student and "<course> · <group> · M V", so the teacher sees whose grade her next number becomes.
     context: {
       submission_id: submissionId, max_score: a?.max_score || 10, grader_id: graderId, is_admin: isAdmin, opened_sub_at: sub.submitted_at,
-      student_name: name, who_tag: lbl.tag,
+      student_name: name, who_tag: lbl.tag, anchor_mid: anchorMid,
     },
     updated_at: new Date().toISOString(),
     expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
@@ -4396,7 +4414,15 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
     .select("state, context, expires_at")
     .eq("telegram_id", tgId)
     .maybeSingle();
-  if (!state) return false;
+  if (!state) {
+    // A voice note with no pending Mini App request used to fall through to the generic keyboard hint, and the
+    // teacher could believe feedback was saved that never was (audit FB-4). Say it was NOT saved, and count it.
+    if (msg.voice || msg.audio) {
+      await onBridgeVoice(voiceBridgeDeps(admin, msg.chat.id, tgId, profileId, locale, isAdmin), msg, locale);
+      return true;
+    }
+    return false;
+  }
   if (new Date(state.expires_at).getTime() < Date.now()) {
     // Delete only while STILL expired: teacher-voice-request may have re-parked this row a moment ago.
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).lt("expires_at", new Date().toISOString());
@@ -4405,12 +4431,14 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
     // DB-visible trail (a steady stream of these means the request TTL is too short).
     if (state.state === "grade_voice" && (msg.voice || msg.audio)) {
       await sendMessage(msg.chat.id, t.gvExpired);
+      // The row holds one request per submission now (_shared/voice-requests.ts); name it when there was one.
+      const exReqs = normalizeVoiceState(state.context, state.expires_at, state.expires_at).reqs;
       try {
         await admin.from("admin_actions").insert({
           actor_user_id: profileId, action: "grade_voice_request_expired",
           target_resource_type: "homework_submission",
-          target_resource_id: (state.context as any)?.submission_id ?? null,
-          details: { source: "miniapp_voice_bridge" },
+          target_resource_id: exReqs.length === 1 ? exReqs[0].submission_id : null,
+          details: { source: "miniapp_voice_bridge", pending: exReqs.length },
         });
       } catch (_e) { /* best-effort */ }
       return true;
@@ -4455,11 +4483,22 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
       return true;
     }
     const max = Number(ctx.max_score || 10);
-    const score = parseInt(text, 10);
-    if (!Number.isFinite(score) || score < 0 || score > max) {
-      await sendMessage(msg.chat.id, t.gradeBadScore(max));
+    // A reply to an OLDER message points at a previous student's screen: refuse, never grade this one with it.
+    if (replyPointsElsewhere(replyMidOf(msg), ctx.anchor_mid)) {
+      await refuseGradingInput(admin, msg.chat.id, profileId, locale, ctx, "grade_score", "reply_to_older_message");
       return true;
     }
+    // Strictly a whole number: parseInt read "1 vazifa topilmadi" ("task 1 not found") as a score of 1.
+    const parsed = parseStrictScore(text, max);
+    if (!parsed.ok) {
+      if (parsed.reason === "not_a_number") {
+        await refuseGradingInput(admin, msg.chat.id, profileId, locale, ctx, "grade_score", "not_a_number");
+      } else {
+        await sendMessage(msg.chat.id, withWho(t.gradeBadScore(max), ctx.student_name, ctx.who_tag));
+      }
+      return true;
+    }
+    const score = parsed.score;
     ctx.score = score;
     await admin.from("bot_conversation_state").update({
       state: "grade_comment", context: ctx, updated_at: new Date().toISOString(),
@@ -4470,114 +4509,29 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
   }
 
   // Mini App → bot VOICE BRIDGE. Telegram's in-app webview does not grant Mini Apps microphone access, so
-  // the teacher's in-app recorder is dead on most devices. teacher-voice-request parks this state and
-  // prompts the teacher HERE, in the bot chat, where Telegram's own recorder always works. We attach the
-  // note to the submission and deliver it to the student through the SAME save + sendVoice path the in-bot
-  // grading flow already uses — no second delivery mechanism to keep in sync.
+  // the teacher's in-app recorder is dead on most devices. teacher-voice-request parks ONE REQUEST PER
+  // SUBMISSION here and prompts the teacher in the bot chat, where Telegram's own recorder always works.
+  // voice-bridge.ts decides which request a recording belongs to — the prompt it replies to, the only one
+  // pending, or the teacher's pick from per-student buttons, never simply the newest (audit FB-4) — and
+  // commitBridgeVoice saves + delivers it through the same save + sendVoice path the in-bot grading flow uses.
   if (state.state === "grade_voice") {
-    const submissionId = String(ctx.submission_id || "");
-    // Every delete in this branch is scoped to THIS request (state + submission). teacher-voice-request can
-    // re-point the row at another card while this update is mid-flight; an unscoped delete would wipe that
-    // newer request, and the teacher's next voice note would fall through unsaved.
     if (text === "/cancel") {
-      await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice");
-      await sendWithKeyboard(msg.chat.id, t.gradeCancelled, locale, isAdmin, isAdmin ? "admin" : "teacher");
+      const bye = await cancelVoiceRequests(voiceBridgeDeps(admin, msg.chat.id, tgId, profileId, locale, isAdmin), tgId, locale);
+      await sendWithKeyboard(msg.chat.id, bye, locale, isAdmin, isAdmin ? "admin" : "teacher");
       return true;
     }
-    const voiceFileId: string | null = msg.voice?.file_id || msg.audio?.file_id || null;
-    if (!voiceFileId) {
-      // TEXT means she moved on — typically a keyboard-menu tap, which arrives as plain text and reaches this
-      // handler FIRST. Trapping every menu tap behind "send a voice message" for the whole 15-minute TTL is the
-      // opposite of member forgiveness: release the parked state and let the message route normally. The
-      // prompt stays in the chat, and one tap on the Mini App button re-arms it.
-      if (text) {
-        await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice").eq("context->>submission_id", submissionId);
-        return false;
-      }
-      // Non-text, non-voice (sticker, photo, video note): nudge rather than silently swallow it.
-      await sendMessage(msg.chat.id, t.gvNeedVoice);
+    if (msg.voice || msg.audio) {
+      await onBridgeVoice(voiceBridgeDeps(admin, msg.chat.id, tgId, profileId, locale, isAdmin), msg, locale);
       return true;
     }
-    const { data: sub } = await admin.from("homework_submissions")
-      .select("user_id, assignment_id").eq("id", submissionId).maybeSingle();
-    if (!sub) {
-      await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice").eq("context->>submission_id", submissionId);
-      await sendMessage(msg.chat.id, t.gradeNotFound);
-      return true;
-    }
-    // Re-check scope at COMMIT time (teachers only) — same guard the grade_comment path applies, so a
-    // stale parked state can never attach a note to a student outside the grader's groups.
-    if (!isAdmin) {
-      const scope = await gradingScopeIds(admin, profileId, false);
-      if (!scope || !scope.includes(sub.user_id)) {
-        await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice").eq("context->>submission_id", submissionId);
-        await sendMessage(msg.chat.id, t.gradeNotFound);
-        return true;
-      }
-    }
-    // Clear score_feedback_voice_path in the SAME write: hw-audio-url plays the app-recorded path FIRST and
-    // the bot file_id only as a fallback, so leaving an older in-app note in place would silently shadow the
-    // note the teacher just recorded here. Newest recording must win. (submitScore never touches the
-    // file_id column, so a later in-app save can't wipe this one either.)
-    const { error: vErr } = await admin.from("homework_submissions")
-      .update({ score_feedback_voice_file_id: voiceFileId, score_feedback_voice_path: null }).eq("id", submissionId);
-    if (vErr) {
-      await sendMessage(msg.chat.id, `❌ ${vErr.message}`);
-      // Same capture as the grade_save failure below: the teacher is told, and now so is the DB.
-      await logError(admin, "telegram-bot-webhook", vErr.message, {
-        action: "grade_voice_save", user_id: sub.user_id, telegram_id: tgId, context: { submission_id: submissionId },
-      });
-      return true;
-    }
-    // Deliver to the student in THEIR locale; a non-delivery stays DB-visible (doctrine), mirroring the
-    // grade_voice_delivery_failed row the in-bot grading path writes. Most students (~70%) never pressed
-    // Start, so "not delivered" is common and expected — the note is still saved and playable in the app.
-    let studentName = "";
-    let delivered = false;
-    try {
-      const { data: stu, error: stuErr } = await admin.from("profiles")
-        .select("telegram_id, preferred_locale, name, last_name").eq("id", sub.user_id).maybeSingle();
-      if (stuErr) throw stuErr; // a failed read is not "no telegram_id"
-      studentName = [stu?.name, stu?.last_name].filter(Boolean).join(" ");
-      if (stu?.telegram_id) {
-        const stuT = T[normLocale(stu.preferred_locale)];
-        // ctx.label = the hw-label teacher-voice-request parked with the request ("<course> · <group> · M V —
-        // <title>"), so a voice note arriving on its own says which homework it is about.
-        const vo = await sendVoice(Number(stu.telegram_id), voiceFileId, withLabelLine(stuT.gradeVoiceNote, ctx.label));
-        delivered = vo.ok;
-        if (!vo.ok) {
-          // Classified, so the watchdogs can tell "student blocked the bot" (expected) from a broken path.
-          await admin.from("admin_actions").insert({
-            actor_user_id: profileId, action: "grade_voice_delivery_failed",
-            target_user_id: sub.user_id, target_resource_type: "homework_submission",
-            target_resource_id: submissionId,
-            details: { source: "miniapp_voice_bridge", error: vo.error, recipient_error: vo.recipient, terminal: vo.terminal, content_error: vo.content },
-          });
-        }
-      } else {
-        // No telegram_id: nobody can send this note. Expected reach, counted (grade_voice_dm_skipped), not silent.
-        await recordGradeVoiceSkipped(admin, {
-          submissionId, studentId: sub.user_id, voiceKey: botVoiceKey(msg), source: "miniapp_voice_bridge", actorUserId: profileId,
-        });
-      }
-    } catch (e) {
-      console.error("grade_voice deliver threw", String(e));
-      try {
-        await admin.from("admin_actions").insert({
-          actor_user_id: profileId, action: "grade_voice_delivery_failed",
-          target_user_id: sub.user_id, target_resource_type: "homework_submission",
-          target_resource_id: submissionId,
-          // A throw (e.g. the profile read failed), not a Telegram refusal: no recipient_error, so the watchdogs count it.
-          details: { source: "miniapp_voice_bridge", error: redactSecrets((e as any)?.message ?? e), terminal: false, thrown: true },
-        });
-      } catch (_e2) { /* audit best-effort */ }
-    }
-    await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice").eq("context->>submission_id", submissionId);
-    cacheInvalidateUser(sub.user_id);
-    // Name the student in the confirmation: the state is one-per-teacher, so if she requested notes for two
-    // cards back to back the latest request wins — naming who received it makes any mix-up visible at once.
-    // …and the label line says which course/group/task it was attached to.
-    await sendWithKeyboard(msg.chat.id, withLabelLine(t.gvSaved(csvEscapeHtml(studentName || "—"), delivered), ctx.label), locale, isAdmin, isAdmin ? "admin" : "teacher");
+    // TEXT means she moved on — typically a keyboard-menu tap, which arrives as plain text and reaches this
+    // handler FIRST. Let it route normally: trapping every menu tap behind "send a voice message" is the
+    // opposite of member forgiveness. The pending requests STAY (a recording she sends next still reaches the
+    // right student); they expire on their own, on /cancel, or when a bot grading session replaces them (which
+    // names what it drops).
+    if (text) return false;
+    // Non-text, non-voice (sticker, photo, video note): nudge rather than silently swallow it.
+    await sendMessage(msg.chat.id, t.gvNeedVoice);
     return true;
   }
 
@@ -4589,6 +4543,11 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
     if (sub) cacheInvalidateUser(sub.user_id);
       await sendWithKeyboard(msg.chat.id, t.gradeCancelled, locale, isAdmin, isAdmin ? "admin" : "teacher");
+      return true;
+    }
+    // Same binding as the score: a comment or voice note replying to an older message is not for this student.
+    if (text !== "/skip" && replyPointsElsewhere(replyMidOf(msg), ctx.anchor_mid)) {
+      await refuseGradingInput(admin, msg.chat.id, profileId, locale, ctx, "grade_comment", "reply_to_older_message");
       return true;
     }
     // C2: re-check scope at commit time (teachers only) — the submission owner
@@ -4767,6 +4726,132 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
 
   return false;
 }
+
+// A score / comment the grading session will not take (grading-guard.ts): say why, name whose grade the session
+// is waiting for, and leave a countable row. The session itself is untouched — she just types again.
+async function refuseGradingInput(
+  admin: any, chatId: number, profileId: string, locale: Locale, ctx: any,
+  state: "grade_score" | "grade_comment", reason: "reply_to_older_message" | "not_a_number",
+): Promise<void> {
+  const text = reason === "not_a_number"
+    ? withWho(notANumberText(locale, Number(ctx.max_score || 10)), ctx.student_name, ctx.who_tag)
+    : replyElsewhereText(locale, ctx.student_name, ctx.who_tag);
+  await sendMessage(chatId, text);
+  await logHealth(admin, "bot_grading_input_refused", { reason, state, submission_id: ctx.submission_id ?? null }, {
+    source: "telegram-bot-webhook", actorUserId: profileId,
+  });
+}
+
+// The Telegram + commit side of voice-bridge.ts for one teacher chat.
+function voiceBridgeDeps(admin: any, chatId: number, tgId: number, profileId: string, locale: Locale, isAdmin: boolean): VoiceBridgeDeps {
+  return {
+    admin,
+    actorId: profileId,
+    send: async (c, text, markup) => messageIdOf(await sendMessage(c, text, markup)),
+    edit: async (c, mid, text, markup) => {
+      try {
+        await tgApi("editMessageText", { chat_id: c, message_id: mid, text, parse_mode: "HTML", ...(markup ? { reply_markup: markup } : {}) });
+      } catch (_e) { /* best-effort: the callback answer already told her */ }
+    },
+    answer: async (id, text) => { await answerCallback(id, text); },
+    commit: (req, voice, remaining) => commitBridgeVoice(admin, chatId, tgId, profileId, isAdmin, locale, req, voice, remaining),
+  };
+}
+
+// Save a Mini App-requested voice note on ITS submission and deliver it to the student. voice-bridge.ts already
+// took the request out of the teacher's pending set in the same write that matched it, so no other recording can
+// land on it; if the save fails the request is put back and she simply resends.
+async function commitBridgeVoice(
+  admin: any, chatId: number, tgId: number, profileId: string, isAdmin: boolean, locale: Locale,
+  req: VoiceRequest, voice: { file_id: string; key: string | null }, remaining: number,
+): Promise<void> {
+  const t = T[locale] as any;
+  const submissionId = req.submission_id;
+  const voiceFileId = voice.file_id;
+  const { data: sub } = await admin.from("homework_submissions")
+    .select("user_id, assignment_id").eq("id", submissionId).maybeSingle();
+  if (!sub) {
+    await sendMessage(chatId, t.gradeNotFound);
+    return;
+  }
+  // Re-check scope at COMMIT time (teachers only) — same guard the grade_comment path applies, so a
+  // stale parked request can never attach a note to a student outside the grader's groups.
+  if (!isAdmin) {
+    const scope = await gradingScopeIds(admin, profileId, false);
+    if (!scope || !scope.includes(sub.user_id)) {
+      await sendMessage(chatId, t.gradeNotFound);
+      return;
+    }
+  }
+  // Clear score_feedback_voice_path in the SAME write: hw-audio-url plays the app-recorded path FIRST and
+  // the bot file_id only as a fallback, so leaving an older in-app note in place would silently shadow the
+  // note the teacher just recorded here. Newest recording must win. (submitScore never touches the
+  // file_id column, so a later in-app save can't wipe this one either.)
+  const { error: vErr } = await admin.from("homework_submissions")
+    .update({ score_feedback_voice_file_id: voiceFileId, score_feedback_voice_path: null }).eq("id", submissionId);
+  if (vErr) {
+    await sendMessage(chatId, `❌ ${vErr.message}`);
+    // Same capture as the grade_save failure: the teacher is told, and so is the DB.
+    await logError(admin, "telegram-bot-webhook", vErr.message, {
+      action: "grade_voice_save", user_id: sub.user_id, telegram_id: tgId, context: { submission_id: submissionId },
+    });
+    await restoreVoiceRequest(admin, tgId, req);
+    return;
+  }
+  // Deliver to the student in THEIR locale; a non-delivery stays DB-visible (doctrine), mirroring the
+  // grade_voice_delivery_failed row the in-bot grading path writes. Most students (~70%) never pressed
+  // Start, so "not delivered" is common and expected — the note is still saved and playable in the app.
+  let studentName = "";
+  let delivered = false;
+  try {
+    const { data: stu, error: stuErr } = await admin.from("profiles")
+      .select("telegram_id, preferred_locale, name, last_name").eq("id", sub.user_id).maybeSingle();
+    if (stuErr) throw stuErr; // a failed read is not "no telegram_id"
+    studentName = [stu?.name, stu?.last_name].filter(Boolean).join(" ");
+    if (stu?.telegram_id) {
+      const stuT = T[normLocale(stu.preferred_locale)];
+      // req.label = the hw-label teacher-voice-request parked with the request ("<course> · <group> · M V —
+      // <title>"), so a voice note arriving on its own says which homework it is about.
+      const vo = await sendVoice(Number(stu.telegram_id), voiceFileId, withLabelLine(stuT.gradeVoiceNote, req.label));
+      delivered = vo.ok;
+      if (!vo.ok) {
+        // Classified, so the watchdogs can tell "student blocked the bot" (expected) from a broken path.
+        await admin.from("admin_actions").insert({
+          actor_user_id: profileId, action: "grade_voice_delivery_failed",
+          target_user_id: sub.user_id, target_resource_type: "homework_submission",
+          target_resource_id: submissionId,
+          details: { source: "miniapp_voice_bridge", error: vo.error, recipient_error: vo.recipient, terminal: vo.terminal, content_error: vo.content },
+        });
+      }
+    } else {
+      // No telegram_id: nobody can send this note. Expected reach, counted (grade_voice_dm_skipped), not silent.
+      await recordGradeVoiceSkipped(admin, {
+        submissionId, studentId: sub.user_id, voiceKey: voice.key || `tgfile:${voiceFileId}`, source: "miniapp_voice_bridge", actorUserId: profileId,
+      });
+    }
+  } catch (e) {
+    console.error("grade_voice deliver threw", String(e));
+    try {
+      await admin.from("admin_actions").insert({
+        actor_user_id: profileId, action: "grade_voice_delivery_failed",
+        target_user_id: sub.user_id, target_resource_type: "homework_submission",
+        target_resource_id: submissionId,
+        // A throw (e.g. the profile read failed), not a Telegram refusal: no recipient_error, so the watchdogs count it.
+        details: { source: "miniapp_voice_bridge", error: redactSecrets((e as any)?.message ?? e), terminal: false, thrown: true },
+      });
+    } catch (_e2) { /* audit best-effort */ }
+  }
+  cacheInvalidateUser(sub.user_id);
+  // Name the student (and the course/group/task label) in the confirmation, and say how many requests are still
+  // waiting — each one needs its own recording, replying to its own prompt.
+  const more = remainingLine(remaining, locale);
+  await sendWithKeyboard(
+    chatId,
+    withLabelLine(t.gvSaved(csvEscapeHtml(studentName || req.student || "—"), delivered), req.label) + (more ? `\n\n${more}` : ""),
+    locale, isAdmin, isAdmin ? "admin" : "teacher",
+  );
+}
+
 async function handleTeacherSession(admin: any, msg: any, profileId: string, locale: Locale): Promise<boolean> {
   const t = T[locale] as any;
   const { data: sess } = await admin.from("bot_sessions").select("state, data").eq("user_id", profileId).maybeSingle();
@@ -7465,6 +7550,16 @@ async function handleCallback(admin: any, cq: any) {
     return;
   }
 
+  // Mini App voice bridge: "who is this voice note for?" (voice-bridge.ts). The question lives in the teacher's
+  // private bot chat, and the held note + requests are read by the tapper's own telegram_id — owner-locked.
+  if (data.startsWith("gvp:") && chatId) {
+    if (_isImp) { await answerCallback(cq.id, "👁 Faqat o'qish — /admin"); return; }
+    if (!_clicker || (_effPersona !== "admin" && _effPersona !== "teacher")) { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(_clicker.preferred_locale);
+    await onVoicePick(voiceBridgeDeps(admin, chatId, tgId, _clicker.id, locale, _effPersona === "admin"), cq, locale);
+    return;
+  }
+
   // Teacher re-tag at grading time: hwmv:<subId> -> module picker -> hwmv:<subId>:<mIdx> ->
   // task picker -> hwmv:<subId>:<mIdx>:<lIdx> -> atomic move via admin_retag_submission RPC.
   // Indices (not UUIDs) keep callback_data under Telegram's 64-byte cap; the server re-derives
@@ -7544,15 +7639,34 @@ async function handleCallback(admin: any, cq: any) {
     if (status !== "moved" && status !== "merged") { await answerCallback(cq.id, t.gradeNotFound); return; }
     const lbl = `M${(mod.position ?? 0) + 1} · ${leafLabel(leaf)}`;
     await answerCallback(cq.id, "✅");
-    // Refresh the grading session so the score prompt targets the surviving row + right max.
+    // Refresh the grading session so the score prompt targets the surviving row + right max. One target at a
+    // time (grading-guard.ts): this button sits on an OLDER prompt, so if she has since opened another homework,
+    // this tap takes the session back — say what it replaces and name whose score the prompt now wants. The
+    // reply anchor carries over only when the session was already on this homework.
+    const { data: prevRow } = await admin.from("bot_conversation_state")
+      .select("state, context, updated_at, expires_at").eq("telegram_id", tgId).maybeSingle();
+    const replaced = replacedSessionNotice(prevRow ?? null, [subId, survivorId], Date.now(), locale);
+    const prevCtx: any = prevRow?.context ?? {};
+    const sameSession = (prevRow?.state === "grade_score" || prevRow?.state === "grade_comment")
+      && [subId, survivorId].includes(prevCtx.submission_id);
+    const { data: rStu } = await admin.from("profiles").select("name, last_name").eq("id", sub.user_id).maybeSingle();
+    const rName = [rStu?.name, rStu?.last_name].filter(Boolean).join(" ") || null;
     await admin.from("bot_conversation_state").upsert({
       telegram_id: tgId,
       state: "grade_score",
-      context: { submission_id: survivorId, max_score: leaf.max_score || 10, grader_id: _clicker.id, is_admin: persona === "admin" },
+      context: {
+        submission_id: survivorId, max_score: leaf.max_score || 10, grader_id: _clicker.id, is_admin: persona === "admin",
+        student_name: rName, ...(sameSession && typeof prevCtx.anchor_mid === "number" ? { anchor_mid: prevCtx.anchor_mid } : {}),
+      },
       updated_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
     });
-    await sendMessage(chatId, `${t.retagDone(lbl)}\n${t.gradeAskScore(leaf.max_score || 10)}`);
+    if (replaced) {
+      await logHealth(admin, "grading_session_replaced", { ...replaced.details, to_submission_id: survivorId, via: "retag" }, {
+        source: "telegram-bot-webhook", actorUserId: _clicker.id, targetResourceType: "homework_submission", targetResourceId: survivorId,
+      });
+    }
+    await sendMessage(chatId, `${replaced ? `${replaced.text}\n\n` : ""}${t.retagDone(lbl)}\n${withWho(t.gradeAskScore(leaf.max_score || 10), rName, null)}`);
     // Tell the student (best-effort, their locale).
     try {
       const { data: stu } = await admin.from("profiles")

@@ -126,11 +126,17 @@ export default function TeacherGrade() {
     try {
       const r = await requestTeacherVoiceInTelegram(submissionId);
       if (r.ok) {
+        // Each card keeps its own request in the bot. With several waiting, each voice note must be sent as a
+        // reply to that student's prompt (otherwise the bot asks whose it is) — say so up front.
         toast.success("Botga xabar yuborildi", {
-          description: "Bahoni saqlang, so'ng Telegram chatida ovozli izohni yuboring.",
+          description: (r.pending ?? 1) > 1
+            ? `Botda ${r.pending} ta ovozli so'rov kutmoqda — har bir ovozni o'sha talaba xabariga javob (reply) qilib yuboring.`
+            : "Bahoni saqlang, so'ng Telegram chatida ovozli izohni yuboring.",
         });
       } else if (r.code === "no_telegram") {
         toast.error("Telegram akkauntingiz ulanmagan — botni oching va /start bosing.");
+      } else if (r.code === "too_many") {
+        toast.error("Botda juda ko'p ovozli so'rov kutmoqda — avval ularni yozib yuboring (yoki botda /cancel), so'ng qayta bosing.");
       } else if (r.code === "busy") {
         toast.error("Botda boshqa amal ochiq — uni tugating yoki /cancel yuboring, so'ng qayta bosing.");
       } else if (r.code === "prompt_failed") {

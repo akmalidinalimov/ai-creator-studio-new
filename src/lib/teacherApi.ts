@@ -259,13 +259,23 @@ export function notifyGradeVoice(submissionId: string, opts?: { voiceFresh?: boo
  * recorder always works; the webhook then attaches the note to this submission and delivers it.
  *
  * Unlike notifyGradeVoice this is NOT fire-and-forget: it returns a typed code so the grading screen can
- * tell the teacher exactly what to do (e.g. `no_telegram` / `prompt_failed` → open the bot and press /start).
+ * tell the teacher exactly what to do (e.g. `no_telegram` / `prompt_failed` → open the bot and press /start,
+ * `too_many` → record the pending ones first).
+ *
+ * Each card keeps its OWN pending request (one per submission, never re-pointed to the newest card), and
+ * `pending` says how many are waiting now: with more than one, each recording must reply to its student's
+ * prompt in the bot (or the bot asks "who is this for?" with buttons).
  */
-export async function requestTeacherVoiceInTelegram(submissionId: string): Promise<{ ok: boolean; code?: string }> {
-  const { error } = await supabase.functions.invoke("teacher-voice-request", {
+export async function requestTeacherVoiceInTelegram(
+  submissionId: string,
+): Promise<{ ok: boolean; code?: string; pending?: number }> {
+  const { data, error } = await supabase.functions.invoke("teacher-voice-request", {
     body: { submission_id: submissionId },
   });
-  if (!error) return { ok: true };
+  if (!error) {
+    const pending = Number((data as { pending?: unknown } | null)?.pending);
+    return { ok: true, pending: Number.isFinite(pending) && pending > 0 ? pending : undefined };
+  }
   let code = "";
   try {
     // On an HTTP error supabase-js puts the response body in error.context, not `data`.

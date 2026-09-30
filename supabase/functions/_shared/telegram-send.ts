@@ -112,8 +112,22 @@ export async function sendTelegram(
   payload: Record<string, unknown>,
   opts?: { admin?: any; purpose?: string; recipientId?: string | number | null; record?: boolean },
 ): Promise<SendOutcome> {
+  return (await sendTelegramResult(botToken, method, payload, opts)).outcome;
+}
+
+/**
+ * sendTelegram that also returns Telegram's `result` (the sent Message, or null) — for a caller that needs the
+ * new message's `message_id` (e.g. teacher-voice-request remembers which prompt a reply points at). Same token
+ * containment, classification and non-delivery recording; sendTelegram is this minus the result.
+ */
+export async function sendTelegramResult(
+  botToken: string,
+  method: string,
+  payload: Record<string, unknown>,
+  opts?: { admin?: any; purpose?: string; recipientId?: string | number | null; record?: boolean },
+): Promise<{ outcome: SendOutcome; result: any }> {
   let status = 0;
-  let j: { ok?: boolean; description?: string } | null = null;
+  let j: { ok?: boolean; description?: string; result?: unknown } | null = null;
   try {
     const resp = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
       method: "POST",
@@ -141,5 +155,5 @@ export async function sendTelegram(
   // recordNonDelivery. Callers that write their own per-row status opt out with `record:false`.
   await recordNonDelivery(outcome, method, opts);
 
-  return outcome;
+  return { outcome, result: (j as { result?: unknown } | null)?.result ?? null };
 }
