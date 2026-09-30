@@ -4,6 +4,8 @@ import {
   classifyGroupMoves,
   courseOfRow,
   crossMoveConfirmText,
+  DB_MOVE_REFUSAL_PREFIX,
+  dbMoveRefusalText,
   describeIntakeRefusal,
   isEngineFailure,
   isEnginePlaced,
@@ -99,6 +101,28 @@ describe("classifyGroupMoves (admin bulk move / group CSV)", () => {
   });
   it("a target group with no course cannot be judged cross-course (same as the server)", () => {
     expect(classifyGroupMoves([row({ waiting: 5 })], { groupId: "gx", courseId: null, courseTitle: null }).cross).toEqual([]);
+  });
+});
+
+describe("dbMoveRefusalText (the database guard, migration 20260930181000)", () => {
+  // The exact MESSAGE profiles_course_move_guard() raises (format() of the migration, verified in PGlite).
+  const real = "cross_course_refused: Aziza Karimova boshqa kursga (AI CREATORS CHALLENGE 6.0) o'tkazilmadi: " +
+    "eski kursda (AI CREATORS 5.0) 1 ta vazifa hali baholanmagan. Avval ustoz ularni baholashi kerak. Hech kim ko'chirilmadi.";
+  it("the refusal becomes its Uzbek sentence, prefix removed", () => {
+    expect(real.startsWith(DB_MOVE_REFUSAL_PREFIX)).toBe(true);
+    expect(dbMoveRefusalText(real)).toBe(real.slice(DB_MOVE_REFUSAL_PREFIX.length).trim());
+    expect(dbMoveRefusalText(real)).toContain("1 ta vazifa hali baholanmagan");
+    expect(dbMoveRefusalText(`  ${real}  `)).toMatch(/^Aziza Karimova/);
+  });
+  it("any other error is not ours: null, so the caller shows its own text", () => {
+    expect(dbMoveRefusalText("forbidden")).toBeNull();
+    expect(dbMoveRefusalText("Bu maydonni faqat admin o‘zgartira oladi")).toBeNull();
+    expect(dbMoveRefusalText("new row violates cross_course_refused: later in the text")).toBeNull();
+    expect(dbMoveRefusalText(null)).toBeNull();
+    expect(dbMoveRefusalText(undefined)).toBeNull();
+  });
+  it("a bare prefix still says what happened", () => {
+    expect(dbMoveRefusalText(DB_MOVE_REFUSAL_PREFIX)).toContain("Hech kim ko'chirilmadi");
   });
 });
 

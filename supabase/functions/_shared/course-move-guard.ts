@@ -55,6 +55,35 @@ export type CourseMoveVerdict =
 
 export const REFUSED_STATUS = "cross_course_refused";
 
+/**
+ * PR-3b: the DATABASE enforces the same rule for every writer. The trigger trg_profiles_aa_course_move_guard
+ * (migration 20260930181000) refuses a move between courses while the old course has waiting homework with
+ * P0001, MESSAGE "cross_course_refused: <Uzbek sentence>" and DETAIL = the course_move_facts() jsonb. The engine
+ * checks first (above), so this only fires when homework arrives between that check and the write.
+ */
+export const DB_REFUSAL_PREFIX = "cross_course_refused:";
+
+/** The facts carried by a database guard refusal, or null when `err` is any other error. Pure; never throws. */
+export function dbRefusalFacts(
+  err: { message?: string | null; details?: string | null } | null | undefined,
+): CourseMoveFacts | null {
+  if (!err || !String(err.message ?? "").trim().startsWith(DB_REFUSAL_PREFIX)) return null;
+  let d: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(String(err.details ?? ""));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) d = parsed as Record<string, unknown>;
+  } catch (_e) { /* a refusal without readable facts is still a refusal */ }
+  const s = (k: string): string | null => (typeof d[k] === "string" && d[k] ? d[k] as string : null);
+  const w = d.old_course_waiting;
+  return {
+    fromGroupId: s("from_group_id"), fromGroupName: s("from_group"),
+    fromCourseId: s("from_course_id"), fromCourseTitle: s("from_course"),
+    toGroupId: s("to_group_id"), toCourseId: s("to_course_id"), toCourseTitle: s("to_course"),
+    oldCourseWaiting: typeof w === "number" && Number.isFinite(w) ? w : null,
+    lookupFailed: false,
+  };
+}
+
 export function emptyFacts(fromGroupId: string | null, toGroupId: string | null, toCourseId: string | null): CourseMoveFacts {
   return {
     fromGroupId, fromGroupName: null, fromCourseId: null, fromCourseTitle: null,

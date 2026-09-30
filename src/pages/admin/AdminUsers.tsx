@@ -20,7 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, Upload as UploadIcon, Search, Copy, RefreshCw, Trash2, Download, Mail, Unlock, ChevronDown, ChevronRight, AlertTriangle, X, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { mutate, mutateMany } from "@/lib/mutate";
-import { blockedMoveText, crossMoveConfirmText, isEngineFailure, loadGroupMovePlan, REFUSED_STATUS } from "@/lib/courseMove";
+import { blockedMoveText, crossMoveConfirmText, dbMoveRefusalText, isEngineFailure, loadGroupMovePlan, REFUSED_STATUS } from "@/lib/courseMove";
 import Papa from "papaparse";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
@@ -895,10 +895,12 @@ export default function AdminUsers() {
   const bulkAssignGroup = async (groupId: string) => {
     if (selected.size === 0) return;
     const ids = Array.from(selected);
-    // PR-3a: admin_assign_group has no course check yet (PR-3b adds it in SQL), so apply the intake rule here.
+    // PR-3a: the intake rule, applied here first so the admin sees WHO is blocked and confirms an override.
     // A student of ANOTHER course with homework still waiting is never moved (it would follow them to the new
     // teachers); with nothing waiting, the admin must confirm, and the override is logged. A check that
-    // cannot run moves nobody.
+    // cannot run moves nobody. PR-3b: the database enforces the same rule on admin_assign_group itself
+    // (trg_profiles_aa_course_move_guard), so homework arriving after this check still cannot slip through;
+    // its refusal moves nobody and is shown in Uzbek below.
     let plan: Awaited<ReturnType<typeof loadGroupMovePlan>>;
     try {
       plan = await loadGroupMovePlan(supabase, ids, groupId);
@@ -915,7 +917,11 @@ export default function AdminUsers() {
       return;
     }
     const { data, error } = await supabase.rpc("admin_assign_group", { _user_ids: ids, _group_id: groupId });
-    if (error) return toast.error(error.message);
+    if (error) {
+      setBulkGroupId("");
+      const refused = dbMoveRefusalText(error.message);
+      return refused ? toast.error(refused, { duration: 12000 }) : toast.error(error.message);
+    }
     if (plan.cross.length) {
       logAction("cross_course_move_override", {
         details: {
