@@ -348,6 +348,21 @@ function GroupFormDialog({
   // undefined = not looked up (yet), null = the bot never saw this topic, string = its name.
   const [dailyTopicName, setDailyTopicName] = useState<string | null | undefined>(undefined);
   const [dailyLookupFailed, setDailyLookupFailed] = useState(false);
+  // Whether groups.daily_task_topic_url exists yet. Vercel ships this page on merge while the migration applies
+  // separately, so the column is probed ON ITS OWN: a missing column must never blank the other fields or make
+  // the whole save fail. null = still probing.
+  const [dailySupported, setDailySupported] = useState<boolean | null>(null);
+
+  const editingId = group?.id ?? null;
+  useEffect(() => {
+    (async () => {
+      const base = supabase.from("groups").select("daily_task_topic_url");
+      const { data, error } = editingId ? await base.eq("id", editingId) : await base.limit(1);
+      if (error) { setDailySupported(false); return; }
+      setDailySupported(true);
+      if (editingId) setDailyUrl(((data ?? [])[0]?.daily_task_topic_url) || "");
+    })();
+  }, [editingId]);
 
   // Load existing group telegram_group_url + shared homework topic on edit
   useEffect(() => {
@@ -355,12 +370,11 @@ function GroupFormDialog({
       if (group) {
         const { data: g } = await supabase
           .from("groups")
-          .select("telegram_group_url, homework_topic_url, daily_task_topic_url")
+          .select("telegram_group_url, homework_topic_url")
           .eq("id", group.id)
           .maybeSingle();
         setTgGroupUrl(((g as any)?.telegram_group_url) || "");
         setHwTopicUrl(((g as any)?.homework_topic_url) || "");
-        setDailyUrl(g?.daily_task_topic_url || "");
         // Load current co-teachers (is_primary=false); the primary is shown via the Teacher picker.
         const { data: cts } = await supabase
           .from("group_teachers" as any)
@@ -411,7 +425,7 @@ function GroupFormDialog({
     if (hwTopicUrl.trim() && !HW_TOPIC_RE.test(hwTopicUrl.trim())) {
       hwErr = "URL noto'g'ri (https://t.me/c/<chat>/<topic>)";
     }
-    const dErr = dailyTopicError(dailyUrl.trim(), hwTopicUrl.trim()) ?? "";
+    const dErr = dailySupported ? dailyTopicError(dailyUrl.trim(), hwTopicUrl.trim()) ?? "" : "";
     setTgGroupErr(groupErr);
     setHwTopicErr(hwErr);
     setDailyErr(dErr);
@@ -437,9 +451,10 @@ function GroupFormDialog({
         teacher_id,
         telegram_group_url: tgGroupUrl.trim() || null,
         homework_topic_url: hwTopicUrl.trim() || null,
-        // Saved in the SAME statement as the homework URL: the trigger validates the pair together.
-        daily_task_topic_url: dailyUrl.trim() || null,
       };
+      // Saved in the SAME statement as the homework URL: the trigger validates the pair together. Only sent once
+      // the column exists (see dailySupported).
+      if (dailySupported) payload.daily_task_topic_url = dailyUrl.trim() || null;
       let gid = group?.id as string | undefined;
       if (group) {
         const r = await mutate(() => supabase.from("groups").update(payload).eq("id", group.id));
@@ -621,11 +636,15 @@ function GroupFormDialog({
                 value={dailyUrl}
                 onChange={(e) => { setDailyUrl(e.target.value); setDailyErr(""); }}
                 placeholder="https://t.me/c/4440955972/144"
+                disabled={dailySupported !== true}
               />
               <p className="text-xs text-muted-foreground mt-1">
                 Challenge guruhi uchun «KUNLIK VAZIFALAR» topigi. Shu topikdagi xabarlar faqat kunlik vazifa ballarini oladi
                 (chat, media va javob ballari berilmaydi). Bo'sh qoldirilsa — o'chiriladi.
               </p>
+              {dailySupported === false && (
+                <p className="text-xs text-amber-600 mt-1">Bu maydon hali bazada yo‘q (migratsiya qo‘llanmagan) — boshqa maydonlar odatdagidek saqlanadi.</p>
+              )}
               {dailyErr && <p className="text-xs text-rose-600 mt-1">{dailyErr}</p>}
               {!dailyErr && parsedDaily && parsedDaily.topic > 1 && (
                 <p className="text-xs mt-1">
