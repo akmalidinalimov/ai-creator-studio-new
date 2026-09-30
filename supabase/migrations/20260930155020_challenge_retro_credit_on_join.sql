@@ -26,25 +26,42 @@
 --    Another person's rows, another chat, another group, pre-window and post-window rows are never touched.
 --    It also records a ledger row (challenge_retro_credits) with scan_from = the earliest webhook_inbox ARRIVAL
 --    among the affected messages (the engines scan arrivals, not send times).
--- 2. CREDIT (scoring = the engines, unmodified): challenge_retro_credit_run() takes BOTH engines' own try-locks
---    (re-entrant in this session), then calls reconcile_challenge_xp(scan_from) and
---    reconcile_challenge_social_xp(scan_from) -- their documented explicit back-fill mode -- so media (+5, 3/day),
---    chat (+1, 5 POINTS/day) and answer candidates are decided by exactly the live rules, caps are counted per
---    HISTORIC Tashkent day (every award is written with created_at = sent_at), and UNIQUE(user_id, ref_key) plus
---    the shared locks make a second payment impossible whichever of the live ticks and this run comes first.
---    No scoring logic is duplicated here and NO existing function is rewritten (nothing to conflict with the
---    in-flight Daily Tasks engine branch). The explicit runs scan every scope group from the earliest pending
---    arrival to now, bounded by the window and scope; for everyone else that is a no-op re-check (idempotent).
---    Answers: the enqueue re-derives eligibility in BOTH directions -- the late student's replies to a linked
---    classmate AND a linked classmate's earlier replies to the late student's questions (the asker had no
---    profile then, so that reply was never a candidate). Candidates are then judged by challenge-qa-judge like
---    any other (they share its daily call budget, 600; per-answerer-day judge caps still apply) and paid by
---    challenge_qa_apply with the historic answer_sent_at.
---    The two engine heartbeats an explicit run writes are RE-LABELLED 'challenge_retro_engine_heartbeat' (details
---    kept, plus 'relabelled_from'), because they are not cron ticks: left as-is they would stand in for a dead
---    cron in challenge_xp_watchdog (1 h) and challenge_social_watchdog A1 (40 min) during an onboarding wave.
---    Engine state is unaffected: the media lookback reads the last REAL tick (this run scanned a superset), and
---    the social explicit mode never moves the cursor.
+-- 2. CREDIT (scoring = the engines themselves): challenge_retro_credit_run() takes BOTH engines' own try-locks
+--    (re-entrant in this session), then calls reconcile_challenge_xp(scan_from, students) and
+--    reconcile_challenge_social_xp(scan_from, students) -- their explicit back-fill mode, SCOPED to the students
+--    the pending ledger rows are for -- so media (+5, 3/day), chat (+1, 5 POINTS/day) and answer candidates are
+--    decided by exactly the live rules, caps are counted per HISTORIC Tashkent day (every award is written with
+--    created_at = sent_at), and UNIQUE(user_id, ref_key) plus the shared locks make a second payment impossible
+--    whichever of the live ticks and this run comes first. No scoring logic is duplicated here.
+--    SCOPE (review fix): a late link credits ONLY the late linker. An unscoped pass from the earliest pending
+--    arrival re-applied TODAY's config and switches to EVERY student's history -- a period while the challenge
+--    was stopped, a cap or points change, a qa.mode 'off' period -- and whether it did depended on some unrelated
+--    late linker's first message happening to come before that period. Section 5 gives the engines an optional
+--    student scope (_only uuid[]; NULL = everyone = the cron tick, unchanged) and every non-heal batch uses it.
+--    Answers: the scoped enqueue re-derives eligibility in BOTH directions -- the late student's replies to a
+--    linked classmate AND a linked classmate's earlier replies to the late student's questions (the asker had
+--    no profile then, so that reply was never a candidate) -- and nothing between two OTHER students. Candidates
+--    are then judged by challenge-qa-judge like any other (they share its daily call budget, 600; per-answerer-
+--    day judge caps still apply) and paid by challenge_qa_apply with the historic answer_sent_at.
+--    A scoped run writes its OWN heartbeat action ('challenge_xp_reconciled_scoped' /
+--    'challenge_social_reconciled_scoped'), so by construction it can never feed the media lookback, the social
+--    cursor or the cron watchdogs (challenge_xp_watchdog 1 h, challenge_social_watchdog A1 40 min), whoever calls
+--    it. A GLOBAL (heal) pass still writes the cron actions; those two rows are RE-LABELLED
+--    'challenge_retro_engine_heartbeat' (details kept, plus 'relabelled_from') so they never stand in for a dead
+--    cron. Every run reports 'scope', 'scoped_profiles' and 'paid_outside_batch' (media + chat awards to students
+--    with no row in the batch: 0 by construction for a scoped pass -- R5 alarms otherwise -- and the visible
+--    effect of a global one).
+--    OWN HISTORY (stated, not hidden): the late linker's own earlier posts are scored under the config at credit
+--    time, like any admin back-fill -- a stop or a different cap BEFORE they linked is not reconstructed (there
+--    is no durable record of past config). Nobody else's history is re-scored. One pass per run over the
+--    batch's students, from the batch's earliest arrival.
+-- 2b. VOIDS ARE DURABLE (review fix): admin_void_challenge_points() deletes a student's challenge xp_events and
+--    writes a 'challenge_points_voided' tombstone. challenge_social_source and challenge_qa_apply honour it; the
+--    media engine did not, so ANY rescan re-paid a voided student's media: a retro pass, a heal, an admin
+--    back-fill, and -- live today, blast radius 0 (no void has been issued) -- the cron tick's own 40-minute
+--    overlap. Section 5 adds the same tombstone predicate to reconcile_challenge_xp: nothing posted at or before
+--    the student's latest void pays again; later posts pay normally (the Daily Tasks engine branch applies the
+--    same rule to task work).
 -- 3. INSTANT PATH + RECONCILER: trg_profiles_challenge_retro_credit (AFTER INSERT OR UPDATE OF telegram_id,
 --    group_id ON profiles) attaches at link time on EVERY link path (bot /start, username link, web login,
 --    admin-create-students, Mini App auth, identity sweeps) -- it only acts when telegram_id or group_id actually
@@ -61,15 +78,19 @@
 -- alarms (R2). 'expired' is terminal. Recovery after the cause is fixed:
 --   update public.challenge_retro_credits set attempts = 0, last_error = null where status = 'pending';
 -- Manual re-credit from a point in time (after a kill-switch period, a re-opened window, ...): the next sweep runs
--- both engines from it, idempotently:
+-- both engines from it, idempotently. A heal row WITHOUT a profile is a deliberate GLOBAL pass (today's config
+-- applied to everyone's history since then; voids hold); WITH a profile it is scoped to that one student:
 --   insert into public.challenge_retro_credits (source, scan_from) values ('heal', '<timestamptz>');
+--   insert into public.challenge_retro_credits (source, profile_id, scan_from) values ('heal', '<uuid>', '<timestamptz>');
 -- Frozen weeks: a late student's points land on their historic days, which can be inside a week whose prize table
 -- (challenge_weekly_results, frozen Monday 09:10 Tashkent) is already final. The frozen table is NOT touched --
 -- prizes stay as decided -- and the run counts such points ('into_frozen_weeks' in its heartbeat and ledger row,
 -- summed in health). Re-freezing a week stays a deliberate admin act: select public.freeze_challenge_week('<monday>');
--- History heal: if the window is already open when this file lands, ONE 'heal' row (scan_from = window.start -
--- 5 min) makes the first sweep re-run both engines from the start, which also pays the two siblings above for
--- anyone linked before the trigger existed. Applied before the window opens (the expected case) it adds nothing.
+-- History heal: if the window is already open when this file lands, ONE global 'heal' row (scan_from =
+-- window.start - 5 min) makes the first sweep re-run both engines from the start, which also pays the two siblings
+-- above for anyone linked before the trigger existed (the only path that can: their rows are not NULL, so the
+-- sweep's attach cannot see them). It is global by design and applies the config of that moment to the hours
+-- since window.start; voids hold (2b). Applied before the window opens it adds nothing.
 --
 -- ═══ KILL-SWITCHES (no deploy) ═══
 --   challenge.retro_credit.enabled=false ... no attach, no credit (trigger + sweep report 'off')
@@ -84,26 +105,41 @@
 -- checked_at every run). Alarms while the challenge is active or in its tail: R1 sweep silent 30 min / cron job
 -- or trigger missing; R2 a pending row stuck (max attempts) or older than 60 min; R3 unlinked rows of a sender
 -- linked > 20 min ago still unattached, a trigger error in 2 h, or a sweep attach error; R4 invalid config or a
--- scope group whose chat cannot be derived.
--- Every run writes admin_actions 'challenge_retro_credit_run' {status, attached, credited, engine results}.
+-- scope group whose chat cannot be derived; R5 a SCOPED pass paid a student outside its batch in 24 h (impossible
+-- by construction -- an engine edit broke the scope).
+-- Every run writes admin_actions 'challenge_retro_credit_run' {status, scope, attached, credited, engine results,
+-- paid_outside_batch}.
 --
--- NOT MODIFIED: reconcile_challenge_xp, reconcile_challenge_social_xp, challenge_social_source,
--- challenge_qa_enqueue_range, challenge_qa_apply, reconcile_community_xp (in scope groups inside the window the
--- community engine already skips these rows via challenge_social_owns_community), telegram-bot-webhook.
+-- ENGINES REWRITTEN (section 5, pinned to their live md5, single-occurrence anchors, stored == executed, owner /
+-- ACL / SECURITY DEFINER / search_path unchanged): reconcile_challenge_xp (void tombstone + scope),
+-- reconcile_challenge_social_xp (scope) and challenge_qa_enqueue_range (scope, both directions). Adding a
+-- parameter is a new signature, so each is DROPPED and re-created in this transaction: every new parameter has a
+-- default, so the cron commands (`select public.reconcile_challenge_xp()`, `... reconcile_challenge_social_xp()`)
+-- and challenge_qa_enqueue_sample's 10-argument call resolve unchanged; production has no pg_depend dependents
+-- and no regprocedure literal naming them (checked 2026-09-30). A cron tick (NULL scope) scores exactly as before
+-- except that a voided student's media no longer re-pays.
+-- NOT CONFLICTING: the in-flight Daily Tasks engine branch (20260930150010) pin-rewrites only
+-- xp_award_integrity_watchdog; it does not touch any function rewritten here.
+-- NOT MODIFIED: challenge_social_source, challenge_qa_apply (both already honour the void tombstone),
+-- admin_void_challenge_points, reconcile_community_xp (in scope groups inside the window the community engine
+-- already skips these rows via challenge_social_owns_community), telegram-bot-webhook.
 -- NOT DONE (outside the owner's decision, reported instead): the same class exists in 5.0 -- 466 unlinked rows from
 -- 72 senders who are linked today, all 2026-07-07..08-25 -- where the community engine's 2 h lookback never
 -- revisited them. Attaching them would change 5.0 analytics and community XP; it needs its own decision.
 -- Answer points pay only in qa.mode='live' (today 'shadow'): retro candidates follow the same mode.
 --
--- SELF-TEST: non-mutating -- config parse, object/RLS/ACL/trigger/index/cron presence, health() runs. It never
--- calls the attach, the sweep (it takes the engines' locks and pays real points) or the watchdog, sends nothing
--- and needs no JWT.
+-- SELF-TEST: non-mutating -- config parse, object/RLS/ACL/trigger/index/cron presence, the rewritten engines'
+-- signatures, defaults, markers and ACLs, health() runs. It never calls an engine, the attach, the sweep (they
+-- take the engines' locks and pay real points) or the watchdog, sends nothing and needs no JWT.
 -- PGlite harness: supabase/functions/_challenge/testing/retro-credit-check.ts applies this file on the LIVE engine
 -- bodies (md5-verified against production) and proves: late-link credit == linked-from-the-start credit (same
 -- ref_keys, amounts and historic created_at), caps per historic day, isolation, idempotency, no double pay with
--- interleaved live ticks, the username and group-move siblings, kill-switches, expiry, error retry, detectors.
--- (This file re-issues 20260930155000, which was never applied, in slot 20260930155010: health() no longer reads an
--- unassigned record when the window has no start, which made the watchdog report R0 instead of R4.)
+-- interleaved live ticks, the username and group-move siblings, kill-switches, expiry, error retry, detectors,
+-- a void that survives every engine path (V), and that a late link leaves every OTHER student's xp_events
+-- byte-identical across a stopped period, a cap change and a qa.mode 'off' period (KS / CF / QO).
+-- Re-issues: 20260930155000 and 20260930155010 were never applied. 155010 fixed health() reading an unassigned
+-- record when the window has no start (R0 instead of R4). This slot (155020) adds the review fixes 2 SCOPE and
+-- 2b VOIDS ARE DURABLE, and R5.
 
 -- ═══════════════════════════════ 1. Config (existing values win) ═══════════════════════════════
 update public.platform_settings
@@ -208,7 +244,181 @@ exception when others then
 end
 $fn$;
 
--- ═══════════════════════════════ 5. Attach (identity only) ═══════════════════════════════
+-- ═══════════════════════════════ 5. The engines: void tombstone + an optional student scope (pinned rewrites) ═══════════════════════════════
+-- One protocol for the three functions. Each starts from the LIVE definition (pg_get_functiondef) and refuses to
+-- run unless its body is the one verified on 2026-09-30 (md5 pin); applies anchored edits, each asserted to match
+-- exactly once; DROPs the old signature (a new parameter is a new signature -- CREATE OR REPLACE would leave an
+-- ambiguous overload behind); executes the new text; restores the ACL (service_role only, as live); and asserts
+-- stored == executed, owner / ACL / SECURITY DEFINER / proconfig unchanged, and the body is the harness-verified
+-- one (new md5 pin). Replay: a new signature already carrying its verified body is skipped.
+--   reconcile_challenge_xp(_since, _only)       void tombstone (2b); scope; a scoped run needs _since and writes
+--                                               'challenge_xp_reconciled_scoped'
+--   reconcile_challenge_social_xp(_from, _only)  scope for chat and answers; a scoped run needs _from and writes
+--                                               'challenge_social_reconciled_scoped'
+--   challenge_qa_enqueue_range(..., _only)       scope: answerer OR asker in _only (both directions)
+do $$
+declare
+  r record;
+  _olds text[]; _news text[];
+  _old oid; _nw oid;
+  _src text; _def text; _new text;
+  _acl text[]; _owner oid; _secdef boolean; _pcfg text[];
+  _n int;
+begin
+  for r in
+    select * from (values
+      ('reconcile_challenge_xp',
+       'public.reconcile_challenge_xp(timestamp with time zone)',
+       'public.reconcile_challenge_xp(timestamp with time zone, uuid[])',
+       '6074d56ec11578ed727c5d6a390272f6',                -- live md5(prosrc), re-read 2026-09-30 16:30 UTC
+       '635dff0d11e4f218739407576275ac67',                -- the rewritten body (PGlite harness)
+       array[
+         E'CREATE OR REPLACE FUNCTION public.reconcile_challenge_xp(_since timestamp with time zone DEFAULT NULL::timestamp with time zone)\n',
+         E'begin\n  -- TRY-lock, not a blocking lock.',
+         E'          and g.profile_id not in (select user_id from staff)\n',
+         E'    values (null, ''challenge_xp_reconciled'',\n',
+         E'''window_invalid'', _win_bad, ''at'', now()));'],
+       array[
+         E'CREATE OR REPLACE FUNCTION public.reconcile_challenge_xp(_since timestamp with time zone DEFAULT NULL::timestamp with time zone, _only uuid[] DEFAULT NULL::uuid[])\n',
+         E'begin\n'
+         || E'  -- 20260930155020: _only SCOPES an explicit back-fill to these students (the retro credit''s late linkers;\n'
+         || E'  -- NULL = everyone, as every cron tick). A scoped scan is never a tick: it needs an explicit _since, and it\n'
+         || E'  -- writes its own heartbeat action, so it can neither move the lookback nor feed challenge_xp_watchdog.\n'
+         || E'  if _only is not null and _since is null then\n'
+         || E'    raise exception ''reconcile_challenge_xp: a run scoped to _only needs an explicit _since'';\n'
+         || E'  end if;\n'
+         || E'\n'
+         || E'  -- TRY-lock, not a blocking lock.',
+         E'          and g.profile_id not in (select user_id from staff)\n'
+         || E'          -- 20260930155020: the void tombstone, exactly as challenge_social_source and challenge_qa_apply. Nothing\n'
+         || E'          -- posted at or before the student''s latest admin_void_challenge_points() pays again, whichever pass\n'
+         || E'          -- rescans it (an explicit back-fill, a heal, the 30-minute overlap of the next tick).\n'
+         || E'          and g.sent_at > coalesce((select max(a.created_at) from admin_actions a\n'
+         || E'                                     where a.action = ''challenge_points_voided'' and a.target_user_id = g.profile_id),\n'
+         || E'                                   ''-infinity''::timestamptz)\n'
+         || E'          and (_only is null or g.profile_id = any(_only))   -- 20260930155020: a scoped explicit run\n',
+         E'    -- 20260930155020: a SCOPED run scanned only some students -- its own action, never read by the lookback.\n'
+         || E'    values (null, case when _only is null then ''challenge_xp_reconciled'' else ''challenge_xp_reconciled_scoped'' end,\n',
+         E'''window_invalid'', _win_bad, ''scoped_profiles'', cardinality(_only), ''at'', now()));']),
+      ('reconcile_challenge_social_xp',
+       'public.reconcile_challenge_social_xp(timestamp with time zone)',
+       'public.reconcile_challenge_social_xp(timestamp with time zone, uuid[])',
+       '6fd3053f80f2937b7e1b82115fdbc487',                -- live md5(prosrc), re-read 2026-09-30 16:30 UTC
+       'a77827855bff5662d7a9f3d1fd91d3db',                -- the rewritten body (PGlite harness)
+       array[
+         E'CREATE OR REPLACE FUNCTION public.reconcile_challenge_social_xp(_from timestamp with time zone DEFAULT NULL::timestamp with time zone)\n',
+         E'begin\n  -- TRY-lock. A miss writes its OWN action',
+         E'           where x.kind is not null\n',
+         E'(_cfg->>''min_answer_letters'')::int, false, null);',
+         E'    values (null, ''challenge_social_reconciled'', jsonb_build_object(\n',
+         E'''apply_error'', _apply_err, ''at'', now()));'],
+       array[
+         E'CREATE OR REPLACE FUNCTION public.reconcile_challenge_social_xp(_from timestamp with time zone DEFAULT NULL::timestamp with time zone, _only uuid[] DEFAULT NULL::uuid[])\n',
+         E'begin\n'
+         || E'  -- 20260930155020: _only SCOPES an explicit run to these students (chat, and answers in both directions;\n'
+         || E'  -- NULL = everyone, as every cron tick). A scoped scan is never a tick: it needs an explicit _from, and it\n'
+         || E'  -- writes its own heartbeat action, so it can neither carry the cursor nor feed challenge_social_watchdog.\n'
+         || E'  if _only is not null and _from is null then\n'
+         || E'    raise exception ''reconcile_challenge_social_xp: a run scoped to _only needs an explicit _from'';\n'
+         || E'  end if;\n'
+         || E'\n'
+         || E'  -- TRY-lock. A miss writes its OWN action',
+         E'           where x.kind is not null\n'
+         || E'             and (_only is null or x.profile_id = any(_only))   -- 20260930155020: a scoped explicit run\n',
+         E'(_cfg->>''min_answer_letters'')::int, false, null, _only);',
+         E'    -- 20260930155020: a SCOPED run scanned only some students -- its own action, never read for the cursor.\n'
+         || E'    values (null, case when _only is null then ''challenge_social_reconciled'' else ''challenge_social_reconciled_scoped'' end, jsonb_build_object(\n',
+         E'''apply_error'', _apply_err, ''scoped_profiles'', cardinality(_only), ''at'', now()));']),
+      ('challenge_qa_enqueue_range',
+       'public.challenge_qa_enqueue_range(timestamp with time zone, timestamp with time zone, uuid[], timestamp with time zone, timestamp with time zone, integer, integer, integer, boolean, integer)',
+       'public.challenge_qa_enqueue_range(timestamp with time zone, timestamp with time zone, uuid[], timestamp with time zone, timestamp with time zone, integer, integer, integer, boolean, integer, uuid[])',
+       'ba37ec893a1aa652d491ef7f26ee6c89',                -- live md5(prosrc), re-read 2026-09-30 16:30 UTC
+       'a9ce39d32eb8d98419607235772ee533',                -- the rewritten body (PGlite harness)
+       array[
+         E', _shadow boolean, _limit integer)\n',
+         E'      left join auth.users qau on qau.id = q.profile_id\n  ),\n'],
+       array[
+         E', _shadow boolean, _limit integer, _only uuid[] DEFAULT NULL::uuid[])\n',
+         E'      left join auth.users qau on qau.id = q.profile_id\n'
+         || E'     -- 20260930155020: a scoped explicit run enqueues only replies that involve these students, in EITHER\n'
+         || E'     -- direction: as the answerer, or as the author of the replied-to message. NULL = everyone.\n'
+         || E'     where _only is null or s.profile_id = any(_only) or q.profile_id = any(_only)\n'
+         || E'  ),\n'])
+    ) v(name, old_sig, new_sig, pin, new_pin, olds, news)
+  loop
+    _olds := r.olds;
+    _news := r.news;
+    _old := to_regprocedure(r.old_sig);
+    _nw := to_regprocedure(r.new_sig);
+
+    if _nw is not null then                                -- replay
+      if _old is not null then
+        raise exception 'ABORT: % exists in BOTH signatures (% and %)', r.name, r.old_sig, r.new_sig;
+      end if;
+      if (select md5(replace(prosrc, E'\r', '')) from pg_proc where oid = _nw) <> r.new_pin then
+        raise exception 'ABORT: % exists but its body is not the harness-verified one (md5 %)', r.new_sig,
+          (select md5(replace(prosrc, E'\r', '')) from pg_proc where oid = _nw);
+      end if;
+      raise notice '% already rewritten -- skipped', r.name;
+      continue;
+    end if;
+    if _old is null then
+      raise exception 'ABORT: % not found', r.old_sig;
+    end if;
+
+    select prosrc, array(select x::text from unnest(proacl) x order by 1), proowner, prosecdef, proconfig
+      into _src, _acl, _owner, _secdef, _pcfg from pg_proc where oid = _old;
+    if md5(replace(_src, E'\r', '')) <> r.pin then
+      raise exception 'ABORT: % changed since it was verified (md5 %); regenerate this migration from the live definition',
+        r.name, md5(replace(_src, E'\r', ''));
+    end if;
+
+    _def := pg_get_functiondef(_old);
+    _new := _def;
+    for i in 1 .. array_length(_olds, 1) loop
+      _n := (length(_new) - length(replace(_new, _olds[i], ''))) / length(_olds[i]);
+      if _n <> 1 then
+        raise exception 'ABORT: % edit % matched % times (want exactly 1)', r.name, i, _n;
+      end if;
+      _new := replace(_new, _olds[i], _news[i]);
+    end loop;
+
+    execute format('drop function %s', _old::regprocedure);
+    execute _new;
+    _nw := to_regprocedure(r.new_sig);
+    if _nw is null then
+      raise exception 'ABORT: % was not created', r.new_sig;
+    end if;
+    -- A new function is born with the schema's default grants; the live one is service_role only.
+    execute format('revoke execute on function %s from public, anon, authenticated', _nw::regprocedure);
+    execute format('grant execute on function %s to service_role', _nw::regprocedure);
+
+    if pg_get_functiondef(_nw) is distinct from _new then
+      raise exception 'ABORT: % -- stored definition differs from what was executed', r.name;
+    end if;
+    if (select array(select x::text from unnest(proacl) x order by 1) from pg_proc where oid = _nw) is distinct from _acl
+       or (select proowner from pg_proc where oid = _nw) <> _owner
+       or (select prosecdef from pg_proc where oid = _nw) <> _secdef
+       or (select proconfig from pg_proc where oid = _nw) is distinct from _pcfg then
+      raise exception 'ABORT: % -- owner, ACL, SECURITY DEFINER or search_path changed', r.name;
+    end if;
+    if (select md5(replace(prosrc, E'\r', '')) from pg_proc where oid = _nw) <> r.new_pin then
+      raise exception 'ABORT: % -- the rewritten body is not the harness-verified one (md5 %)', r.name,
+        (select md5(replace(prosrc, E'\r', '')) from pg_proc where oid = _nw);
+    end if;
+  end loop;
+end $$;
+-- The same grants as statements (idempotent), so they are visible to review and to the footguns lint.
+revoke execute on function public.reconcile_challenge_xp(timestamptz, uuid[]) from public, anon, authenticated;
+grant execute on function public.reconcile_challenge_xp(timestamptz, uuid[]) to service_role;
+revoke execute on function public.reconcile_challenge_social_xp(timestamptz, uuid[]) from public, anon, authenticated;
+grant execute on function public.reconcile_challenge_social_xp(timestamptz, uuid[]) to service_role;
+revoke execute on function public.challenge_qa_enqueue_range(timestamptz, timestamptz, uuid[], timestamptz, timestamptz,
+  integer, integer, integer, boolean, integer, uuid[]) from public, anon, authenticated;
+grant execute on function public.challenge_qa_enqueue_range(timestamptz, timestamptz, uuid[], timestamptz, timestamptz,
+  integer, integer, integer, boolean, integer, uuid[]) to service_role;
+
+-- ═══════════════════════════════ 6. Attach (identity only) ═══════════════════════════════
 -- ONE code path for the link trigger and the sweep. Returns {status, attached, relinked, scan_from, ledger_id}.
 -- 'relinked' (link_trigger only): the profile's OWN earlier rows in its current group chat inside the window
 -- that a telegram_id/group_id change just made payable (username-stamped or group-move rows).
@@ -303,7 +513,7 @@ begin
 end
 $fn$;
 
--- ═══════════════════════════════ 6. The instant path: link trigger ═══════════════════════════════
+-- ═══════════════════════════════ 7. The instant path: link trigger ═══════════════════════════════
 create or replace function public.challenge_retro_on_profile_link()
 returns trigger
 language plpgsql
@@ -342,7 +552,7 @@ create trigger trg_profiles_challenge_retro_credit
   when (new.telegram_id is not null and new.group_id is not null)
   execute function public.challenge_retro_on_profile_link();
 
--- ═══════════════════════════════ 7. The sweep: re-derive the attach, credit through the engines ═══════════════════════════════
+-- ═══════════════════════════════ 8. The sweep: re-derive the attach, credit through the engines ═══════════════════════════════
 create or replace function public.challenge_retro_credit_run()
 returns jsonb
 language plpgsql
@@ -365,6 +575,8 @@ declare
   _m_aw int; _m_cp int; _s_chat int; _s_enq int; _s_app int;
   _mhb jsonb; _shb jsonb;
   _frozen_to timestamptz; _frozen_before bigint; _frozen_after bigint; _into_frozen int;
+  _global boolean; _prof uuid[]; _only uuid[];
+  _in_before bigint; _in_after bigint; _outside int;
   _err text; _status text;
   _report jsonb;
 begin
@@ -405,11 +617,15 @@ begin
       end loop;
     end if;
 
-    -- 2. CREDIT every pending row in ONE pass of each engine, from the earliest pending arrival.
-    select array_agg(c.id order by c.id), min(c.scan_from), count(*)
-      into _ids, _from, _n
+    -- 2. CREDIT every pending row in ONE pass of each engine, from the earliest pending arrival, SCOPED to the
+    --    batch's students. Only a heal row without a profile makes the pass global (a deliberate admin act).
+    select array_agg(c.id order by c.id), min(c.scan_from), count(*),
+           coalesce(bool_or(c.profile_id is null), false),
+           array_agg(distinct c.profile_id) filter (where c.profile_id is not null)
+      into _ids, _from, _n, _global, _prof
       from public.challenge_retro_credits c
      where c.status = 'pending' and c.attempts < _max;
+    _only := case when _ids is null or _global then null else coalesce(_prof, '{}'::uuid[]) end;
 
     if _ids is null then
       _status := 'idle';
@@ -445,11 +661,18 @@ begin
            and x.created_at >= _w_start and x.created_at < _frozen_to;
       end if;
 
-      -- Each engine in its own sub-block: an error rolls back only that engine's work.
+      -- Media + chat awards to the batch's students, before and after: the rest of what the engines report is
+      -- 'paid_outside_batch' (0 by construction for a scoped pass; the visible effect of a global one).
+      select count(*) into _in_before from public.xp_events x
+       where x.user_id = any(coalesce(_prof, '{}'::uuid[])) and x.reason in ('challenge_group_media', 'challenge_chat');
+
+      -- Each engine in its own sub-block: an error rolls back only that engine's work. A scoped run writes the
+      -- engine's '_scoped' heartbeat action (never read by the cron lookback / cursor / watchdogs); a GLOBAL run
+      -- writes the cron action, which is relabelled here so it cannot stand in for a dead cron.
       begin
-        select e.awarded, e.capped into _m_aw, _m_cp from public.reconcile_challenge_xp(_from) e;
+        select e.awarded, e.capped into _m_aw, _m_cp from public.reconcile_challenge_xp(_from, _only) e;
         select a.details into _mhb from public.admin_actions a
-         where a.action = 'challenge_xp_reconciled' and a.created_at = now()
+         where a.action in ('challenge_xp_reconciled', 'challenge_xp_reconciled_scoped') and a.created_at = now()
          limit 1;
         update public.admin_actions a
            set action = 'challenge_retro_engine_heartbeat',
@@ -457,12 +680,13 @@ begin
          where a.action = 'challenge_xp_reconciled' and a.created_at = now();
       exception when others then
         _err := 'media: ' || left(sqlerrm, 200);
+        _m_aw := null; _m_cp := null;
       end;
       begin
         select e.chat_awarded, e.qa_enqueued, e.qa_applied into _s_chat, _s_enq, _s_app
-          from public.reconcile_challenge_social_xp(_from) e;
+          from public.reconcile_challenge_social_xp(_from, _only) e;
         select a.details into _shb from public.admin_actions a
-         where a.action = 'challenge_social_reconciled' and a.created_at = now()
+         where a.action in ('challenge_social_reconciled', 'challenge_social_reconciled_scoped') and a.created_at = now()
            and coalesce((a.details->>'explicit')::boolean, false)
          limit 1;
         update public.admin_actions a
@@ -478,7 +702,12 @@ begin
         end if;
       exception when others then
         _err := concat_ws('; ', _err, 'social: ' || left(sqlerrm, 200));
+        _s_chat := null; _s_enq := null; _s_app := null;
       end;
+
+      select count(*) into _in_after from public.xp_events x
+       where x.user_id = any(coalesce(_prof, '{}'::uuid[])) and x.reason in ('challenge_group_media', 'challenge_chat');
+      _outside := (coalesce(_m_aw, 0) + coalesce(_s_chat, 0) - (_in_after - _in_before))::int;
 
       if _frozen_to is not null then
         select count(*) into _frozen_after from public.xp_events x
@@ -492,6 +721,8 @@ begin
            set status = 'credited', credited_at = now(), last_attempt_at = now(), attempts = attempts + 1,
                last_error = null,
                result = jsonb_build_object('scan_from', _from, 'batch', _n,
+                          'scope', case when _global then 'global' else 'profiles' end,
+                          'scoped_profiles', cardinality(_only), 'paid_outside_batch', _outside,
                           'media_awarded', _m_aw, 'media_capped', _m_cp, 'chat_awarded', _s_chat,
                           'qa_enqueued', _s_enq, 'qa_applied', _s_app, 'into_frozen_weeks', _into_frozen)
          where id = any(_ids) and status = 'pending';
@@ -510,6 +741,8 @@ begin
     'config_invalid', coalesce(_cfg->'invalid', '[]'::jsonb),
     'attached_profiles', _att_profiles, 'attached_rows', _att_rows, 'attach_errors', _att_errs, 'attach_error', _att_err,
     'batch', coalesce(_n, 0), 'scan_from', _from, 'expired', _expired,
+    'scope', case when _ids is null then null when _global then 'global' else 'profiles' end,
+    'scoped_profiles', cardinality(_only), 'paid_outside_batch', _outside,
     'media_awarded', _m_aw, 'media_capped', _m_cp, 'chat_awarded', _s_chat, 'qa_enqueued', _s_enq, 'qa_applied', _s_app,
     'into_frozen_weeks', _into_frozen, 'social_heartbeat', _shb, 'media_heartbeat', _mhb, 'error', _err, 'at', now());
   begin
@@ -521,7 +754,7 @@ begin
 end
 $fn$;
 
--- ═══════════════════════════════ 8. Health (read-only) ═══════════════════════════════
+-- ═══════════════════════════════ 9. Health (read-only) ═══════════════════════════════
 create or replace function public.challenge_retro_credit_health()
 returns jsonb
 language plpgsql
@@ -552,7 +785,14 @@ begin
          count(*) filter (where c.status = 'nothing_to_credit' and c.created_at > now() - interval '7 days') as nothing_to_credit_7d,
          coalesce(sum(case when c.status = 'credited' and c.credited_at > now() - interval '7 days'
                                 and jsonb_typeof(c.result->'into_frozen_weeks') = 'number'
-                           then (c.result->>'into_frozen_weeks')::int end), 0) as into_frozen_7d
+                           then (c.result->>'into_frozen_weeks')::int end), 0) as into_frozen_7d,
+         -- A pass pays several ledger rows at once and copies its result into each: count passes, not rows.
+         count(distinct c.credited_at) filter (where c.status = 'credited' and c.credited_at > now() - interval '7 days'
+                                                 and c.result->>'scope' = 'global') as global_passes_7d,
+         count(distinct c.credited_at) filter (where c.status = 'credited' and c.credited_at > now() - interval '24 hours'
+                                                 and c.result->>'scope' = 'profiles'
+                                                 and jsonb_typeof(c.result->'paid_outside_batch') = 'number'
+                                                 and (c.result->>'paid_outside_batch')::int > 0) as scope_breaches_24h
     into _q
     from public.challenge_retro_credits c;
 
@@ -586,7 +826,8 @@ begin
                                 'last_error', _q.last_error, 'credited_7d', _q.credited_7d,
                                 'credited_rows_7d', _q.credited_rows_7d, 'credited_profiles_7d', _q.credited_profiles_7d,
                                 'expired_7d', _q.expired_7d, 'nothing_to_credit_7d', _q.nothing_to_credit_7d,
-                                'into_frozen_weeks_7d', _q.into_frozen_7d),
+                                'into_frozen_weeks_7d', _q.into_frozen_7d, 'global_passes_7d', _q.global_passes_7d,
+                                'scope_breaches_24h', _q.scope_breaches_24h),
     'unattached', jsonb_build_object('rows', coalesce(_un_rows, 0), 'senders', coalesce(_un_senders, 0), 'oldest_sent_at', _un_oldest),
     'link_errors_24h', (select count(*) from public.admin_actions a
                          where a.action = 'challenge_retro_link_error' and a.created_at > now() - interval '24 hours'),
@@ -603,7 +844,7 @@ begin
 end
 $fn$;
 
--- ═══════════════════════════════ 9. Watchdog (hourly, DMs admins) ═══════════════════════════════
+-- ═══════════════════════════════ 10. Watchdog (hourly, DMs admins) ═══════════════════════════════
 create or replace function public.challenge_retro_credit_watchdog()
 returns jsonb
 language plpgsql
@@ -693,6 +934,14 @@ begin
                                   || case when coalesce((_h#>>'{config,win_bad}')::boolean, false) then ' (window)' else '' end
                                   || ', chatsiz guruhlar: ' || coalesce(_h->>'scope_groups_without_chat', '0') || '.');
     end if;
+
+    -- R5: a SCOPED pass paid a student outside its batch -- impossible unless an engine edit broke the scope
+    if coalesce((_h#>>'{queue,scope_breaches_24h}')::int, 0) > 0 then
+      _alarms := array_append(_alarms, 'R5');
+      _msgs := array_append(_msgs, 'Kechikkan ballar hisoblagichi boshqa oʻquvchilarga ham ball yozdi ('
+                                  || coalesce(_h#>>'{queue,scope_breaches_24h}', '0')
+                                  || ' ta yurish, 24 soat): challenge_retro_credits.result.paid_outside_batch.');
+    end if;
   end if;
 
   -- Latch (as challenge_social_watchdog): DM on a new breach, every 11.5 h while breached; recovery only after
@@ -773,7 +1022,7 @@ begin
 end
 $fn$;
 
--- ═══════════════════════════════ 10. Grants: service_role only ═══════════════════════════════
+-- ═══════════════════════════════ 11. Grants: service_role only ═══════════════════════════════
 revoke execute on function public.challenge_retro_config() from public, anon, authenticated;
 grant execute on function public.challenge_retro_config() to service_role;
 revoke execute on function public.challenge_retro_attach(uuid, text) from public, anon, authenticated;
@@ -786,7 +1035,7 @@ grant execute on function public.challenge_retro_credit_health() to service_role
 revoke execute on function public.challenge_retro_credit_watchdog() from public, anon, authenticated;
 grant execute on function public.challenge_retro_credit_watchdog() to service_role;
 
--- ═══════════════════════════════ 11. Cron (idempotent) ═══════════════════════════════
+-- ═══════════════════════════════ 12. Cron (idempotent) ═══════════════════════════════
 -- :08 of every 10 minutes: after challenge-xp-reconcile (:00) and challenge-social-reconcile (:03) have usually
 -- finished; a collision is a 'locked' run that retries 10 minutes later.
 do $$
@@ -799,7 +1048,7 @@ end $$;
 select cron.schedule('challenge-retro-credit', '8-59/10 * * * *', $c$ select public.challenge_retro_credit_run() $c$);
 select cron.schedule('challenge-retro-credit-watchdog', '57 * * * *', $c$ select public.challenge_retro_credit_watchdog() $c$);
 
--- ═══════════════════════════════ 12. History heal (once) ═══════════════════════════════
+-- ═══════════════════════════════ 13. History heal (once) ═══════════════════════════════
 -- Only when the window is ALREADY open at apply time: one pending 'heal' row makes the first sweep run both engines
 -- from window.start (idempotent for everything already paid). Before the window opens there is nothing to heal.
 do $$
@@ -813,7 +1062,7 @@ begin
   end if;
 end $$;
 
--- ═══════════════════════════════ 13. Self-test (NON-mutating) and the audit row ═══════════════════════════════
+-- ═══════════════════════════════ 14. Self-test (NON-mutating) and the audit row ═══════════════════════════════
 do $$
 declare
   _bad text[] := '{}';
@@ -855,6 +1104,45 @@ begin
     _bad := _bad || 'cron'::text;
   end if;
 
+  -- The rewritten engines (section 5): old signatures gone, new ones service_role-only SECURITY DEFINER, every
+  -- new parameter defaulted (so the cron commands and challenge_qa_enqueue_sample resolve unchanged), markers in.
+  -- Read from the catalog only: calling an engine would take its lock and pay real points.
+  if to_regprocedure('public.reconcile_challenge_xp(timestamptz)') is not null
+     or to_regprocedure('public.reconcile_challenge_social_xp(timestamptz)') is not null
+     or to_regprocedure('public.challenge_qa_enqueue_range(timestamptz, timestamptz, uuid[], timestamptz, timestamptz, integer, integer, integer, boolean, integer)') is not null then
+    _bad := _bad || 'engine_old_signature'::text;
+  end if;
+  foreach _f in array array[
+      'public.reconcile_challenge_xp(timestamptz, uuid[])', 'public.reconcile_challenge_social_xp(timestamptz, uuid[])',
+      'public.challenge_qa_enqueue_range(timestamptz, timestamptz, uuid[], timestamptz, timestamptz, integer, integer, integer, boolean, integer, uuid[])'] loop
+    if to_regprocedure(_f) is null then
+      _bad := _bad || ('engine_missing:' || _f);
+      continue;
+    end if;
+    if not (select prosecdef from pg_proc where oid = _f::regprocedure)
+       or (select proacl is null from pg_proc where oid = _f::regprocedure)
+       or exists (select 1 from pg_proc p, aclexplode(p.proacl) a
+                   where p.oid = _f::regprocedure
+                     and (a.grantee = 0 or a.grantee in (select oid from pg_roles where rolname in ('anon', 'authenticated'))))
+       or not has_function_privilege('service_role', _f::regprocedure, 'execute') then
+      _bad := _bad || ('engine_acl:' || _f);
+    end if;
+  end loop;
+  if (select pronargdefaults from pg_proc where oid = to_regprocedure('public.reconcile_challenge_xp(timestamptz, uuid[])')) is distinct from 2::smallint
+     or (select pronargdefaults from pg_proc where oid = to_regprocedure('public.reconcile_challenge_social_xp(timestamptz, uuid[])')) is distinct from 2::smallint
+     or (select pronargdefaults from pg_proc where oid = to_regprocedure(
+           'public.challenge_qa_enqueue_range(timestamptz, timestamptz, uuid[], timestamptz, timestamptz, integer, integer, integer, boolean, integer, uuid[])')) is distinct from 1::smallint then
+    _bad := _bad || 'engine_defaults'::text;
+  end if;
+  if position('challenge_points_voided' in coalesce((select prosrc from pg_proc
+        where oid = to_regprocedure('public.reconcile_challenge_xp(timestamptz, uuid[])')), '')) = 0
+     or position('challenge_social_reconciled_scoped' in coalesce((select prosrc from pg_proc
+        where oid = to_regprocedure('public.reconcile_challenge_social_xp(timestamptz, uuid[])')), '')) = 0
+     or position('q.profile_id = any(_only)' in coalesce((select prosrc from pg_proc
+        where oid = to_regprocedure('public.challenge_qa_enqueue_range(timestamptz, timestamptz, uuid[], timestamptz, timestamptz, integer, integer, integer, boolean, integer, uuid[])')), '')) = 0 then
+    _bad := _bad || 'engine_markers'::text;
+  end if;
+
   _h := public.challenge_retro_credit_health();                 -- read-only
   if _h->'queue' is null or _h->'unattached' is null then _bad := _bad || 'health'::text; end if;
 
@@ -870,6 +1158,10 @@ begin
       'heal_enqueued', exists (select 1 from public.challenge_retro_credits where source = 'heal'),
       'scope_group_chats', (select coalesce(jsonb_object_agg(s.id::text, public.group_telegram_chat_id(s.id)), '{}'::jsonb)
                               from public.challenge_scope_group_ids() s(id)),
+      'engine_md5', (select jsonb_object_agg(p.oid::regprocedure::text, md5(replace(p.prosrc, E'\r', '')))
+                       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                      where n.nspname = 'public'
+                        and p.proname in ('reconcile_challenge_xp', 'reconcile_challenge_social_xp', 'challenge_qa_enqueue_range')),
       'at', now()));
   end if;
 end $$;

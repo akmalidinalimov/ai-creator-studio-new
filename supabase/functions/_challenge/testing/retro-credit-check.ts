@@ -1,19 +1,28 @@
-// PGlite harness for 20260930155010_challenge_retro_credit_on_join.sql (S3: credit earlier messages on join).
+// PGlite harness for 20260930155020_challenge_retro_credit_on_join.sql (S3: credit earlier messages on join).
 //
 //   deno test -A --node-modules-dir=none --no-lock supabase/functions/_challenge/testing/retro-credit-check.ts
 //
 // Builds production's engine state on a real PostgreSQL -- the LIVE reconcile_community_xp and
 // reconcile_challenge_xp (fixtures), #218 (20260930100010) and Daily Tasks PR-1 (20260930121000) -- and section A
-// asserts that every engine body this migration CALLS is byte-identical to production (md5 of prosrc, read-only
-// 2026-09-30). Then it applies THIS migration and proves:
+// asserts that every engine body this migration CALLS or REWRITES is byte-identical to production (md5 of prosrc,
+// read-only 2026-09-30), plus admin_void_challenge_points. Then it applies THIS migration (M also pins the three
+// rewritten bodies, their ACLs and defaults) and proves:
 //   C  late link == linked from the start: the same xp_events (user, reason, ref_key, amount, historic created_at)
 //      and the same answer candidates, for the late student, a username-stamped student, a group mover and a late
 //      staff member; caps per HISTORIC Tashkent day; isolation (another person, another chat, another group,
-//      anonymous admin, pre-window rows are never attached or credited); the engine heartbeats are relabelled.
-//   D  idempotency: repeated sweeps, explicit engine re-runs and live ticks change nothing; user_xp drift 0.
+//      anonymous admin, pre-window rows are never attached or credited).
+//      The pass is SCOPED to the batch's students and writes the engines' own '_scoped' heartbeats.
+//   D  idempotency: repeated sweeps, explicit engine re-runs and live ticks change nothing; user_xp drift 0; a
+//      scoped engine run without an explicit start is refused.
 //   E  no double pay with interleaved LIVE ticks (link -> live ticks pay the recent posts -> sweep pays the rest):
 //      per-day caps hold and per-day totals equal the linked-from-the-start run.
-//   K  kill-switches: retro_credit off, challenge disabled (deferred, then paid), expired after the W2 tail, tail.
+//   V  an admin void holds against every engine path: the cron tick's 40-minute overlap, an unrelated late link,
+//      a global heal, an explicit back-fill; a post made after the void pays.
+//   KS / CF / QO  an unrelated late link leaves another student's xp_events byte-identical across a period while
+//      the challenge was stopped, a cap change, and a qa.mode 'off' period (no candidate, no judge call).
+//   K  kill-switches: retro_credit off, challenge disabled (deferred, then paid), expired after the W2 tail, tail,
+//      a profile-bound (scoped) heal and a global heal.
+//   B  a scoped pass that paid outside its batch alarms R5.
 //   J  a failing attach never fails the profile write (signal row), and the sweep heals it.
 //   R  an engine section error keeps the ledger pending, retries, stops at max_attempts, alarms (R2) with ONE DM,
 //      recovers after the fix, and sends the recovery DM.
@@ -68,6 +77,14 @@ const PROD_BODY_MD5: Record<string, string> = {
   "challenge_cfg_int(jsonb)": "3dcfb2bab5ad4b70b844f03142de2e9f",
   "group_telegram_chat_id(uuid)": "5a7d02fbb86f2efe9839257740e8278a",
   "reconcile_community_xp(timestamp with time zone)": "bf77d191befedad7e4049de31b15b899",
+  "admin_void_challenge_points(uuid,text)": "119b924ae309a6bc3784c8ab72d9e468",
+};
+// ── this migration's pinned rewrites (section 5): the bodies it must leave behind (its own _new_pin constants) ──
+const NEW_BODY_MD5: Record<string, string> = {
+  "challenge_qa_enqueue_range(timestamp with time zone,timestamp with time zone,uuid[],timestamp with time zone,timestamp with time zone,integer,integer,integer,boolean,integer,uuid[])":
+    "a9ce39d32eb8d98419607235772ee533",
+  "reconcile_challenge_social_xp(timestamp with time zone,uuid[])": "a77827855bff5662d7a9f3d1fd91d3db",
+  "reconcile_challenge_xp(timestamp with time zone,uuid[])": "635dff0d11e4f218739407576275ac67",
 };
 
 const C6 = "f502f631-2104-4834-b6c2-702cd3080e27";
@@ -228,6 +245,45 @@ grant execute on function public.challenge_scope_group_ids() to service_role;
 revoke execute on function public.group_telegram_chat_id(uuid) from public;
 grant execute on function public.group_telegram_chat_id(uuid) to service_role;
 
+-- LIVE admin_void_challenge_points (md5-pinned in section A): deletes the student's ch_* / challenge_* xp_events and
+-- writes the 'challenge_points_voided' tombstone that every challenge engine must respect.
+CREATE OR REPLACE FUNCTION public.admin_void_challenge_points(_student uuid, _reason text)
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare _n int := 0;
+begin
+  if not (public.has_role(auth.uid(), 'admin'::app_role)
+          or public.has_role(auth.uid(), 'superadmin'::app_role)) then
+    raise exception 'forbidden';
+  end if;
+
+  delete from xp_events
+  where user_id = _student
+    and (starts_with(ref_key, 'ch_') or reason like 'challenge\\_%');
+  get diagnostics _n = row_count;
+
+  insert into user_xp (user_id, total_xp, level, updated_at)
+  select _student, coalesce(sum(amount), 0)::int,
+         public.xp_level_for(coalesce(sum(amount), 0)::int), now()
+  from xp_events where user_id = _student
+  on conflict (user_id) do update
+    set total_xp = excluded.total_xp, level = excluded.level, updated_at = now();
+
+  begin
+    insert into public.admin_actions (actor_user_id, action, target_user_id, details)
+    values (auth.uid(), 'challenge_points_voided', _student,
+            jsonb_build_object('removed', _n, 'reason', _reason, 'at', now()));
+  exception when others then null; end;
+
+  return _n;
+end;
+$function$;
+create index idx_admin_actions_challenge_void on public.admin_actions (target_user_id, created_at desc)
+  where action = 'challenge_points_voided';
+
 CREATE OR REPLACE FUNCTION public.update_updated_at_column() RETURNS trigger LANGUAGE plpgsql AS $$ begin NEW.updated_at := now(); return NEW; end $$;
 CREATE OR REPLACE FUNCTION public.groups_extract_homework_topic_id()
  RETURNS trigger
@@ -301,7 +357,7 @@ interface Msg {
 
 Deno.test({
   name: CAN_RUN
-    ? "retro_credit_check: 20260930155010 on PGlite (live engine bodies; late link == linked from the start)"
+    ? "retro_credit_check: 20260930155020 on PGlite (live engine bodies; late link == linked from the start)"
     : "retro_credit_check: SKIPPED -- needs `deno test -A --node-modules-dir=none` (PGlite reads its own files)",
   ignore: !CAN_RUN,
   sanitizeOps: false,
@@ -314,7 +370,7 @@ async function run() {
   // deno-lint-ignore no-explicit-any
   const { PGlite } = (await import(spec)) as any;
 
-  const MIG = lf(await Deno.readTextFile(Deno.env.get("MIG_PATH") ?? here("../../../migrations/20260930155010_challenge_retro_credit_on_join.sql")));
+  const MIG = lf(await Deno.readTextFile(Deno.env.get("MIG_PATH") ?? here("../../../migrations/20260930155020_challenge_retro_credit_on_join.sql")));
   const MIG218 = lf(await Deno.readTextFile(here("../../../migrations/20260930100010_challenge_social_points.sql")));
   const MIG_PR1 = lf(await Deno.readTextFile(here("../../../migrations/20260930121000_challenge_daily_task_topic.sql")));
   const RCX_LIVE = lf(await Deno.readTextFile(here("./reconcile_challenge_xp.live-2026-09-30.sql")));
@@ -520,6 +576,18 @@ async function run() {
   const dayTotal = (db: PG, user: string, reason: string, daysAgo: number) => num(db,
     `select coalesce(sum(amount), 0)::int n from xp_events where user_id = $1 and reason = $2
       and (created_at at time zone 'Asia/Tashkent')::date = ${dayOf(daysAgo)}`, [user, reason]);
+  const byReason = async (db: PG, user: string) => Object.fromEntries((await q(db,
+    `select reason, sum(amount)::int s from xp_events where user_id = $1 group by 1 order by 1`, [user])).map((r) => [r.reason, r.s]));
+  /** One student's xp_events, byte for byte (the "must stay identical" oracle of V/KS/CF/QO). */
+  const xpOf = async (db: PG, user: string) => (await xpSnap(db)).filter((s) => s.startsWith(user));
+  /** admin_void_challenge_points as the admin AD (it checks has_role(auth.uid())). */
+  async function voidAs(db: PG, user: string): Promise<number> {
+    await db.query("select set_config('request.jwt.claim.sub', $1, false)", [AD]);
+    const n = Number((await one(db, "select admin_void_challenge_points($1, 'farm') n", [user])).n);
+    await db.query("select set_config('request.jwt.claim.sub', '', false)");
+    return n;
+  }
+  const candCount = (db: PG) => num(db, "select count(*)::int n from challenge_qa_candidates where not shadow_only");
 
   // ───────────── A. fidelity: every engine body this migration calls = production ─────────────
   console.log("A. the engines under test are production's (md5 of every body the migration calls)");
@@ -555,6 +623,24 @@ async function run() {
     ok("trigger: AFTER INSERT OR UPDATE OF telegram_id, group_id, WHEN both not null, enabled",
       /AFTER INSERT OR UPDATE OF telegram_id, group_id ON public\.profiles/.test(trg?.d ?? "") && /telegram_id IS NOT NULL/.test(trg.d)
       && /group_id IS NOT NULL/.test(trg.d) && trg.e === "O", trg);
+    const eng = await q(db, `select p.oid::regprocedure::text sig, md5(replace(p.prosrc, E'\\r', '')) b, p.prosecdef s,
+         coalesce(array_to_string(p.proacl, ','), '') a, p.pronargdefaults d, p.proowner::regrole::text o,
+         array_to_string(p.proconfig, ',') c
+       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public' and p.proname in ('reconcile_challenge_xp', 'reconcile_challenge_social_xp', 'challenge_qa_enqueue_range')`);
+    ok("engines: exactly the three new signatures (the old ones dropped), bodies = the pinned rewrites",
+      eng.length === 3 && eng.every((e) => NEW_BODY_MD5[e.sig] === e.b), eng.map((e) => [e.sig, e.b]));
+    ok("engines: SECURITY DEFINER, owner and search_path as live, service_role only (no PUBLIC / anon / authenticated)",
+      eng.every((e) => e.s && e.o === "postgres" && e.c === "search_path=public" && /service_role=X/.test(e.a)
+        && !/(^|,)=/.test(e.a) && !/anon=|authenticated=/.test(e.a)), eng.map((e) => [e.sig, e.a, e.o, e.c]));
+    ok("engines: every new parameter is defaulted (cron's zero-argument calls resolve unchanged)",
+      eng.every((e) => e.d === (e.sig.startsWith("challenge_qa_enqueue_range") ? 1 : 2)), eng.map((e) => [e.sig, e.d]));
+    const calls = [
+      await errOf(db, "select * from reconcile_challenge_xp()"),
+      await errOf(db, "select * from reconcile_challenge_social_xp()"),
+      await errOf(db, `select challenge_qa_enqueue_sample('${C5}', now() - interval '1 day', 5)`),   // its 10-argument call
+    ];
+    ok("the cron commands and challenge_qa_enqueue_sample's positional 10-argument call still resolve", calls.every((c) => c === null), calls);
     ok("partial index on unlinked rows", /WHERE \(profile_id IS NULL\)/.test((await one(db,
       "select indexdef d from pg_indexes where indexname = 'idx_gme_unlinked_sender'"))?.d ?? ""));
     const jobs = await q(db, "select jobname, schedule, command from cron.job where jobname like 'challenge-retro%' order by 1");
@@ -634,6 +720,8 @@ async function run() {
 
     const r = await sweep(db);
     ok("sweep: credited, one pass over the four pending rows", r.status === "credited" && r.batch === 4 && r.error === null, r);
+    ok("sweep: SCOPED to the batch's 4 students; nothing paid outside the batch",
+      r.scope === "profiles" && r.scoped_profiles === 4 && r.paid_outside_batch === 0, r);
     await judgeAll(db);
     await q(db, "select challenge_qa_apply()");
     const after = await xpSnap(db);
@@ -657,10 +745,14 @@ async function run() {
       && (await num(db, "select count(*)::int n from xp_events where user_id = $1", [T])) === 0);
     ok("ledger: all four credited, with the engine results", (await ledger(db)).every((x) => x.status === "credited" && x.attempts === 1
       && x.result?.media_awarded >= 0), await ledger(db));
-    ok("the two explicit engine heartbeats were relabelled (the live ticks' last heartbeats are unchanged)",
+    const scopedHb = await q(db, `select action, details from admin_actions
+       where action in ('challenge_xp_reconciled_scoped', 'challenge_social_reconciled_scoped') order by action`);
+    ok("a scoped pass writes the engines' OWN '_scoped' heartbeats (4 students), relabels nothing, and the live ticks' "
+      + "last heartbeats (the media lookback base and the social cursor) are unchanged",
       (await one(db, "select id from admin_actions where action = 'challenge_xp_reconciled' order by created_at desc limit 1")).id === lastXp.id
       && (await one(db, "select id from admin_actions where action = 'challenge_social_reconciled' order by created_at desc limit 1")).id === lastSo.id
-      && (await num(db, "select count(*)::int n from admin_actions where action = 'challenge_retro_engine_heartbeat'")) === 2);
+      && scopedHb.length === 2 && scopedHb.every((h) => h.details.scoped_profiles === 4)
+      && (await num(db, "select count(*)::int n from admin_actions where action = 'challenge_retro_engine_heartbeat'")) === 0, scopedHb);
     ok("user_xp drift 0", (await drift(db)) === 0);
     await q(db, `select * from reconcile_community_xp(now() - interval '10 days')`);
     ok("community engine: nothing in scope groups inside the window (owned by the challenge)", (await num(db,
@@ -677,6 +769,10 @@ async function run() {
     await q(db, "select * from reconcile_challenge_xp()");
     await q(db, "select * from reconcile_challenge_social_xp()");
     ok("no new award from any engine path", JSON.stringify(await xpSnap(db)) === JSON.stringify(snap));
+    const e1 = await errOf(db, `select * from reconcile_challenge_xp(null, array['${L}']::uuid[])`);
+    const e2 = await errOf(db, `select * from reconcile_challenge_social_xp(null, array['${L}']::uuid[])`);
+    ok("a scoped engine run with no explicit start is refused (it would otherwise compute the cron lookback / cursor)",
+      /needs an explicit _since/.test(e1 ?? "") && /needs an explicit _from/.test(e2 ?? ""), [e1, e2]);
     ok("no new ledger row", (await ledger(db)).length === 4);
     ok("drift 0", (await drift(db)) === 0);
     const h = (await one(db, "select challenge_retro_credit_health() h")).h;
@@ -736,6 +832,116 @@ async function run() {
     await ref.close();
   }
 
+  // ───────────── V. an admin void is durable against EVERY engine path ─────────────
+  console.log("V. a voided student stays voided: cron ticks (the 40-min overlap), an unrelated late link, heal, back-fill");
+  {
+    const db = await freshDb({ windowStartDaysAgo: 5 });
+    await seedProfiles(db, false);
+    for (let i = 0; i < 8; i++) await q(db, "select * from reconcile_challenge_social_xp()"); // cursor at now, as cron
+    await post(db, { id: 401, tg: TG[L], group: G1, text: text(1), sent: at(DAY_A, "08:00") }, null);   // L unlinked
+    for (const i of [0, 1, 2]) await post(db, { id: 411 + i, tg: TG[P], group: G1, photo: true, sent: at(DAY_A, `09:1${i}`) }, P);
+    for (const i of [0, 1]) await post(db, { id: 421 + i, tg: TG[P], group: G1, text: text(10 + i), sent: at(DAY_A, `09:2${i}`) }, P);
+    await post(db, { id: 431, tg: TG[P], group: G1, photo: true, sent: ago(20) }, P);   // inside the cron media overlap
+    await engines(db);
+    await q(db, "select * from reconcile_challenge_xp()");   // a cron tick: its heartbeat is the next lookback's base
+    const paid = await byReason(db, P);
+    ok("V0 the live stack paid P: media 20 (3 shares on day A + 1 today), chat 2",
+      paid.challenge_group_media === 20 && paid.challenge_chat === 2, paid);
+    const n = await voidAs(db, P);
+    ok("V1 admin_void_challenge_points removed P's 6 challenge rows", n === 6, n);
+    await q(db, "select * from reconcile_challenge_xp()");
+    await q(db, "select * from reconcile_challenge_social_xp()");
+    ok("V2 the next cron ticks do not re-pay the photo posted inside the 40-minute media overlap",
+      (await xpOf(db, P)).length === 0, await byReason(db, P));
+    await db.query("update profiles set telegram_id = $1 where id = $2", [TG[L], L]);   // an unrelated late student joins the bot
+    const s = await sweep(db);
+    ok("V3 an unrelated late link: L credited (+1), P stays voided (media AND chat)", s.status === "credited"
+      && (await perDay(db, L, "challenge_chat", "sum")) === 1 && (await xpOf(db, P)).length === 0, { s, P: await byReason(db, P) });
+    await db.query(`insert into challenge_retro_credits (source, scan_from) values ('heal', $1::timestamptz - interval '5 minutes')`, [await wStart(db)]);
+    const h = await sweep(db);
+    ok("V4 a GLOBAL heal pass from window.start: P stays voided", h.status === "credited" && h.scope === "global"
+      && (await xpOf(db, P)).length === 0, { h, P: await byReason(db, P) });
+    await q(db, `select * from reconcile_challenge_xp((select value->'window'->>'start' from platform_settings where key = 'challenge')::timestamptz)`);
+    ok("V5 an admin's explicit media back-fill from window.start: P stays voided", (await xpOf(db, P)).length === 0, await byReason(db, P));
+    await post(db, { id: 441, tg: TG[P], group: G1, photo: true, sent: "now()" }, P);
+    await q(db, "select * from reconcile_challenge_xp()");
+    ok("V6 the tombstone is not a ban: P's photo posted AFTER the void pays (+5)", (await byReason(db, P)).challenge_group_media === 5,
+      await byReason(db, P));
+    ok("V7 drift 0", (await drift(db)) === 0);
+    await db.close();
+  }
+
+  // ───────────── KS / CF / QO. a late link credits ONLY the late linker ─────────────
+  console.log("KS. challenge stopped for a period; later an unrelated student links late");
+  {
+    const db = await freshDb({ windowStartDaysAgo: 5 });
+    await seedProfiles(db, false);
+    await post(db, { id: 501, tg: TG[L], group: G1, text: text(1), sent: at(DAY_A, "08:00") }, null);   // L unlinked
+    await cfg(db, { enabled: false });
+    for (const i of [0, 1, 2]) await post(db, { id: 511 + i, tg: TG[P], group: G1, photo: true, sent: at(DAY_B, `09:1${i}`) }, P);
+    for (const i of [0, 1]) await post(db, { id: 521 + i, tg: TG[P], group: G1, text: text(10 + i), sent: at(DAY_B, `09:2${i}`) }, P);
+    for (let i = 0; i < 8; i++) await q(db, "select * from reconcile_challenge_social_xp()");
+    await q(db, "select * from reconcile_challenge_xp()");
+    await cfg(db, { enabled: true });
+    await q(db, "select * from reconcile_challenge_social_xp()");
+    await q(db, "select * from reconcile_challenge_xp()");
+    const before = await xpOf(db, P);
+    ok("KS1 the live engines never pay P's posts made while the challenge was stopped", before.length === 0, before);
+    await db.query("update profiles set telegram_id = $1 where id = $2", [TG[L], L]);
+    const s = await sweep(db);
+    ok("KS2 L's retro credit is scoped to L: credited, scope 'profiles', nothing paid outside the batch",
+      s.status === "credited" && s.scope === "profiles" && s.scoped_profiles === 1 && s.paid_outside_batch === 0, s);
+    ok("KS3 P's xp_events are unchanged (the stopped period stays unpaid)", JSON.stringify(await xpOf(db, P)) === JSON.stringify(before),
+      await byReason(db, P));
+    ok("KS4 L is credited (+1)", (await perDay(db, L, "challenge_chat", "sum")) === 1);
+    await db.close();
+  }
+
+  console.log("CF. caps raised mid-challenge (group_media_per_day 3 -> 5); later an unrelated student links late");
+  {
+    const db = await freshDb({ windowStartDaysAgo: 5 });
+    await seedProfiles(db, false);
+    await post(db, { id: 601, tg: TG[L], group: G1, text: text(1), sent: at(DAY_A, "08:00") }, null);
+    for (const i of [0, 1, 2, 3, 4]) await post(db, { id: 611 + i, tg: TG[P], group: G1, photo: true, sent: at(DAY_A, `09:1${i}`) }, P);
+    await engines(db);
+    ok("CF0 P's day A at the time: 3 shares (15)", (await dayTotal(db, P, "challenge_group_media", DAY_A)) === 15);
+    await cfg(db, { caps: { group_media_per_day: 5 } });
+    await q(db, "select * from reconcile_challenge_xp()");
+    const before = await xpOf(db, P);
+    await db.query("update profiles set telegram_id = $1 where id = $2", [TG[L], L]);
+    const s = await sweep(db);
+    ok("CF1 P's historic day is not re-scored under the new cap: xp_events byte-identical",
+      s.status === "credited" && JSON.stringify(await xpOf(db, P)) === JSON.stringify(before),
+      { s: s.status, day: await dayTotal(db, P, "challenge_group_media", DAY_A) });
+    await db.close();
+  }
+
+  console.log("QO. qa.mode 'off' for a period; later an unrelated student links late");
+  {
+    const db = await freshDb({ windowStartDaysAgo: 5 });
+    await cfg(db, { qa: { mode: "off" } });
+    await seedProfiles(db, false);
+    await post(db, { id: 701, tg: TG[L], group: G1, text: text(1), sent: at(DAY_A, "08:00") }, null);
+    await post(db, { id: 711, tg: TG[K], group: G1, text: "Kling da video qanday uzaytiriladi?", sent: at(DAY_B, "12:00") }, K);
+    await post(db, { id: 712, tg: TG[P], group: G1, replyTo: 711, text: "extend tugmasini bosing, keyin davomiylikni tanlang",
+      sent: at(DAY_B, "12:05") }, P);
+    for (let i = 0; i < 8; i++) await q(db, "select * from reconcile_challenge_social_xp()");
+    await q(db, "select * from reconcile_challenge_xp()");
+    await cfg(db, { qa: { mode: "live" } });
+    await q(db, "select * from reconcile_challenge_social_xp()");
+    ok("QO1 the live ticks never enqueue a reply made while qa.mode was 'off'", (await candCount(db)) === 0);
+    const beforeP = await xpOf(db, P), beforeK = await xpOf(db, K);
+    await db.query("update profiles set telegram_id = $1 where id = $2", [TG[L], L]);
+    const s = await sweep(db);
+    await judgeAll(db);
+    await q(db, "select challenge_qa_apply()");
+    ok("QO2 L's retro credit enqueues nothing between OTHER students (no judge call, no answer points)",
+      s.status === "credited" && (await candCount(db)) === 0, { s: s.status, qa_enqueued: s.qa_enqueued });
+    ok("QO3 P's and K's xp_events are unchanged", JSON.stringify(await xpOf(db, P)) === JSON.stringify(beforeP)
+      && JSON.stringify(await xpOf(db, K)) === JSON.stringify(beforeK));
+    await db.close();
+  }
+
   // ───────────── K / J / R / U. switches, errors, detectors (one database) ─────────────
   console.log("K. kill-switches, deferral, expiry, tail");
   const k = await freshDb({ windowStartDaysAgo: 5 });
@@ -789,12 +995,23 @@ async function run() {
     ok("K6 window re-opened: the sweep attaches V's later post and pays it; Q's expired row stays unpaid",
       ro.status === "credited" && ro.attached_rows === 1 && (await stampOfRow(k, 332)) === V
       && (await perDay(k, V, "challenge_chat", "sum")) === 2 && (await perDay(k, Q, "challenge_chat", "sum")) === 0, ro);
-    // K7 the documented manual heal (header): one 'heal' row from window.start -> the next sweep pays it
+    // K7 the documented manual heals (header). A heal row WITH a profile is scoped to that student: Q's expired
+    // row is paid by it, and the pass is 'profiles' with nothing outside it.
+    await k.query(`insert into challenge_retro_credits (source, profile_id, scan_from) values ('heal', $1, $2::timestamptz - interval '5 minutes')`,
+      [Q, await wStart(k)]);
+    const sh = await sweep(k);
+    ok("K7 a profile-bound heal row is SCOPED to that student: Q +1, paid_outside_batch 0", sh.status === "credited"
+      && sh.scope === "profiles" && sh.scoped_profiles === 1 && sh.paid_outside_batch === 0
+      && (await perDay(k, Q, "challenge_chat", "sum")) === 1, sh);
+    // K8 a heal row WITHOUT a profile is the deliberate GLOBAL pass from window.start: everything is already paid
     await k.query(`insert into challenge_retro_credits (source, scan_from) values ('heal', $1::timestamptz - interval '5 minutes')`, [await wStart(k)]);
     const mh = await sweep(k);
-    ok("K7 manual heal row: credited; Q +1; nobody paid twice", mh.status === "credited" && (await perDay(k, Q, "challenge_chat", "sum")) === 1
+    ok("K8 a global heal row: credited, scope 'global'; nobody paid twice", mh.status === "credited" && mh.scope === "global"
+      && mh.scoped_profiles === null && mh.paid_outside_batch === 0 && (await perDay(k, Q, "challenge_chat", "sum")) === 1
       && (await perDay(k, V, "challenge_chat", "sum")) === 2 && (await perDay(k, N, "challenge_chat", "sum")) === 3
       && (await perDay(k, O, "challenge_chat", "sum")) === 2, mh);
+    ok("K9 health counts the global pass (global_passes_7d = 1)",
+      (await one(k, "select challenge_retro_credit_health() h")).h.queue.global_passes_7d === 1);
   }
 
   console.log("R. an engine error: pending, retried, stuck at max_attempts, alarmed once, recovered");
@@ -875,6 +1092,20 @@ async function run() {
     ok("J6 drift 0 across K/R/U/J", (await drift(k)) === 0);
   }
 
+  console.log("B. a SCOPED pass that paid someone outside its batch (an engine edit broke the scope) alarms R5");
+  {
+    ok("B0 no breach so far (every scoped pass above paid inside its batch)",
+      (await one(k, "select challenge_retro_credit_health() h")).h.queue.scope_breaches_24h === 0);
+    // The engines make this unrepresentable, so the ledger row a broken engine would leave is written directly.
+    await k.query(`insert into challenge_retro_credits (source, profile_id, telegram_user_id, attached, scan_from, status, credited_at, result)
+                   values ('sweep', $1, $2, 1, now(), 'credited', now(), '{"scope": "profiles", "paid_outside_batch": 3}')`, [P, TG[P]]);
+    const h = (await one(k, "select challenge_retro_credit_health() h")).h;
+    const w = (await one(k, "select challenge_retro_credit_watchdog() w")).w;
+    ok("B1 health scope_breaches_24h = 1 and the watchdog alarms R5", h.queue.scope_breaches_24h === 1 && w.alarms.includes("R5"),
+      { q: h.queue, alarms: w.alarms });
+    await k.query("delete from challenge_retro_credits where result->>'paid_outside_batch' = '3'");
+  }
+
   console.log("W. a window with no start (the engines treat it as unbounded) fails CLOSED here, loudly");
   {
     await cfg(k, { window: { start: null, end: null } });
@@ -911,6 +1142,11 @@ async function run() {
     const s = await sweep(o);
     ok("O4 the sweep credits R's chat (+2) and does not pay the media twice", s.status === "credited"
       && (await perDay(o, R, "challenge_chat", "sum")) === 2 && (await perDay(o, R, "challenge_group_media", "count")) === 1, s);
+    ok("O4b the heal pass is GLOBAL and says so: scope 'global', paid_outside_batch = 2 (R has no ledger row of its own)",
+      s.scope === "global" && s.paid_outside_batch === 2, s);
+    ok("O4c its two cron-action heartbeats were relabelled (a global pass must not stand in for a dead cron)",
+      (await num(o, "select count(*)::int n from admin_actions where action = 'challenge_retro_engine_heartbeat'")) === 2
+      && (await num(o, "select count(*)::int n from admin_actions where action like '%\\_scoped'")) === 0);
     const e2 = await tx(o, MIG);
     ok("O5 replay: still one heal row", e2 === null && (await ledger(o)).length === 1, e2);
     await o.close();
