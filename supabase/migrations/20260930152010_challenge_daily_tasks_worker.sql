@@ -3,6 +3,11 @@
 -- paused, the new cron job stamps ONE heartbeat row in app_settings and does nothing else -- it queues nothing, posts
 -- nothing, sends nothing and never calls the worker. Go-live is PR-8.
 --
+-- RE-ISSUED as 20260930152010 (replaces 20260930152000, which was never merged or applied): review found that a tick
+-- SECTION failing every minute (the morning / evening DMs, the 20:00 summary ...) was recorded but never alarmed, and
+-- that 'partial' worker runs were never alarmed. The tick now keeps a per-section failure memory for today in its
+-- heartbeat ('failures'), and the watchdog block gains 'tick_errors' and 'worker_partial' (section 6 below).
+--
 -- ═══ WHAT THIS DOES ═══
 -- 1. challenge_tasks_tick() -- cron 'challenge-tasks-tick', every minute (F14). Active only when challenge_tasks.enabled
 --    AND challenge.enabled AND a parseable window (challenge_tasks_config().active). Task-day aware (C22 / G6):
@@ -24,8 +29,10 @@
 --    (g) KICKS the worker (one ops_net_post) only when challenge_tasks_worker_due() says the claims would lease
 --        something: posts, receipts, due DMs (outside quiet hours) or identity-sweep senders.
 --    Heartbeat: app_settings 'challenge_tasks_tick_state' every run (paused runs included); 'challenge_task_tick' when
---    a run queued or sent anything; 'challenge_task_tick_failed' once a day per failing section. One tick at a time
---    (pg_try_advisory_xact_lock): a slow run never overlaps the next minute's.
+--    a run queued or sent anything; 'challenge_task_tick_failed' once a day per failing section. The heartbeat also
+--    carries 'failures' -- today's per-section memory {runs, streak (consecutive failing runs), max_streak, first_at,
+--    last_at, error} -- which the watchdog reads ('tick_errors'). One tick at a time (pg_try_advisory_xact_lock): a
+--    slow run never overlaps the next minute's.
 -- 2. challenge_tasks_worker_due(cfg) (read-only) -- the kick's decision, with the claim RPCs' EXACT filters (PR-3), so the
 --    tick never wakes the worker for work a claim would not lease.
 -- 3. challenge_task_identity_candidates(since, until, exclude, limit) (read-only) -- the worker's identity-sweep input
@@ -37,11 +44,14 @@
 -- 4. challenge_task_identity_sweep_request(since, until) -- the admin action behind PR-8's pre-step: ONE call to the
 --    worker for a window sweep. It links / registers accounts only; it posts and sends nothing.
 -- 5. challenge_tasks_admin_dm(text, purpose) -- up to 3 admins, ops_net_post with Content-Type (the watchdog's recipients).
--- 6. ONE pinned rewrite: challenge_tasks_watchdog (PR-3, live md5 8425d007..., new 9b9f9b68...) gains a block that watches THIS PR's legs
---    from outside them: 'tick_silent' (the tick state row older than 10 min), 'worker_receipts' (a receipt pending >
---    30 min, while receipts are on), 'worker_dms' (a due DM pending > 60 min, while dm is on, outside the quiet hours
---    + 1 h) and 'worker_errors' (a crashed worker run in the last hour). Same 24-h dedupe and admin DMs as every other
---    alarm there.
+-- 6. ONE pinned rewrite: challenge_tasks_watchdog (PR-3, live md5 8425d007..., new: _new_pin below) gains a block that
+--    watches THIS PR's legs from outside them: 'tick_silent' (the tick state row older than 10 min), 'tick_errors' (a
+--    tick section that failed on 3+ consecutive runs, its latest failure in the last hour -- so a section that fails
+--    all day, or failed for minutes and stopped between two hourly watchdog runs, both alarm; a one-minute blip does
+--    not), 'worker_receipts' (a receipt pending > 30 min, while receipts are on), 'worker_dms' (a due DM pending >
+--    60 min, while dm is on, outside the quiet hours + 1 h), 'worker_errors' (a crashed worker run in the last hour)
+--    and 'worker_partial' (3+ worker runs in the last hour that finished with errors[], e.g. a record RPC failing
+--    every run). Same 24-h dedupe and admin DMs as every other alarm there.
 -- 7. idx_ctask_msg_username_match: the per-minute identity check reads username-matched rows by time.
 --
 -- The edge function supabase/functions/challenge-tasks-worker (same PR; NO config.toml entry -> verify_jwt=true with
@@ -89,10 +99,12 @@
 -- whole feature is being retired (and delete app_settings 'challenge_tasks_watchdog_state', PR-3's runbook).
 --
 -- ═══ DETECTION ═══
--- app_settings 'challenge_tasks_tick_state' (every run), admin_actions 'challenge_task_tick' / 'challenge_task_tick_failed'
+-- app_settings 'challenge_tasks_tick_state' (every run; .errors = this run's, .failures = today's per-section memory),
+-- admin_actions 'challenge_task_tick' / 'challenge_task_tick_failed'
 -- / 'challenge_task_no_task_today' / 'challenge_task_no_task_tomorrow' / 'challenge_task_post_fallback' /
 -- 'challenge_task_post_failed' / 'challenge_task_post_skipped'; the worker's 'challenge_task_worker_run' /
--- 'challenge_task_identity_sweep'; PR-3's health (receipts / outbox / posts / identity) and the watchdog alarms above.
+-- 'challenge_task_identity_sweep' / 'challenge_task_autoreg_skipped' {chat_admin | not_member | membership_unknown};
+-- PR-3's health (receipts / outbox / posts / identity) and the watchdog alarms above.
 --
 -- SELF-TEST: non-mutating only -- catalog, ACLs, the cron row, the watchdog rewrite's md5, and two READ-ONLY calls
 -- (worker_due() is asserted inactive only when the live config really is paused; identity_candidates() answers its
@@ -374,6 +386,7 @@ declare
   _kicked boolean := false;
   _k text;
   _v jsonb;
+  _fail jsonb;
 begin
   -- one tick at a time (a slow run must never overlap the next minute's): a miss changes nothing and is harmless,
   -- the next minute retries; the heartbeat row shows the last run that got the lock
@@ -697,6 +710,26 @@ begin
     _err := _err || jsonb_build_object('kick', left(sqlerrm, 200));
   end;
 
+  -- today's per-section failure memory (the PR-3 watchdog's 'tick_errors' reads it): runs = failing runs today,
+  -- streak = consecutive failing runs (any run in which the section did not fail resets it to 0), max_streak, first_at,
+  -- last_at, error. A section that fails every minute, or failed for minutes and recovered between two hourly watchdog
+  -- runs, stays visible there; a one-minute blip (max_streak 1) is not an alarm. Reset at the Tashkent day change.
+  _fail := case when jsonb_typeof(_prev->'failures') = 'object' and _prev->'failures'->>'date' = _today::text
+                then _prev->'failures' else jsonb_build_object('date', _today) end;
+  for _k in select f.key from jsonb_each(_fail) f where jsonb_typeof(f.value) = 'object' and not (_err ? f.key) loop
+    _fail := jsonb_set(_fail, array[_k, 'streak'], '0'::jsonb);
+  end loop;
+  for _k, _v in select key, value from jsonb_each(_err) loop
+    _n := coalesce((_fail #>> array[_k, 'streak'])::int, 0) + 1;
+    _fail := _fail || jsonb_build_object(_k, jsonb_build_object(
+      'runs', coalesce((_fail #>> array[_k, 'runs'])::int, 0) + 1,
+      'streak', _n,
+      'max_streak', greatest(_n, coalesce((_fail #>> array[_k, 'max_streak'])::int, 0)),
+      'first_at', coalesce(_fail #> array[_k, 'first_at'], to_jsonb(now())),
+      'last_at', now(),
+      'error', _v));
+  end loop;
+
   -- graceful is not silent: one row a day per failing section
   for _k, _v in select key, value from jsonb_each(_err) loop
     if not exists (select 1 from public.admin_actions a
@@ -717,7 +750,7 @@ begin
                              'last_kick_at', case when _kicked then to_jsonb(now()) else coalesce(_prev->'last_kick_at', 'null'::jsonb) end,
                              'kicks_today', case when _kicked then 1 else 0 end
                                + case when _prev->'done'->>'date' = _today::text then coalesce((_prev->>'kicks_today')::int, 0) else 0 end,
-                             'last_out', _out, 'errors', _err),
+                             'last_out', _out, 'errors', _err, 'failures', _fail),
           'Daily Tasks PR-5: heartbeat of cron challenge-tasks-tick (every minute). Written by challenge_tasks_tick().')
   on conflict (key) do update set value = excluded.value, updated_at = now();
   return jsonb_build_object('state', 'active', 'out', _out, 'errors', _err, 'due', _due, 'kicked', _kicked);
@@ -764,15 +797,28 @@ $fn$;
 do $$
 declare
   _pin constant text := '8425d0076060c3501094d611179baaa0';       -- live md5(prosrc), read 2026-09-30 (= the repo's PR-3 body)
-  _new_pin constant text := '9b9f9b684bc40a584916c02450212b86';    -- the rewritten body (PGlite harness)
+  _new_pin constant text := 'ab091a8a4dfba493296490c558d6d198';    -- the rewritten body: this block applied to the LIVE
+                                                                   -- body (read-only, 2026-09-30) = the PGlite harness
   _anchor constant text := E'  select coalesce(array_agg(distinct a), ''{}'') into _alarms from unnest(_alarms) a;\n';
   _block constant text :=
-       E'  -- 20260930152000 (Daily Tasks PR-5): the per-minute tick and the worker, watched from here (independent of both)\n'
+       E'  -- 20260930152010 (Daily Tasks PR-5): the per-minute tick and the worker, watched from here (independent of both)\n'
     || E'  begin\n'
     || E'    if coalesce((select (s.value->>''checked_at'')::timestamptz from public.app_settings s where s.key = ''challenge_tasks_tick_state''),\n'
     || E'                ''-infinity''::timestamptz) < _at - interval ''10 minutes'' then\n'
     || E'      _alarms := _alarms || ''tick_silent''::text;\n'
     || E'      _msgs := _msgs || ''Kunlik vazifalar taymeri (challenge_tasks_tick) 10 daqiqadan beri ishlamadi: post, DM va cheklar navbatda turibdi.''::text;\n'
+    || E'    end if;\n'
+    || E'    -- a tick section that failed on 3+ consecutive runs, its latest failure in the last hour (the tick''s failures memory)\n'
+    || E'    select count(*)::int, string_agg(f.key || '': '' || left(coalesce(f.value->>''error'', ''?''), 80), ''; '' order by f.key)\n'
+    || E'      into _n, _k\n'
+    || E'      from public.app_settings s\n'
+    || E'      cross join lateral jsonb_each(case when jsonb_typeof(s.value->''failures'') = ''object'' then s.value->''failures'' else ''{}''::jsonb end) f\n'
+    || E'     where s.key = ''challenge_tasks_tick_state'' and jsonb_typeof(f.value) = ''object''\n'
+    || E'       and coalesce((f.value->>''max_streak'')::int, 0) >= 3\n'
+    || E'       and (f.value->>''last_at'')::timestamptz >= _at - interval ''60 minutes'';\n'
+    || E'    if _n > 0 then\n'
+    || E'      _alarms := _alarms || ''tick_errors''::text;\n'
+    || E'      _msgs := _msgs || (''Kunlik vazifalar taymerida (challenge_tasks_tick) '' || _n || '' ta bo‘lim ketma-ket xato berdi: '' || left(_k, 200));\n'
     || E'    end if;\n'
     || E'    _n := (select count(*)::int from public.challenge_task_submissions s\n'
     || E'            where s.receipt_version > s.receipt_sent_version and s.receipt_state in (''pending'', ''sending'')\n'
@@ -797,6 +843,18 @@ declare
     || E'    if _n > 0 then\n'
     || E'      _alarms := _alarms || ''worker_errors''::text;\n'
     || E'      _msgs := _msgs || (_n || '' marta challenge-tasks-worker xato bilan to‘xtadi (1 soatda).'');\n'
+    || E'    end if;\n'
+    || E'    -- 3+ worker runs in the last hour that finished with errors[] (e.g. a record RPC failing every run)\n'
+    || E'    _n := (select count(*)::int from public.admin_actions a\n'
+    || E'            where a.action = ''challenge_task_worker_run'' and a.created_at >= _at - interval ''60 minutes''\n'
+    || E'              and a.details->>''status'' = ''partial'');\n'
+    || E'    if _n >= 3 then\n'
+    || E'      _alarms := _alarms || ''worker_partial''::text;\n'
+    || E'      _msgs := _msgs || (_n || '' marta challenge-tasks-worker qisman xato bilan ishladi (1 soatda): ''\n'
+    || E'                         || left(coalesce((select (a.details->''errors'')::text from public.admin_actions a\n'
+    || E'                                            where a.action = ''challenge_task_worker_run'' and a.created_at >= _at - interval ''60 minutes''\n'
+    || E'                                              and a.details->>''status'' = ''partial''\n'
+    || E'                                            order by a.created_at desc limit 1), ''''), 150));\n'
     || E'    end if;\n'
     || E'  exception when others then\n'
     || E'    _alarms := _alarms || ''worker_watch_crashed''::text;\n'
@@ -912,8 +970,14 @@ begin
     _bad := _bad || 'tick_content_type'::text;
   end if;
   -- the pinned rewrite landed
-  if position('challenge_tasks_tick_state' in (select prosrc from pg_proc where oid = 'public.challenge_tasks_watchdog(timestamptz)'::regprocedure)) = 0 then
+  _src := (select prosrc from pg_proc where oid = 'public.challenge_tasks_watchdog(timestamptz)'::regprocedure);
+  if position('challenge_tasks_tick_state' in _src) = 0 or position('''tick_errors''' in _src) = 0
+     or position('''worker_partial''' in _src) = 0 then
     _bad := _bad || 'watchdog_rewrite'::text;
+  end if;
+  -- the tick keeps the failures memory the watchdog reads
+  if position('''failures'', _fail' in (select prosrc from pg_proc where oid = 'public.challenge_tasks_tick()'::regprocedure)) = 0 then
+    _bad := _bad || 'tick_failures_memory'::text;
   end if;
   -- read-only, and gated on the CONFIG (never on the answer): while paused the kick must decide "do nothing"
   if not coalesce((_cfg->>'active')::boolean, false) then

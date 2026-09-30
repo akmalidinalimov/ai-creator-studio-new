@@ -1,4 +1,4 @@
-// PGlite harness for the WORKER side of the daily tasks (Daily Tasks PR-5): migration 20260930152000 (the per-minute
+// PGlite harness for the WORKER side of the daily tasks (Daily Tasks PR-5): migration 20260930152010 (the per-minute
 // challenge_tasks_tick, the SQL fallback poster, the missing-task alert, the identity-sweep input, the watchdog's new
 // tick / worker alarms) and the edge function's runWorker() (challenge-tasks-worker/worker.ts: posts, receipts, the DM
 // outbox, the identity sweep through the REAL _shared resolveGroupPoster + this function's registrar) against the
@@ -25,9 +25,12 @@
 //   W7 evening DMs ('📅 vazifa seriyasi') only to students with an open task not done; stale morning DMs expire;
 //      the 20:00 anonymous summary;
 //   W8 the identity sweep: an unknown poster registered (the engine stub), an intake username linked, a chat admin
-//      declined and backed off 60 minutes, and the WINDOW sweep (PR-8's pre-step) while PAUSED;
+//      declined and backed off 60 minutes, a sender who LEFT / was KICKED since posting declined (not_member), and
+//      the WINDOW sweep (PR-8's pre-step) while PAUSED;
 //   W9 DM edges (result DM, a blocked student -> skipped); W10 the day rollover and no-task-today;
-//   W11 the watchdog alarms tick_silent / worker_receipts / worker_dms / worker_errors; W12 invariants.
+//   W11 the watchdog alarms tick_silent / worker_receipts / worker_dms / worker_errors, tick_errors (a REAL section
+//      failure: a one-minute blip no, 3 in a row yes, recovered within the hour still yes, an hour later no) and
+//      worker_partial (3 'partial' runs in an hour); W12 invariants.
 //
 // CI NOTE: named *-check.ts (never *_test.ts) so CI's `deno test supabase/functions/` never collects it. Run it by path.
 // TEST INFRASTRUCTURE ONLY: this directory has no index.ts, so it is never deployed.
@@ -572,7 +575,7 @@ async function runPinned() {
 
 
   const WMIG_PATH = Deno.env.get("WORKER_MIG_PATH");
-  const WMIG = lf(await Deno.readTextFile(WMIG_PATH ?? here("../../../migrations/20260930152000_challenge_daily_tasks_worker.sql")));
+  const WMIG = lf(await Deno.readTextFile(WMIG_PATH ?? here("../../../migrations/20260930152010_challenge_daily_tasks_worker.sql")));
   const LIVE_WATCHDOG_MD5 = "8425d0076060c3501094d611179baaa0"; // md5(replace(prosrc, E'\r', '')) read live 2026-09-30
   // the Bot API host, assembled so no literal of it sits in a .ts file (the footgun lint forbids raw senders; this
   // harness only compares the URL the SQL fallback handed to the ops_net_post stub)
@@ -599,7 +602,7 @@ async function runPinned() {
     const e = await tx(db, WMIG);
     const m = await wdMd5();
     console.log(`     challenge_tasks_watchdog md5 after the rewrite: ${m} (pinned: ${PINNED_NEW})`);
-    ok("W0b 20260930152000 applies (prerequisites, rewrite, grants, cron, self-test, audit)", e === null, e);
+    ok("W0b 20260930152010 applies (prerequisites, rewrite, grants, cron, self-test, audit)", e === null, e);
     ok("W0c the rewritten watchdog md5 is the pinned one", m === PINNED_NEW, { m, PINNED_NEW });
     const e2 = await tx(db, WMIG);
     ok("W0d replay: applies again, the watchdog is untouched, one cron row, one audit row",
@@ -642,12 +645,15 @@ async function runPinned() {
   const sent: { method: string; payload: Row; opts: Row }[] = [];
   let script: ((method: string, payload: Row) => { outcome: SendResultOutcome; result: unknown } | null) | null = null;
   let nextMid = 70_000;
+  // senders who left / were removed after posting (W8p): every later probe answers so
+  const CHAT_STATUS: Record<number, string> = { 9990: "left", 9991: "kicked" };
   const send: SendFn = (method, payload, opts) => {
     sent.push({ method, payload, opts: opts ?? {} });
     const r = script?.(method, payload) ?? null;
     return Promise.resolve(r ?? {
       outcome: okOut(),
-      result: method === "sendMessage" ? { message_id: nextMid++ } : method === "getChatMember" ? { status: "member" } : true,
+      result: method === "sendMessage" ? { message_id: nextMid++ }
+        : method === "getChatMember" ? { status: CHAT_STATUS[Number(payload.user_id)] ?? "member" } : true,
     });
   };
   const fetchCalls: { url: string; headers: Row; body: Row }[] = [];
@@ -1023,6 +1029,24 @@ async function runPinned() {
     setClock(utc("2026-10-06T22:12:00"));
     ok("W8k … and is retried after 60 minutes (the retry row lives 26 hours)", (await due()).identity === 1);
 
+    // members leave: the sweep runs after the fact, so the post no longer proves membership. A sender who has LEFT and
+    // one who was KICKED since posting (the stub answers so for every later probe too) are never registered. Received
+    // before 22:00, so W8l's window [22:00, …) never sees them.
+    setClock(utc("2026-10-06T22:12:30"));
+    await inbox(db, tgm({ from: 9990, username: "gone_kid", at: "2026-10-06T21:58:00", photo: "w8p1" }), `'${utc("2026-10-06T21:58:00")}'::timestamptz`);
+    await inbox(db, tgm({ from: 9991, username: "kicked_kid", at: "2026-10-06T21:58:10", photo: "w8p2" }), `'${utc("2026-10-06T21:58:10")}'::timestamptz`);
+    await reconcile(db);
+    script = (method, payload) => method === "getChatMember" && payload.user_id === 8888 ? { outcome: okOut(), result: { status: "administrator" } } : null;
+    const fcLeft = fetchCalls.length;
+    const wl2 = await work();
+    script = null;
+    ok("W8p a sender who LEFT and one who was KICKED are never registered: no engine call, 'not_member' skip rows",
+      await count(db, "select count(*) n from profiles where telegram_id in (9990, 9991)") === 0 &&
+      !fetchCalls.slice(fcLeft).some((c) => [9990, 9991].includes(Number(c.body.students?.[0]?.telegram_user_id))) &&
+      await count(db, `select count(*) n from admin_actions where action = 'challenge_task_autoreg_skipped' and details->>'reason' = 'not_member'
+                       and details->>'via' = 'identity_sweep' and (details->>'telegram_id')::bigint in (9990, 9991)`) === 2 &&
+      ((wl2.body.identity as Row)?.unresolved ?? 0) >= 2, wl2.body);
+
     // PR-8's pre-step: the WINDOW sweep while PAUSED (nothing is captured before go-live)
     await cfgSet(db, "enabled", false);
     setClock(utc("2026-10-06T22:20:00"));
@@ -1110,13 +1134,14 @@ async function runPinned() {
   }
 
   // ───────────── W11. the watchdog watches the tick and the worker ─────────────
-  console.log("W11. the watchdog: tick_silent / worker_receipts / worker_dms / worker_errors");
+  console.log("W11. the watchdog: tick_silent / worker_receipts / worker_dms / worker_errors / tick_errors / worker_partial");
   {
     setClock(utc("2026-10-10T10:30:00"));
     await tick();
     const alarms = async () => ((await one(db, "select challenge_tasks_watchdog() w")).w as Row).alarms as string[];
     let a = await alarms();
-    ok("W11a a fresh tick, an empty backlog: none of the four", !a.some((x) => ["tick_silent", "worker_receipts", "worker_dms", "worker_errors", "worker_watch_crashed"].includes(x)), a);
+    ok("W11a a fresh tick, an empty backlog: none of the six", !a.some((x) => ["tick_silent", "tick_errors", "worker_receipts", "worker_dms", "worker_errors",
+      "worker_partial", "worker_watch_crashed"].includes(x)), a);
     await db.query("update app_settings set value = jsonb_set(value, '{checked_at}', to_jsonb(now() - interval '15 minutes')) where key = 'challenge_tasks_tick_state'");
     await db.query(`update challenge_task_submissions set receipt_version = receipt_version + 1, receipt_state = 'pending', updated_at = now() - interval '40 minutes'
                     where id = $1`, [subR]);
@@ -1136,6 +1161,74 @@ async function runPinned() {
     a = await alarms();
     ok("W11c inside the quiet hours a waiting DM is not an alarm (it may not be sent yet); a fresh tick is not silent",
       !a.includes("worker_dms") && !a.includes("tick_silent"), a);
+
+    // a tick SECTION that fails every minute: the heartbeat stays fresh and the section creates no rows the other
+    // alarms could see -- only the tick's failures memory tells. A REAL failure: the kick's decision raises.
+    const breakKick = async () => await db.exec(`alter function public.challenge_tasks_worker_due(jsonb) rename to challenge_tasks_worker_due_w11;
+      create function public.challenge_tasks_worker_due(_cfg jsonb default null) returns jsonb language plpgsql
+      as $w11$ begin raise exception 'w11: the kick decision is down'; end $w11$;`);
+    const fixKick = async () => await db.exec(`drop function public.challenge_tasks_worker_due(jsonb);
+      alter function public.challenge_tasks_worker_due_w11(jsonb) rename to challenge_tasks_worker_due;`);
+    const failures = async () => ((await tickState())?.failures ?? {}) as Row;
+    setClock(utc("2026-10-11T10:00:30"));
+    await tick();
+    await breakKick();
+    setClock(utc("2026-10-11T10:01:30"));
+    const t1 = await tick();
+    await fixKick();
+    setClock(utc("2026-10-11T10:02:30"));
+    await tick();
+    let f = await failures();
+    a = await alarms();
+    ok("W11e a ONE-minute section failure: recorded (errors, failures memory, one 'challenge_task_tick_failed' row), not an alarm",
+      /w11: the kick decision is down/.test(String(t1.errors?.kick ?? "")) && f.date === "2026-10-11" && f.kick?.runs === 1 &&
+      f.kick?.streak === 0 && f.kick?.max_streak === 1 && !a.includes("tick_errors") &&
+      await count(db, "select count(*) n from admin_actions where action = 'challenge_task_tick_failed' and details->>'section' = 'kick'") === 1,
+      { t1, f, a });
+    await breakKick();
+    for (const hm of ["10:03:30", "10:04:30", "10:05:30"]) {
+      setClock(utc(`2026-10-11T${hm}`));
+      await tick();
+    }
+    f = await failures();
+    const wd = (await one(db, "select challenge_tasks_watchdog() w")).w as Row;
+    ok("W11f the section fails 3 runs in a row → 'tick_errors', the message names the section and its error; the heartbeat is fresh",
+      f.kick?.streak === 3 && f.kick?.max_streak === 3 && f.kick?.runs === 4 && (wd.alarms as string[]).includes("tick_errors") &&
+      !(wd.alarms as string[]).includes("tick_silent") &&
+      (wd.messages as string[]).some((m) => /challenge_tasks_tick/.test(m) && /kick: w11: the kick decision is down/.test(m)) &&
+      await count(db, "select count(*) n from admin_actions where action = 'challenge_task_tick_failed' and details->>'section' = 'kick'") === 1,
+      { f, wd: { alarms: wd.alarms, messages: wd.messages } });
+    await fixKick();
+    setClock(utc("2026-10-11T10:06:30"));
+    await tick();
+    f = await failures();
+    a = await alarms();
+    ok("W11g recovered before the hourly watchdog ran: streak 0, but the failure of the last hour still alarms",
+      f.kick?.streak === 0 && f.kick?.max_streak === 3 && a.includes("tick_errors"), { f, a });
+    setClock(utc("2026-10-11T11:10:30"));
+    await tick();
+    a = await alarms();
+    ok("W11h … and not once its last failure is over an hour old", !a.includes("tick_errors"), a);
+
+    // worker runs that finish with errors[] ('partial'): 3 in an hour alarm, 2 do not
+    const partial = `insert into admin_actions (action, details) values ('challenge_task_worker_run',
+      '{"status":"partial","errors":["post_record: XX000"],"test":"w11"}')`;
+    await db.query(partial);
+    await db.query(partial);
+    a = await alarms();
+    ok("W11i two 'partial' worker runs in an hour: not an alarm", !a.includes("worker_partial"), a);
+    await db.query(partial);
+    const wp = (await one(db, "select challenge_tasks_watchdog() w")).w as Row;
+    ok("W11j three 'partial' worker runs in an hour → 'worker_partial', with the latest errors",
+      (wp.alarms as string[]).includes("worker_partial") &&
+      (wp.messages as string[]).some((m) => /3 marta challenge-tasks-worker qisman/.test(m) && /post_record: XX000/.test(m)),
+      { alarms: wp.alarms, messages: wp.messages });
+
+    // the memory is today's: the Tashkent day change starts it empty
+    setClock(utc("2026-10-12T00:00:30"));
+    await tick();
+    f = await failures();
+    ok("W11k the failures memory resets at the day change", f.date === "2026-10-12" && f.kick === undefined, f);
   }
 
   // ───────────── W12. the ledger stays whole ─────────────
@@ -1143,10 +1236,12 @@ async function runPinned() {
   {
     const inv = (await one(db, "select challenge_tasks_health()->'invariants' i")).i as Row;
     ok("W12a every health invariant is zero; user_xp equals the ledger", await userXpOk(db) && Object.values(inv).every((v) => Number(v) === 0), inv);
-    ok("W12b the tick never failed a section", await count(db, "select count(*) n from admin_actions where action = 'challenge_task_tick_failed'") === 0,
+    ok("W12b the tick never failed a section (but W11's deliberate kick failure)",
+      await count(db, "select count(*) n from admin_actions where action = 'challenge_task_tick_failed' and coalesce(details->>'error', '') not like 'w11:%'") === 0,
       await q(db, "select details from admin_actions where action = 'challenge_task_tick_failed'"));
-    ok("W12c every worker run was ok / inactive / a deliberate bad request (no partial; the one crash is W11's insert)",
-      await count(db, "select count(*) n from admin_actions where action = 'challenge_task_worker_run' and details->>'status' not in ('ok', 'inactive', 'bad_request', 'crashed')") === 0,
+    ok("W12c every worker run was ok / inactive / a deliberate bad request (no partial but W11's inserts; the one crash is W11's insert)",
+      await count(db, `select count(*) n from admin_actions where action = 'challenge_task_worker_run'
+                       and details->>'status' not in ('ok', 'inactive', 'bad_request', 'crashed') and coalesce(details->>'test', '') <> 'w11'`) === 0,
       await q(db, "select details from admin_actions where action = 'challenge_task_worker_run' and details->>'status' not in ('ok', 'inactive', 'bad_request')"));
   }
   await db.close();

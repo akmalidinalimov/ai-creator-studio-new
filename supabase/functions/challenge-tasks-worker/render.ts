@@ -10,7 +10,7 @@ import {
   type Rendered, safeName,
 } from "../_shared/daily-task-render.ts";
 
-/** The task post's button text. The SQL fallback poster (migration 20260930152000) posts the SAME text. */
+/** The task post's button text. The SQL fallback poster (migration 20260930152010) posts the SAME text. */
 export const POST_BUTTON_TEXT = "📲 Vazifani botda ochish";
 
 export function toLocale(v: unknown): Locale {
@@ -142,7 +142,7 @@ function dmKeyboard(c: DmCopy, topicUrl: unknown, taskId: unknown, botUsername: 
   return row.length ? { inline_keyboard: [row] } : null;
 }
 
-/** challenge_task_outbox.payload of kind 'morning' (migration 20260930152000, tick section b). */
+/** challenge_task_outbox.payload of kind 'morning' (migration 20260930152010, tick section b). */
 export interface MorningPayload {
   task_id?: number;
   task_date?: string;

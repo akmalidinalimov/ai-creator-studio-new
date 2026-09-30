@@ -1,4 +1,4 @@
-// challenge-tasks-worker — pg_cron's challenge_tasks_tick() (every minute, migration 20260930152000) calls this
+// challenge-tasks-worker — pg_cron's challenge_tasks_tick() (every minute, migration 20260930152010) calls this
 // through ops_net_post ONLY when challenge_tasks is active and challenge_tasks_worker_due() says a claim would lease
 // something (a post, a receipt, a due DM, an identity-sweep sender). challenge_task_identity_sweep_request() (PR-8's
 // go-live pre-step) calls it with {mode: 'identity_sweep', since, until}. While the feature is paused nothing calls it.
