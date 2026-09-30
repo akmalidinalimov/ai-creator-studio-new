@@ -12,18 +12,25 @@
 // the "3 / 12" progress. `processed` (a ref Set) remembers handled ids so a background reconcile()
 // refetch never re-surfaces a skipped/redone item, while still pruning items a co-teacher graded ahead
 // of us and appending brand-new submissions — without disturbing the card currently on screen.
-// Items leave the queue BY ID (never "drop the head"), and the inputs are cleared only when the item
-// that left was the one on screen: an "Ortga" tapped while another grade is still being written re-opens
-// the right card and keeps its restored score (audit TUI-6).
+// Items leave the queue BY ID (never "drop the head").
+//
+// THE INPUTS BELONG TO ONE SUBMISSION: the score, feedback and voice note are tied to the submission they
+// were entered for (`inputsForRef`), and are cleared the moment any OTHER card is on screen — whatever
+// moved it: grading/skipping, a filter chip, the bottom nav's "Baholash" tab (same route, so no remount,
+// but the URL filter goes), a ?group= link that only resolves once the teacher's groups load, a background
+// reconcile. One rule, not one reset per path, so a typed score or a recorded note can never land on a
+// student the teacher is not looking at. An "Ortga" re-opens its card and claims the inputs for it, so an
+// "Ortga" tapped while another grade is still being written keeps its restored score (audit TUI-6).
 //
 // FILTER (teacher audit PR-4, TUI-1): a teacher of AI Creators 5.0 and Challenge 6.0 can work through one
 // course or one group at a time — "Hammasi · N", one chip per course with its count, one per group
 // (GradeFilterBar; the rules are in src/lib/gradeFilter.ts). The whole queue is still loaded (the chips
 // need every count); the filter only chooses which item is on screen. It starts at "Hammasi" unless the
 // URL says otherwise (?course= / ?group=, e.g. from Home's per-course counts): the Groups screen's pick
-// does NOT follow the teacher here, so work is never hidden by a choice made elsewhere. Changing the
-// filter clears the inputs (a typed score never moves to another student), and is locked while a write
-// is in flight. The card's course chip carries the course's colour (src/lib/courseTone.ts).
+// does NOT follow the teacher here, so work is never hidden by a choice made elsewhere. A URL filter that
+// names nothing there (a stale link) is taken out of the URL once the queue and the groups have loaded,
+// so it cannot wake up later and switch the card by itself. The filter is locked while a write is in
+// flight. The card's course chip carries the course's colour (src/lib/courseTone.ts).
 //
 // STATES (all required): loading (Skeleton) · error/offline (navigator.onLine + retry) · empty /
 // end-of-queue ("Baholash tugadi ✅") · nothing under the chosen filter ("Hammasini ko'rsatish") ·
@@ -31,7 +38,7 @@
 // advance) · already-graded-by-co-teacher (gentle "boshqa ustoz baholadi" skip, member-forgiveness) ·
 // undo (Sonner toast "Ortga" RE-OPENS the just-graded item for correction — purely client-side, NO DB
 // score-clear; the correction lands on the next submitScore).
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -88,7 +95,7 @@ export default function TeacherGrade() {
   const [searchParams, setSearchParams] = useSearchParams();
   // The teacher's groups (junction-aware teacher_groups), so a group with nothing waiting still has its chip.
   // Only the list is used: the shared selected group is deliberately NOT a grading filter (see the header).
-  const { groups: teacherGroups } = useSelectedGroup();
+  const { groups: teacherGroups, loading: groupsLoading } = useSelectedGroup();
 
   const [queue, setQueue] = useState<PendingSubmission[]>([]);
   const [handled, setHandled] = useState<PendingSubmission[]>([]);
@@ -120,6 +127,9 @@ export default function TeacherGrade() {
   // resetInputs() (new card) and explicitly cleared in restoreInputs() (a restore is not a new
   // recording).
   const voiceRecordedThisRoundRef = useRef(false);
+  // The submission the inputs above were entered for (null = nothing entered). See "THE INPUTS BELONG TO ONE
+  // SUBMISSION" in the header: whenever another card is on screen, the inputs are cleared.
+  const inputsForRef = useRef<string | null>(null);
 
   const wanted = useMemo(() => filterFromSearch(searchParams), [searchParams]);
   const model = useMemo(
@@ -128,9 +138,10 @@ export default function TeacherGrade() {
   );
   const visible = model.visible;
   const current = visible[0] ?? null;
-  // The id of the card on screen, readable from async handlers (see advance()).
+  const currentId = current?.submission_id ?? null;
+  // The id of the card on screen, readable from async handlers (reconcile, the voice recorder, the inputs).
   const currentIdRef = useRef<string | null>(null);
-  currentIdRef.current = current?.submission_id ?? null;
+  currentIdRef.current = currentId;
   // The filter in force, readable from the undo toast (its closure is from an older render).
   const filterRef = useRef<GradeFilter>(model.filter);
   filterRef.current = model.filter;
@@ -148,16 +159,35 @@ export default function TeacherGrade() {
     setFeedback("");
     setVoiceBlob(null);
     voiceRecordedThisRoundRef.current = false;
+    inputsForRef.current = null;
   }, []);
+
+  // The teacher entered something on the card on screen: the inputs are now that submission's.
+  const claimInputs = useCallback(() => {
+    inputsForRef.current = currentIdRef.current;
+  }, []);
+
+  // ONE rule for every way the card can change (see the header): inputs entered for another submission are
+  // cleared. A layout effect, so the new card is never painted — or tapped — with the old card's score.
+  useLayoutEffect(() => {
+    if (inputsForRef.current !== null && inputsForRef.current !== currentId) resetInputs();
+  }, [currentId, resetInputs]);
 
   // Wraps VoiceRecorder's onChange: a non-null blob here means the recorder JUST finished capturing
   // + encoding a fresh note (VoiceRecorder only calls onChange from finishRecording/handleDelete/
   // handleReRecord — never as a reaction to the parent setting `value`), so this is the ONLY place
-  // `voiceRecordedThisRoundRef` may be set true.
-  const handleVoiceChange = useCallback((blob: Blob | null) => {
+  // `voiceRecordedThisRoundRef` may be set true. `forId` is the card the recorder was on: a note that
+  // finishes encoding after its card has left the screen belongs to that student, never to this one.
+  const handleVoiceChange = useCallback((forId: string | null, blob: Blob | null) => {
+    if (forId === null || forId !== currentIdRef.current) {
+      if (blob) toast.message("Ovozli izoh saqlanmadi", { description: "U boshqa o'quvchining ishi uchun yozilgan edi." });
+      return;
+    }
+    inputsForRef.current = forId;
     voiceRecordedThisRoundRef.current = blob != null;
     setVoiceBlob(blob);
   }, []);
+  const onVoiceChange = useCallback((blob: Blob | null) => handleVoiceChange(currentId, blob), [currentId, handleVoiceChange]);
 
   // Voice bridge. Telegram's webview denies Mini Apps the microphone on most devices, so the in-app
   // recorder is a dead end there. This asks the bot to prompt the teacher in her Telegram chat, where the
@@ -191,6 +221,8 @@ export default function TeacherGrade() {
   // local state (the voice blob is the SAME object already uploaded by the just-undone submit; if
   // the teacher deletes it before re-submitting, handleSubmit best-effort removes that object).
   const restoreInputs = useCallback((item: PendingSubmission, score: number, fb: string, voice: Blob | null) => {
+    // The restored inputs are the re-opened item's (it is put back on screen in the same update).
+    inputsForRef.current = item.submission_id;
     if (chipValuesFor(item.max_score).includes(score)) {
       setChipScore(score);
       setCustomOpen(false);
@@ -208,25 +240,33 @@ export default function TeacherGrade() {
     setShowFeedback(fb.trim() !== "" || voice != null);
   }, []);
 
-  // `item` is handled: it leaves the queue BY ID. The inputs are cleared only when it was the card on screen
-  // — after an "Ortga" during this item's write, the re-opened card (and its restored score) stays put.
-  const advance = useCallback(
-    (item: PendingSubmission) => {
-      setQueue((prev) => prev.filter((p) => p.submission_id !== item.submission_id));
-      setHandled((prev) => [...prev.filter((p) => p.submission_id !== item.submission_id), item]);
-      if (currentIdRef.current === item.submission_id) resetInputs();
-    },
-    [resetInputs],
-  );
+  // `item` is handled: it leaves the queue BY ID. If it was the card on screen, the next card comes up and the
+  // inputs rule clears them; after an "Ortga" during this item's write, the re-opened card (and its restored
+  // score) stays put.
+  const advance = useCallback((item: PendingSubmission) => {
+    setQueue((prev) => prev.filter((p) => p.submission_id !== item.submission_id));
+    setHandled((prev) => [...prev.filter((p) => p.submission_id !== item.submission_id), item]);
+  }, []);
 
-  // A new filter shows another card: clear the inputs so a typed score never moves to another student.
+  // A new filter may show another card; the inputs rule clears the inputs when it does.
   const changeFilter = useCallback(
     (f: GradeFilter) => {
-      resetInputs();
       setSearchParams(searchFromFilter(f), { replace: true });
     },
-    [resetInputs, setSearchParams],
+    [setSearchParams],
   );
+
+  // A URL filter naming a course or group that is not there is ignored (buildGradeFilter drops it). Take it out of
+  // the URL too, or it would wake up when that course's first new item arrives and switch the card by itself.
+  // Judged only once the queue AND the teacher's groups have loaded: a ?group= of a group with nothing waiting
+  // is only known from teacher_groups.
+  const appliedCourse = model.filter.courseId;
+  const appliedGroup = model.filter.groupId;
+  const urlFilterStale = wanted.courseId !== appliedCourse || wanted.groupId !== appliedGroup;
+  useEffect(() => {
+    if (loading || error || groupsLoading || !urlFilterStale) return;
+    setSearchParams(searchFromFilter({ courseId: appliedCourse, groupId: appliedGroup }), { replace: true });
+  }, [loading, error, groupsLoading, urlFilterStale, appliedCourse, appliedGroup, setSearchParams]);
 
   // Initial load / retry.
   useEffect(() => {
@@ -298,6 +338,9 @@ export default function TeacherGrade() {
     // whatever finalized blob is in state right now — a mid-recording/mid-encode note (still null,
     // onChange hasn't fired yet) is treated as no-voice-this-round, which is acceptable (T2 note).
     const blob = voiceBlob;
+    // Read with the blob, not after the write: if the card changes while the write is in flight, the inputs
+    // rule clears the ref, but this note is still this student's and still new.
+    const voiceFresh = voiceRecordedThisRoundRef.current;
     setSubmitting(true);
     try {
       // Fix round 1 (Important A): default to `undefined`, NOT null. The RPC backing this queue
@@ -343,7 +386,7 @@ export default function TeacherGrade() {
       // `blob` — an undo→resubmit still has `blob` truthy but must NOT re-fire) gets pushed to the
       // student's Telegram DM if they've started the bot — fire-and-forget: never awaited, never
       // allowed to affect the grade UI (notifyGradeVoice swallows its own errors).
-      notifyGradeVoice(item.submission_id, { voiceFresh: voiceRecordedThisRoundRef.current });
+      notifyGradeVoice(item.submission_id, { voiceFresh });
 
       // Advance immediately, offer a 6s undo (auto-advance makes a fat-finger unrecoverable).
       processed.current.add(item.submission_id);
@@ -363,8 +406,8 @@ export default function TeacherGrade() {
             processed.current.delete(item.submission_id);
             setQueue((prev) => [item, ...prev.filter((p) => p.submission_id !== item.submission_id)]);
             setHandled((prev) => prev.filter((p) => p.submission_id !== item.submission_id));
-            // The re-opened item must be the card on screen, or the restored score would sit on another
-            // student's card: if the filter was changed since, widen it back to "Hammasi" first.
+            // The re-opened item must be the card on screen (or the inputs rule would clear its restored
+            // score): if the filter was changed since, widen it back to "Hammasi" in the same update.
             if (!matchesFilter(item, filterRef.current)) changeFilter(NO_FILTER);
             restoreInputs(item, value, fb, blob);
             toast.info("Qayta baholash uchun ochildi");
@@ -566,6 +609,7 @@ export default function TeacherGrade() {
                   key={v}
                   type="button"
                   onClick={() => {
+                    claimInputs();
                     setChipScore(v);
                     setCustomOpen(false);
                     setCustom("");
@@ -585,6 +629,7 @@ export default function TeacherGrade() {
             <button
               type="button"
               onClick={() => {
+                claimInputs();
                 setCustomOpen(true);
                 setChipScore(null);
               }}
@@ -609,7 +654,10 @@ export default function TeacherGrade() {
                 max={current.max_score}
                 value={custom}
                 autoFocus
-                onChange={(e) => setCustom(e.target.value)}
+                onChange={(e) => {
+                  claimInputs();
+                  setCustom(e.target.value);
+                }}
                 placeholder={`0–${current.max_score}`}
                 className="w-28 rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-base font-extrabold tabular-nums text-foreground placeholder:text-sm placeholder:font-semibold placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
@@ -627,14 +675,17 @@ export default function TeacherGrade() {
           <div className="space-y-2">
             <textarea
               value={feedback}
-              onChange={(e) => setFeedback(e.target.value)}
+              onChange={(e) => {
+                claimInputs();
+                setFeedback(e.target.value);
+              }}
               rows={3}
               placeholder="Izoh (ixtiyoriy)"
               className="w-full resize-none rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             <VoiceRecorder
               value={voiceBlob}
-              onChange={handleVoiceChange}
+              onChange={onVoiceChange}
               disabled={submitting || redoing}
               fallback={
                 current ? (
@@ -654,7 +705,10 @@ export default function TeacherGrade() {
         ) : (
           <button
             type="button"
-            onClick={() => setShowFeedback(true)}
+            onClick={() => {
+              claimInputs();
+              setShowFeedback(true);
+            }}
             className="inline-flex min-h-[40px] items-center gap-1.5 text-[13px] font-bold text-muted-foreground transition-colors hover:text-foreground"
           >
             <MessageSquarePlus className="size-4" />
