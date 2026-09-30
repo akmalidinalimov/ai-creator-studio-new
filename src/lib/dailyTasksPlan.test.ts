@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
 import plan from "./__fixtures__/challenge6-daily-tasks-plan.json";
 import {
-  acceptsFor, addDays, buildImportRows, configWeekdays, deriveFromFormat, isIsoDate, isoWeekday, parseMessageUrl, parsePlan,
-  planRef, requiresProblem, requiresValid, REQUIRES_MSG, scheduleDates, tashkentToday, telegramHtmlRuns, textOnlySatisfiable,
-  type RequiresGroup,
+  acceptsFor, addDays, buildImportRows, configWeekdays, deriveFromFormat, inWindow, isIsoDate, isoWeekday, parseMessageUrl, parsePlan,
+  readCalendarConfig,
+  planRef, requiresProblem, requiresSummary, requiresValid, REQUIRES_MSG, scheduleDates, taskSaveMessage, tashkentToday,
+  telegramHtmlRuns, textOnlySatisfiable, type RequiresGroup,
 } from "./dailyTasksPlan";
 
 // The SQL mirrors (challenge_task_requires_valid / _requires_problem / _parse_message_url) are checked against this
@@ -174,6 +175,41 @@ describe("parseMessageUrl (mirror of challenge_task_parse_message_url)", () => {
       "https://t.me/group/144/5", "t.me/c/1/2/3", "", null]) {
       expect(parseMessageUrl(u)).toBeNull();
     }
+  });
+});
+
+describe("readCalendarConfig", () => {
+  it("reads the live shapes", () => {
+    const c = readCalendarConfig(
+      { enabled: true, course_ids: ["c6"], group_ids: [], window: { start: "2026-10-01T00:00:00+05:00", end: null } },
+      { enabled: false, ai: false, task_weekdays: [1, 2, 3, 4, 5], points: { general: 5, instagram: 8 }, late_factor: 0.5, test_group_ids: ["g8"] },
+    );
+    expect(c).toEqual({ enabled: false, ai: false, weekdays: [1, 2, 3, 4, 5], defaultPoints: { general: 5, instagram: 8 }, lateFactor: 0.5,
+      windowStart: "2026-10-01", windowEnd: null, courseIds: ["c6"], groupIds: [], testGroupIds: ["g8"] });
+    expect(inWindow("2026-09-30", c)).toBe(false);
+    expect(inWindow("2026-10-01", c)).toBe(true);
+  });
+  it("falls back on junk", () => {
+    const c = readCalendarConfig(null, { points: { general: 0, instagram: "8" }, task_weekdays: "x", late_factor: 3, window: 1 });
+    expect(c.defaultPoints).toEqual({ general: 5, instagram: 8 });
+    expect(c.weekdays).toEqual([1, 2, 3, 4, 5]);
+    expect(c.lateFactor).toBe(0.5);
+    expect(c.windowStart).toBeNull();
+  });
+});
+
+describe("admin-facing text", () => {
+  it("requiresSummary", () => {
+    expect(requiresSummary([SHOT, TEXT])).toBe("Skrinshot / rasm + Matn");
+    expect(requiresSummary([{ ...SHOT, min: 2 }])).toBe("Skrinshot / rasm ×2");
+    expect(requiresSummary([])).toBe("Istalgan bitta element");
+    expect(requiresSummary("x")).toBe("—");
+  });
+  it("taskSaveMessage translates constraint names and passes guard messages through", () => {
+    expect(taskSaveMessage('duplicate key value violates unique constraint "uq_challenge_tasks_course_date"')).toMatch(/bir kunda bitta/);
+    expect(taskSaveMessage('new row for relation "challenge_tasks" violates check constraint "challenge_tasks_requires_check"')).toBe(REQUIRES_MSG.invalid);
+    expect(taskSaveMessage("E’lon matni juda uzun: 4100 / 4000 belgi — matnni qisqartiring")).toMatch(/4100/);
+    expect(taskSaveMessage(null)).toMatch(/Saqlab/);
   });
 });
 

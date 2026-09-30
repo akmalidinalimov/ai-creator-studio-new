@@ -548,6 +548,86 @@ export function parseMessageUrl(url: string | null | undefined): MessageRef | nu
   return { chat: m[1], chatId, topic: thread, msg: Number(m[2]) };
 }
 
+// ───────────────────────────── config (display only; the engine has its own parser) ─────────────────────────────
+
+export type CalendarConfig = {
+  /** challenge_tasks.enabled -- false until go-live (PR-8): nothing is posted. */
+  enabled: boolean;
+  ai: boolean;
+  weekdays: number[];
+  defaultPoints: { general: number; instagram: number };
+  lateFactor: number;
+  /** Tashkent dates of challenge.window (null = open). */
+  windowStart: string | null;
+  windowEnd: string | null;
+  courseIds: string[];
+  groupIds: string[];
+  testGroupIds: string[];
+};
+
+const obj = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+const pts = (v: unknown, dflt: number) => (typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 50 ? v : dflt);
+function tashkentDateOf(ts: unknown): string | null {
+  if (typeof ts !== "string" || ts.trim() === "") return null;
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? null : tashkentToday(d);
+}
+
+/** Reads platform_settings 'challenge' + 'challenge_tasks' the way the approve guard does (defaults on junk). */
+export function readCalendarConfig(challenge: unknown, tasks: unknown): CalendarConfig {
+  const c = obj(challenge);
+  const t = obj(tasks);
+  const w = obj(c.window);
+  const p = obj(t.points);
+  const lf = typeof t.late_factor === "number" && t.late_factor > 0 && t.late_factor <= 1 ? t.late_factor : 0.5;
+  return {
+    enabled: t.enabled === true,
+    ai: t.ai === true,
+    weekdays: configWeekdays(t.task_weekdays),
+    defaultPoints: { general: pts(p.general, 5), instagram: pts(p.instagram, 8) },
+    lateFactor: lf,
+    windowStart: tashkentDateOf(w.start),
+    windowEnd: tashkentDateOf(w.end),
+    courseIds: strs(c.course_ids),
+    groupIds: strs(c.group_ids),
+    testGroupIds: strs(t.test_group_ids),
+  };
+}
+
+export const inWindow = (d: string, cfg: Pick<CalendarConfig, "windowStart" | "windowEnd">) =>
+  (cfg.windowStart === null || d >= cfg.windowStart) && (cfg.windowEnd === null || d <= cfg.windowEnd);
+
+// ───────────────────────────── admin-facing text ─────────────────────────────
+
+/** "Skrinshot / rasm ×2 + Matn" -- what a task requires, for the calendar and the importer preview. */
+export function requiresSummary(requires: unknown): string {
+  if (!requiresValid(requires)) return "—";
+  if (requires.length === 0) return "Istalgan bitta element";
+  return requires.map((g) => `${LABEL_UZ[g.label]}${g.min > 1 ? ` ×${g.min}` : ""}`).join(" + ");
+}
+
+/**
+ * A challenge_tasks write error, in the admin's words. The guard's own messages (P0001) pass through verbatim;
+ * constraint names (which PostgREST reports as-is) are translated.
+ */
+export function taskSaveMessage(raw: string | null | undefined): string {
+  const m = raw ?? "";
+  if (m.includes("uq_challenge_tasks_course_date")) return "Bu sanada allaqachon vazifa bor — bir kunda bitta vazifa (avvalgisini bekor qiling)";
+  if (m.includes("challenge_tasks_title_check")) return `Sarlavha ${LIMITS.title[0]}–${LIMITS.title[1]} belgi bo‘lishi kerak`;
+  if (m.includes("challenge_tasks_body_check")) return `Vazifa matni 1–${LIMITS.body[1]} belgi bo‘lishi kerak`;
+  if (m.includes("challenge_tasks_learn_line_check")) return `«Nimani o‘rganasiz» ko‘pi bilan ${LIMITS.learn} belgi`;
+  if (m.includes("challenge_tasks_submit_hint_check")) return `«Topshirish» ko‘pi bilan ${LIMITS.hint} belgi`;
+  if (m.includes("challenge_tasks_check_rubric_check")) return `AI mezoni ko‘pi bilan ${LIMITS.rubric} belgi`;
+  if (m.includes("challenge_tasks_accepts_check")) return "Kamida bitta qabul qilinadigan format tanlang";
+  if (m.includes("challenge_tasks_requires_check")) return REQUIRES_MSG.invalid;
+  if (m.includes("challenge_tasks_points_check")) return `Ball ${LIMITS.points[0]}–${LIMITS.points[1]} oralig‘ida bo‘lishi kerak`;
+  if (m.includes("challenge_tasks_minutes_check")) return `Daqiqa ${LIMITS.minutes[0]}–${LIMITS.minutes[1]} oralig‘ida bo‘lishi kerak`;
+  if (m.includes("challenge_task_posts_task_id_fkey")) return "Bu vazifaga e’lon qilingan xabar biriktirilgan — avval havolalarni o‘chiring yoki vazifani bekor qiling";
+  if (/row-level security|permission denied/i.test(m)) return "Ruxsat yo‘q (faqat admin)";
+  return m || "Saqlab bo‘lmadi";
+}
+
 // ───────────────────────────── the post preview (display only) ─────────────────────────────
 
 /**

@@ -575,6 +575,164 @@ export type Database = {
         }
         Relationships: []
       }
+      challenge_task_posts: {
+        Row: {
+          attempts: number
+          chat_id: number
+          claim_token: string | null
+          claimed_at: string | null
+          created_at: string
+          error: string | null
+          group_id: string
+          kind: string
+          message_id: number | null
+          net_request_id: number | null
+          sent_at: string | null
+          state: string
+          task_id: number
+          thread_id: number | null
+        }
+        Insert: {
+          attempts?: number
+          chat_id: number
+          claim_token?: string | null
+          claimed_at?: string | null
+          created_at?: string
+          error?: string | null
+          group_id: string
+          kind?: string
+          message_id?: number | null
+          net_request_id?: number | null
+          sent_at?: string | null
+          state?: string
+          task_id: number
+          thread_id?: number | null
+        }
+        Update: {
+          attempts?: number
+          chat_id?: number
+          claim_token?: string | null
+          claimed_at?: string | null
+          created_at?: string
+          error?: string | null
+          group_id?: string
+          kind?: string
+          message_id?: number | null
+          net_request_id?: number | null
+          sent_at?: string | null
+          state?: string
+          task_id?: number
+          thread_id?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "challenge_task_posts_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "challenge_task_posts_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "challenge_tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      challenge_tasks: {
+        Row: {
+          accepts: string[]
+          approved_at: string | null
+          approved_by: string | null
+          body: string
+          check_rubric: string | null
+          course_id: string
+          created_at: string
+          created_by: string | null
+          id: number
+          learn_line: string | null
+          min_duration_sec: number | null
+          min_text_chars: number | null
+          minutes: number | null
+          plan_format: string | null
+          plan_ref: string | null
+          points: number | null
+          requires: Json
+          requires_tag: boolean | null
+          source: string
+          status: string
+          submit_hint: string | null
+          task_date: string
+          title: string
+          type: string
+          updated_at: string
+        }
+        Insert: {
+          accepts: string[]
+          approved_at?: string | null
+          approved_by?: string | null
+          body: string
+          check_rubric?: string | null
+          course_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: never
+          learn_line?: string | null
+          min_duration_sec?: number | null
+          min_text_chars?: number | null
+          minutes?: number | null
+          plan_format?: string | null
+          plan_ref?: string | null
+          points?: number | null
+          requires?: Json
+          requires_tag?: boolean | null
+          source?: string
+          status?: string
+          submit_hint?: string | null
+          task_date: string
+          title: string
+          type: string
+          updated_at?: string
+        }
+        Update: {
+          accepts?: string[]
+          approved_at?: string | null
+          approved_by?: string | null
+          body?: string
+          check_rubric?: string | null
+          course_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: never
+          learn_line?: string | null
+          min_duration_sec?: number | null
+          min_text_chars?: number | null
+          minutes?: number | null
+          plan_format?: string | null
+          plan_ref?: string | null
+          points?: number | null
+          requires?: Json
+          requires_tag?: boolean | null
+          source?: string
+          status?: string
+          submit_hint?: string | null
+          task_date?: string
+          title?: string
+          type?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "challenge_tasks_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       course_tiers: {
         Row: {
           course_id: string
@@ -2459,6 +2617,15 @@ export type Database = {
       admin_assign_group: {
         Args: { _group_id: string; _user_ids: string[] }
         Returns: number
+      }
+      admin_challenge_task_preview: { Args: { _draft: Json }; Returns: Json }
+      admin_challenge_task_set_manual_post: {
+        Args: { _group_id: string; _task_id: number; _url: string }
+        Returns: Json
+      }
+      admin_challenge_tasks_import: {
+        Args: { _course_id: string; _items: Json }
+        Returns: Json
       }
       admin_change_role: {
         Args: { _new_role: string; _target: string }
