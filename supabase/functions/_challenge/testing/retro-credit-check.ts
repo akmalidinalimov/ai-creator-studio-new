@@ -1,4 +1,4 @@
-// PGlite harness for 20260930155000_challenge_retro_credit_on_join.sql (S3: credit earlier messages on join).
+// PGlite harness for 20260930155010_challenge_retro_credit_on_join.sql (S3: credit earlier messages on join).
 //
 //   deno test -A --node-modules-dir=none --no-lock supabase/functions/_challenge/testing/retro-credit-check.ts
 //
@@ -31,8 +31,6 @@
 // load its own data files, so this suite registers as IGNORED there (visible in the log, never a false red).
 // TEST INFRASTRUCTURE ONLY: this directory has no index.ts, so it is never deployed.
 
-import { createHash } from "node:crypto";
-
 // deno-lint-ignore no-explicit-any
 type Row = Record<string, any>;
 interface PG {
@@ -48,7 +46,6 @@ const CAN_RUN = granted("read") && granted("env") && granted("net");
 
 const here = (p: string) => new URL(p, import.meta.url);
 const lf = (s: string) => s.replace(/\r\n/g, "\n"); // a Windows checkout is CRLF; production text is LF
-const md5 = (s: string) => createHash("md5").update(s).digest("hex");
 
 // ── production facts (read-only, 2026-09-30 15:30 UTC): md5(replace(prosrc, E'\r', '')) ──
 const PROD_BODY_MD5: Record<string, string> = {
@@ -304,7 +301,7 @@ interface Msg {
 
 Deno.test({
   name: CAN_RUN
-    ? "retro_credit_check: 20260930155000 on PGlite (live engine bodies; late link == linked from the start)"
+    ? "retro_credit_check: 20260930155010 on PGlite (live engine bodies; late link == linked from the start)"
     : "retro_credit_check: SKIPPED -- needs `deno test -A --node-modules-dir=none` (PGlite reads its own files)",
   ignore: !CAN_RUN,
   sanitizeOps: false,
@@ -317,7 +314,7 @@ async function run() {
   // deno-lint-ignore no-explicit-any
   const { PGlite } = (await import(spec)) as any;
 
-  const MIG = lf(await Deno.readTextFile(Deno.env.get("MIG_PATH") ?? here("../../../migrations/20260930155000_challenge_retro_credit_on_join.sql")));
+  const MIG = lf(await Deno.readTextFile(Deno.env.get("MIG_PATH") ?? here("../../../migrations/20260930155010_challenge_retro_credit_on_join.sql")));
   const MIG218 = lf(await Deno.readTextFile(here("../../../migrations/20260930100010_challenge_social_points.sql")));
   const MIG_PR1 = lf(await Deno.readTextFile(here("../../../migrations/20260930121000_challenge_daily_task_topic.sql")));
   const RCX_LIVE = lf(await Deno.readTextFile(here("./reconcile_challenge_xp.live-2026-09-30.sql")));
@@ -511,16 +508,16 @@ async function run() {
   const candSnap = async (db: PG) => (await q(db, `select chat_id, answer_msg_id, question_msg_id, answerer_id::text a, asker_id::text k,
        day::text d, status, award_status, skip_reason from challenge_qa_candidates where not shadow_only order by answer_msg_id`))
     .map((r) => JSON.stringify(r));
-  const drift = async (db: PG) => num(db, `select count(*)::int n from user_xp x
+  const drift = (db: PG) => num(db, `select count(*)::int n from user_xp x
       where x.total_xp <> coalesce((select sum(amount) from xp_events e where e.user_id = x.user_id), 0)`);
   const sweep = async (db: PG) => (await one(db, "select challenge_retro_credit_run() r")).r as Row;
   const ledger = async (db: PG) => await q(db, "select * from challenge_retro_credits order by id");
   const stampOfRow = async (db: PG, msg: number) =>
     (await one(db, "select profile_id::text p from group_message_events where telegram_message_id = $1", [msg])).p as string | null;
   const dayOf = (daysAgo: number) => `((date_trunc('day', now() at time zone 'Asia/Tashkent') - interval '${daysAgo} days')::date)`;
-  const perDay = async (db: PG, user: string, reason: string, agg: "sum" | "count") => num(db,
+  const perDay = (db: PG, user: string, reason: string, agg: "sum" | "count") => num(db,
     `select coalesce(${agg === "sum" ? "sum(amount)" : "count(*)"}, 0)::int n from xp_events where user_id = $1 and reason = $2`, [user, reason]);
-  const dayTotal = async (db: PG, user: string, reason: string, daysAgo: number) => num(db,
+  const dayTotal = (db: PG, user: string, reason: string, daysAgo: number) => num(db,
     `select coalesce(sum(amount), 0)::int n from xp_events where user_id = $1 and reason = $2
       and (created_at at time zone 'Asia/Tashkent')::date = ${dayOf(daysAgo)}`, [user, reason]);
 
@@ -876,6 +873,20 @@ async function run() {
     ok("J5 the sweep attaches W's row and credits it", s.attached_rows === 1 && s.status === "credited"
       && (await perDay(k, W, "challenge_chat", "sum")) === 1, s);
     ok("J6 drift 0 across K/R/U/J", (await drift(k)) === 0);
+  }
+
+  console.log("W. a window with no start (the engines treat it as unbounded) fails CLOSED here, loudly");
+  {
+    await cfg(k, { window: { start: null, end: null } });
+    const h = await errOf(k, "select challenge_retro_credit_health()");
+    ok("W1 health still runs", h === null, h);
+    const s = await sweep(k);
+    ok("W2 the sweep attaches nothing (window_invalid)", s.window_invalid === true && s.attached_rows === 0, s);
+    const w = (await one(k, "select challenge_retro_credit_watchdog() w")).w;
+    ok("W3 the watchdog alarms R4 (not R0)", w.alarms.includes("R4") && !w.alarms.includes("R0"), w.alarms);
+    const a = (await one(k, "select challenge_retro_attach($1, 'sweep') a", [P])).a;
+    ok("W4 attach refuses: window_invalid", a.status === "window_invalid", a);
+    await setWindow(k, 5, null);
   }
   await k.close();
 

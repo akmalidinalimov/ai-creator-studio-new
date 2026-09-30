@@ -102,6 +102,8 @@
 -- bodies (md5-verified against production) and proves: late-link credit == linked-from-the-start credit (same
 -- ref_keys, amounts and historic created_at), caps per historic day, isolation, idempotency, no double pay with
 -- interleaved live ticks, the username and group-move siblings, kill-switches, expiry, error retry, detectors.
+-- (This file re-issues 20260930155000, which was never applied, in slot 20260930155010: health() no longer reads an
+-- unassigned record when the window has no start, which made the watchdog report R0 instead of R4.)
 
 -- ═══════════════════════════════ 1. Config (existing values win) ═══════════════════════════════
 update public.platform_settings
@@ -533,7 +535,8 @@ declare
   _win_bad boolean := coalesce((_cfg->>'win_bad')::boolean, true);
   _w_start timestamptz := (_cfg->>'w_start')::timestamptz;
   _w_end timestamptz := (_cfg->>'w_end')::timestamptz;
-  _hb record; _q record; _un record;
+  _hb record; _q record;
+  _un_rows bigint := 0; _un_senders bigint := 0; _un_oldest timestamptz;   -- scalars: stay defined when win_bad
 begin
   select a.created_at, a.details into _hb from public.admin_actions a
    where a.action = 'challenge_retro_credit_run' order by a.created_at desc limit 1;
@@ -558,8 +561,8 @@ begin
     with sc as (
       select s.id, public.group_telegram_chat_id(s.id) as chat from public.challenge_scope_group_ids() s(id)
     )
-    select count(*) as n, count(distinct g.telegram_user_id) as senders, min(g.sent_at) as oldest
-      into _un
+    select count(*), count(distinct g.telegram_user_id), min(g.sent_at)
+      into _un_rows, _un_senders, _un_oldest
       from public.group_message_events g
       join sc on sc.id = g.group_id and sc.chat = g.telegram_chat_id
       join public.profiles p on p.telegram_id = g.telegram_user_id and p.group_id = g.group_id
@@ -584,7 +587,7 @@ begin
                                 'credited_rows_7d', _q.credited_rows_7d, 'credited_profiles_7d', _q.credited_profiles_7d,
                                 'expired_7d', _q.expired_7d, 'nothing_to_credit_7d', _q.nothing_to_credit_7d,
                                 'into_frozen_weeks_7d', _q.into_frozen_7d),
-    'unattached', jsonb_build_object('rows', coalesce(_un.n, 0), 'senders', coalesce(_un.senders, 0), 'oldest_sent_at', _un.oldest),
+    'unattached', jsonb_build_object('rows', coalesce(_un_rows, 0), 'senders', coalesce(_un_senders, 0), 'oldest_sent_at', _un_oldest),
     'link_errors_24h', (select count(*) from public.admin_actions a
                          where a.action = 'challenge_retro_link_error' and a.created_at > now() - interval '24 hours'),
     'link_errors_2h', (select count(*) from public.admin_actions a
