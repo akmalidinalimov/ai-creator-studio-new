@@ -255,10 +255,10 @@ create extension if not exists citext;
 alter table public.profiles add column name text, add column telegram_username citext, add column instagram_username citext,
   add column account_type text not null default 'paid', add column telegram_write_access_at timestamptz;
 alter table public.webhook_inbox add column message_thread_id bigint, add column from_user_id bigint, add column chat_type text;
-insert into auth.users select ('aaaaaaaa-0000-0000-0001-' || lpad(n::text, 12, '0'))::uuid from generate_series(1, 40) n;
+insert into auth.users select ('aaaaaaaa-0000-0000-0001-' || lpad(n::text, 12, '0'))::uuid from generate_series(1, 60) n;
 insert into auth.users values ('${S7}'), ('${S8}'), ('${IU}'), ('${Y1}'), ('${Y2}');
 insert into public.profiles (id, group_id, telegram_id, name)
-  select ('aaaaaaaa-0000-0000-0001-' || lpad(n::text, 12, '0'))::uuid, '${G1}', 2000 + n, 'Student ' || n from generate_series(1, 40) n;
+  select ('aaaaaaaa-0000-0000-0001-' || lpad(n::text, 12, '0'))::uuid, '${G1}', 2000 + n, 'Student ' || n from generate_series(1, 60) n;
 insert into public.profiles (id, group_id, telegram_id, name, status, archived_at, telegram_username) values
   ('${S7}', null, 1020, 'No group', 'active', null, null),
   ('${S8}', '${G1}', 1021, 'Archived', 'archived', now() - interval '3 days', null),
@@ -629,6 +629,14 @@ async function run() {
     ok("D11 ...the next one fills MONDAY (missed, late 1 day): +3 = ceil(5 x 0.5)", m11b.outcome === "created" &&
       m11b.slot?.date === "2026-10-05" && m11b.slot?.kind === "missed" && m11b.submission?.late_days === 1 && m11b.submission?.points === 3, m11b);
 
+    // D11b (d3) a missed day's screenshot sent 2 minutes after today's is NOT swallowed by the burst rule
+    const q4a = await cap(db, tgm({ from: TG(4), at: "2026-10-06T10:00:00", photo: "q4a" }));
+    const q4b = await cap(db, tgm({ from: TG(4), at: "2026-10-06T10:02:00", photo: "q4b", caption: T25 }));
+    const q4c = await cap(db, tgm({ from: TG(4), at: "2026-10-06T10:03:00", text: "Ikkalasini ham yubordim, rahmat ustoz!" }));
+    ok("D11b media 2 minutes after an ACCEPTED submission fills the missed task (never swallowed); text still bursts",
+      q4a.submission?.status === "accepted" && q4b.outcome === "created" && q4b.slot?.date === "2026-10-05" &&
+      q4c.outcome === "appended", [q4a.outcome, q4b.outcome, q4b.slot, q4c.outcome]);
+
     // D12 text-only never fills a missed task
     await cap(db, tgm({ from: TG(12), at: "2026-10-06T10:00:00", photo: "m12a" }));
     const m12b = await cap(db, tgm({ from: TG(12), at: "2026-10-06T10:30:00", text: "Bugun juda zo'r vazifa bo'ldi, rahmat!" }));
@@ -723,6 +731,11 @@ async function run() {
     const tt = await cap(db, tgm({ from: TG(27), at: "2026-10-08T10:00:00", text: "Bugun men ChatGPT bilan uchta prompt yozib ko'rdim va natijani solishtirdim" }));
     ok("D32 a text-only task with ai=false: checking, hold 'ai_off', 0 points (👀)", tt.submission?.status === "checking" &&
       tt.submission?.hold_reason === "ai_off" && tt.submission?.points === 0 && tt.reaction === "👀", tt);
+
+    // D32b a photo attached to a TEXT-ONLY task does not make it "media": still held while ai=false (C16)
+    const tp = await cap(db, tgm({ from: TG(41), at: "2026-10-08T10:00:00", photo: "tp41", caption: "Bugungi fikrlarim: prompt yozishni o'rgandim va sinab ko'rdim" }));
+    ok("D32b text-only task + a photo: still checking / ai_off (only a met MEDIA group pays on format)",
+      tp.submission?.status === "checking" && tp.submission?.hold_reason === "ai_off", tp);
 
     // D33 attempts exhausted (three rejections)
     await cfgSet(db, "max_attempts_per_task", 2);
@@ -969,6 +982,14 @@ async function run() {
     const hb = await reconcile(db);
     ok("N5 posted but never captured (the edge function died): the reconciler's Mini App heal captures it",
       hb.miniapp_healed === 1 && (await liveOf(db, ST(7), TTUE))?.status === "accepted", hb);
+    await db.query("select challenge_task_submit_claim($1, 'req-mini-0020', $2)", [S7, TTUE]);
+    await db.query("update profiles set status = 'inactive' where id = $1", [S7]);
+    const refused = (await one(db, "select challenge_task_capture_miniapp($1, $2, 'req-mini-0020', null, $3::jsonb) r",
+      [S7, TTUE, JSON.stringify([{ message_id: 8003, date: epoch("2026-10-06T18:00:00"), chat: { id: CH1 }, photo: [{ file_unique_id: "mini20" }] }])])).r;
+    ok("N6 an inactive student is refused FINALLY (claim failed, signal written; the heal never loops on it)", refused.outcome === "refused" &&
+      (await one(db, "select state from challenge_task_submit_claims where request_id = 'req-mini-0020'")).state === "failed" &&
+      await count(db, "select count(*) n from admin_actions where action = 'challenge_task_miniapp_refused'") === 1, refused);
+    await db.query("update profiles set status = 'active' where id = $1", [S7]);
     await cfgSet(db, "miniapp", false);
   }
 
@@ -1071,6 +1092,9 @@ async function run() {
     const sat = (await one(db, "select challenge_tasks_watchdog('2026-10-10T12:00:00+05:00') r")).r;
     ok("H4 Saturday (a rest day, no task): no 'no_task_today' / 'post_missing' alarm", !sat.alarms.includes("no_task_today") &&
       !sat.alarms.includes("post_missing"), sat.alarms);
+    const thu1 = (await one(db, "select challenge_tasks_watchdog('2026-10-01T10:00:00+05:00') r")).r;
+    ok("H4b a weekday BEFORE the first approved task (Thu 2026-10-01; the calendar starts Mon 10-05): not a task day, no alarm",
+      !thu1.alarms.includes("no_task_today"), thu1.alarms);
     const mon = (await one(db, "select challenge_tasks_watchdog('2026-10-19T10:00:00+05:00') r")).r;
     const calls1 = await count(db, "select count(*) n from ops_net_calls");
     const call = await one(db, "select * from ops_net_calls order by id desc limit 1");
@@ -1140,6 +1164,98 @@ async function run() {
       await count(db, "select count(*) n from challenge_task_outbox where kind = 'backfill_summary'") === 1, bf2);
     ok("B7 final: user_xp equals the ledger; health invariants zero", await userXpOk(db) &&
       (await one(db, "select challenge_tasks_health()->'invariants'->>'ledger_drift' n")).n === "0");
+  }
+
+  // ───────────── Z. every remaining RPC runs on real rows (plpgsql checks columns only at run time) ─────────────
+  console.log("Z. the remaining RPCs, end to end");
+  {
+    const card = (await one(db, "select challenge_task_card($1, $2) r", [TMON, TG(1)])).r;
+    ok("Z1 challenge_task_card: the rendered post, the student's own topic URL, their status", card.ok === true &&
+      card.text.includes("Yangi sarlavha") && card.topic_url === "https://t.me/c/4440955972/144" && card.submission?.status === "accepted", card);
+    const res = await as(db, AD, "select admin_challenge_task_results($1) r", [TMON]);
+    const rr = (res.rows as Row[])?.[0]?.r;
+    ok("Z2 admin_challenge_task_results lists the task's submissions with names", res.err === null &&
+      rr.submissions.length > 10 && rr.submissions.some((x: Row) => x.name === "Student 1" && x.points === 5), res.err ?? rr.submissions.length);
+    const s2 = await liveOf(db, ST(2), TMON);
+    const rej = await as(db, AD, `select admin_challenge_task_override($1, 'reject', '{"reason":"off_task"}'::jsonb) r`, [s2.id]);
+    ok("Z3 admin override 'reject' removes the points, audited", rej.err === null && (rej.rows as Row[])[0].r.submission?.status === "rejected" &&
+      (await xpOf(db, ST(2), `ch_task:${TMON}`)) === undefined, rej);
+    const acc = await as(db, AD, "select admin_challenge_task_override($1, 'accept') r", [s2.id]);
+    ok("Z4 admin override 'accept' pays again (the Telegram-time created_at)", acc.err === null && (acc.rows as Row[])[0].r.submission?.points === 5 &&
+      new Date((await xpOf(db, ST(2), `ch_task:${TMON}`)).created_at).toISOString() === "2026-10-05T05:02:00.000Z", acc);
+    const mv = await as(db, AD, "select admin_challenge_task_override($1, 'move', $2::jsonb) r", [s2.id, JSON.stringify({ task_id: TTUE })]);
+    ok("Z5 admin override 'move' to a FUTURE task is refused like any move", mv.err === null && (mv.rows as Row[])[0].r.reason === "future_task", mv);
+    const s12 = await liveOf(db, ST(34), TTUE);   // photo + caption: satisfies Monday (screenshot + text) too
+    const myMove = await as(db, ST(34), "select my_challenge_task_move($1, $2) r", [s12.id, TMON]);
+    ok("Z6 my_challenge_task_move (web / Mini App): Tuesday's work re-labelled as Monday's, late 1 (+3)", myMove.err === null &&
+      (myMove.rows as Row[])[0].r.submission?.late_days === 1 && (myMove.rows as Row[])[0].r.submission?.points === 3, myMove);
+    const myW = await as(db, ST(34), "select my_challenge_task_withdraw($1) r", [s12.id]);
+    const myR = await as(db, ST(34), "select my_challenge_task_restore($1) r", [s12.id]);
+    ok("Z7 my_challenge_task_withdraw / restore round-trip", myW.err === null && myR.err === null &&
+      (myR.rows as Row[])[0].r.submission?.status === "accepted", [myW, myR]);
+
+    const rc = (await one(db, "select challenge_task_receipt_claim(50) r")).r;
+    const item = rc.items[0];
+    ok("Z8 receipt_claim leases pending receipts (reconciler captures, corrections) with the reply target",
+      rc.ok === true && rc.items.length >= 1 && !!item.token && item.receipt?.chat_id === CH1, rc.items.length);
+    const rr2 = (await one(db, "select challenge_task_receipt_record($1, $2, $3, 9100, true, null, $4) r",
+      [item.submission.id, item.receipt.version, CH1, item.token])).r;
+    ok("Z9 receipt_record stores the sent message and version", rr2.ok === true &&
+      String((await one(db, "select receipt_message_id from challenge_task_submissions where id = $1", [item.submission.id])).receipt_message_id) === "9100");
+    const fr = (await one(db, "select challenge_task_receipt_record($1, 1, $2, null, false, 'Bad Request: message thread not found') r", [s2.id, CH1])).r;
+    ok("Z10 a failed receipt is DB-visible (state failed + signal)", fr.ok === true &&
+      (await one(db, "select receipt_state from challenge_task_submissions where id = $1", [s2.id])).receipt_state === "failed" &&
+      await count(db, "select count(*) n from admin_actions where action = 'challenge_task_receipt_failed'") === 1);
+
+    await db.query(`insert into challenge_task_posts (task_id, group_id, kind, state, chat_id, thread_id) values ($1, $2, 'task', 'queued', $3, $4)`,
+      [T["2026-10-16"], G1, CH1, D1]);
+    const pc = (await one(db, "select challenge_task_post_claim(5) r")).r;
+    const pi = pc.items.find((x: Row) => x.task_id === T["2026-10-16"]);
+    ok("Z11 post_claim leases a queued post with the SAME rendered text the approve guard measured", pc.ok === true && !!pi &&
+      pi.text.startsWith("📅 <b>") && pi.text.includes("📍 Faqat shu «Kunlik vazifalar» topikiga yuboring"), pc);
+    const pr = (await one(db, "select challenge_task_post_record($1, $2, 'task', $3, 9200) r", [pi.task_id, G1, pi.token])).r;
+    const stale = (await one(db, "select challenge_task_post_record($1, $2, 'task', gen_random_uuid(), 9201) r", [pi.task_id, G1])).r;
+    ok("Z12 post_record marks it sent (a stale token cannot)", pr.ok === true && stale.ok === false &&
+      String((await one(db, "select message_id from challenge_task_posts where task_id = $1 and group_id = $2", [pi.task_id, G1])).message_id) === "9200");
+
+    await cfgSet(db, "quiet_start", "00:00");
+    await cfgSet(db, "quiet_end", "00:00");
+    const oc = (await one(db, "select challenge_task_outbox_claim(10) r")).r;
+    ok("Z13 outbox_claim leases the queued backfill summary with the student's Telegram id", oc.ok === true &&
+      oc.items.some((x: Row) => x.kind === "backfill_summary" && Number(x.telegram_id) === TG(8)), oc);
+    const ob = oc.items.find((x: Row) => x.kind === "backfill_summary");
+    const orec = (await one(db, "select challenge_task_outbox_record($1, $2, true) r", [ob.id, ob.token])).r;
+    ok("Z14 outbox_record marks it sent", orec.ok === true && (await one(db, "select state from challenge_task_outbox where id = $1", [ob.id])).state === "sent");
+    await cfgSet(db, "quiet_start", "22:00");
+    await cfgSet(db, "quiet_end", "08:00");
+
+    const ip = (await one(db, "select challenge_task_identity_pending(20, now() - interval '30 days') r")).r;
+    ok("Z15 identity_pending lists shaped unknown senders for the PR-5 sweep", Array.isArray(ip.unknown) &&
+      ip.unknown.some((u: Row) => Number(u.tg_user_id) === 9555) && Array.isArray(ip.username_matched), ip);
+
+    await cfgSet(db, "task_weekdays", "x");
+    const bad = (await one(db, "select challenge_tasks_config() c")).c;
+    ok("Z16 a malformed key falls back to its default and is listed in invalid[]", JSON.stringify(bad.task_weekdays) === "[1,2,3,4,5]" &&
+      bad.invalid.includes("task_weekdays") && bad.active === true, bad.invalid);
+    await cap(db, tgm({ from: TG(42), at: "2026-10-06T10:00:00", photo: "z42" }));
+    await cap(db, tgm({ from: TG(43), at: "2026-10-06T10:00:00", photo: "z43" }));
+    ok("Z17 ...one 'challenge_task_config_invalid' row per Tashkent day, however many captures",
+      await count(db, "select count(*) n from admin_actions where action = 'challenge_task_config_invalid'") === 1);
+    await cfgSet(db, "task_weekdays", [1, 2, 3, 4, 5]);
+
+    // recovery: a clean run after an alert that went out
+    await db.query(`insert into admin_actions (action, details, created_at) values ('challenge_task_reconciled', '{"active":true,"section_errors":{}}', '2026-10-10T12:00:00+05:00')`);
+    await db.query(`insert into admin_actions (action, details) values ('challenge_bot_status_changed', $1::jsonb)`,
+      [JSON.stringify({ chat: CH1, old_status: "member", new_status: "administrator", can_delete_messages: true })]);
+    const calls0 = await count(db, "select count(*) n from ops_net_calls");
+    const clean = (await one(db, "select challenge_tasks_watchdog('2026-10-10T12:20:00+05:00') r")).r;
+    const last = await one(db, "select body from ops_net_calls order by id desc limit 1");
+    ok("Z18 all clear after an alert: ONE recovery DM", clean.state === "ok" && clean.recovered === true &&
+      await count(db, "select count(*) n from ops_net_calls") === calls0 + 1 && String(last.body.text).startsWith("✅"), { alarms: clean.alarms });
+    const clean2 = (await one(db, "select challenge_tasks_watchdog('2026-10-10T12:30:00+05:00') r")).r;
+    ok("Z19 ...and silence after that", clean2.state === "ok" && clean2.dm_sent === 0);
+    ok("Z20 final: user_xp equals the ledger; every invariant is zero", await userXpOk(db) &&
+      Object.values((await one(db, "select challenge_tasks_health()->'invariants' i")).i).every((v) => Number(v) === 0));
   }
 
   await db.close();
