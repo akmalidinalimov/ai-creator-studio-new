@@ -15,8 +15,42 @@ import {
   type WatchReason,
 } from "../_shared/miniapp-button.ts";
 import { continuePath, type MiniAppSrc } from "../_shared/miniapp-links.ts";
+import { decideReminderCourse, type EngagementTargeting } from "../_shared/engagement-targeting.ts";
 
 export type NudgeType = "inactive_3d" | "inactive_7d" | "stuck_lesson" | "module_complete";
+
+// ─────────────────────────── who gets a smart nudge (engagement_targeting) ───────────────────────────
+export type NudgeRunPlan = {
+  /** Run inactive_3d / inactive_7d. False when retire_smart_inactive_nudges is on (the drip covers days 3/7). */
+  inactive: boolean;
+  /** Skip an inactive candidate who has no published course (skip_closed_courses). */
+  skipClosed: boolean;
+};
+
+/** What this cron run does. module_complete always runs: it celebrates a module the student just finished. */
+export function nudgeRunPlan(t: EngagementTargeting): NudgeRunPlan {
+  const inactive = !t.retire_smart_inactive_nudges;
+  return { inactive, skipClosed: inactive && t.skip_closed_courses };
+}
+
+/** The cron result for a retired inactive nudge type — what used to be its {sent, failed, skipped, total}. */
+export function retiredResult() {
+  return { retired: true, by: "engagement_targeting.retire_smart_inactive_nudges", sent: 0, failed: 0, skipped: 0, total: 0 };
+}
+
+/**
+ * True when skip_closed_courses must drop this candidate: the course its /continue button would open (group
+ * course, else first enrollment) is closed and no enrolled course is published. Same rule as cron-engagement
+ * (_shared/engagement-targeting.ts decideReminderCourse); anything unknown (no course at all, a read failed →
+ * published null) keeps today's behaviour and sends.
+ */
+export function closedForNudge(
+  groupCourseId: string | null,
+  enrolled: readonly string[],
+  published: ReadonlyMap<string, boolean> | null,
+): boolean {
+  return decideReminderCourse(groupCourseId ?? enrolled[0] ?? null, true, published, enrolled).closed;
+}
 
 export const NUDGE_SRC: Record<NudgeType, MiniAppSrc> = {
   inactive_3d: "nudge_3d",
