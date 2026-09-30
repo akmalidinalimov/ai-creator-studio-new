@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -13,6 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { translateAuthError } from "@/lib/authErrors";
 import { mutate } from "@/lib/mutate";
+import { reportClientError } from "@/lib/beacon";
+import { parseInstagramHandle, isInstagramHandleTaken } from "@/lib/instagramHandle";
 import { Monitor, LogOut, ShieldOff } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { SUPPORTED_LANGUAGES, type LanguageCode } from "@/i18n";
@@ -56,6 +59,12 @@ export default function Settings() {
   const [timezone, setTimezone] = useState("UTC");
   const [goal, setGoal] = useState(5);
   const [instagram, setInstagram] = useState("");
+  // What the DB holds (normalized), so the handle is written only when it actually changed and a
+  // failed read can never turn an untouched, empty-looking field into a "clear my handle" write.
+  const [savedInstagram, setSavedInstagram] = useState("");
+  const [igError, setIgError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const location = useLocation();
   const [pw, setPw] = useState("");
   const [events, setEvents] = useState<AuthEvent[]>([]);
   const [digestOptIn, setDigestOptIn] = useState(true);
@@ -90,7 +99,9 @@ export default function Settings() {
       try {
         const { data: ig } = await (supabase as any)
           .from("profiles").select("instagram_username").eq("id", user.id).maybeSingle();
-        setInstagram((ig?.instagram_username as string) || "");
+        const handle = (ig?.instagram_username as string) || "";
+        setInstagram(handle);
+        setSavedInstagram(handle);
       } catch { /* column not there yet — leave the field empty */ }
       if (data) {
         setName(data.name || "");
@@ -111,23 +122,82 @@ export default function Settings() {
     })();
   }, [user]);
 
+  // The Profil tab's "Shaxsiy ma'lumotlar" row links to /settings#profile: bring the editor into view.
+  useEffect(() => {
+    if (location.hash !== "#profile") return;
+    const el = document.getElementById("profile");
+    if (el && typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "start" });
+  }, [location.hash]);
+
   const currentUa = typeof navigator !== "undefined" ? navigator.userAgent : "";
 
+  const igFail = (msg: string, beacon: string, extra: Record<string, unknown>, restSaved: boolean) => {
+    setIgError(msg);
+    toast.error(msg, restSaved ? { description: t("settings.instagramErrors.restSaved") } : undefined);
+    // A refused or lost handle costs the student Instagram points without them noticing — make every
+    // one DB-visible (client_error_events), not just a toast.
+    reportClientError({ type: "other", message: beacon, extra: { surface: "settings", ...extra } });
+  };
+
   const save = async () => {
-    if (!user) return;
-    // Guarded write: a 0-row (RLS-filtered) update must not read as "saved" — mutate() surfaces
-    // not_saved/error instead of a false success toast. Impersonation preview is a silent no-op.
-    const r = await mutate(() =>
-      supabase
-        .from("profiles")
-        .update({
-          name, last_name: lastName || null, timezone, weekly_goal_lessons: goal,
-          instagram_username: instagram.trim() || null,
-        } as any)
-        .eq("id", user.id),
-    );
-    if (r.ok) toast.success(t("settings.saved"));
-    else if (r.reason !== "impersonation_readonly") toast.error(r.message ? translateAuthError(t, r.message) : "Saqlab bo'lmadi");
+    if (!user || saving) return;
+    // 1. Check the handle BEFORE anything is written (same rules as the DB's instagram_handle_parse).
+    const parsed = parseInstagramHandle(instagram);
+    if (!parsed.ok) {
+      igFail(t(`settings.instagramErrors.${parsed.reason}`), "instagram_handle_rejected", { reason: parsed.reason }, false);
+      return;
+    }
+    setIgError(null);
+    setSaving(true);
+    try {
+      // 2. Name / timezone / goal. Guarded write: a 0-row (RLS-filtered) update must not read as
+      // "saved" — mutate() surfaces not_saved/error instead of a false success toast. Impersonation
+      // preview is a silent no-op.
+      const r = await mutate(() =>
+        supabase
+          .from("profiles")
+          .update({ name, last_name: lastName || null, timezone, weekly_goal_lessons: goal } as any)
+          .eq("id", user.id),
+      );
+      if (!r.ok) {
+        if (r.reason !== "impersonation_readonly") toast.error(r.message ? translateAuthError(t, r.message) : "Saqlab bo'lmadi");
+        return;
+      }
+
+      // 3. The handle, in its OWN write and only when it changed: a handle another account already
+      // has (unique index) must not throw away the edits saved above. The normalized value is sent,
+      // and the stored value is read back — the DB may still refuse it (it keeps the old handle and
+      // records 'instagram_handle_rejected'), and that must never be reported as "Saqlandi".
+      const wanted = parsed.handle ?? "";
+      if (wanted !== savedInstagram) {
+        const ig = await mutate<{ id: string; instagram_username: string | null }>(
+          () => (supabase as any).from("profiles").update({ instagram_username: parsed.handle }).eq("id", user.id),
+          "id,instagram_username",
+        );
+        if (!ig.ok) {
+          if (ig.reason === "impersonation_readonly") return;
+          if (isInstagramHandleTaken(ig)) {
+            igFail(t("settings.instagramErrors.taken"), "instagram_handle_taken", { code: ig.code ?? null }, true);
+          } else {
+            igFail(t("settings.instagramErrors.notSaved"), "instagram_handle_save_failed",
+              { reason: ig.reason, code: ig.code ?? null }, true);
+          }
+          return;
+        }
+        const stored = String(ig.row.instagram_username ?? "");
+        setSavedInstagram(stored);
+        setInstagram(stored);
+        if (stored !== wanted) {
+          igFail(t("settings.instagramErrors.notSaved"), "instagram_handle_not_stored", { stored_blank: stored === "" }, true);
+          return;
+        }
+      } else {
+        setInstagram(wanted);
+      }
+      toast.success(t("settings.saved"));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const updatePassword = async () => {
@@ -180,7 +250,7 @@ export default function Settings() {
       <div className="max-w-2xl space-y-6">
         <h1 className="text-3xl font-semibold tracking-tight">{t("settings.title")}</h1>
 
-        <Card className="p-5 space-y-4 shadow-soft">
+        <Card id="profile" className="p-5 space-y-4 shadow-soft scroll-mt-20">
           <h2 className="font-semibold">{t("settings.profile")}</h2>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5"><Label>{t("auth.firstName")}</Label><Input value={name} onChange={(e) => setName(e.target.value)} /></div>
@@ -190,8 +260,26 @@ export default function Settings() {
           <div className="space-y-1.5"><Label>{t("settings.timezone")}</Label><Input value={timezone} onChange={(e) => setTimezone(e.target.value)} /></div>
           <div className="space-y-1.5"><Label>{t("settings.weeklyGoal")}</Label><Input type="number" value={goal} onChange={(e) => setGoal(parseInt(e.target.value) || 0)} /></div>
           {/* "Instagram" is the same word in uz/ru/en, so it needs no translation key. */}
-          <div className="space-y-1.5"><Label>Instagram</Label><Input value={instagram} onChange={(e) => setInstagram(e.target.value)} placeholder="@username" /></div>
-          <Button onClick={save}>{t("settings.saveProfile")}</Button>
+          <div className="space-y-1.5">
+            <Label htmlFor="settings-instagram">Instagram</Label>
+            <Input
+              id="settings-instagram"
+              value={instagram}
+              onChange={(e) => { setInstagram(e.target.value); if (igError) setIgError(null); }}
+              placeholder="@username"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              aria-invalid={igError ? true : undefined}
+              aria-describedby="settings-instagram-help"
+            />
+            {igError ? (
+              <p id="settings-instagram-help" role="alert" className="text-xs font-medium text-destructive">{igError}</p>
+            ) : (
+              <p id="settings-instagram-help" className="text-xs text-muted-foreground">{t("settings.instagramHint")}</p>
+            )}
+          </div>
+          <Button onClick={save} disabled={saving}>{t("settings.saveProfile")}</Button>
         </Card>
 
         <HomeworkProfileSection />

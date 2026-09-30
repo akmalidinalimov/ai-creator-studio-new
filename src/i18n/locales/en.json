@@ -432,7 +432,18 @@
     "justNow": "just now",
     "minAgo": "{{n}}m ago",
     "hourAgo": "{{n}}h ago",
-    "dayAgo": "{{n}}d ago"
+    "dayAgo": "{{n}}d ago",
+    "instagramHint": "Challenge Instagram task points are credited to this handle. Enter your profile name, e.g. @yourname",
+    "instagramErrors": {
+      "not_profile_link": "That is a post or reel link, not a profile. Enter your Instagram name, e.g. @yourname",
+      "no_handle_in_link": "The link has no Instagram name in it. Enter your name, e.g. @yourname",
+      "empty": "Enter your Instagram name, e.g. @yourname",
+      "too_long": "An Instagram name is at most 30 characters",
+      "bad_chars": "An Instagram name has only Latin letters, digits, dots (.) and underscores (_). No spaces or Cyrillic",
+      "taken": "This Instagram name is already on another account. Check the name or contact an admin",
+      "notSaved": "Your Instagram name was not saved. Check it and save again",
+      "restSaved": "Your name and other details were saved."
+    }
   },
   "validation": {
     "required": "This field is required",
@@ -1280,6 +1291,8 @@
     "settingsLanguage": "Language",
     "settingsNotifications": "Notifications",
     "settingsBoardVisibility": "Visible on leaderboard",
+    "settingsPersonal": "Personal details",
+    "settingsPersonalHint": "Name, surname, Instagram",
     "boardVisibilityShown": "Shown on group boards",
     "boardVisibilityHidden": "Hidden from group boards",
     "boardVisibilityFailed": "Something went wrong — try again",

@@ -7,6 +7,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { ModuleCelebrationModal } from "@/components/ModuleCelebrationModal";
 import { tierFor, formatXp, type TierKey } from "@/lib/xp";
+import { reportClientError } from "@/lib/beacon";
+import { readStatsRow, displayRank } from "@/lib/studentStats";
 import {
   Hero,
   StatTile,
@@ -123,7 +125,7 @@ export default function Dashboard() {
     (async () => {
      try {
       const weekStartIso = tashkentWeekStartIso();
-      const [profRes, statsRes, enrollRes, weekXpRes, dailyRes, hwRes] = await Promise.all([
+      const [profRes, statsRes, enrollRes, weekXpRes, dailyRes, hwRes, courseRes] = await Promise.all([
         supabase.from("profiles").select("name, last_name").eq("id", user.id).maybeSingle(),
         // profile_stats(uid): total_xp/level/group_rank/badges_earned/current_streak are the SAME
         // underlying reads xp-data-sources.md pins (user_xp.total_xp, user_group_rating_xp-based
@@ -136,21 +138,60 @@ export default function Dashboard() {
         supabase.from("xp_events" as any).select("amount").eq("user_id", user.id).gte("created_at", weekStartIso),
         supabase.rpc("daily_goal_progress", { uid: user.id }),
         supabase.from("homework_submissions").select("score").eq("user_id", user.id),
+        // The course the group rating is scored by (same lookup as group_leaderboard / profile_stats;
+        // `groups` is admin-only under RLS) — needed to know whether the student has any rating points.
+        supabase.rpc("group_rating_course_id" as any, { uid: user.id }),
       ]);
       if (enrollRes.error) throw enrollRes.error;
+      // A failed or EMPTY profile_stats read (a failed caller gate returns 200 + []) is a failure: show
+      // the retry state and beacon it — never "0 XP · level 1 · Bronza" as if true, and never let it
+      // reach the celebration baseline below (a zero baseline makes the next good load celebrate a
+      // level-up and a tier-up that did not happen).
+      const statsRead = readStatsRow<any>(statsRes as any);
+      if (!statsRead.ok) {
+        reportClientError({ type: "other", message: "profile_stats_failed", extra: { code: statsRead.code, surface: "dashboard" } });
+        throw new Error(`profile_stats_failed: ${statsRead.code}`);
+      }
+      // Secondary reads degrade to an empty card, but never silently.
+      const failedReads = ([["profiles", profRes], ["xp_events", weekXpRes], ["daily_goal_progress", dailyRes], ["homework_submissions", hwRes]] as const)
+        .filter(([, r]) => (r as any)?.error)
+        .map(([name, r]) => `${name}:${(r as any).error.code || (r as any).error.message || "error"}`);
+      if (failedReads.length) reportClientError({ type: "other", message: "dashboard_read_failed", extra: { parts: failedReads, surface: "dashboard" } });
       const profile = profRes.data; const enrollments = enrollRes.data;
       const first = (profile?.name || "").trim();
       const last = ((profile as any)?.last_name || "").trim();
       const full = [first, last].filter(Boolean).join(" ");
       setDisplayName(full || first || t("dashboard.there"));
 
-      const sRow: any = Array.isArray(statsRes.data) ? statsRes.data[0] : statsRes.data;
+      const sRow: any = statsRead.row;
       const freshTotalXp = sRow?.total_xp ?? 0;
       const freshLevel = sRow?.level ?? 1;
+
+      // No rank without points. profile_stats numbers a group 1..N even when everyone is at 0 (ties
+      // broken by streak, then uuid), so a Challenge 6.0 student saw an arbitrary "#17" on day 1. The
+      // rank is shown only when the student's own RATING score (user_group_rating_xp over the group's
+      // course — the number the rank is computed from, not lifetime XP) is at least 1.
+      let rankScore: number | null = null;
+      if (sRow?.group_rank != null) {
+        if (courseRes.error) {
+          reportClientError({ type: "other", message: "dashboard_rank_score_failed", extra: { step: "course", code: courseRes.error.code ?? courseRes.error.message ?? null } });
+        } else if (typeof courseRes.data === "string") {
+          const { data: score, error: scoreErr } = await supabase
+            .rpc("user_group_rating_xp" as any, { _uid: user.id, _course_id: courseRes.data });
+          if (scoreErr || typeof score !== "number") {
+            reportClientError({ type: "other", message: "dashboard_rank_score_failed", extra: { step: "score", code: scoreErr?.code ?? scoreErr?.message ?? "not_a_number" } });
+          } else {
+            rankScore = score;
+          }
+        } else {
+          // A group without a course: profile_stats ranks that group by lifetime XP.
+          rankScore = freshTotalXp;
+        }
+      }
       setStats({
         totalXp: freshTotalXp,
         level: freshLevel,
-        groupRank: sRow?.group_rank ?? null,
+        groupRank: displayRank(sRow?.group_rank ?? null, rankScore),
         badges: sRow?.badges_earned ?? 0,
         streak: sRow?.current_streak ?? 0,
       });
