@@ -32,6 +32,16 @@ Deno.test("valid initData → ok with user + startParam", async () => {
   assertEquals(r.startParam, "hw");
 });
 
+Deno.test("allows_write_to_pm: surfaced only when the SIGNED user says true (Daily Tasks PR-7, C15)", async () => {
+  const authDate = String(Math.floor(Date.now() / 1000));
+  const yes = await signInitData({ user: JSON.stringify({ id: 5, allows_write_to_pm: true }), auth_date: authDate }, BOT);
+  assertEquals((await validateInitData(yes, BOT, 600)).user?.allows_write_to_pm, true);
+  const no = await signInitData({ user: JSON.stringify({ id: 5, allows_write_to_pm: false }), auth_date: authDate }, BOT);
+  assertEquals((await validateInitData(no, BOT, 600)).user?.allows_write_to_pm, undefined);
+  const str = await signInitData({ user: JSON.stringify({ id: 5, allows_write_to_pm: "true" }), auth_date: authDate }, BOT);
+  assertEquals((await validateInitData(str, BOT, 600)).user?.allows_write_to_pm, undefined);
+});
+
 Deno.test("initData WITH signature field → ok (signature stays in the HMAC data-check-string)", async () => {
   // Real modern clients (Telegram Desktop/mobile 2025+) include an Ed25519 `signature` field, and the
   // bot-token `hash` is computed over ALL fields except `hash` — signature INCLUDED. Mirror that here:
