@@ -1,4 +1,4 @@
-// PGlite harness for the WEEKLY TELEGRAM APPROVAL (Daily Tasks PR-9): migration 20260930200000 (the settings merge,
+// PGlite harness for the WEEKLY TELEGRAM APPROVAL (Daily Tasks PR-9): migration 20260930200010 (the settings merge,
 // the ledger, challenge_tasks_week_approval_tick, the claim / record RPCs, challenge_tasks_approve_week, the view, the
 // health and the watchdog's new alarms) plus the edge code that reads it -- challenge-tasks-worker's {mode:
 // 'week_approval'} run (runWorker -> week-approval.ts) and the bot's dtw: buttons (telegram-bot-webhook/week-approval.ts)
@@ -27,7 +27,10 @@
 //   A5 a go-live on Friday asks at once; A6 quiet hours (a go-live at 23:00 asks at 08:00); A7 approval.enabled = false;
 //   A8 a week with no task -> one «vazifa yo‘q» note; A9 claim edges: expired / nothing-to-approve rows skipped;
 //   A10 undelivered: a 429 then terminal errors -> 'challenge_week_approval_undelivered' once; the watchdog alarms
-//      'week_approval_undelivered' only after 2 h (never at night) and 'week_approval_silent' on a stale heartbeat.
+//      'week_approval_undelivered' only after 2 h (never at night) and 'week_approval_silent' on a stale heartbeat;
+//   A12 past days (review fix): a mid-week tap approves today and later only (past drafts in skipped_past, marked and
+//      left out of N in the confirm), the web path includes today, a week that is over approves nothing (bot and RPC),
+//      and a student's streak is unchanged through all of it; A11 invariants run last.
 //
 // CI NOTE: named *-check.ts (never *_test.ts) so CI's `deno test supabase/functions/` never collects it. Run it by path.
 // TEST INFRASTRUCTURE ONLY: this directory has no index.ts, so it is never deployed.
@@ -574,7 +577,7 @@ async function runPinned() {
   // ═══════════════════════════════ the WEEKLY APPROVAL against the engine ═══════════════════════════════
   const WMIG = lf(await Deno.readTextFile(here("../../../migrations/20260930152010_challenge_daily_tasks_worker.sql")));
   const AMIG_PATH = Deno.env.get("WEEK_MIG_PATH");
-  const AMIG = lf(await Deno.readTextFile(AMIG_PATH ?? here("../../../migrations/20260930200000_challenge_tasks_week_approval.sql")));
+  const AMIG = lf(await Deno.readTextFile(AMIG_PATH ?? here("../../../migrations/20260930200010_challenge_tasks_week_approval.sql")));
   const PR5_WATCHDOG_MD5 = "ab091a8a4dfba493296490c558d6d198"; // live md5(replace(prosrc, E'\r', '')) read 2026-09-30 (= PR-5's _new_pin)
   const PINNED_NEW = /_new_pin constant text := '([0-9a-fPENDING_NEW]+)'/.exec(AMIG)?.[1] ?? "";
 
@@ -617,7 +620,7 @@ async function runPinned() {
     const e = await tx(db, AMIG);
     const m = await wdMd5();
     console.log(`     challenge_tasks_watchdog md5 after the rewrite: ${m} (pinned: ${PINNED_NEW})`);
-    ok("A0b 20260930200000 applies (prerequisites, tables, functions, rewrite, grants, setting, cron, self-test, audit)", e === null, e);
+    ok("A0b 20260930200010 applies (prerequisites, tables, functions, rewrite, grants, setting, cron, self-test, audit)", e === null, e);
     ok("A0c the rewritten watchdog md5 is the pinned one", m === PINNED_NEW, { m, PINNED_NEW });
     const after = await settings();
     const { approval, ...rest } = after;
@@ -1114,6 +1117,98 @@ async function runPinned() {
     const wd2 = await watchdog();
     ok("A10h a heartbeat older than 20 minutes -> 'week_approval_silent'", (wd2.alarms as string[]).includes("week_approval_silent") &&
       !(wd2.alarms as string[]).includes("week_approval_watch_crashed"), wd2.alarms);
+  }
+
+  // ───────────── A12. past days are never approved in bulk (review fix) ─────────────
+  // PR-5 never posts a past task date (tick (0) skips it, (a) posts only today's), and challenge_task_streak_current
+  // walks EVERY approved date: a past day approved after the fact is a miss for every student. So the week button (bot
+  // and web) approves today and later only; past drafts come back in skipped_past[]; a week already over approves nothing.
+  console.log("A12. past days: a mid-week tap approves today and later only, a past week approves nothing, streaks unchanged");
+  {
+    at("2026-12-10T10:00:30");
+    const d11 = await addTask("2026-12-11", { title: "Juma 11" });
+    const d14 = await addTask("2026-12-14", { title: "Dushanba 14" });
+    const d15 = await addTask("2026-12-15", { title: "Seshanba 15" });
+    const d16 = await addTask("2026-12-16", { title: "Chorshanba 16" });
+    const d17 = await addTask("2026-12-17", { title: "Payshanba 17" });
+    const d18 = await addTask("2026-12-18", { title: "Juma 18" });
+    // Fri 11 and Wed 16 approved one by one (the calendar's own path) by AD: the guard stamps AD
+    const e0 = await tx(db, `select set_config('request.jwt.claim.sub', '${AD}', true);
+      update challenge_tasks set status = 'approved' where id = any('{${d11},${d16}}'::bigint[]);`);
+    if (e0) throw new Error(`A12 setup: ${e0}`);
+    const S1 = ST(1);
+    for (const [id, day] of [[d11, "2026-12-11"], [d16, "2026-12-16"]] as const) {
+      await db.query(`insert into challenge_task_submissions (task_id, user_id, group_id, source, attributed_via, status, submitted_at,
+                                                              last_item_at, late_days, accepted_at)
+                      values ($1, $2, $3, 'admin', 'admin', 'accepted', $4::timestamptz, $4::timestamptz, 0, $4::timestamptz)`,
+        [id, S1, G1, `${day}T10:00:00+05:00`]);
+    }
+    const streak = async () => Number((await one(db, "select challenge_task_streak_current($1, $2) s", [S1, C6])).s);
+    at("2026-12-16T15:00:30"); // Wednesday 16 December 15:00: Mon 14 and Tue 15 went by as drafts (never posted)
+    const s0 = await streak();
+    ok("A12a before: the student's streak is 2 (Fri 11 + Wed 16, both on time)", s0 === 2, s0);
+    const msg = { chat: 1011, id: 777001 };
+    const i = since();
+    await tap("dtw:a:20261214", 1011, AD, msg);
+    const conf = String(sentFrom(i, "editMessageText")[0]?.payload.text ?? "");
+    ok("A12b dtw:a mid-week: «Shu hafta», N counts today and later only (Thu 17 + Fri 18 = 2), past days marked and left out",
+      conf.startsWith("📅 <b>Shu hafta vazifalari") && conf.includes("❓ <b>2 ta vazifa tasdiqlansinmi?</b>") &&
+      conf.includes("<b>Du, 14-dekabr</b> · 📝 umumiy · 5 ball · ⌛ o‘tgan kun") &&
+      /O‘tgan kunlardagi 2 ta qoralama kiritilmaydi/.test(conf) && !conf.includes("<b>Pa, 17-dekabr</b> · 📝 umumiy · 5 ball · ⌛"), conf);
+    const j = since();
+    const au0 = (await audits("challenge_week_approved")).length;
+    await tap("dtw:y:20261214", 1011, AD, msg);
+    const st = await q(db, "select id, status, approved_by from challenge_tasks where id = any($1::bigint[]) order by id",
+      [`{${[d14, d15, d17, d18].join(",")}}`]);
+    const byId = (id: number) => st.find((r) => Number(r.id) === id);
+    ok("A12c dtw:y mid-week: Thu 17 + Fri 18 approved (by AD); Mon 14 + Tue 15 (past) stay drafts",
+      byId(d17)?.status === "approved" && byId(d18)?.status === "approved" && byId(d17)?.approved_by === AD &&
+      byId(d14)?.status === "draft" && byId(d15)?.status === "draft", st);
+    const au = (await audits("challenge_week_approved")).at(-1);
+    ok("A12d audited with the past days in skipped_past (with the reason), never as failures",
+      (await audits("challenge_week_approved")).length === au0 + 1 && au?.details.approved === 2 && au?.details.failed_count === 0 &&
+      au?.details.skipped_past_count === 2 && au?.details.past_week === false &&
+      (au?.details.skipped_past ?? []).map((x: Row) => x.date).join(",") === "2026-12-14,2026-12-15" &&
+      /o‘tgan kun/.test(au?.details.skipped_past?.[0]?.reason ?? ""), au?.details);
+    const res = String(sentFrom(j, "editMessageText")[0]?.payload.text ?? "");
+    ok("A12e the result: «Shu hafta vazifalari: 2/2 tasdiqlandi» + the past days listed as not approved (the retro hint)",
+      toasts.at(-1) === "✅ 2 ta tasdiqlandi" && res.startsWith("✅ <b>Shu hafta vazifalari: 2/2 tasdiqlandi</b>") &&
+      res.includes("• Du, 14-dekabr — «Dushanba 14»") && res.includes("• Se, 15-dekabr — «Seshanba 15»") && res.includes("retro"),
+      { toast: toasts.at(-1), res });
+    const s1 = await streak();
+    ok("A12f the student's streak is unchanged (2)", s1 === 2, s1);
+
+    // today counts: Tuesday 22 December 10:00, drafts Mon 21 / Tue 22 / Wed 23 -> the web approves Tue 22 + Wed 23
+    const e21 = await addTask("2026-12-21"), e22 = await addTask("2026-12-22"), e23 = await addTask("2026-12-23");
+    at("2026-12-22T10:00:30");
+    const web = await claimsAs({ sub: AD2, role: "authenticated" }, "authenticated",
+      "select challenge_tasks_approve_week($1::date, null, $2::uuid) r", ["2026-12-21", C6]);
+    const wr = (web.rows?.[0]?.r ?? {}) as Row;
+    const s2 = await q(db, "select id, status from challenge_tasks where id = any($1::bigint[]) order by id", [`{${[e21, e22, e23].join(",")}}`]);
+    ok("A12g the web, mid-week: today (Tue 22) + Wed 23 approved, Mon 21 in skipped_past, nothing actionable left",
+      web.err === null && wr.approved === 2 && wr.failed?.length === 0 && wr.skipped_past?.length === 1 &&
+      wr.skipped_past[0].date === "2026-12-21" && wr.past_week === false && wr.drafts_left === 0 &&
+      s2.map((r) => r.status).join(",") === "draft,approved,approved", { err: web.err, wr, s2 });
+
+    // a week long over (the old ask of 26 October still has its ✅): the buttons refuse, the RPC approves nothing
+    const k = since();
+    const n0 = (await audits("challenge_week_approved")).length;
+    await tap("dtw:a:20261026", 1011, AD, msg);
+    await tap("dtw:y:20261026", 1011, AD, msg);
+    const e = sentFrom(k, "editMessageText");
+    ok("A12h a past week's ✅ / Ha: «Bu hafta o‘tib ketdi», no approval call, the message loses its approve button",
+      toasts.slice(-2).every((t) => t === "⌛ Bu hafta o‘tib ketdi") && (await audits("challenge_week_approved")).length === n0 &&
+      e.length === 2 && e.every((x) => !JSON.stringify(x.payload.reply_markup).includes("dtw:")) &&
+      String(e[0].payload.text).startsWith("⌛ <b>Bu hafta o‘tib ketdi"), { toasts: toasts.slice(-2), e: e.map((x) => x.payload) });
+    ok("A12i ... DB-visible once (per admin, week and day)", (await audits("challenge_week_approval_past_week")).length === 1);
+    const svc = await claimsAs({ role: "service_role" }, "service_role", "select challenge_tasks_approve_week($1::date, $2::uuid) r",
+      ["2026-10-26", AD]);
+    const sr = (svc.rows?.[0]?.r ?? {}) as Row;
+    ok("A12j the RPC on a past week: approved 0, past_week, the draft in skipped_past -- and it is still a draft",
+      svc.err === null && sr.approved === 0 && sr.past_week === true && sr.skipped_past?.length === 1 && sr.failed?.length === 0 &&
+      await count(db, "select count(*) n from challenge_tasks where task_date = '2026-10-26' and status = 'draft'") === 1, { err: svc.err, sr });
+    const s3 = await streak();
+    ok("A12k after all of it the student's streak is still 2", s3 === 2, s3);
   }
 
   // ───────────── A11. invariants ─────────────

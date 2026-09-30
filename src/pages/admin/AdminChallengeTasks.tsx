@@ -13,7 +13,7 @@ import {
 import { ChallengePlanImportDialog } from "@/components/admin/ChallengePlanImportDialog";
 import { ChallengeTaskResults } from "@/components/admin/ChallengeTaskResults";
 import { ChallengeWeekApprove } from "@/components/admin/ChallengeWeekApprove";
-import { weekFromSearch } from "@/lib/weekApproval";
+import { weekDraftCounts, weekFromSearch } from "@/lib/weekApproval";
 import {
   addDays, inWindow, isoWeekday, MONTH_UZ, readCalendarConfig, requiresSummary, tashkentToday, WEEKDAY_SHORT_UZ,
   type CalendarConfig, type TaskSource,
@@ -323,8 +323,10 @@ export default function AdminChallengeTasks() {
                       <span>{prettyDate(monday)} — {prettyDate(addDays(monday, 6))}</span>
                       {monday === focusWeek && <Badge variant="outline" className="text-[10px]">Botdagi havola</Badge>}
                       <span className="ml-auto" />
+                      {/* today-and-later drafts only: a past day is never approved from the week button (never posted) */}
                       <ChallengeWeekApprove weekStart={monday} courseId={courseId}
-                        drafts={list.filter((t) => t.status === "draft").length} onDone={() => void reload()} />
+                        drafts={weekDraftCounts(list, today).open} pastDrafts={weekDraftCounts(list, today).past}
+                        onDone={() => void reload()} />
                     </div>
                     {list.length === 0 && <p className="px-4 py-3 text-xs text-muted-foreground">Bu haftada vazifa yo‘q.</p>}
                     <table className="w-full text-sm min-w-[760px]">

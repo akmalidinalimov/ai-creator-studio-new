@@ -13,13 +13,21 @@
 // Refusals and failures are DB-visible: 'challenge_week_approval_refused' (once per clicker per day) and
 // 'challenge_week_approval_failed'. Every approval writes 'challenge_week_approved' (SQL).
 //
+// PAST DAYS (review fix): an old ask keeps its ✅ after the week starts, but a past day is never approved from here --
+// PR-5 never posts it, and an approved-but-never-posted day is a miss in every student's streak. The view says what
+// today is (SQL now(), Tashkent): the confirm step counts today-and-later drafts only and marks past days; a week whose
+// Sunday is over answers «Bu hafta o‘tib ketdi» without calling the approval ('challenge_week_approval_past_week', once
+// per admin, week and day) and loses its approve button. challenge_tasks_approve_week enforces the same rule itself
+// (past drafts come back in skipped_past), so a view that fails to load can never approve a past day either.
+//
 // The text is rendered by _shared/week-approval.ts from public.challenge_task_week_view -- the same renderer the worker
 // sent the ask with. parse/render are pure and unit-tested (week-approval.test.ts); the whole flow runs against the
 // real SQL in _challenge/testing/daily-tasks-week-approval-check.ts.
 import { logHealth, logHealthOnce } from "../_shared/edge.ts";
 import { type SendResultOutcome, sendTelegramWithResult } from "../_shared/telegram-send.ts";
 import {
-  type ApproveResult, parseDtwCallback, renderAsk, renderConfirm, renderResult, type Rendered, toWeekView, type WeekView,
+  type ApproveResult, parseDtwCallback, type PastSkip, renderAsk, renderConfirm, renderResult, type Rendered, toWeekView,
+  weekCounts, type WeekView, weekPhase,
 } from "../_shared/week-approval.ts";
 
 export { parseDtwCallback } from "../_shared/week-approval.ts";
@@ -51,6 +59,8 @@ export const TOAST = {
   stale: "Bu tugma eskirgan",
   error: "⚠️ Xato — qayta urinib ko‘ring",
   already: "Allaqachon tasdiqlangan",
+  pastWeek: "⌛ Bu hafta o‘tib ketdi",
+  pastDays: "⌛ O‘tgan kunlar bu yerdan tasdiqlanmaydi",
   back: "↩️",
 } as const;
 
@@ -74,9 +84,21 @@ export function toApproveResult(raw: unknown): ApproveResult | null {
     approved: Number(o.approved) || 0,
     already_approved: Number(o.already_approved) || 0,
     failed: Array.isArray(o.failed) ? o.failed as ApproveResult["failed"] : [],
+    skipped_past: Array.isArray(o.skipped_past)
+      ? (o.skipped_past as unknown[]).filter((p): p is PastSkip => !!p && typeof p === "object")
+      : [],
+    past_week: o.past_week === true,
     drafts_left: Number(o.drafts_left) || 0,
     actor_name: typeof o.actor_name === "string" ? o.actor_name : null,
   };
+}
+
+/** The toast after an approval call. */
+export function approveToast(r: ApproveResult): string {
+  const past = r.skipped_past?.length ?? 0;
+  if (r.approved === 0 && r.failed.length === 0) return r.past_week ? TOAST.pastWeek : past > 0 ? TOAST.pastDays : TOAST.already;
+  if (r.failed.length) return `⚠️ ${r.approved} ta tasdiqlandi, ${r.failed.length} ta xato`;
+  return `✅ ${r.approved} ta tasdiqlandi`;
 }
 
 export function createWeekApproval(deps: WeekApprovalDeps) {
@@ -151,21 +173,40 @@ export function createWeekApproval(deps: WeekApprovalDeps) {
       return;
     }
 
+    // a week that is over: nothing to approve from here (an old ask / confirm still carries the buttons) -- say so, drop
+    // the approve button from this copy, and leave a DB-visible trace (graceful is not silent)
+    const actorId: string = clicker.id;
+    const { week, action } = cb;
+    const pastWeek = async (v: WeekView) => {
+      await logHealthOnce(admin, "challenge_week_approval_past_week", `${actorId}:${week}`, {
+        week, actor: actorId, tg_user_id: cq?.from?.id ?? null, action, today: v.today ?? null,
+        past_drafts: weekCounts(v).pastDrafts,
+      }, { source: "telegram-bot-webhook", actorUserId: actorId });
+      await deps.answerCallback(cq.id, TOAST.pastWeek);
+      await edit(admin, chatId, messageId, renderAsk(v, "ask"), "challenge_week_approval_past_week");
+    };
+
     if (cb.action === "a" || cb.action === "b") {
       const v = await loadView(admin, cb.week);
       if (!v) {
         await deps.answerCallback(cq.id, TOAST.error);
         return;
       }
-      const drafts = v.tasks.filter((t) => t.status === "draft").length;
-      // nothing left to approve (approved on the web, or by another admin): the listing without the approve button
+      if (cb.action === "a" && weekPhase(v) === "past") return await pastWeek(v);
+      // today-and-later drafts only; nothing left (approved on the web / by another admin, or only past days remain):
+      // the listing without the approve button
+      const { drafts, pastDrafts } = weekCounts(v);
       const r = cb.action === "a" && drafts > 0 ? renderConfirm(v) : renderAsk(v, "ask");
-      await deps.answerCallback(cq.id, cb.action === "a" && drafts === 0 ? TOAST.already : undefined);
+      await deps.answerCallback(cq.id, cb.action === "a" && drafts === 0 ? (pastDrafts > 0 ? TOAST.pastDays : TOAST.already) : undefined);
       await edit(admin, chatId, messageId, r, cb.action === "a" ? "challenge_week_approval_confirm" : "challenge_week_approval_back");
       return;
     }
 
-    // dtw:y -- the approval itself, as the REAL clicker (the SQL re-checks the admin role and stamps approved_by)
+    // dtw:y -- the approval itself, as the REAL clicker (the SQL re-checks the admin role and stamps approved_by, and
+    // approves today-and-later drafts only). A week already over is refused before the call; when the view cannot be
+    // read the call still goes ahead -- the SQL is the guard.
+    const pre = await loadView(admin, cb.week);
+    if (pre && weekPhase(pre) === "past") return await pastWeek(pre);
     const { data, error } = await admin.rpc("challenge_tasks_approve_week", { _week_start: cb.week, _actor: clicker.id });
     const res = error ? null : toApproveResult(data);
     if (!res) {
@@ -175,8 +216,7 @@ export function createWeekApproval(deps: WeekApprovalDeps) {
       await deps.answerCallback(cq.id, approveErrorToast(error));
       return;
     }
-    const nothing = res.approved === 0 && res.failed.length === 0;
-    await deps.answerCallback(cq.id, nothing ? TOAST.already : res.failed.length ? `⚠️ ${res.approved} ta tasdiqlandi, ${res.failed.length} ta xato` : `✅ ${res.approved} ta tasdiqlandi`);
+    await deps.answerCallback(cq.id, approveToast(res));
     const v = (await loadView(admin, cb.week)) ?? toWeekView(null, cb.week);
     const r = renderResult(v, res, res.actor_name ?? clicker.name ?? null);
     await edit(admin, chatId, messageId, r, "challenge_week_approval_result");

@@ -2,6 +2,10 @@
 -- runs only while platform_settings.challenge_tasks is ACTIVE (enabled = false today -> a heartbeat stamp only). Go-live
 -- is PR-8; from then on nothing extra is needed.
 --
+-- Re-issued in slot 20260930200010 after review (20260930200000 was never applied; this file replaces it whole): the
+-- week approval NEVER approves a past-dated draft (d8 below) -- PR-5 never posts a past date, and a day approved after
+-- the fact is a miss in every student's streak.
+--
 -- ═══ THE OWNER'S PLAN (verbatim intent) ═══
 -- Every task sits in the calendar as a DRAFT (a draft is never posted). Every week the bot DMs the admins, on Thursday
 -- 12:00: «Keyingi hafta vazifalari (5–9 oktabr)» -- each day's weekday + date, title, type, points and what a student
@@ -38,9 +42,12 @@
 --    of the challenge course(s) ONE BY ONE through the existing trg_challenge_tasks_guard (scope, window, requires, post
 --    length; it stamps approved_by := auth.uid()) -- the service-role path sets request.jwt.claims (and the legacy
 --    request.jwt.claim.sub) LOCALLY to the actor for the loop and restores them after, so approved_by is the real admin.
---    Per-row exception capture: {approved, already_approved, failed:[{date,title,error}], drafts_left}. Serialized per
---    week (advisory lock): a double tap / a second admin gets approved 0 + already_approved N. Audit:
---    admin_actions 'challenge_week_approved' (actor, via, week, counts, failures) on every call.
+--    Per-row exception capture: {approved, already_approved, failed:[{date,title,error}], skipped_past:[{date,title,
+--    reason}], past_week, drafts_left}. ONLY drafts dated TODAY or later (Tashkent) are approved (d8): a past-dated draft
+--    is returned in skipped_past with a reason, never approved, never a failure; a week whose Sunday is over approves
+--    nothing (past_week). Serialized per week (advisory lock): a double tap / a second admin gets approved 0 +
+--    already_approved N. Audit: admin_actions 'challenge_week_approved' (actor, via, week, counts, failures, skipped
+--    past days) on every call.
 -- 5. challenge_task_week_view(week, course) (service_role): the week as the renderer needs it (tasks with points from
 --    challenge_task_post_context -- the SAME numbers the post shows --, requires, the configured days with no task,
 --    counts, ledger). challenge_task_week_edits_record(): the bot records the edits of the other admins' copies.
@@ -78,6 +85,14 @@
 -- d6 Cron every 5 minutes (not every minute): an ask at 12:00-12:05 is on time; the heartbeat threshold is 20 minutes.
 -- d7 A web approval does not edit the Telegram copies (the web has no sender); a later tap on a stale copy answers
 --    «allaqachon tasdiqlangan» and edits that copy to the result.
+-- d8 (review fix) PAST DAYS ARE NEVER APPROVED IN BULK. An old ask keeps its ✅ after the week starts, and the web shows
+--    the week button on past weeks. PR-5 never posts a past task date (tick (0) skips it, (a) posts task_date = today
+--    only), and challenge_task_streak_current / _recompute walk EVERY approved date -- so a day approved after the fact
+--    was never posted and becomes a miss for every student (reproduced on PGlite: streak 2 -> 1). The RPC approves only
+--    task_date >= challenge_task_local_date(now()) (today's draft is still posted late the same day by PR-5 (a)); past
+--    drafts come back in skipped_past with «o‘tgan kun» and stay drafts. A deliberate retro day is the calendar's own
+--    one-task path (source 'retro' + the manual post link). The view returns today + a past flag per task, so the bot's
+--    confirm / listing mark past days and leave them out of N, and a week that is over answers «Bu hafta o‘tib ketdi».
 --
 -- ═══ KILL-SWITCHES ═══
 -- platform_settings.challenge_tasks.approval.enabled = false (asks / reminders / notes stop; the web button still works);
@@ -92,7 +107,8 @@
 -- 'challenge_week_approval_failed'; health + the two watchdog alarms above.
 --
 -- SELF-TEST: non-mutating only -- parser + week-plan fixtures (pure), catalog / RLS / ACL / cron / the watchdog rewrite,
--- and read-only calls of the view and the health (shape). It never calls the tick, the approve RPC (it would need a JWT
+-- the approve RPC's past-day filter (its text; the behaviour is the harness's), and read-only calls of the view and the
+-- health (shape). It never calls the tick, the approve RPC (it would need a JWT
 -- AND would approve), a claim or a record, and never sends.
 -- PGlite harness: supabase/functions/_challenge/testing/daily-tasks-week-approval-check.ts (#218 + PR-1 + PR-2 + PR-3 +
 -- PR-5 + THIS file; the tick on a pinned clock, the RPC under real JWT claims, the worker's week_approval run and the
@@ -328,9 +344,11 @@ set search_path = public
 as $fn$
 -- Everything the ask / confirm / result messages render (supabase/functions/_shared/week-approval.ts). Points come from
 -- challenge_task_post_context -- the SAME numbers the 09:00 post will show. missing = configured task days inside the
--- window with no live task (for some course of the scope). Read-only.
+-- window with no live task (for some course of the scope). today (Tashkent) + past per task: a past day is never
+-- approved from the week button (d8), so the renderer marks it and leaves it out of N. Read-only.
 declare
   _cfg jsonb := public.challenge_tasks_config();
+  _today date := public.challenge_task_local_date(now());
   _courses uuid[];
   _tasks jsonb;
   _missing jsonb;
@@ -344,7 +362,7 @@ begin
            'id', t.id, 'course_id', t.course_id, 'course_title', c.title, 'date', t.task_date,
            'weekday', extract(isodow from t.task_date)::int, 'type', t.type, 'title', t.title, 'status', t.status,
            'points', ctx.points, 'requires', t.requires, 'accepts', to_jsonb(t.accepts), 'min_text_chars', t.min_text_chars,
-           'min_duration_sec', t.min_duration_sec)
+           'min_duration_sec', t.min_duration_sec, 'past', t.task_date < _today)
            order by t.task_date, c.title, t.id), '[]'::jsonb)
     into _tasks
     from public.challenge_tasks t
@@ -366,7 +384,7 @@ begin
     left join public.profiles p on p.id = w.approved_by
    where w.week_start = _week_start;
   return jsonb_build_object(
-    'week_start', _week_start, 'week_end', _week_start + 6, 'course_ids', to_jsonb(_courses),
+    'week_start', _week_start, 'week_end', _week_start + 6, 'today', _today, 'course_ids', to_jsonb(_courses),
     'multi_course', cardinality(_courses) > 1, 'tasks', _tasks, 'missing', _missing,
     'counts', public.challenge_task_week_counts(_week_start, _cfg, _course_id),
     'post_time', coalesce(_cfg->>'post_time', '09:00'),
@@ -680,12 +698,15 @@ volatile
 security definer
 set search_path = public
 as $fn$
--- Approves every DRAFT task of the Monday.._week_start+6 week (challenge course(s), or _course_id) one by one through
--- trg_challenge_tasks_guard, which validates each and stamps approved_by := auth.uid(). A row the guard refuses is
--- reported in failed[] and the others still go through. See the file header §4 for who may call it.
+-- Approves every DRAFT task dated TODAY OR LATER (Tashkent) of the Monday.._week_start+6 week (challenge course(s), or
+-- _course_id) one by one through trg_challenge_tasks_guard, which validates each and stamps approved_by := auth.uid().
+-- A row the guard refuses is reported in failed[] and the others still go through. A PAST-dated draft is never
+-- approved here (d8: PR-5 never posts it, and an approved-but-never-posted day breaks every student's streak): it is
+-- returned in skipped_past[] with the reason and stays a draft. See the file header §4 for who may call it.
 declare
   _role text := coalesce(auth.role(), '');
   _uid uuid := auth.uid();
+  _today date := public.challenge_task_local_date(now());
   _who uuid;
   _via text;
   _courses uuid[];
@@ -694,6 +715,8 @@ declare
   _t record;
   _approved bigint[] := '{}';
   _failed jsonb := '[]'::jsonb;
+  _past jsonb;
+  _past_week boolean;
   _already int;
   _left int;
   _old_claims text;
@@ -726,9 +749,19 @@ begin
   -- one approval of a week at a time: a double tap or a second admin waits, then finds nothing left to approve
   perform pg_advisory_xact_lock(hashtext('challenge_tasks_approve_week:' || _week_start::text));
 
+  -- d8: only today and later; a past-dated draft is reported, never approved (a same-day approval is still posted by
+  -- PR-5's tick (a), which queues every approved task of TODAY from post_time on)
+  _past_week := _week_start + 6 < _today;
   select coalesce(array_agg(t.id order by t.task_date, t.id), '{}') into _ids
     from public.challenge_tasks t
-   where t.course_id = any(_courses) and t.task_date between _week_start and _week_start + 6 and t.status = 'draft';
+   where t.course_id = any(_courses) and t.task_date between _week_start and _week_start + 6 and t.status = 'draft'
+     and t.task_date >= _today;
+  select coalesce(jsonb_agg(jsonb_build_object('task_id', t.id, 'date', t.task_date, 'title', t.title, 'course_id', t.course_id,
+                                               'reason', 'o‘tgan kun — kerak bo‘lsa, kalendarda alohida (retro) tasdiqlang')
+                            order by t.task_date, t.id), '[]'::jsonb) into _past
+    from public.challenge_tasks t
+   where t.course_id = any(_courses) and t.task_date between _week_start and _week_start + 6 and t.status = 'draft'
+     and t.task_date < _today;
   _already := (select count(*)::int from public.challenge_tasks t
                 where t.course_id = any(_courses) and t.task_date between _week_start and _week_start + 6
                   and t.status = 'approved');
@@ -758,13 +791,16 @@ begin
     perform set_config('request.jwt.claim.sub', coalesce(_old_sub, ''), true);
   end if;
 
+  -- drafts_left = what the button can still approve (today and later); the past drafts are counted apart
   _left := (select count(*)::int from public.challenge_tasks t
-             where t.course_id = any(_courses) and t.task_date between _week_start and _week_start + 6 and t.status = 'draft');
+             where t.course_id = any(_courses) and t.task_date between _week_start and _week_start + 6 and t.status = 'draft'
+               and t.task_date >= _today);
   _name := (select p.name::text from public.profiles p where p.id = _who);
   _res := jsonb_build_object('ok', true, 'week_start', _week_start, 'via', _via, 'approved', cardinality(_approved),
                              'already_approved', _already, 'failed', _failed, 'drafts_left', _left,
-                             'total', _already + cardinality(_approved) + _left, 'task_ids', to_jsonb(_approved),
-                             'actor', _who, 'actor_name', _name, 'course_ids', to_jsonb(_courses));
+                             'skipped_past', _past, 'past_week', _past_week, 'today', _today,
+                             'total', _already + cardinality(_approved) + _left + jsonb_array_length(_past),
+                             'task_ids', to_jsonb(_approved), 'actor', _who, 'actor_name', _name, 'course_ids', to_jsonb(_courses));
 
   insert into public.challenge_task_week_approvals as w (week_start, course_ids, approved_at, approved_by, last_result)
   values (_week_start, _courses, case when cardinality(_approved) > 0 then now() end,
@@ -777,6 +813,7 @@ begin
   values (_who, 'challenge_week_approved', jsonb_build_object(
     'week', _week_start, 'via', _via, 'approved', cardinality(_approved), 'already_approved', _already,
     'failed', _failed, 'failed_count', jsonb_array_length(_failed), 'drafts_left', _left, 'task_ids', to_jsonb(_approved),
+    'skipped_past', _past, 'skipped_past_count', jsonb_array_length(_past), 'past_week', _past_week, 'today', _today,
     'course_ids', to_jsonb(_courses), 'noop', cardinality(_approved) = 0 and jsonb_array_length(_failed) = 0, 'at', now()));
   return _res;
 end
@@ -893,10 +930,10 @@ $fn$;
 do $$
 declare
   _pin constant text := 'ab091a8a4dfba493296490c558d6d198';       -- live md5(prosrc), read 2026-09-30 (= PR-5's _new_pin)
-  _new_pin constant text := '4e486bae40cdcf9078536241822d04e2';   -- the rewritten body (PGlite harness + an independent recompute)
+  _new_pin constant text := '3bc7d4e73b1c3d0c2b959a7ae16e378c';   -- the rewritten body (PGlite harness + an independent recompute on the live body)
   _anchor constant text := E'  select coalesce(array_agg(distinct a), ''{}'') into _alarms from unnest(_alarms) a;\n';
   _block constant text :=
-       E'  -- 20260930200000 (Daily Tasks PR-9): the weekly Telegram approval, watched from here (independent of its tick and the worker)\n'
+       E'  -- 20260930200010 (Daily Tasks PR-9): the weekly Telegram approval, watched from here (independent of its tick and the worker)\n'
     || E'  begin\n'
     || E'    _g := public.challenge_task_week_approval_health(_at);\n'
     || E'    if coalesce((_g->>''silent'')::boolean, false) then\n'
@@ -1149,8 +1186,14 @@ begin
   -- (h) read-only calls answer their shape (the view of next week, the health now)
   _v := public.challenge_task_week_view((public.challenge_task_week_plan(now(), '{}'::jsonb)->>'week_start')::date, null);
   if jsonb_typeof(_v->'tasks') is distinct from 'array' or jsonb_typeof(_v->'counts') is distinct from 'object'
-     or _v->>'admin_url' !~ '^https://www\.aicreator\.academy/admin/challenge/tasks\?week=[0-9]{4}-[0-9]{2}-[0-9]{2}$' then
+     or _v->>'admin_url' !~ '^https://www\.aicreator\.academy/admin/challenge/tasks\?week=[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+     or (_v->>'today') is distinct from public.challenge_task_local_date(now())::text then
     _bad := _bad || ('view_shape:' || left(_v::text, 200));
+  end if;
+  -- (i) d8: the approve RPC that landed is the one that never approves a past-dated draft (behaviour: the PGlite harness)
+  _src := (select prosrc from pg_proc where oid = 'public.challenge_tasks_approve_week(date, uuid, uuid)'::regprocedure);
+  if position('and t.task_date >= _today;' in _src) = 0 or position('''skipped_past'', _past' in _src) = 0 then
+    _bad := _bad || 'approve_past_filter'::text;
   end if;
   _h := public.challenge_task_week_approval_health(now());
   if jsonb_typeof(_h->'undelivered_alarm') is distinct from 'boolean' or jsonb_typeof(_h->'silent') is distinct from 'boolean' then

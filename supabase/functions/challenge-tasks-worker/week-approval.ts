@@ -1,5 +1,5 @@
 // challenge-tasks-worker {mode: 'week_approval'} (Daily Tasks PR-9): sends the weekly approval ask / reminder / "no
-// tasks" note that challenge_tasks_week_approval_tick() queued (migration 20260930200000). Every decision is SQL's:
+// tasks" note that challenge_tasks_week_approval_tick() queued (migration 20260930200010). Every decision is SQL's:
 //   challenge_task_week_msg_claim   leases due messages (never in quiet hours; expired / nothing-left rows skipped)
 //   challenge_task_week_view        the week, rendered by _shared/week-approval.ts (the bot re-renders the same view)
 //   challenge_task_week_msg_record  the outcome (message_id kept: the bot edits every copy after an approval); when a

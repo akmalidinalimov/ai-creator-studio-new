@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { approveErrorMessage, approveSummary, parseApproveResult, weekFromSearch } from "@/lib/weekApproval";
+import { approveErrorMessage, approveSummary, parseApproveResult, weekDraftCounts, weekFromSearch } from "@/lib/weekApproval";
 
 // Daily Tasks PR-9, the web side of the weekly approval: the bot's «👀 Ko‘rib chiqish» link (?week=) opens the week
 // list on that week, and each week has «✅ Haftani tasdiqlash» -> confirm -> challenge_tasks_approve_week (the same RPC
@@ -73,12 +73,28 @@ describe("weekApproval lib", () => {
   });
   it("the RPC's answer, defensively", () => {
     expect(parseApproveResult({ ok: true, approved: 4, already_approved: 1, drafts_left: 1, failed: [{ date: "2026-10-06", error: "x" }, 5] }))
-      .toEqual({ approved: 4, alreadyApproved: 1, draftsLeft: 1, failed: [{ date: "2026-10-06", error: "x" }] });
+      .toEqual({ approved: 4, alreadyApproved: 1, draftsLeft: 1, failed: [{ date: "2026-10-06", error: "x" }], skippedPast: [], pastWeek: false });
+    expect(parseApproveResult({ ok: true, approved: 0, skipped_past: [{ date: "2026-10-05", title: "T" }, null], past_week: true }))
+      .toEqual({ approved: 0, alreadyApproved: 0, draftsLeft: 0, failed: [], skippedPast: [{ date: "2026-10-05", title: "T" }], pastWeek: true });
     expect(parseApproveResult({ ok: false })).toBeNull();
     expect(parseApproveResult(null)).toBeNull();
-    expect(approveSummary({ approved: 0, alreadyApproved: 5, draftsLeft: 0, failed: [] })).toBe("Bu hafta allaqachon tasdiqlangan (5 ta vazifa)");
-    expect(approveSummary({ approved: 5, alreadyApproved: 0, draftsLeft: 0, failed: [] })).toBe("5 ta vazifa tasdiqlandi");
+    const r = { approved: 0, alreadyApproved: 5, draftsLeft: 0, failed: [], skippedPast: [], pastWeek: false };
+    expect(approveSummary(r)).toBe("Bu hafta allaqachon tasdiqlangan (5 ta vazifa)");
+    expect(approveSummary({ ...r, approved: 5, alreadyApproved: 0 })).toBe("5 ta vazifa tasdiqlandi");
     expect(approveErrorMessage("Faqat admin haftani tasdiqlay oladi")).toBe("Ruxsat yo‘q (faqat admin)");
+  });
+  it("past days: never counted as approvable, and the answer says they were left alone", () => {
+    const list = [
+      { status: "draft", task_date: "2026-10-05" }, { status: "draft", task_date: "2026-10-06" },
+      { status: "draft", task_date: "2026-10-07" }, { status: "approved", task_date: "2026-10-08" }, { status: "draft", task_date: "2026-10-09" },
+    ];
+    expect(weekDraftCounts(list, "2026-10-07")).toEqual({ open: 2, past: 2 }); // today (7th) counts as open
+    expect(weekDraftCounts(list, "2026-10-12")).toEqual({ open: 0, past: 4 });
+    const base = { approved: 0, alreadyApproved: 1, draftsLeft: 0, failed: [], pastWeek: false };
+    const past = [{ date: "2026-10-05" }, { date: "2026-10-06" }];
+    expect(approveSummary({ ...base, approved: 2, skippedPast: past })).toBe("2 ta vazifa tasdiqlandi, 2 ta o‘tgan kun tasdiqlanmadi");
+    expect(approveSummary({ ...base, skippedPast: past })).toMatch(/^O‘tgan kunlar \(2 ta\) bu tugma bilan tasdiqlanmaydi/);
+    expect(approveSummary({ ...base, skippedPast: past, pastWeek: true })).toMatch(/^Bu hafta o‘tib ketdi/);
   });
 });
 
@@ -123,6 +139,38 @@ describe("AdminChallengeTasks: the weekly approval", () => {
     await waitFor(() => expect(h.rpc).toHaveBeenCalledWith("challenge_tasks_approve_week", { _week_start: "2026-10-05", _course_id: C6 }));
     expect(await screen.findByText("Tasdiqlanmadi (1):")).toBeInTheDocument();
     expect(screen.getByText(/E’lon matni juda uzun/)).toBeInTheDocument();
+  });
+
+  it("mid-week: the button counts today and later only; past drafts are left out and listed after the RPC", async () => {
+    vi.setSystemTime(new Date("2026-10-07T05:00:00Z")); // Wednesday 7 October, 10:00 Tashkent
+    world([task(1, "2026-10-05", "draft", "Dushanba"), task(2, "2026-10-06", "draft", "Seshanba"),
+           task(3, "2026-10-07", "draft", "Chorshanba"), task(4, "2026-10-08", "draft", "Payshanba")]);
+    h.rpc.mockImplementation(async (name: string) => {
+      if (name === "challenge_tasks_approve_week") {
+        return { data: { ok: true, approved: 2, already_approved: 0, drafts_left: 0, failed: [], past_week: false,
+          skipped_past: [{ task_id: 1, date: "2026-10-05", title: "Dushanba", reason: "o‘tgan kun" },
+                         { task_id: 2, date: "2026-10-06", title: "Seshanba", reason: "o‘tgan kun" }] }, error: null };
+      }
+      return { data: null, error: null };
+    });
+    window.history.pushState({}, "", "/admin/challenge/tasks?week=2026-10-05");
+    render(<AdminChallengeTasks />);
+    fireEvent.click(await screen.findByText("✅ Haftani tasdiqlash (2)"));
+    expect(await screen.findByText("2 ta qoralama tasdiqlansinmi?")).toBeInTheDocument();
+    expect(screen.getByText(/O‘tgan kunlardagi 2 ta qoralama kiritilmaydi/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Ha, tasdiqlash"));
+    await waitFor(() => expect(h.rpc).toHaveBeenCalledWith("challenge_tasks_approve_week", { _week_start: "2026-10-05", _course_id: C6 }));
+    expect(await screen.findByText("⌛ O‘tgan kun — tasdiqlanmadi (2):")).toBeInTheDocument();
+  });
+
+  it("a week that is over: no approve button, only the past-days hint", async () => {
+    vi.setSystemTime(new Date("2026-10-14T05:00:00Z")); // Wednesday 14 October
+    window.history.pushState({}, "", "/admin/challenge/tasks?week=2026-10-05");
+    world([task(1, "2026-10-05", "approved", "Birinchi"), task(2, "2026-10-06", "draft", "Unutilgan")]);
+    render(<AdminChallengeTasks />);
+    expect(await screen.findByText("Unutilgan")).toBeInTheDocument();
+    expect(screen.queryByText(/Haftani tasdiqlash/)).toBeNull();
+    expect(screen.getByText(/⌛ O‘tgan kunlar \(1 ta qoralama\)/)).toBeInTheDocument();
   });
 
   it("a week with no draft has no approve button", async () => {

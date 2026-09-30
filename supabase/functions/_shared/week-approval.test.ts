@@ -1,8 +1,9 @@
 // Tests for the weekly approval renderer (Daily Tasks PR-9). Run: deno test supabase/functions/_shared/week-approval.test.ts
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
-  askKeyboard, BTN, dayLine, dtwData, MAX_TEXT, parseDtwCallback, rangeLabel, renderAsk, renderConfirm, renderKind,
-  renderNoTasks, renderResult, requiresShort, reviewUrl, toWeekView, type WeekTask, type WeekView, weekLabel,
+  askKeyboard, BTN, dayLine, dtwData, isPastTask, MAX_TEXT, PAST_EXPLAIN, parseDtwCallback, rangeLabel, renderAsk,
+  renderConfirm, renderKind, renderNoTasks, renderResult, requiresShort, reviewUrl, toWeekView, weekCounts, type WeekTask,
+  type WeekView, weekLabel, weekPhase,
 } from "./week-approval.ts";
 
 const SHOT = { any: ["photo", "image_doc"], min: 1, label: "screenshot" };
@@ -137,8 +138,65 @@ Deno.test("a long week always fits one Telegram message", () => {
   }
 });
 
+Deno.test("past days: the phase of the week, past tasks marked and left out of N, never an approve button for them", () => {
+  const tasks = [
+    task(1, "2026-10-05", { title: "Dushanba" }), task(2, "2026-10-06", { title: "Seshanba" }),
+    task(3, "2026-10-07", { title: "Chorshanba" }), task(4, "2026-10-08", { status: "approved" }), task(5, "2026-10-09"),
+  ];
+  assertEquals(weekPhase(week(tasks)), "next", "no today known: nothing is past (the SQL still guards)");
+  assertEquals(weekPhase(week(tasks, { today: "2026-10-04" })), "next");
+  assertEquals(weekPhase(week(tasks, { today: "2026-10-05" })), "current");
+  assertEquals(weekPhase(week(tasks, { today: "2026-10-11" })), "current");
+  assertEquals(weekPhase(week(tasks, { today: "2026-10-12" })), "past");
+  assertEquals(weekPhase({ week_start: "2026-10-05", today: "2026-10-12" }), "past", "week_end derived when absent");
+  assert(isPastTask({ today: null }, { date: "2020-01-01", past: true }), "the SQL's flag wins");
+  assert(!isPastTask({ today: "2026-10-07" }, { date: "2026-10-07" }), "today is not past");
+
+  // Wednesday 7 October: Mon + Tue are past; Wed (today) + Fri are approvable
+  const mid = week(tasks, { today: "2026-10-07" });
+  assertEquals(weekCounts(mid), { drafts: 2, pastDrafts: 2, approved: 1 });
+  const c = renderConfirm(mid);
+  assert(c.text.startsWith("📅 <b>Shu hafta vazifalari (5–9 oktabr)</b>"), c.text);
+  assert(c.text.includes("❓ <b>2 ta vazifa tasdiqlansinmi?</b>"), c.text);
+  assert(c.text.includes("<b>Du, 5-oktabr</b> · 📝 umumiy · 5 ball · ⌛ o‘tgan kun"), c.text);
+  assert(!c.text.includes("<b>Ch, 7-oktabr</b> · 📝 umumiy · 5 ball · ⌛"), "today is not marked past");
+  assert(c.text.includes("⌛ O‘tgan kunlardagi 2 ta qoralama kiritilmaydi"), c.text);
+  const l = renderAsk(mid, "ask");
+  assert(l.text.includes("Jami: 2 ta qoralama, 1 ta tasdiqlangan, 2 ta o‘tgan kun qoralamasi."), l.text);
+  assertEquals(l.keyboard?.inline_keyboard[0][0].callback_data, "dtw:a:20261005", "today + Friday can still be approved");
+
+  // only past drafts left: no approve button, the calendar link only
+  const onlyPast = week([task(1, "2026-10-05"), task(2, "2026-10-06", { status: "approved" })], { today: "2026-10-07" });
+  assertEquals(askKeyboard(onlyPast).inline_keyboard.length, 1);
+  assertEquals(askKeyboard(onlyPast).inline_keyboard[0][0].text, BTN.review);
+
+  // the week is over
+  const over = renderAsk(week(tasks, { today: "2026-10-12" }), "ask");
+  assert(over.text.startsWith("⌛ <b>Bu hafta o‘tib ketdi (5–9 oktabr)</b>\n" + PAST_EXPLAIN), over.text);
+  assert(over.text.includes("👀 — kalendarda ko‘rish"), over.text);
+  assertEquals(JSON.stringify(over.keyboard).includes("dtw:"), false);
+});
+
+Deno.test("renderResult: the past days the approval left alone are listed with the retro hint", () => {
+  const v = week([task(1, "2026-10-05"), task(3, "2026-10-07", { status: "approved" })], { today: "2026-10-07" });
+  const past = [{ task_id: 1, date: "2026-10-05", title: "Dushanba <1>", reason: "o‘tgan kun" }];
+  const r = renderResult(v, { approved: 1, already_approved: 0, failed: [], skipped_past: past }, "Admin");
+  assert(r.text.startsWith("✅ <b>Shu hafta vazifalari: 1/1 tasdiqlandi</b> (5–7 oktabr) — Admin"), r.text);
+  assert(r.text.includes("<b>⌛ O‘tgan kun — tasdiqlanmadi (1):</b>\n• Du, 5-oktabr — «Dushanba &lt;1&gt;»"), r.text);
+  assert(r.text.includes("(retro)"));
+  const none = renderResult(v, { approved: 0, already_approved: 1, failed: [], skipped_past: past }, "Admin");
+  assert(none.text.startsWith("ℹ️ <b>Bu hafta allaqachon tasdiqlangan"), none.text);
+  assert(!none.text.includes("Qoralama qolmagan"), "a past draft remains: never claim there is none");
+  const gone = renderResult(week([task(1, "2026-10-05")], { today: "2026-10-20" }), { approved: 0, already_approved: 0, failed: [], skipped_past: past, past_week: true });
+  assert(gone.text.startsWith("⌛ <b>Bu hafta o‘tib ketdi"), gone.text);
+  assertEquals(JSON.stringify(gone.keyboard).includes("dtw:"), false);
+});
+
 Deno.test("toWeekView: junk never throws", () => {
   assertEquals(toWeekView(null, "2026-10-05").tasks, []);
   assertEquals(toWeekView({ tasks: [{ date: "x" }, { id: 1, date: "2026-10-05", title: "T", status: "draft", points: 5 }] }, "2026-10-05").tasks.length, 1);
   assertEquals(toWeekView({ week_start: "2026-10-12", missing: ["2026-10-12", 3] }, "2026-10-05").missing, ["2026-10-12"]);
+  const v = toWeekView({ today: "2026-10-07", tasks: [{ id: 1, date: "2026-10-05", status: "draft", past: true }] }, "2026-10-05");
+  assertEquals([v.today, v.tasks[0].past], ["2026-10-07", true]);
+  assertEquals(toWeekView({ today: "7 Oct" }, "2026-10-05").today, null);
 });

@@ -2,12 +2,12 @@
 // Run: deno test supabase/functions/telegram-bot-webhook/week-approval.test.ts
 // The same flow against the REAL SQL: _challenge/testing/daily-tasks-week-approval-check.ts.
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { approveErrorToast, createWeekApproval, TOAST, toApproveResult } from "./week-approval.ts";
+import { approveErrorToast, approveToast, createWeekApproval, TOAST, toApproveResult } from "./week-approval.ts";
 import { BTN } from "../_shared/week-approval.ts";
 
 type Call = { method: string; payload: Record<string, unknown> };
 
-function world(opts: { admins?: string[]; approve?: unknown; approveError?: { code?: string; message?: string } | null } = {}) {
+function world(opts: { admins?: string[]; approve?: unknown; approveError?: { code?: string; message?: string } | null; today?: string } = {}) {
   const admins = new Set(opts.admins ?? ["admin-1"]);
   const rpcs: Array<{ name: string; args: Record<string, unknown> }> = [];
   const inserts: Array<Record<string, unknown>> = [];
@@ -25,7 +25,10 @@ function world(opts: { admins?: string[]; approve?: unknown; approveError?: { co
     rpc: (name: string, args: Record<string, unknown>) => {
       rpcs.push({ name, args });
       if (name === "challenge_task_week_view") {
-        return Promise.resolve({ data: { week_start: "2026-10-05", week_end: "2026-10-11", tasks: tasks(), missing: [] }, error: null });
+        return Promise.resolve({
+          data: { week_start: "2026-10-05", week_end: "2026-10-11", tasks: tasks(), missing: [], ...(opts.today ? { today: opts.today } : {}) },
+          error: null,
+        });
       }
       if (name === "challenge_tasks_approve_week") {
         if (opts.approveError) return Promise.resolve({ data: null, error: opts.approveError });
@@ -112,6 +115,34 @@ Deno.test("an RPC error is a toast + a DB-visible row, never a silent tap", asyn
   assertEquals(approveErrorToast({ code: "P0001", message: "boom" }), TOAST.error);
   assertEquals(toApproveResult({ ok: false }), null);
   assertEquals(toApproveResult({ ok: true, approved: 3, already_approved: 1, failed: [] })?.approved, 3);
+});
+
+Deno.test("a week that is over: «Bu hafta o‘tib ketdi», no approval call, the copy loses its buttons, recorded once", async () => {
+  const w = world({ today: "2026-10-14", admins: ["admin-past"] });
+  await w.wa.onCallback(w.admin, w.cq("dtw:a:20261005"), { clicker: { id: "admin-past" }, impersonating: false });
+  await w.wa.onCallback(w.admin, w.cq("dtw:y:20261005"), { clicker: { id: "admin-past" }, impersonating: false });
+  assertEquals(w.toasts, [TOAST.pastWeek, TOAST.pastWeek]);
+  assertEquals(w.rpcs.filter((r) => r.name === "challenge_tasks_approve_week").length, 0, "never approves a past week");
+  const edits = w.calls.filter((c) => c.method === "editMessageText");
+  assertEquals(edits.length, 2);
+  assert(edits.every((e) => String(e.payload.text).startsWith("⌛ <b>Bu hafta o‘tib ketdi") && !JSON.stringify(e.payload.reply_markup).includes("dtw:")));
+  const rows = w.inserts.filter((i) => i.action === "challenge_week_approval_past_week");
+  assertEquals(rows.length, 1, "once per admin, week and day");
+  assertEquals((rows[0].details as Record<string, unknown>).week, "2026-10-05");
+});
+
+Deno.test("mid-week: the confirm counts today and later only; past drafts left alone -> said so", async () => {
+  const w = world({ today: "2026-10-06" }); // Tuesday: Monday's draft is past, Tuesday's (today) is approvable
+  await w.wa.onCallback(w.admin, w.cq("dtw:a:20261005"), { clicker: { id: "admin-1" }, impersonating: false });
+  const t = String(w.calls[0].payload.text);
+  assert(t.startsWith("📅 <b>Shu hafta vazifalari") && t.includes("❓ <b>1 ta vazifa tasdiqlansinmi?</b>") &&
+    t.includes("⌛ O‘tgan kunlardagi 1 ta qoralama kiritilmaydi"), t);
+  const past = [{ task_id: 1, date: "2026-10-05", title: "Birinchi", reason: "o‘tgan kun" }];
+  assertEquals(approveToast({ approved: 0, already_approved: 1, failed: [], skipped_past: past }), TOAST.pastDays);
+  assertEquals(approveToast({ approved: 0, already_approved: 0, failed: [], skipped_past: past, past_week: true }), TOAST.pastWeek);
+  assertEquals(approveToast({ approved: 0, already_approved: 3, failed: [] }), TOAST.already);
+  assertEquals(approveToast({ approved: 1, already_approved: 0, failed: [], skipped_past: past }), "✅ 1 ta tasdiqlandi");
+  assertEquals(toApproveResult({ ok: true, approved: 1, skipped_past: [past[0], 7], past_week: false })?.skipped_past, past);
 });
 
 Deno.test("partial: the guard refused one draft -> failures listed, copies updated, approve button kept", async () => {
