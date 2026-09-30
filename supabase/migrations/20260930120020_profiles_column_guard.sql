@@ -1,6 +1,8 @@
 -- SECURITY: a signed-in student could rewrite the privileged columns of their own profile row.
 -- PR-0 of the Challenge Daily Tasks plan (design §3A, gap G2). Prevention hierarchy layer 2 (DB
 -- invariant) plus a layer-5 detector.
+-- Re-issue of 20260930120010 (never applied anywhere), adding two review findings: the student arm
+-- of "hws own update", and active_teacher_group_id as a SCOPED column.
 --
 -- ── EVIDENCE (production, read-only, 2026-09-30) ────────────────────────────────────────────────
 --   * pg_class.relacl on public.profiles: anon=arwdDxtm, authenticated=arwdDxtm (table-level UPDATE,
@@ -31,8 +33,9 @@
 --     (AdminUsers: status, archived_at, telegram_id, updateProfile; AdminGroups: group_id,
 --     account_type; GroupDetail: group_id). Students write preferred_language (Settings,
 --     LanguageSwitcher), name/last_name/timezone/weekly_goal_lessons/instagram_username (Settings),
---     avatar_url (Profile), digest_opt_in (Settings), active_teacher_group_id (teacher pages). No
---     src/ code inserts or upserts profiles.
+--     avatar_url (Profile), digest_opt_in (Settings). Teachers write active_teacher_group_id
+--     (TeacherProfile.pickGroup, AdminDashboard), always a group from teacher_groups(). No src/
+--     code inserts or upserts profiles.
 --   Edge functions: every profiles write goes through a service_role client (admin-create-students,
 --     admin-merge-duplicates, staff-intake, telegram-auth, telegram-bot-webhook, tg-miniapp-auth,
 --     cron-engagement, sheet-sync).
@@ -50,13 +53,20 @@
 --    not the caller's own sign-in email) raises P0001 'Bu maydonni faqat admin o‘zgartira oladi'.
 --      GUARDED: telegram_id, telegram_username, email, group_id, status, archived_at, account_type,
 --               telegram_write_access_at, created_at.
+--      SCOPED:  active_teacher_group_id. The bot scopes a teacher's roster, module-progress and
+--               legacy student-picker views by this column (tr:list, thm:list, thm:mod, gs:list), so
+--               a non-privileged caller may set it only to NULL or to a group they teach
+--               (is_group_teacher: groups.teacher_id or group_teachers). Anything else is rejected
+--               like a guarded column. Not recorded as a privileged change (the bot rewrites it on
+--               every group switch, which would be noise), and not part of the drift snapshot.
+--               The bot re-checks the stored value on read as well (a reassignment leaves it stale).
 --      SELF-EDITABLE (unchanged): name, last_name, avatar_url, bio, phone, timezone,
 --               tashkent_offset_minutes, weekly_goal_lessons, goals, onboarding_completed,
 --               preferred_language, preferred_locale, reminder_time, notifications_enabled,
---               digest_opt_in, hide_from_group_boards, instagram_username (audited, step 4),
---               active_teacher_group_id, and the bot's bookkeeping stamps (telegram_onboarded_at,
---               name_confirmed_at, name_prompt_last_at, last_*_reminder/warning_*) — none of them
---               gates anything but the student's own reminders.
+--               digest_opt_in, hide_from_group_boards, instagram_username (audited, step 4), and
+--               the bot's bookkeeping stamps (telegram_onboarded_at, name_confirmed_at,
+--               name_prompt_last_at, last_*_reminder/warning_*). None of them grants access to
+--               anything or anyone else: they shape the user's own display and own reminders.
 --    Consequences checked: an FK action (groups deleted -> group_id SET NULL) runs as the table owner,
 --    so it passes and is recorded; a client UPSERT that echoes guarded values would fail its INSERT
 --    arm (the BEFORE INSERT trigger sees the proposed row), and no client upserts profiles.
@@ -80,9 +90,20 @@
 --      homework_submissions "hws own insert": insert your own submission already graded (score 10,
 --               scored_by = self) -> homework XP, teacher-grade XP to "scored_by", the perfect-score
 --               badge and the Saturday group spotlight. Every real insert is service_role
---               (submit-homework, the bot). The student UPDATE branch ("hws own update": only while
---               score IS NULL, and the new row must keep score NULL) is left as is: teachers grade
---               through it.
+--               (submit-homework, the bot).
+--      homework_submissions "hws own update", STUDENT ARM only: ((auth.uid() = user_id) AND
+--               (score IS NULL)) with no WITH CHECK keeps score NULL and nothing else, so a student
+--               could write previous_attempts, previous_score, scored_by, scored_at, assignment_id and
+--               submitted_at on their own ungraded row. previous_attempts is READ AS A GRADE:
+--               user_homework_avg10_effective() and vw_module_homework_score_effective take
+--               COALESCE(score, last numeric previous_attempts[].score), recalc_leaderboard() feeds it
+--               into leaderboard_cache, and pick_weekly_group_stars() (Student of the Week) picks the
+--               top of that; staff pages show previous_attempts as earlier grades. The arm has no
+--               legitimate writer: src/ updates homework_submissions only from teacher code
+--               (TeacherProfile, teacherApi, TeacherHomework), students submit through submit-homework
+--               (service_role) and resubmit through start_homework_resubmission (SECURITY DEFINER), and
+--               every pg_proc writer is SECURITY DEFINER. The policy is re-created with the admin and
+--               teacher arms only, WITH CHECK = USING, TO authenticated (live it was TO PUBLIC).
 --      quiz_attempts "quiz_a own all" -> replaced by a read-only "quiz_a own read" (grade_quiz_attempt,
 --               SECURITY DEFINER, is the only writer; staff dashboards read these scores).
 --    NOT changed here (documented in the PR): lesson_progress (the client writes completed_at by
@@ -95,7 +116,9 @@
 --                            LAST before-row trigger (a later one could rewrite a column after the
 --                            check);
 --      instagram_audit_down  the handle audit trigger is missing or disabled;
---      rls_drift             a write policy reappeared on a table closed in step 5;
+--      rls_drift             a write policy reappeared on a table closed in step 5, or an UPDATE
+--                            policy on homework_submissions regained a student arm
+--                            (auth.uid() = user_id) or an unconditional (true) predicate;
 --      rejections (event)    new guard rejections since the last run (sequence delta);
 --      drift (event)         a guarded column changed with no matching 'profile_privileged_change'
 --                            row, i.e. the trigger was bypassed (disabled, session_replication_role,
@@ -120,6 +143,15 @@
 --   * Fan-out: 734 graded submissions, 0 self-graded or graded by a non-staff user; 10291
 --     daily_watch_summary rows, 0 in the future, 0 XP without a row; streaks bounded by account
 --     age, <= 2 streak_30 awards per user; 5 quiz attempts ever, all score-consistent.
+--   * "hws own update" student arm: 220 previous_attempts entries on 127 rows, and ALL 220 equal,
+--     key for key, the 'RESUBMIT' progress_audit snapshot that start_homework_resubmission wrote
+--     for that row; all 220 were scored by staff; 0 entries above 10; 0 ungraded rows carrying
+--     previous_attempts, scored_by or scored_at; leaderboard_cache max 91. The 3 ungraded rows with a
+--     previous_score are the bot's picker-path resubmits (source telegram_topic, which stamps
+--     previous_score and resets score by design).
+--   * active_teacher_group_id: 3 profiles hold one, all 3 teach that group. The bot's inbox has 2
+--     tprof:g: taps since 2026-05-06; 1 names a group this teacher does not teach, and that group no
+--     longer exists (pre-replay id, 2026-07-06), i.e. stale, not forged.
 --   => nothing proven damaged, so there is no heal step.
 --
 -- ── DEVIATIONS FROM THE DESIGN (§3A), and why ──────────────────────────────────────────────────
@@ -128,6 +160,12 @@
 --     judges the final row; PR-3's handle lock needs exactly that (it compares the NORMALISED handle).
 --   * Three more guarded columns: telegram_username and email are identity keys (see above) and
 --     created_at is an audit timestamp. No legitimate non-admin writer of any of them exists.
+--   * active_teacher_group_id is SCOPED (above), and the bot re-validates it on read
+--     (telegram-bot-webhook/teacher-scope.ts). The design marked PR-0 touches_bot: false; review
+--     found the bot trusting the column, and a stale value after a reassignment can only be
+--     caught by the reader, so this PR carries that two-site bot change.
+--   * "hws own update" loses its student arm (review finding; same class as the policies closed in
+--     step 5).
 --   * The rejection counter and the drift snapshot (the design had no DB-visible rejection signal).
 --   * Column REVOKE/GRANT is NOT used: a column REVOKE is a no-op against the table GRANT, and
 --     replacing the table GRANT with column GRANTs would also block the admin pages, which write
@@ -248,6 +286,8 @@ declare
   _old jsonb;
   _cols text[];
   _uid uuid;
+  _restricted boolean := current_user::text in ('authenticated', 'anon');
+  _scope_changed boolean;
   _changes jsonb := '{}'::jsonb;
   _k text;
 begin
@@ -256,6 +296,7 @@ begin
     select coalesce(array_agg(k order by k), '{}') into _cols
       from jsonb_object_keys(_new) k
      where (_new -> k) is distinct from (_old -> k);
+    _scope_changed := new.active_teacher_group_id is distinct from old.active_teacher_group_id;
   else
     -- INSERT: a row may only be born with the column defaults. (email and created_at have no
     -- default to compare with; email is checked against the caller below.)
@@ -266,10 +307,23 @@ begin
       from jsonb_object_keys(_old) k
      where (_new -> k) is distinct from (_old -> k);
     -- A signed-in user may only create a profile carrying their OWN sign-in email.
-    if current_user::text in ('authenticated', 'anon')
+    if _restricted
        and (coalesce(auth.jwt() ->> 'email', '') = ''
             or lower(new.email) is distinct from lower(auth.jwt() ->> 'email')) then
       _cols := _cols || 'email'::text;
+    end if;
+    _scope_changed := new.active_teacher_group_id is not null;
+  end if;
+
+  -- SCOPED: a non-privileged caller may point active_teacher_group_id only at NULL or at a group
+  -- they teach (the bot scopes a teacher's roster views by it). An unchanged value is never judged,
+  -- so a value left stale by a reassignment does not block the teacher's other edits.
+  if _restricted and _scope_changed and new.active_teacher_group_id is not null then
+    _uid := auth.uid();
+    if _uid is null then
+      _cols := _cols || 'active_teacher_group_id'::text;
+    elsif not public.is_group_teacher(new.active_teacher_group_id, _uid) then
+      _cols := _cols || 'active_teacher_group_id'::text;  -- an admin still passes below
     end if;
   end if;
 
@@ -277,7 +331,7 @@ begin
     return new;
   end if;
 
-  if current_user::text in ('authenticated', 'anon') then
+  if _restricted then
     _uid := auth.uid();
     if _uid is null
        or not (public.has_role(_uid, 'admin'::app_role) or public.has_role(_uid, 'superadmin'::app_role)) then
@@ -294,9 +348,14 @@ begin
   end if;
 
   -- Privileged: leave a DB-visible record (forensics, and the drift detector's "explained" set).
+  -- The scoped column is a preference, not a privileged change: never recorded.
   foreach _k in array _cols loop
+    continue when _k = 'active_teacher_group_id';
     _changes := _changes || jsonb_build_object(_k, jsonb_build_object('old', _old -> _k, 'new', _new -> _k));
   end loop;
+  if _changes = '{}'::jsonb then
+    return new;
+  end if;
   begin
     perform public.profiles_guard_record_change(new.id, lower(tg_op), _changes, current_user::text);
   exception when others then
@@ -349,6 +408,16 @@ drop policy if exists "streaks own update" on public.streaks;
 drop policy if exists "dws own insert" on public.daily_watch_summary;
 drop policy if exists "dws own update" on public.daily_watch_summary;
 drop policy if exists "hws own insert" on public.homework_submissions;
+-- Grading stays with staff: admin, or a teacher of the student's group (is_teacher_of is SECURITY
+-- DEFINER, junction-aware via is_group_teacher). WITH CHECK = USING, so the new row must still be
+-- one the grader may grade.
+drop policy if exists "hws own update" on public.homework_submissions;
+create policy "hws own update" on public.homework_submissions
+  for update to authenticated
+  using (public.has_role(auth.uid(), 'admin'::app_role)
+         or (public.has_role(auth.uid(), 'teacher'::app_role) and public.is_teacher_of(user_id, auth.uid())))
+  with check (public.has_role(auth.uid(), 'admin'::app_role)
+              or (public.has_role(auth.uid(), 'teacher'::app_role) and public.is_teacher_of(user_id, auth.uid())));
 drop policy if exists "quiz_a own all" on public.quiz_attempts;
 drop policy if exists "quiz_a own read" on public.quiz_attempts;
 create policy "quiz_a own read" on public.quiz_attempts
@@ -461,15 +530,24 @@ begin
                       and t.tgname = 'trg_profiles_zz_instagram_audit'
                       and t.tgenabled in ('O', 'A') and p.proname = 'profiles_instagram_audit');
 
-  -- Write policies on the tables closed by 20260930120010 (any reappearance is a regression until
-  -- someone updates this list on purpose).
+  -- Write policies on the tables closed by 20260930120020 (any reappearance is a regression until
+  -- someone updates this list on purpose). homework_submissions keeps its staff UPDATE policy, so
+  -- there an UPDATE policy is drift only when it lets the row's owner in (a student arm
+  -- auth.uid() = user_id, in either order) or has no real predicate at all. The expressions are
+  -- deparsed under this function's fixed search_path, so the text is stable.
   select coalesce(jsonb_agg(jsonb_build_object('table', c.relname, 'policy', p.polname, 'cmd', p.polcmd::text)
                             order by c.relname, p.polname), '[]'::jsonb)
     into _rls
     from pg_policy p join pg_class c on c.oid = p.polrelid
    where c.relnamespace = 'public'::regnamespace
      and ((c.relname in ('streaks', 'daily_watch_summary', 'quiz_attempts') and p.polcmd in ('a', 'w', '*'))
-          or (c.relname = 'homework_submissions' and p.polcmd in ('a', '*')));
+          or (c.relname = 'homework_submissions' and p.polcmd in ('a', '*'))
+          or (c.relname = 'homework_submissions' and p.polcmd = 'w'
+              and (p.polqual is null
+                   or btrim(pg_get_expr(p.polqual, p.polrelid), '() ') = 'true'
+                   or (coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' '
+                       || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), ''))
+                      ~ '(auth\.uid\(\)\s*=\s*(homework_submissions\.)?user_id|(homework_submissions\.)?user_id\s*=\s*auth\.uid\(\))')));
 
   select case when is_called then last_value else 0 end into _total from public.profiles_guard_rejections_seq;
   select value into _state from public.app_settings where key = 'profiles_guard_watchdog_state';
@@ -602,7 +680,8 @@ begin
   if _n > 0 then
     _msg := _msg || case when _msg = '' then '' else E'\n\n' end
          || '⛔ ' || _n || ' ta taqiqlangan profil oʻzgartirish urinishi rad etildi (admin boʻlmagan foydalanuvchi '
-         || 'guruh, toʻlov turi, Telegram ID, email yoki holat kabi maydonni oʻzgartirmoqchi boʻldi). '
+         || 'guruh, toʻlov turi, Telegram ID, email, holat yoki oʻzi dars bermaydigan faol guruh kabi '
+         || 'maydonni oʻzgartirmoqchi boʻldi). '
          || 'Tafsilot: API loglarida PATCH/POST /rest/v1/profiles → 400. Agar bu ilovadagi oddiy amal '
          || 'boʻlsa, qaysidir sahifa himoyalangan maydonga yozyapti — bu xato, tuzatish kerak.';
   end if;
@@ -828,6 +907,8 @@ declare
   _msg text;
   _k text;
   _e2e text := 'ran';
+  _hws uuid;
+  _hws_owner uuid;
 begin
   -- A. Structure and privileges.
   if not exists (select 1 from information_schema.columns
@@ -851,6 +932,23 @@ begin
   if not exists (select 1 from pg_policy where polrelid = 'public.quiz_attempts'::regclass
                    and polname = 'quiz_a own read' and polcmd = 'r') then
     raise exception 'ABORT: quiz_attempts lost its read policy';
+  end if;
+  -- Staff grading must survive the student arm's removal: exactly one UPDATE policy, for
+  -- authenticated, with the teacher arm in both USING and WITH CHECK (the no-student-arm half is
+  -- the rls_write_policies assertion above).
+  if (select count(*) from pg_policy p
+       where p.polrelid = 'public.homework_submissions'::regclass and p.polcmd in ('w', '*')) <> 1
+     or not exists (select 1 from pg_policy p
+                     where p.polrelid = 'public.homework_submissions'::regclass
+                       and p.polname = 'hws own update' and p.polcmd = 'w'
+                       and p.polroles = array['authenticated'::regrole::oid]
+                       and pg_get_expr(p.polqual, p.polrelid) like '%is_teacher_of(user_id, auth.uid())%'
+                       and pg_get_expr(p.polwithcheck, p.polrelid) like '%is_teacher_of(user_id, auth.uid())%'
+                       and pg_get_expr(p.polqual, p.polrelid) like '%''admin''::%app_role%') then
+    raise exception 'ABORT: homework_submissions UPDATE policy is not the staff-only "hws own update"';
+  end if;
+  if not has_function_privilege('authenticated', 'public.is_group_teacher(uuid, uuid)', 'EXECUTE') then
+    raise exception 'ABORT: the guard runs as the writer and needs is_group_teacher(uuid, uuid)';
   end if;
   if coalesce((_r#>>'{drift,unexplained_users}')::int, -1) <> 0 then
     raise exception 'ABORT: drift right after seeding the snapshot: %', _r->'drift';
@@ -928,9 +1026,18 @@ begin
      and not exists (select 1 from public.user_roles r
                      where r.user_id = p.id and r.role in ('admin', 'teacher', 'superadmin'))
    order by p.created_at, p.id limit 1;
-  select g.id into _other_group from public.groups g where g.id is distinct from _student_group order by g.id limit 1;
+  select g.id into _other_group from public.groups g
+   where g.id is distinct from _student_group and not public.is_group_teacher(g.id, _student)
+   order by g.id limit 1;
   select r.user_id into _admin from public.user_roles r join public.profiles p on p.id = r.user_id
    where r.role = 'admin' order by r.user_id limit 1;
+  -- Any non-staff student's UNGRADED submission: the one row the removed student arm would match.
+  select hs.id, hs.user_id into _hws, _hws_owner
+    from public.homework_submissions hs
+   where hs.score is null
+     and not exists (select 1 from public.user_roles r
+                     where r.user_id = hs.user_id and r.role in ('admin', 'teacher', 'superadmin'))
+   order by hs.submitted_at desc nulls last, hs.id limit 1;
 
   if _student is null or _other_group is null or _admin is null then
     _e2e := 'skipped: no student with a group, second group and admin to test with';
@@ -979,6 +1086,27 @@ begin
         get stacked diagnostics _sqlstate = returned_sqlstate, _msg = message_text;
         _res := _res || jsonb_build_object('student_telegram_username', _sqlstate || ' ' || _msg);
       end;
+      begin
+        -- SCOPED: pointing the bot's teacher scope at a group this user does not teach.
+        update public.profiles set active_teacher_group_id = _other_group where id = _student;
+        _res := _res || jsonb_build_object('student_active_teacher_group_id', 'NOT BLOCKED');
+      exception when others then
+        get stacked diagnostics _sqlstate = returned_sqlstate, _msg = message_text;
+        _res := _res || jsonb_build_object('student_active_teacher_group_id', _sqlstate || ' ' || _msg);
+      end;
+
+      -- 1b. The owner of an ungraded submission can no longer write it (RLS filters it: 0 rows, so
+      --     no homework trigger fires). The structural check in A has already proven the policy.
+      if _hws is null then
+        _res := _res || jsonb_build_object('student_hws_update_rows', 'skipped: no ungraded student submission');
+      else
+        perform set_config('request.jwt.claims',
+                           jsonb_build_object('sub', _hws_owner, 'role', 'authenticated')::text, true);
+        perform set_config('request.jwt.claim.sub', _hws_owner::text, true);
+        update public.homework_submissions set previous_attempts = previous_attempts where id = _hws;
+        get diagnostics _n = row_count;
+        _res := _res || jsonb_build_object('student_hws_update_rows', _n);
+      end if;
 
       -- 2. A brand-new signed-in user inserting a profile that is already in a group.
       perform set_config('request.jwt.claims',
@@ -1032,11 +1160,13 @@ begin
        or coalesce(_res->>'admin_status_recorded', '') <> '1'
        or coalesce(_res->>'definer_rows', '') <> '1'
        or coalesce(_res->>'definer_recorded', '') <> '1'
-       or coalesce((_res->>'rejections_counted')::int, 0) < 5 then
+       or coalesce((_res->>'rejections_counted')::int, 0) < 6
+       or coalesce(_res->>'student_hws_update_rows', '') not in ('0', 'skipped: no ungraded student submission') then
       raise exception 'ABORT: guard end-to-end self-test failed: %', _res;
     end if;
     foreach _k in array array['student_group_id', 'student_account_type', 'student_telegram_id',
-                              'student_telegram_username', 'student_insert_with_group'] loop
+                              'student_telegram_username', 'student_active_teacher_group_id',
+                              'student_insert_with_group'] loop
       if coalesce(_res->>_k, '') not like 'P0001 Bu maydonni faqat admin%' then
         raise exception 'ABORT: guard end-to-end self-test: % was not rejected by the guard: %', _k, _res;
       end if;
@@ -1055,15 +1185,16 @@ begin
     'enabled', true, 'notified_keys', null, 'last_alert_ms', 0,
     'rejections_seen', (select case when is_called then last_value else 0 end
                           from public.profiles_guard_rejections_seq),
-    'seeded_by', '20260930120010', 'checked_at', now()))
+    'seeded_by', '20260930120020', 'checked_at', now()))
   on conflict (key) do nothing;
 
   -- Audit once, even if a racing deploy replays this file.
   insert into public.admin_actions (actor_user_id, action, details)
   select null, 'profiles_column_guard_applied',
-         jsonb_build_object('migration', '20260930120010',
+         jsonb_build_object('migration', '20260930120020',
                             'guarded', '["telegram_id","telegram_username","email","group_id","status","archived_at","account_type","telegram_write_access_at","created_at"]'::jsonb,
-                            'policies_closed', '["streaks own write","streaks own update","dws own insert","dws own update","hws own insert","quiz_a own all"]'::jsonb,
+                            'scoped', '["active_teacher_group_id"]'::jsonb,
+                            'policies_closed', '["streaks own write","streaks own update","dws own insert","dws own update","hws own insert","quiz_a own all","hws own update (student arm)"]'::jsonb,
                             'self_test', _e2e, 'self_test_results', _res,
                             'guard_md5', (select md5(prosrc) from pg_proc where oid = 'public.profiles_column_guard()'::regprocedure),
                             'kill_switch', 'platform_settings profiles_guard_watchdog {"enabled": false}; guard: alter table public.profiles disable trigger trg_profiles_zz_column_guard',

@@ -1,14 +1,16 @@
-// PGlite harness for 20260930120010_profiles_column_guard.sql (PR-0 of the daily-tasks plan).
+// PGlite harness for 20260930120020_profiles_column_guard.sql (PR-0 of the daily-tasks plan).
 //
 //   deno test -A --no-lock supabase/functions/_challenge/testing/profiles_column_guard_test.ts
 //
 // Applies the REAL migration file to a real PostgreSQL (PGlite, PG 17) carrying the live shape of
 // everything it touches: the anon/authenticated/service_role roles and Supabase's default
-// privileges, auth.uid()/role()/jwt() (live bodies), has_role (live body), profiles with its live
-// columns, defaults, unique indexes, RLS policies and the four live triggers (normalize_instagram,
-// updated_at, sync_group_enrollment, new_student_alert), and the four fan-out tables with their live
-// policies. It then acts as a student, an admin, a teacher, service_role and a SECURITY DEFINER
-// function, and drives the watchdog end to end with a stub ops_net_post.
+// privileges, auth.uid()/role()/jwt() (live bodies), has_role, is_group_teacher and is_teacher_of
+// (live bodies), profiles with its live columns, defaults, unique indexes, RLS policies and the four
+// live triggers (normalize_instagram, updated_at, sync_group_enrollment, new_student_alert), and the
+// four fan-out tables with their live policies (homework_submissions with the live "hws own update"
+// text, TO PUBLIC, no WITH CHECK). It first reproduces the two review findings on that live shape,
+// then acts as a student, an admin, a teacher, service_role and a SECURITY DEFINER function, and
+// drives the watchdog end to end with a stub ops_net_post.
 //
 // CI runs `deno test supabase/functions/` WITHOUT permission flags, and PGlite has to read its
 // wasm/data files, so there this test reports as IGNORED (visible, not silently green). Run it locally
@@ -22,7 +24,7 @@ type Row = Record<string, any>;
 
 const canRead = Deno.permissions.querySync({ name: "read" }).state === "granted";
 const canEnv = Deno.permissions.querySync({ name: "env" }).state === "granted";
-const MIGRATION_URL = new URL("../../../migrations/20260930120010_profiles_column_guard.sql", import.meta.url);
+const MIGRATION_URL = new URL("../../../migrations/20260930120020_profiles_column_guard.sql", import.meta.url);
 
 // Fixture ids.
 const G1 = "11111111-1111-1111-1111-111111111111";
@@ -35,7 +37,12 @@ const S1 = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"; // student in G1 (the migrati
 const S2 = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"; // student in G1
 const S3 = "dddddddd-dddd-dddd-dddd-dddddddddddd"; // auth user with NO profile yet
 const AD = "adadadad-adad-adad-adad-adadadadadad"; // admin
-const TE = "7e7e7e7e-7e7e-7e7e-7e7e-7e7e7e7e7e7e"; // teacher
+const TE = "7e7e7e7e-7e7e-7e7e-7e7e-7e7e7e7e7e7e"; // teacher of G1 (groups.teacher_id)
+const H1 = "a1a1a1a1-0000-0000-0000-000000000001"; // S1's UNGRADED submission
+const H2 = "a1a1a1a1-0000-0000-0000-000000000002"; // S1's graded submission
+const HA = "a1a1a1a1-0000-0000-0000-00000000000a"; // the admin's submission (outside TE's groups)
+const A1 = "a5a5a5a5-0000-0000-0000-000000000001"; // assignments
+const A2 = "a5a5a5a5-0000-0000-0000-000000000002";
 
 const SCHEMA = `
 set timezone = 'Asia/Tashkent';   -- deliberately not UTC: the snapshot values must not depend on it
@@ -85,7 +92,9 @@ grant execute on function public.has_role(uuid, public.app_role) to anon, authen
 
 create table public.courses (id uuid primary key);
 create table public.course_tiers (id uuid primary key, course_id uuid);
-create table public.groups (id uuid primary key, name text, course_id uuid, tier_id uuid);
+create table public.groups (id uuid primary key, name text, course_id uuid, tier_id uuid, teacher_id uuid);
+create table public.group_teachers (group_id uuid not null references public.groups(id) on delete cascade,
+  teacher_id uuid not null, primary key (group_id, teacher_id));
 create table public.enrollments (id uuid primary key default gen_random_uuid(), user_id uuid not null,
   course_id uuid not null, tier_id uuid, enrolled_at timestamptz not null default now(), unique (user_id, course_id));
 
@@ -106,6 +115,19 @@ create table public.profiles (
   name_confirmed_at timestamptz, name_prompt_last_at timestamptz, phone text, bio text,
   account_type text not null default 'paid' check (account_type in ('provisional', 'paid')),
   hide_from_group_boards boolean not null default false, instagram_username citext);
+-- Live bodies and ACLs (2026-09-30): authenticated + service_role may execute, anon may not.
+create function public.is_group_teacher(_group_id uuid, _uid uuid) returns boolean
+  language sql stable security definer set search_path to 'public' as $$
+  select exists (select 1 from public.groups g where g.id = _group_id and g.teacher_id = _uid)
+      or exists (select 1 from public.group_teachers gt where gt.group_id = _group_id and gt.teacher_id = _uid); $$;
+create function public.is_teacher_of(_student uuid, _teacher uuid) returns boolean
+  language sql stable security definer set search_path to 'public' as $$
+  select exists (
+    select 1 from profiles p join groups g on g.id = p.group_id
+    where p.id = _student and public.is_group_teacher(p.group_id, _teacher)
+  ) $$;
+revoke execute on function public.is_group_teacher(uuid, uuid), public.is_teacher_of(uuid, uuid) from public, anon;
+grant execute on function public.is_group_teacher(uuid, uuid), public.is_teacher_of(uuid, uuid) to authenticated, service_role;
 create unique index profiles_telegram_id_unique on public.profiles (telegram_id) where telegram_id is not null;
 create unique index profiles_telegram_username_unique on public.profiles (telegram_username) where telegram_username is not null;
 create unique index uq_profiles_instagram_username on public.profiles (instagram_username) where instagram_username is not null;
@@ -184,13 +206,28 @@ create policy "dws own insert" on public.daily_watch_summary for insert with che
 create policy "dws own select" on public.daily_watch_summary for select using ((auth.uid() = user_id) or has_role(auth.uid(), 'admin'::app_role));
 create policy "dws own update" on public.daily_watch_summary for update using (auth.uid() = user_id);
 create table public.homework_submissions (id uuid primary key default gen_random_uuid(), user_id uuid not null,
-  assignment_id uuid, score smallint, scored_by uuid, submitted_at timestamptz default now());
+  assignment_id uuid, score smallint, scored_by uuid, scored_at timestamptz, submitted_at timestamptz default now(),
+  attempt_number integer default 1, previous_attempts jsonb default '[]'::jsonb, previous_score smallint,
+  score_is_stale boolean default false);
 alter table public.homework_submissions enable row level security;
+-- The live policy set, verbatim (2026-09-30).
 create policy "hws admin delete" on public.homework_submissions for delete to authenticated using (has_role(auth.uid(), 'admin'::app_role));
 create policy "hws own insert" on public.homework_submissions for insert to authenticated with check (auth.uid() = user_id);
-create policy "hws own select" on public.homework_submissions for select using ((auth.uid() = user_id) or has_role(auth.uid(), 'admin'::app_role));
+create policy "hws own select" on public.homework_submissions for select
+  using ((auth.uid() = user_id) or has_role(auth.uid(), 'admin'::app_role)
+         or (has_role(auth.uid(), 'teacher'::app_role) and is_teacher_of(user_id, auth.uid())));
 create policy "hws own update" on public.homework_submissions for update
-  using (((auth.uid() = user_id) and (score is null)) or has_role(auth.uid(), 'admin'::app_role));
+  using (((auth.uid() = user_id) and (score is null)) or has_role(auth.uid(), 'admin'::app_role)
+         or (has_role(auth.uid(), 'teacher'::app_role) and is_teacher_of(user_id, auth.uid())));
+-- The effective-score expression of user_homework_avg10_effective / vw_module_homework_score_effective
+-- (live), cut down to what the finding needs: score, else the last numeric previous_attempts score.
+create function public.test_effective_score(_id uuid) returns numeric language sql stable as $$
+  select coalesce(hs.score,
+    (select (e->>'score')::numeric
+       from jsonb_array_elements(coalesce(hs.previous_attempts, '[]'::jsonb)) with ordinality as t(e, ord)
+      where nullif(e->>'score','') is not null and (e->>'score') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+      order by ord desc limit 1))
+  from public.homework_submissions hs where hs.id = _id $$;
 create table public.quiz_attempts (id uuid primary key default gen_random_uuid(), user_id uuid not null, module_id uuid,
   score integer, answers jsonb, completed_at timestamptz default now());
 alter table public.quiz_attempts enable row level security;
@@ -206,7 +243,8 @@ create function public.ops_net_post(p_url text, p_body jsonb, p_headers jsonb de
 -- Seed.
 insert into public.courses values ('${C1}'), ('${C2}');
 insert into public.course_tiers values ('${T1}', '${C1}'), ('${T2}', '${C2}');
-insert into public.groups values ('${G1}', 'G1', '${C1}', '${T1}'), ('${G2}', 'G2 (the paid one)', '${C2}', '${T2}');
+insert into public.groups (id, name, course_id, tier_id, teacher_id)
+  values ('${G1}', 'G1', '${C1}', '${T1}', '${TE}'), ('${G2}', 'G2 (the paid one)', '${C2}', '${T2}', null);
 insert into auth.users values ('${S1}', 's1@x.uz'), ('${S2}', 's2@x.uz'), ('${S3}', 's3@x.uz'), ('${AD}', 'ad@x.uz'), ('${TE}', 'te@x.uz');
 insert into public.user_roles (user_id, role) values ('${S1}', 'student'), ('${S2}', 'student'), ('${AD}', 'admin'),
   ('${AD}', 'student'), ('${TE}', 'teacher');
@@ -216,6 +254,10 @@ insert into public.profiles (id, email, name, group_id, telegram_id, telegram_us
          ('${AD}', 'ad@x.uz', 'Admin', null, 9001, 'the_admin', 'paid', now() - interval '90 days'),
          ('${TE}', 'te@x.uz', 'Teacher', '${G1}', 7001, 'the_teacher', 'paid', now() - interval '60 days');
 insert into public.platform_settings (key, value) values ('telegram', '{"bot_token": "123:TEST"}');
+insert into public.homework_submissions (id, user_id, assignment_id, score, scored_by, scored_at)
+  values ('${H1}', '${S1}', '${A1}', null, null, null),
+         ('${H2}', '${S1}', '${A2}', 7, '${TE}', now() - interval '2 days'),
+         ('${HA}', '${AD}', '${A1}', null, null, null);
 `;
 
 async function newDb(): Promise<any> {
@@ -289,12 +331,34 @@ Deno.test({
     const db = await newDb();
     const MIG = await migrationText();
 
+    await t.step("BEFORE the migration, the live shape reproduces both review findings", async () => {
+      // 1. A student forges an earlier grade on their own ungraded submission; it reads as a grade.
+      const forged = await as(db, "authenticated", student(S1),
+        `update public.homework_submissions
+            set previous_attempts = '[{"score": "1000", "scored_at": "2026-09-30T00:00:00Z"}]',
+                previous_score = 10, scored_by = user_id, assignment_id = $2, submitted_at = now() - interval '9 days'
+          where id = $1 returning id`, [H1, A2]);
+      eq(forged.length, 1, "live 'hws own update' lets the owner write previous_attempts/scored_by/assignment_id");
+      eq(Number((await one(db, "select public.test_effective_score($1) s", [H1])).s), 1000, "forged attempt read as the grade");
+      // 2. A teacher points the bot's scope at a group they do not teach.
+      eq((await as(db, "authenticated", student(TE),
+        "update public.profiles set active_teacher_group_id = $2 where id = $1 returning id", [TE, G2])).length, 1,
+        "live policy lets a teacher scope to someone else's group");
+      await db.exec(`update public.homework_submissions set previous_attempts = '[]', previous_score = null, scored_by = null,
+                       assignment_id = '${A1}', submitted_at = now() where id = '${H1}';
+                     update public.profiles set active_teacher_group_id = null where id = '${TE}';`);
+    });
+
     await t.step("applies, and its own end-to-end self-test runs (not skipped)", async () => {
       await db.exec(MIG);
       const m = await one(db, "select details from public.admin_actions where action = 'profiles_column_guard_applied'");
       assert(m, "no audit marker");
       eq(m.details.self_test, "ran", "in-migration e2e self-test");
-      eq(m.details.self_test_results.rejections_counted >= 5, true, "self-test counted its rejections");
+      eq(m.details.self_test_results.rejections_counted >= 6, true, "self-test counted its rejections");
+      eq(m.details.self_test_results.student_hws_update_rows, 0, "self-test: the owner's hws update is filtered");
+      assert(String(m.details.self_test_results.student_active_teacher_group_id).startsWith("P0001"),
+        `self-test: scope rejected: ${JSON.stringify(m.details.self_test_results)}`);
+      eq(m.details.scoped, ["active_teacher_group_id"], "marker names the scoped column");
       eq(await rejections(db), 0, "self-test put the rejection counter back");
       eq(Number((await one(db, "select count(*) n from public.admin_actions where action = 'profile_privileged_change'")).n), 0,
         "self-test left no audit rows");
@@ -401,7 +465,68 @@ Deno.test({
       isGuardRejection(await err(as(db, "authenticated", student(TE), "update public.profiles set group_id = $2 where id = $1", [TE, G2])),
         "teacher own group");
       const ok = await as(db, "authenticated", student(TE), "update public.profiles set active_teacher_group_id = $2 where id = $1 returning id", [TE, G1]);
-      eq(ok.length, 1, "teacher picks their active group (not guarded)");
+      eq(ok.length, 1, "teacher picks a group they teach");
+    });
+
+    await t.step("active_teacher_group_id is SCOPED: only NULL or a group the writer teaches", async () => {
+      const before = await rejections(db);
+      const setScope = (who: string, row: string, g: string | null) =>
+        as(db, "authenticated", student(who), "update public.profiles set active_teacher_group_id = $2 where id = $1 returning id", [row, g]);
+      isGuardRejection(await err(setScope(TE, TE, G2)), "teacher scopes to a group they do not teach");
+      isGuardRejection(await err(setScope(S1, S1, G1)), "student scopes to their own (untaught) group");
+      eq(await rejections(db) - before, 2, "both counted");
+      eq((await one(db, "select active_teacher_group_id g from public.profiles where id = $1", [TE])).g, G1, "unchanged");
+      // co-teacher via the junction
+      await db.exec(`insert into public.group_teachers values ('${G2}', '${TE}')`);
+      eq((await setScope(TE, TE, G2)).length, 1, "a co-teacher (group_teachers) may scope to it");
+      await db.exec(`delete from public.group_teachers where group_id = '${G2}' and teacher_id = '${TE}'`);
+      // G2 is now STALE for TE: other edits still pass (an unchanged value is never judged)
+      eq((await as(db, "authenticated", student(TE), "update public.profiles set name = 'Ustoz' where id = $1 returning id", [TE])).length, 1,
+        "a stale scope does not block the teacher's other edits");
+      eq((await setScope(TE, TE, null)).length, 1, "NULL is always allowed");
+      // admin and service_role pass, and a scope change is not a privileged change
+      const recBefore = Number((await one(db, "select count(*) n from public.admin_actions where action = 'profile_privileged_change'")).n);
+      eq((await setScope(AD, AD, G2)).length, 1, "admin may scope anywhere");
+      await as(db, "service_role", { role: "service_role" }, "update public.profiles set active_teacher_group_id = $2 where id = $1", [TE, G2]);
+      eq(Number((await one(db, "select count(*) n from public.admin_actions where action = 'profile_privileged_change'")).n), recBefore,
+        "scope changes are not recorded as privileged changes (bot noise)");
+      // a mixed patch: allowed column + bad scope is rejected whole
+      await db.exec(`update public.profiles set active_teacher_group_id = null where id in ('${TE}', '${AD}')`);
+      isGuardRejection(await err(as(db, "authenticated", student(TE),
+        "update public.profiles set name = 'X', active_teacher_group_id = $2 where id = $1", [TE, G2])), "mixed patch with a bad scope");
+      eq((await one(db, "select name from public.profiles where id = $1", [TE])).name, "Ustoz", "rolled back whole");
+      // INSERT: a new profile may not be born scoped to an untaught group
+      const S4 = "e4e4e4e4-e4e4-e4e4-e4e4-e4e4e4e4e4e4";
+      await db.exec(`insert into auth.users values ('${S4}', 's4@x.uz')`);
+      isGuardRejection(await err(as(db, "authenticated", student(S4, "s4@x.uz"),
+        "insert into public.profiles (id, email, active_teacher_group_id) values ($1, 's4@x.uz', $2)", [S4, G2])), "insert scoped");
+    });
+
+    await t.step("homework_submissions: the owner can no longer write their row; staff grading works", async () => {
+      for (const [label, set] of [
+        ["previous_attempts", `previous_attempts = '[{"score": "1000"}]'`],
+        ["scored_by", "scored_by = user_id"],
+        ["assignment_id", `assignment_id = '${A2}'`],
+        ["submitted_at", "submitted_at = now() - interval '9 days'"],
+      ]) {
+        eq((await as(db, "authenticated", student(S1), `update public.homework_submissions set ${set} where id = $1 returning id`, [H1])).length, 0,
+          `student ${label}`);
+      }
+      eq((await one(db, "select previous_attempts p, assignment_id a from public.homework_submissions where id = $1", [H1])),
+        { p: [], a: A1 }, "row untouched");
+      eq(Number((await one(db, "select coalesce(public.test_effective_score($1), -1) s", [H1])).s), -1, "no forged grade");
+      // the teacher of S1's group grades; the admin grades anyone
+      eq((await as(db, "authenticated", student(TE), "update public.homework_submissions set score = 8, scored_by = $2 where id = $1 returning id", [H1, TE])).length, 1,
+        "teacher grades their student");
+      eq((await as(db, "authenticated", student(TE), "update public.homework_submissions set score = 9 where id = $1 returning id", [HA])).length, 0,
+        "teacher cannot grade outside their groups");
+      assert(await err(as(db, "authenticated", student(TE), "update public.homework_submissions set user_id = $2 where id = $1", [H2, AD])),
+        "WITH CHECK: a teacher cannot move a submission out of their scope");
+      eq((await as(db, "authenticated", student(AD), "update public.homework_submissions set score = 9 where id = $1 returning id", [HA])).length, 1,
+        "admin grades anyone");
+      eq((await as(db, "authenticated", student(S1), "select score from public.homework_submissions where id = $1", [H1])).map((r) => r.score), [8],
+        "the student still reads their grade");
+      await db.exec(`update public.homework_submissions set score = null, scored_by = null where id in ('${H1}', '${HA}')`);
     });
 
     await t.step("SECURITY DEFINER path and service_role pass (and are recorded)", async () => {
@@ -501,11 +626,21 @@ Deno.test({
       await db.exec("alter table public.profiles enable trigger trg_profiles_zz_column_guard");
       await db.exec(`create function public.evil() returns trigger language plpgsql as $$ begin return new; end $$;
                      create trigger trg_profiles_zzz_evil before update on public.profiles for each row execute function public.evil();
-                     create policy "sneaky" on public.streaks for insert with check (true);`);
+                     create policy "sneaky" on public.streaks for insert with check (true);
+                     create policy "hws sneaky arm" on public.homework_submissions for update
+                       using ((user_id = auth.uid()) and (score is null));
+                     create policy "hws sneaky open" on public.homework_submissions for update to authenticated using (true);
+                     create policy "hws staff too" on public.homework_submissions for update
+                       using (has_role(auth.uid(), 'admin'::app_role));`);
       const r3 = await one(db, "select public.profiles_guard_health() r");
       assert(r3.r.problems.includes("guard_not_last:trg_profiles_zzz_evil"), `guard_not_last: ${JSON.stringify(r3.r.problems)}`);
       eq(r3.r.keys, ["guard_down", "rls_drift"], "rls drift");
-      await db.exec(`drop trigger trg_profiles_zzz_evil on public.profiles; drop policy "sneaky" on public.streaks;`);
+      eq(r3.r.rls_write_policies.map((p: Row) => `${p.table}/${p.policy}`),
+        ["homework_submissions/hws sneaky arm", "homework_submissions/hws sneaky open", "streaks/sneaky"],
+        "a student arm (either operand order) or an open predicate on hws UPDATE is drift; a staff-only one and the real policy are not");
+      await db.exec(`drop trigger trg_profiles_zzz_evil on public.profiles; drop policy "sneaky" on public.streaks;
+                     drop policy "hws sneaky arm" on public.homework_submissions; drop policy "hws sneaky open" on public.homework_submissions;
+                     drop policy "hws staff too" on public.homework_submissions;`);
       const r4 = await one(db, "select public.profiles_guard_watchdog() r");
       eq(r4.r.keys, [], "clear");
       const last = (await one(db, "select body->>'text' t from public.ops_calls order by id desc limit 1")).t;
