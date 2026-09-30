@@ -6,7 +6,7 @@
 //
 // Auth model (asymmetric, on purpose):
 //   * admin / superadmin → any course; a course picker is returned.
-//   * teacher            → ONLY the groups they own (groups.teacher_id = their profile id).
+//   * teacher            → ONLY the groups they teach: primary (groups.teacher_id) ∪ co-teacher (group_teachers).
 //   * anyone else        → 403.
 // Read-only: no writes, no XP awards. Top-N only — never a "bottom" list.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
