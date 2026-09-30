@@ -91,6 +91,48 @@ describe("impersonation (G12)", () => {
   });
 });
 
+describe("the submit form's file cap (the engine takes at most 10 messages per request)", () => {
+  const origCreate = URL.createObjectURL, origRevoke = URL.revokeObjectURL;
+  beforeEach(() => { URL.createObjectURL = vi.fn(() => "blob:preview"); URL.revokeObjectURL = vi.fn(); });
+  afterEach(() => { cleanup(); URL.createObjectURL = origCreate; URL.revokeObjectURL = origRevoke; }); // unmount revokes previews
+  const photos = (n: number) => Array.from({ length: n }, (_, i) => new File(["x"], `s${i}.jpg`, { type: "image/jpeg" }));
+  const textbox = () => screen.getByLabelText(i18n.t("dailyTasks.submit.textLabel"));
+  const sendBtn = () => screen.getByRole("button", { name: i18n.t("dailyTasks.submit.send") });
+
+  it("10 photos + a text past the caption room: a notice, Send disabled, nothing sent; one file fewer sends 9", async () => {
+    h.invoke.mockResolvedValue({ data: { ok: true, result: { outcome: "created", submission: { status: "accepted", points: 5 } }, posted: 10, failed: 0 }, error: null });
+    render(<DailyTaskSubmit task={TASK} topicUrl={null} captionTextMax={50} onDone={() => {}} />);
+    fireEvent.change(screen.getByTestId("dt-file-input"), { target: { files: photos(10) } });
+    fireEvent.change(textbox(), { target: { value: "x".repeat(50) } }); // fits the caption: 10 files are fine
+    expect(screen.queryByTestId("dt-over-cap")).toBeNull();
+    expect(sendBtn()).not.toBeDisabled();
+    fireEvent.change(textbox(), { target: { value: "x".repeat(51) } }); // its own message now: 11 would be posted
+    expect(screen.getByTestId("dt-over-cap")).toHaveTextContent(i18n.t("dailyTasks.submit.errors.too_many_files_with_text", { max: 9 }));
+    expect(sendBtn()).toBeDisabled();
+    fireEvent.click(sendBtn());
+    expect(h.invoke).not.toHaveBeenCalled();
+    fireEvent.click(screen.getAllByRole("button", { name: i18n.t("dailyTasks.submit.remove") })[0]);
+    expect(screen.queryByTestId("dt-over-cap")).toBeNull();
+    fireEvent.click(sendBtn());
+    await waitFor(() => expect(h.invoke).toHaveBeenCalledTimes(1));
+    expect((h.invoke.mock.calls[0][1] as { body: FormData }).body.getAll("files")).toHaveLength(9);
+  });
+
+  it("with a long text already typed, the picker takes 9 and says why; the server's refusal names its max", async () => {
+    render(<DailyTaskSubmit task={TASK} topicUrl={null} captionTextMax={50} onDone={() => {}} />);
+    fireEvent.change(textbox(), { target: { value: "x".repeat(200) } });
+    fireEvent.change(screen.getByTestId("dt-file-input"), { target: { files: photos(10) } });
+    expect(screen.getAllByRole("button", { name: i18n.t("dailyTasks.submit.remove") })).toHaveLength(9);
+    expect(h.toast.error).toHaveBeenCalledWith(i18n.t("dailyTasks.submit.errors.too_many_files_with_text", { max: 9 }));
+    expect(screen.queryByTestId("dt-over-cap")).toBeNull();
+
+    h.invoke.mockResolvedValue({ data: null, error: { context: new Response(JSON.stringify({ error: "too_many_files_with_text", max: 8 }), { status: 400 }) } });
+    fireEvent.click(sendBtn());
+    await waitFor(() => expect(h.toast.error).toHaveBeenCalledWith(i18n.t("dailyTasks.submit.errors.too_many_files_with_text", { max: 8 })));
+    expect(h.beacon).not.toHaveBeenCalled(); // an expected answer, not a client error
+  });
+});
+
 describe("the submit form's request id", () => {
   it("a retry of the same form reuses it (Telegram busy); a definitive answer starts a new one", async () => {
     const onDone = vi.fn();

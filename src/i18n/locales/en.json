@@ -1528,11 +1528,13 @@
         "kind_not_accepted": "This task does not take that kind of file.",
         "empty": "Add a photo, file or text first.",
         "too_many_files": "At most {{max}} files.",
+        "too_many_files_with_text": "The text is long — it goes as its own message, so at most {{max}} files can go with it. Remove one file or shorten the text.",
         "file_too_large": "File too large: photos up to 10 MB, videos and files up to 50 MB.",
         "batch_too_large": "The files are too large together. Send fewer.",
         "text_too_long": "The text is too long.",
         "expired": "The request expired — submit again.",
         "refused": "This work cannot be accepted. Contact an admin.",
+        "capture_rejected": "Your work was posted in the topic but not counted. Contact an admin.",
         "topic_not_configured": "Your group's «Kunlik vazifalar» topic is not set up. Contact an admin.",
         "network": "Check your connection and try again.",
         "generic": "Something went wrong. Try again."

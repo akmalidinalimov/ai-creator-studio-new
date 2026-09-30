@@ -6,7 +6,7 @@ import { useMiniApp } from "@/lib/telegram/MiniAppContext";
 import { Button } from "@/components/ui-kit";
 import { impersonatingReadonly } from "@/lib/mutate";
 import {
-  acceptsFile, effectiveKind, fileKindOf, newRequestId, pickerAccept, pickKinds, requiresHint, submitDailyTask,
+  acceptsFile, effectiveKind, fileKindOf, maxFilesFor, newRequestId, pickerAccept, pickKinds, requiresHint, submitDailyTask,
   type FileKind, type PrepareTask, type SubmitAnswer,
 } from "@/lib/dailyTasks";
 
@@ -61,11 +61,14 @@ async function toUploadable(file: File): Promise<File> {
 export interface DailyTaskSubmitProps {
   task: PrepareTask;
   topicUrl: string | null;
+  /** prepare's limits.caption_text_max: the room the text has in the caption under this student's header. A longer
+   *  text is posted as its own message, so it leaves room for one file fewer (at most 10 messages per request). */
+  captionTextMax?: number | null;
   /** Called after the engine answered (the page reloads its data). */
   onDone: () => void;
 }
 
-export default function DailyTaskSubmit({ task, topicUrl, onDone }: DailyTaskSubmitProps) {
+export default function DailyTaskSubmit({ task, topicUrl, captionTextMax, onDone }: DailyTaskSubmitProps) {
   const { t } = useTranslation();
   const { webApp } = useMiniApp();
   const [items, setItems] = useState<Picked[]>([]);
@@ -83,6 +86,9 @@ export default function DailyTaskSubmit({ task, topicUrl, onDone }: DailyTaskSub
   const accepts = task.accepts ?? [];
   const accept = pickerAccept(accepts);
   const takesText = accepts.includes("text") || accepts.includes("link");
+  // 10 files, or 9 with a text too long for the caption (the server refuses 11 messages before posting anything)
+  const maxItems = maxFilesFor(text, captionTextMax);
+  const overCap = items.length > maxItems;
   const hint = useMemo(
     () => requiresHint(task.requires ?? [], { kinds: items.flatMap((i) => pickKinds(i.kind, i.mime)), text }),
     [task.requires, items, text],
@@ -109,9 +115,13 @@ export default function DailyTaskSubmit({ task, topicUrl, onDone }: DailyTaskSub
     if (picked.length) {
       touched();
       setItems((prev) => {
-        const room = MAX_ITEMS - prev.length;
+        const room = maxItems - prev.length;
         for (const it of picked.slice(Math.max(0, room))) if (it.previewUrl) URL.revokeObjectURL(it.previewUrl);
-        if (picked.length > room) toast.error(t("dailyTasks.submit.errors.too_many_files", { max: MAX_ITEMS }));
+        if (picked.length > room) {
+          toast.error(maxItems < MAX_ITEMS
+            ? t("dailyTasks.submit.errors.too_many_files_with_text", { max: maxItems })
+            : t("dailyTasks.submit.errors.too_many_files", { max: MAX_ITEMS }));
+        }
         return [...prev, ...picked.slice(0, Math.max(0, room))];
       });
     }
@@ -164,7 +174,7 @@ export default function DailyTaskSubmit({ task, topicUrl, onDone }: DailyTaskSub
       toast.error(t("dailyTasks.submit.errors.rate_limited", { sec: a.retryAfter }));
       return;
     }
-    toast.error(t(`dailyTasks.submit.errors.${a.code}`, { max: MAX_ITEMS, defaultValue: t("dailyTasks.submit.errors.generic") }));
+    toast.error(t(`dailyTasks.submit.errors.${a.code}`, { max: a.max ?? MAX_ITEMS, defaultValue: t("dailyTasks.submit.errors.generic") }));
   };
 
   const submit = async () => {
@@ -172,6 +182,8 @@ export default function DailyTaskSubmit({ task, topicUrl, onDone }: DailyTaskSub
     if (impersonatingReadonly()) return; // expected preview no-op (G12): nothing is sent, nothing is beaconed
     const body = text.trim();
     if (!items.length && !body) { toast.error(t("dailyTasks.submit.errors.empty")); return; }
+    const cap = maxFilesFor(body.slice(0, MAX_TEXT), captionTextMax);
+    if (itemsRef.current.length > cap) { toast.error(t("dailyTasks.submit.errors.too_many_files_with_text", { max: cap })); return; }
     setSubmitting(true);
     try {
       if (!requestId.current) requestId.current = newRequestId();
@@ -238,7 +250,7 @@ export default function DailyTaskSubmit({ task, topicUrl, onDone }: DailyTaskSub
                   </button>
                 </div>
               ))}
-              {items.length < MAX_ITEMS && (
+              {items.length < maxItems && (
                 <button type="button" onClick={() => fileInput.current?.click()} disabled={submitting || readonly}
                   className="flex aspect-square flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-border bg-surface-2 text-muted-foreground disabled:opacity-50">
                   <ImagePlus className="size-5" />
@@ -272,6 +284,12 @@ export default function DailyTaskSubmit({ task, topicUrl, onDone }: DailyTaskSub
         </div>
       )}
 
+      {overCap && (
+        <p role="alert" className="text-xs font-semibold text-destructive" data-testid="dt-over-cap">
+          {t("dailyTasks.submit.errors.too_many_files_with_text", { max: maxItems })}
+        </p>
+      )}
+
       {hint.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 text-[11.5px] font-semibold" aria-label={t("dailyTasks.submit.needs")}>
           <span className="text-muted-foreground">{t("dailyTasks.submit.needs")}:</span>
@@ -283,7 +301,7 @@ export default function DailyTaskSubmit({ task, topicUrl, onDone }: DailyTaskSub
         </div>
       )}
 
-      <Button variant="primary" block disabled={submitting || readonly || (!items.length && !text.trim())} onClick={() => void submit()}>
+      <Button variant="primary" block disabled={submitting || readonly || overCap || (!items.length && !text.trim())} onClick={() => void submit()}>
         {submitting ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
         {submitting ? t("dailyTasks.submit.sending") : t("dailyTasks.submit.send")}
       </Button>

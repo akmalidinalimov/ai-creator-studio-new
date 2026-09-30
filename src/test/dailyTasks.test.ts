@@ -4,8 +4,8 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: {} })); // pure hel
 vi.mock("@/lib/beacon", () => ({ reportClientError: vi.fn() }));
 
 import {
-  acceptsFile, effectiveKind, fileKindOf, formatTaskDate, parsePostHtml, pickerAccept, requiresHint, statusTone,
-  tashkentDateOf, tashkentToday,
+  acceptsFile, DT_CAPTION_TEXT_SAFE, DT_MAX_MESSAGES, effectiveKind, fileKindOf, formatTaskDate, maxFilesFor, parsePostHtml,
+  pickerAccept, requiresHint, statusTone, tashkentDateOf, tashkentToday,
 } from "@/lib/dailyTasks";
 // The edge function's own copies: the Mini App must refuse exactly what submit-daily-task refuses.
 import * as edge from "../../supabase/functions/submit-daily-task/core";
@@ -54,6 +54,23 @@ describe("file kinds mirror the edge function (the server refuses what the picke
       }
     }
     expect(effectiveKind("photo", ["document"])).toBe("document"); // a file task gets the image as a file (image_doc)
+  });
+  it("maxFilesFor: exactly as many files as keep the post at the engine's 10 messages (a long text is its own message)", () => {
+    expect(DT_MAX_MESSAGES).toBe(edge.MAX_MESSAGES);
+    expect(DT_CAPTION_TEXT_SAFE).toBe(edge.CAPTION_TEXT_SAFE);
+    const header = edge.buildHeader({ name: "Ali", last_name: "Valiyev", telegram_username: "ali_v" }, { id: 7, date: "2026-10-05", title: "Birinchi" });
+    const room = edge.captionTextMax(header);
+    const files = (k: number) => Array.from({ length: k }, () => ({ kind: "photo" as const, blob: new Blob(["x"]), name: "a.jpg", size: 1, mime: "image/jpeg" }));
+    for (const len of [0, 10, room, room + 1, 1000, 3500]) {
+      const text = "x".repeat(len);
+      const n = maxFilesFor(text, room);
+      expect(edge.plannedMessages(edge.planParts(files(n), text, header))).toBeLessThanOrEqual(edge.MAX_MESSAGES);
+      expect(edge.plannedMessages(edge.planParts(files(n + 1), text, header))).toBeGreaterThan(edge.MAX_MESSAGES); // tight
+    }
+    expect(maxFilesFor("x".repeat(room + 1), room)).toBe(9);
+    expect(maxFilesFor(`  ${"x".repeat(room)}  `, room)).toBe(10); // what is sent is trimmed
+    expect(maxFilesFor("x".repeat(DT_CAPTION_TEXT_SAFE + 1), null)).toBe(9); // no room from prepare: the safe one
+    expect(maxFilesFor("x".repeat(DT_CAPTION_TEXT_SAFE), undefined)).toBe(10);
   });
   it("pickerAccept", () => {
     expect(pickerAccept(["text", "photo"])).toBe("image/*");

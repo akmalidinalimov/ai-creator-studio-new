@@ -1528,11 +1528,13 @@
         "kind_not_accepted": "Bu vazifa bunday faylni qabul qilmaydi.",
         "empty": "Avval rasm, fayl yoki matn qo'shing.",
         "too_many_files": "Ko'pi bilan {{max}} ta fayl.",
+        "too_many_files_with_text": "Matn uzun — u alohida xabar bo'lib ketadi, shuning uchun ko'pi bilan {{max}} ta fayl yuborish mumkin. Bitta faylni olib tashlang yoki matnni qisqartiring.",
         "file_too_large": "Fayl juda katta: rasm 10 MB gacha, video va fayl 50 MB gacha.",
         "batch_too_large": "Fayllar jami juda katta. Kamroq fayl yuboring.",
         "text_too_long": "Matn juda uzun.",
         "expired": "So'rov eskirdi — qayta yuboring.",
         "refused": "Bu ishni qabul qilib bo'lmadi. Admin bilan bog'laning.",
+        "capture_rejected": "Ishingiz topikka joylandi, lekin hisobga olinmadi. Admin bilan bog'laning.",
         "topic_not_configured": "Guruhingizning «Kunlik vazifalar» topiki sozlanmagan. Admin bilan bog'laning.",
         "network": "Internet aloqasini tekshiring va qayta urinib ko'ring.",
         "generic": "Xatolik yuz berdi. Qayta urinib ko'ring."

@@ -80,7 +80,8 @@ export interface Prepare {
   open_tasks: { task_id: number; date: string; type: string; title: string; late: boolean }[];
   topic_url: string | null;
   text: string | null;
-  limits?: { max_items: number; max_photo_bytes: number; max_file_bytes: number; max_text: number };
+  limits?: { max_items: number; max_photo_bytes: number; max_file_bytes: number; max_text: number; max_messages?: number;
+             caption_text_max?: number };
 }
 
 // ─────────────────────────────── reads ───────────────────────────────
@@ -148,11 +149,13 @@ export async function prepareTask(taskId: number | null): Promise<Prepare | { er
 // ─────────────────────────────── writes (impersonation-gated) ───────────────────────────────
 export type SubmitAnswer =
   | { ok: true; pending: boolean; result: Record<string, unknown> | null; posted: number; failed: number }
-  | { ok: false; code: string; reason?: string | null; retryAfter?: number | null; topicUrl?: string | null; status?: number };
+  | { ok: false; code: string; reason?: string | null; retryAfter?: number | null; topicUrl?: string | null; status?: number;
+      max?: number | null };
 
 /** Codes the student can meet in normal use (never beaconed). Anything else is a real failure and is. */
 const EXPECTED_CODES = new Set([
   "impersonation_readonly", "not_allowed", "in_progress", "expired", "refused", "kind_not_accepted", "empty", "too_many_files",
+  "too_many_files_with_text",
   "file_too_large", "batch_too_large", "text_too_long", "empty_file", "telegram_post_failed", "unauthorized", "request_id_reused",
   "network", "too_many_requests",
 ]);
@@ -173,6 +176,7 @@ export async function submitDailyTask(form: FormData): Promise<SubmitAnswer> {
         retryAfter: typeof body?.retry_after === "number" ? (body.retry_after as number) : null,
         topicUrl: typeof body?.topic_url === "string" ? (body.topic_url as string) : null,
         status,
+        max: typeof body?.max === "number" ? (body.max as number) : null,
       };
     } else {
       const d = (data ?? {}) as Record<string, unknown>;
@@ -301,6 +305,21 @@ export function acceptsFile(accepts: string[], kind: FileKind, mime: string): bo
   if (m.startsWith("video/")) return a.has("video");
   if (m.startsWith("audio/")) return a.has("audio") || a.has("voice");
   return false;
+}
+
+/** Mirrors submit-daily-task: the engine captures at most this many messages per Mini App request. */
+export const DT_MAX_MESSAGES = 10;
+/** Mirrors submit-daily-task's CAPTION_TEXT_SAFE: a text this long fits the caption under any header. */
+export const DT_CAPTION_TEXT_SAFE = 760;
+
+/**
+ * How many files may go with this text. A text longer than the caption room (prepare's limits.caption_text_max: the
+ * room under THIS student's header) is posted as its own message, so it leaves room for DT_MAX_MESSAGES - 1 files —
+ * the server refuses 10 files + such a text (too_many_files_with_text) before anything is posted.
+ */
+export function maxFilesFor(text: string, captionTextMax?: number | null): number {
+  const room = typeof captionTextMax === "number" && Number.isFinite(captionTextMax) && captionTextMax >= 0 ? captionTextMax : DT_CAPTION_TEXT_SAFE;
+  return text.trim().length > room ? DT_MAX_MESSAGES - 1 : DT_MAX_MESSAGES;
 }
 
 /** The file picker's accept attribute for a task. */

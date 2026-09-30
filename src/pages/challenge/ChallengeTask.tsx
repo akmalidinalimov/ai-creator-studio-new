@@ -176,7 +176,8 @@ export default function ChallengeTask() {
                 <SectionHeader title={t("dailyTasks.submit.title")} />
                 <Card className="space-y-3 p-4">
                   <p className="text-xs font-semibold text-muted-foreground">{t("dailyTasks.task.whereBody")}</p>
-                  <DailyTaskSubmit key={`${task.id}:${reloadKey}`} task={task} topicUrl={topicUrl} onDone={reload} />
+                  <DailyTaskSubmit key={`${task.id}:${reloadKey}`} task={task} topicUrl={topicUrl}
+                    captionTextMax={p.limits?.caption_text_max ?? null} onDone={reload} />
                 </Card>
               </>
             ) : p && p.reason ? (
