@@ -98,7 +98,7 @@ export async function recordMenuOutcome(
     error: o.error, // Telegram's description only — never the token
   };
   if (outcome === "rejected") {
-    await logHealthOnce(admin, "miniapp_button_rejected", `rejected:menu_button:${ctx.method}`, details, {
+    await logHealthOnce(admin, "miniapp_button_rejected", `rejected:menu_button_${ctx.where}:${ctx.method}`, details, {
       source: "telegram-bot-webhook",
     });
   } else {

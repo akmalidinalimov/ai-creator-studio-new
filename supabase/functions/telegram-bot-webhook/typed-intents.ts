@@ -22,7 +22,7 @@ const RULES: [RegExp, TypedIntent][] = [
   [/(vazifa|вазифа|задани|задач|домашн|домашк|homework|uyga\s*ish|уйга\s*иш)/u, "/vazifalar"],
   [/(davom|давом|продолж|continue|keyingi|кейинги|следующ|(?<!\p{L})dars|(?<!\p{L})дарс|(?<!\p{L})урок|lesson)/u, "/davom"],
   [/(kurs|курс|course|modul|модул|module)/u, "/dars"],
-  [/(reyting|рейтинг|rating|(?<!\p{L})ball|(?<!\p{L})балл|o'rin|ўрин|(?<!\p{L})урин|profil|профил|profile|statistik|статистик)/u, "/profil"],
+  [/(reyting|рейтинг|rating|(?<!\p{L})ball|(?<!\p{L})балл|o'ri?n|ўри?н|(?<!\p{L})урин|profil|профил|profile|statistik|статистик)/u, "/profil"],
   [/(yordam|ёрдам|помощ|помоги|(?<!\p{L})help(?!\p{L})|(?<!\p{L})admin|(?<!\p{L})админ|support|поддержк)/u, "/yordam"],
 ];
 
