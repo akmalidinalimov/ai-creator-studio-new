@@ -27,7 +27,7 @@ import { type SendOutcome } from "../_shared/telegram-send.ts";
 
 export type Locale = "uz" | "ru" | "en";
 // deno-lint-ignore no-explicit-any
-type Db = any; // eslint-disable-line @typescript-eslint/no-explicit-any
+type Db = any;
 
 const esc = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 

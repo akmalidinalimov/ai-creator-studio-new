@@ -51,7 +51,7 @@ export const BACKOFF_MS: Record<string, number> = {
 };
 
 // deno-lint-ignore no-explicit-any
-type Db = any; // eslint-disable-line @typescript-eslint/no-explicit-any
+type Db = any;
 
 // ─────────────────────────── settings ───────────────────────────
 export type SweepSettings = { enabled: boolean; student: boolean; teacher: boolean; rerun: string };
