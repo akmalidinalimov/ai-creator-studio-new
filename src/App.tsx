@@ -78,6 +78,7 @@ const AdminGroups = lazy(() => import("./pages/admin/AdminGroups"));
 const GroupDetail = lazy(() => import("./pages/admin/GroupDetail"));
 const AdminHomework = lazy(() => import("./pages/admin/AdminHomework"));
 const AdminHomeworkHealth = lazy(() => import("./pages/admin/AdminHomeworkHealth"));
+const AdminChallengeTasks = lazy(() => import("./pages/admin/AdminChallengeTasks"));
 const TeacherHomework = lazy(() => import("./pages/TeacherHomework"));
 const AdminEngagement = lazy(() => import("./pages/admin/AdminEngagement"));
 const AdminTeacherStats = lazy(() => import("./pages/admin/AdminTeacherStats"));
@@ -180,6 +181,7 @@ const App = () => (
             <Route path="/admin/nudges" element={<Navigate to="/admin/engagement" replace />} />
             <Route path="/admin/homework" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminHomework /></Suspense></RequireAuth>} />
             <Route path="/admin/homework-health" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminHomeworkHealth /></Suspense></RequireAuth>} />
+            <Route path="/admin/challenge/tasks" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminChallengeTasks /></Suspense></RequireAuth>} />
             <Route path="/teacher/homework" element={<RequireAuth staffOnly><Suspense fallback={<AdminFallback />}><TeacherHomework /></Suspense></RequireAuth>} />
             
             <Route path="/admin/analytics" element={<RequireAuth adminOnly><Suspense fallback={<AdminFallback />}><AdminAnalytics /></Suspense></RequireAuth>} />
