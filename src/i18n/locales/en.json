@@ -1522,6 +1522,7 @@
       "noSlot": "This task has closed — your work stays in the topic but earns no points.",
       "errors": {
         "in_progress": "The previous submission is still in progress — wait a moment and tap again.",
+        "too_many_requests": "Too many submissions — try again in 10 minutes.",
         "telegram_post_failed": "Could not post to Telegram. Try again in a little while.",
         "rate_limited": "Telegram is busy — try again in {{sec}} s.",
         "kind_not_accepted": "This task does not take that kind of file.",

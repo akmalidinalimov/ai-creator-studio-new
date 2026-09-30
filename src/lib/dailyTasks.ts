@@ -154,7 +154,7 @@ export type SubmitAnswer =
 const EXPECTED_CODES = new Set([
   "impersonation_readonly", "not_allowed", "in_progress", "expired", "refused", "kind_not_accepted", "empty", "too_many_files",
   "file_too_large", "batch_too_large", "text_too_long", "empty_file", "telegram_post_failed", "unauthorized", "request_id_reused",
-  "network",
+  "network", "too_many_requests",
 ]);
 
 /** The multipart submission. `form` carries task_id, request_id, text and files. */

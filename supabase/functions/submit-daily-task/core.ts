@@ -77,6 +77,10 @@ export const MAX_TEXT = 3500; // + the header stays under sendMessage's 4096
 export const CAPTION_MAX = 1024; // Telegram's caption limit (UTF-16 units = String.length)
 export const CLAIM_STALE_MS = 7 * 60_000; // longer than any edge wall clock: a 'claimed' row this old is dead
 export const RATE_LIMIT_WAIT_MAX_SEC = 20; // a 429 with a short retry_after is waited out inside the request
+// Every submission is a post BY THE BOT into a shared group topic, and Telegram allows a bot ~20 messages a minute in
+// one group: a student's burst of new requests must not starve the bot's receipts for the whole class.
+export const MAX_NEW_CLAIMS_PER_WINDOW = 6;
+export const NEW_CLAIM_WINDOW_MS = 10 * 60_000;
 export const REQUEST_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 
 export type FileKind = "photo" | "video" | "document";
@@ -380,6 +384,23 @@ async function readClaim(deps: Deps, userId: string, requestId: string): Promise
   return (data ?? null) as Claim | null;
 }
 
+/** The student's new requests in the last NEW_CLAIM_WINDOW_MS. A read failure counts as 0 (never block on the guard),
+ *  loudly. */
+async function recentClaims(deps: Deps, userId: string): Promise<number> {
+  try {
+    const { data, error } = await deps.admin.from("challenge_task_submit_claims")
+      .select("request_id")
+      .eq("user_id", userId)
+      .gte("claimed_at", new Date(deps.now() - NEW_CLAIM_WINDOW_MS).toISOString())
+      .limit(MAX_NEW_CLAIMS_PER_WINDOW + 1);
+    if (error) throw error;
+    return Array.isArray(data) ? data.length : 0;
+  } catch (e) {
+    await deps.healthOnce("challenge_task_miniapp_rpc_failed", `recent_claims:${errCode(e)}`, { stage: "recent_claims", code: errCode(e) }, userId);
+    return 0;
+  }
+}
+
 /** Compare-and-set a claim back to 'claimed' (a retry after a failure, or the take-over of a dead request). */
 async function takeClaim(deps: Deps, userId: string, requestId: string, from: Claim): Promise<boolean> {
   const { data, error } = await deps.admin.from("challenge_task_submit_claims")
@@ -467,6 +488,12 @@ export async function handleSubmit(deps: Deps, userId: string, input: SubmitInpu
   // 6. the claim. Its time is the submission time (G28): a retry that takes a failed / dead claim back keeps it.
   let claimedAt: string;
   if (!existing) {
+    const recent = await recentClaims(deps, userId);
+    if (recent >= MAX_NEW_CLAIMS_PER_WINDOW) {
+      await deps.healthOnce("challenge_task_miniapp_submit_refused", `${userId}:too_many_requests`,
+        { reason: "too_many_requests", task_id: input.taskId, recent }, userId);
+      return { status: 429, body: { error: "too_many_requests", retry_after: Math.round(NEW_CLAIM_WINDOW_MS / 1000) } };
+    }
     const { data: claim, error: cErr } = await deps.admin.rpc("challenge_task_submit_claim", {
       _user: userId, _request_id: input.requestId, _task_id: input.taskId,
     });

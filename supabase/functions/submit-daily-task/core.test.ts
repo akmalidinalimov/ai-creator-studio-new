@@ -70,6 +70,7 @@ function recorder(script?: (c: Call, n: number) => SendResult | { outcome: SendR
 /** A fake engine: rpc answers by name; the claims table for readClaim / takeClaim. */
 function fakeEngine(opts: {
   prep?: Any; claimRow?: Any; claimNew?: boolean; capture?: (args: Any) => { data: Any; error: Any }; card?: Any; prepErr?: Any;
+  recent?: number;
 } = {}) {
   const rpcs: { name: string; args: Any }[] = [];
   const health: { action: string; details: Any; once?: string }[] = [];
@@ -100,6 +101,8 @@ function fakeEngine(opts: {
         select: () => b,
         update: (row: Any) => { st.op = "update"; st.row = row; return b; },
         eq: (c: string, v: unknown) => { st.where[c] = v; return b; },
+        gte: (c: string, v: unknown) => { st.where[`${c}>=`] = v; return b; },
+        limit: () => Promise.resolve({ data: Array.from({ length: opts.recent ?? 0 }, (_, i) => ({ request_id: `r${i}` })), error: null }),
         maybeSingle: () => {
           if (st.op === "select") return Promise.resolve({ data: claimRow, error: null });
           updates.push({ row: st.row, where: st.where });
@@ -366,6 +369,20 @@ Deno.test("handleSubmit: a capture error after the post is 202 pending (the reco
   assertEquals(rep.body.pending, true);
   assertEquals(e.health.map((h) => h.action), ["challenge_task_miniapp_capture_failed"]);
   assertEquals(e.rpcs.find((x) => x.name === "challenge_task_submit_record")!.args._error, null);
+});
+
+Deno.test("handleSubmit: a burst of NEW requests is throttled before any claim or post (the bot's group budget)", async () => {
+  const e = fakeEngine({ recent: 6 });
+  const r = recorder();
+  const rep = await handleSubmit(depsOf(e, r.poster), U, input(), PROFILE);
+  assertEquals(rep.status, 429);
+  assertEquals(rep.body.error, "too_many_requests");
+  assertEquals(r.calls.length, 0);
+  assertEquals(e.rpcs.some((x) => x.name === "challenge_task_submit_claim"), false);
+  assertEquals(e.health.map((h) => h.action), ["challenge_task_miniapp_submit_refused"]);
+  // a retry of an EXISTING request is never throttled (it may be finishing work already in the topic)
+  const e2 = fakeEngine({ recent: 6, claimRow: { state: "posted", items: [{ message_id: 1 }], claimed_at: "a", updated_at: "b", error: null, task_id: 7 } });
+  assertEquals((await handleSubmit(depsOf(e2, recorder().poster), U, input(), PROFILE)).status, 200);
 });
 
 Deno.test("handleSubmit: a partial post is captured AND signalled", async () => {

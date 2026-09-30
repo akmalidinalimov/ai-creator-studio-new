@@ -1522,6 +1522,7 @@
       "noSlot": "Bu vazifaning muddati tugagan — ishingiz topikda qoldi, lekin ball berilmadi.",
       "errors": {
         "in_progress": "Oldingi yuborish hali tugamadi — biroz kutib, qayta bosing.",
+        "too_many_requests": "Juda ko'p yuborildi — 10 daqiqadan keyin qayta urinib ko'ring.",
         "telegram_post_failed": "Telegramga yuborib bo'lmadi. Birozdan keyin qayta urinib ko'ring.",
         "rate_limited": "Telegram band — {{sec}} soniyadan keyin qayta urinib ko'ring.",
         "kind_not_accepted": "Bu vazifa bunday faylni qabul qilmaydi.",
