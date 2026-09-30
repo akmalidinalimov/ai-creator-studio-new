@@ -7,7 +7,7 @@ import { fanOutBroadcast } from "./broadcast-fanout.ts";
 import { isContentError, isRecipientError, isTerminal, tgResult } from "../_shared/telegram-classify.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { logHealth } from "../_shared/edge.ts";
-import { recordGradeCardSkipped } from "../_shared/grade-card-signals.ts";
+import { botVoiceKey, recordGradeCardSkipped, recordGradeVoiceSkipped } from "../_shared/grade-card-signals.ts";
 import {
   type AutoRegisterSource, isRealReply, isRegisteredHomeworkTopic, mergeCappedMedia, recordAutoRegisterFailed,
   recordCaptureFailed, recordCaptureSkipped, recordPendingAppendDrop,
@@ -4511,6 +4511,10 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
       .update({ score_feedback_voice_file_id: voiceFileId, score_feedback_voice_path: null }).eq("id", submissionId);
     if (vErr) {
       await sendMessage(msg.chat.id, `❌ ${vErr.message}`);
+      // Same capture as the grade_save failure below: the teacher is told, and now so is the DB.
+      await logError(admin, "telegram-bot-webhook", vErr.message, {
+        action: "grade_voice_save", user_id: sub.user_id, telegram_id: tgId, context: { submission_id: submissionId },
+      });
       return true;
     }
     // Deliver to the student in THEIR locale; a non-delivery stays DB-visible (doctrine), mirroring the
@@ -4519,8 +4523,9 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
     let studentName = "";
     let delivered = false;
     try {
-      const { data: stu } = await admin.from("profiles")
+      const { data: stu, error: stuErr } = await admin.from("profiles")
         .select("telegram_id, preferred_locale, name, last_name").eq("id", sub.user_id).maybeSingle();
+      if (stuErr) throw stuErr; // a failed read is not "no telegram_id"
       studentName = [stu?.name, stu?.last_name].filter(Boolean).join(" ");
       if (stu?.telegram_id) {
         const stuT = T[normLocale(stu.preferred_locale)];
@@ -4535,8 +4540,24 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
             details: { source: "miniapp_voice_bridge", error: vo.error, recipient_error: vo.recipient, terminal: vo.terminal, content_error: vo.content },
           });
         }
+      } else {
+        // No telegram_id: nobody can send this note. Expected reach, counted (grade_voice_dm_skipped), not silent.
+        await recordGradeVoiceSkipped(admin, {
+          submissionId, studentId: sub.user_id, voiceKey: botVoiceKey(msg), source: "miniapp_voice_bridge", actorUserId: profileId,
+        });
       }
-    } catch (e) { console.error("grade_voice deliver threw", String(e)); }
+    } catch (e) {
+      console.error("grade_voice deliver threw", String(e));
+      try {
+        await admin.from("admin_actions").insert({
+          actor_user_id: profileId, action: "grade_voice_delivery_failed",
+          target_user_id: sub.user_id, target_resource_type: "homework_submission",
+          target_resource_id: submissionId,
+          // A throw (e.g. the profile read failed), not a Telegram refusal: no recipient_error, so the watchdogs count it.
+          details: { source: "miniapp_voice_bridge", error: redactSecrets((e as any)?.message ?? e), terminal: false, thrown: true },
+        });
+      } catch (_e2) { /* audit best-effort */ }
+    }
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice").eq("context->>submission_id", submissionId);
     cacheInvalidateUser(sub.user_id);
     // Name the student in the confirmation: the state is one-per-teacher, so if she requested notes for two
@@ -4697,7 +4718,8 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
               actor_user_id: profileId, action: "grade_card_dm_failed",
               target_user_id: sub.user_id, target_resource_type: "homework_submission",
               target_resource_id: submissionId,
-              details: { error: String((e as any)?.message ?? e), terminal: false, transport: true, score, max },
+              // Everything that throws here runs before sendVoice, so a voice note on this grade was lost too.
+              details: { error: String((e as any)?.message ?? e), terminal: false, transport: true, score, max, has_voice: !!voiceFileId },
             });
           } catch (_e2) { /* audit best-effort */ }
         }
@@ -4707,6 +4729,14 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
           submissionId, studentId: sub.user_id, attempt: (sub as any).attempt_number ?? 1,
           source: "telegram-bot-webhook", actorUserId: profileId, details: { score, max, has_voice: !!voiceFileId },
         });
+        // The voice note gets its own row, keyed by the note: the card row above exists once per attempt, so a
+        // re-grade of the same attempt with a new note would otherwise leave no trace.
+        if (voiceFileId) {
+          await recordGradeVoiceSkipped(admin, {
+            submissionId, studentId: sub.user_id, voiceKey: botVoiceKey(msg), source: "telegram-bot-webhook",
+            actorUserId: profileId, details: { score, has_text: !!feedback },
+          });
+        }
       }
       await sendWithKeyboard(msg.chat.id, t.gradeSaved(score, max), locale, isAdmin, isAdmin ? "admin" : "teacher");
     }

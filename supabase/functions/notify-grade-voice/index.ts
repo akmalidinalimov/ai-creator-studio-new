@@ -22,14 +22,14 @@
 //   OR a platform admin/superadmin. A student can never trigger their own grade DM. Anyone else → 403.
 // Member-forgiveness (CLAUDE.md): a student with no telegram_id (123 of 690 student profiles on 2026-09-29)
 //   is a graceful no-send, HTTP 200, NOT a failure — and NOT marked notified (a later reconciler can still
-//   reach them). It is counted, once per graded attempt, as a grade_card_dm_skipped row
-//   (_shared/grade-card-signals.ts), never alarmed.
+//   reach them). It is counted, once per graded attempt, as a grade_card_dm_skipped row, and a fresh voice
+//   note it could not send as a grade_voice_dm_skipped row (_shared/grade-card-signals.ts), never alarmed.
 // SECURITY: the bot token is used ONLY inside this function; never returned, embedded in the signed audio
 //   URL, or logged. Real non-deliveries (blocked/errored, recipient_error flagged) are DB-visible, and so
 //   is the no_telegram skip above.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
-import { gradeCardOwed, recordGradeCardSkipped } from "../_shared/grade-card-signals.ts";
+import { appVoiceKey, gradeCardOwed, recordGradeCardSkipped, recordGradeVoiceSkipped } from "../_shared/grade-card-signals.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -119,7 +119,7 @@ Deno.serve(async (req) => {
     // --- 2. Load the submission. ---
     const { data: sub, error: subErr } = await admin
       .from("homework_submissions")
-      .select("id, user_id, assignment_id, score, previous_score, score_feedback, score_feedback_voice_path, attempt_number, grade_card_notified_attempt, score_is_stale")
+      .select("id, user_id, assignment_id, score, previous_score, score_feedback, score_feedback_voice_path, attempt_number, grade_card_notified_attempt, score_is_stale, scored_at")
       .eq("id", submissionId)
       .maybeSingle();
     if (subErr) throw subErr;
@@ -165,6 +165,15 @@ Deno.serve(async (req) => {
           submissionId, studentId: sub.user_id, attempt: ((sub as any).attempt_number as number) ?? 1,
           source: "notify-grade-voice", actorUserId: uid,
           details: { score: (sub as any).score, voice_dropped: !!(voiceFresh && sub.score_feedback_voice_path) },
+        });
+      }
+      // The voice note step 7 would have sent gets its own row, keyed by the note, so a second recording on
+      // an attempt whose card row already exists is still counted.
+      if (voiceFresh && sub.score_feedback_voice_path) {
+        await recordGradeVoiceSkipped(admin, {
+          submissionId, studentId: sub.user_id,
+          voiceKey: appVoiceKey((sub as any).scored_at, ((sub as any).attempt_number as number) ?? 1),
+          source: "notify-grade-voice", actorUserId: uid, details: { score: (sub as any).score },
         });
       }
       return json({ ok: true, card_sent: false, voice_sent: false, reason: "no_telegram" });

@@ -57,3 +57,66 @@ export function recordGradeCardSkipped(
     sinceIso: new Date(Date.now() - GRADE_CARD_SKIP_WINDOW_DAYS * 86_400_000).toISOString(),
   });
 }
+
+// ---- Voice feedback: the same skip, for the voice note that follows (or replaces) the card. ----
+//
+// Three paths deliver a teacher's voice note: bot grading (telegram-bot-webhook grade_comment), the Mini App
+// voice bridge (telegram-bot-webhook grade_voice) and in-app recording (notify-grade-voice). A student who
+// blocked the bot already leaves a grade_voice_delivery_failed / grade_voice_dm_failed row (recipient_error),
+// but a student with no telegram_id left nothing on the bridge path, and on the other two only a flag on the
+// grade_card_dm_skipped row, which exists once per attempt, so a second note on the same attempt vanished.
+// A voice note gets its own row, keyed by the NOTE rather than the attempt.
+
+/**
+ * The note's identity from the teacher's Telegram message: file_unique_id of the voice (or audio), which
+ * every private voice message in webhook_inbox carries (339 of 339 on 2026-09-30) and a redelivered update
+ * repeats. A message without one falls back to its chat and message id.
+ */
+export function botVoiceKey(msg: {
+  chat?: { id?: number | string } | null;
+  message_id?: number | string;
+  voice?: { file_unique_id?: string } | null;
+  audio?: { file_unique_id?: string } | null;
+}): string {
+  const uid = msg.voice?.file_unique_id || msg.audio?.file_unique_id;
+  if (uid) return `tg:${uid}`;
+  return `tgmsg:${msg.chat?.id ?? "?"}:${msg.message_id ?? "?"}`;
+}
+
+/**
+ * The note's identity on the in-app path: the scored_at of the grade write that stored it. Every app
+ * grading surface (teacherApi.submitScore, TeacherProfile, TeacherHomework) sets scored_at in the same update
+ * as the new voice path, so a double invoke for one save shares a key and a re-recording saved later gets
+ * a new one. The storage path cannot tell them apart: it is <student>/<submission>.mp3 for every recording.
+ */
+export function appVoiceKey(scoredAt: string | null | undefined, attempt: number): string {
+  return scoredAt ? `app:${scoredAt}` : `app:attempt${attempt}`;
+}
+
+/**
+ * A voice note was recorded for this submission, but the student has no telegram_id, so it was never sent
+ * (it is still saved and playable in the app). ONE grade_voice_dm_skipped row per note, whichever path
+ * carried it. Expected reach like grade_card_dm_skipped: counted, never alarmed. Never throws.
+ */
+export function recordGradeVoiceSkipped(
+  admin: any,
+  p: {
+    submissionId: string;
+    studentId: string | null;
+    voiceKey: string;
+    source: "telegram-bot-webhook" | "miniapp_voice_bridge" | "notify-grade-voice";
+    actorUserId?: string | null;
+    details?: Record<string, unknown>;
+  },
+): Promise<boolean> {
+  return logHealthOnce(admin, "grade_voice_dm_skipped", `no_telegram:${p.submissionId}:${p.voiceKey}`, {
+    reason: "no_telegram", submission_id: p.submissionId, ...(p.details ?? {}),
+  }, {
+    source: p.source,
+    actorUserId: p.actorUserId ?? null,
+    targetUserId: p.studentId,
+    targetResourceType: "homework_submission",
+    targetResourceId: p.submissionId,
+    sinceIso: new Date(Date.now() - GRADE_CARD_SKIP_WINDOW_DAYS * 86_400_000).toISOString(),
+  });
+}
