@@ -18,6 +18,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json, logHealth } from "../_shared/edge.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";
+import { loadHwLabel } from "../_shared/hw-label-load.ts";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STATE_TTL_MS = 15 * 60_000; // mirrors the grading flow's own conversation TTL
@@ -32,11 +33,13 @@ function normLocale(code?: string | null): Locale {
   return "uz";
 }
 // The ONLY copy of this prompt. The webhook's grade_voice step owns the follow-ups (gvNeedVoice / gvSaved /
-// gvExpired) — keep the wording consistent if either side changes.
-const ASK: Record<Locale, (student: string, title: string) => string> = {
-  uz: (s, t) => `🎤 <b>${s}</b> — ${t}\n\nOvozli izohingizni shu yerga yuboring (yoki /cancel):`,
-  ru: (s, t) => `🎤 <b>${s}</b> — ${t}\n\nОтправьте сюда голосовой комментарий (или /cancel):`,
-  en: (s, t) => `🎤 <b>${s}</b> — ${t}\n\nSend your voice feedback here (or /cancel):`,
+// gvExpired) — keep the wording consistent if either side changes. `label` is the shared hw-label
+// ("5.0 · 1-GURUH PRE · M2 V1 — <title>"): the Challenge tasks are copies of the 5.0 tasks, so the title alone
+// could not tell the teacher which course's card she is voicing (audit BOT-8 / FB-3).
+const ASK: Record<Locale, (student: string, label: string) => string> = {
+  uz: (s, l) => `🎤 <b>${s}</b>\n📌 ${l}\n\nOvozli izohingizni shu yerga yuboring (yoki /cancel):`,
+  ru: (s, l) => `🎤 <b>${s}</b>\n📌 ${l}\n\nОтправьте сюда голосовой комментарий (или /cancel):`,
+  en: (s, l) => `🎤 <b>${s}</b>\n📌 ${l}\n\nSend your voice feedback here (or /cancel):`,
 };
 
 Deno.serve(async (req) => {
@@ -97,7 +100,10 @@ Deno.serve(async (req) => {
       return json({ error: "no_telegram" }, 409);
     }
 
-    const { data: a } = await admin.from("homework_assignments").select("title").eq("id", sub.assignment_id).maybeSingle();
+    // Course from the task, group from the student's group (the one the RBAC above checked). A failed read only
+    // shortens the label (recorded once a day as hw_label_lookup_failed).
+    const lbl = await loadHwLabel(admin, sub.assignment_id, stu?.group_id ?? null, "teacher-voice-request");
+    const label = lbl.label || lbl.info?.title || "—";
     const studentName = [stu?.name, stu?.last_name].filter(Boolean).join(" ") || "—";
     const locale = normLocale(me?.preferred_locale);
 
@@ -109,9 +115,11 @@ Deno.serve(async (req) => {
     //      (re-pointing to the newest card is intended), a non-flow cache row, or already expired.
     // Anything else is a live flow → 409 `busy`, and the grading screen asks her to finish or /cancel it. ---
     const nowIso = new Date().toISOString();
+    // `label` (plain text) rides along so the webhook's "saved" confirmation and the student's voice caption
+    // name the same course/group/task without re-reading anything.
     const parked = {
       state: "grade_voice",
-      context: { submission_id: submissionId },
+      context: { submission_id: submissionId, label: lbl.label || null },
       updated_at: nowIso,
       expires_at: new Date(Date.now() + STATE_TTL_MS).toISOString(),
     };
@@ -136,7 +144,7 @@ Deno.serve(async (req) => {
     const out = await sendTelegram(
       BOT_TOKEN,
       "sendMessage",
-      { chat_id: teacherTg, text: ASK[locale](escHtml(studentName), escHtml(a?.title || "")), parse_mode: "HTML" },
+      { chat_id: teacherTg, text: ASK[locale](escHtml(studentName), escHtml(label)), parse_mode: "HTML" },
       { admin, purpose: "teacher_voice_prompt", recipientId: teacherTg },
     );
     if (!out.ok) {

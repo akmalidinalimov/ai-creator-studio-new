@@ -3,6 +3,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
+import { loadAssignmentLabels } from "../_shared/hw-label-load.ts";
+import { type Locale, submissionDmText } from "./copy.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,17 +13,6 @@ const corsHeaders = {
 };
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
-
-const escHtml = (s: string = "") => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-const MSG = {
-  uz: (name: string, mn: number, tn: number, title: string) =>
-    `📝 <b>Yangi topshiriq</b>\n\n<b>${name}</b> Modul ${mn} · Vazifa ${tn} ni topshirdi${title ? `\n«${title}»` : ""}`,
-  ru: (name: string, mn: number, tn: number, title: string) =>
-    `📝 <b>Новая работа</b>\n\n<b>${name}</b> отправил(а) Модуль ${mn} · Задание ${tn}${title ? `\n«${title}»` : ""}`,
-  en: (name: string, mn: number, tn: number, title: string) =>
-    `📝 <b>New submission</b>\n\n<b>${name}</b> submitted Module ${mn} · Task ${tn}${title ? `\n"${title}"` : ""}`,
-};
 
 const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
@@ -67,10 +58,14 @@ Deno.serve(async (req) => {
 
   const teacherIds = Array.from(new Set(rows.map((r) => r.teacher_id)));
   const groupIds = Array.from(new Set(rows.map((r) => r.group_id)));
-  const [{ data: profs }, { data: groups }, { data: gTeachers }] = await Promise.all([
+  // Labels: the course comes from each row's TASK (assignment → module → course), the group name from the
+  // row's group. A failed label read never blocks delivery (the text falls back to the row's own snapshot)
+  // and is recorded once a day as hw_label_lookup_failed.
+  const [{ data: profs }, { data: groups }, { data: gTeachers }, labels] = await Promise.all([
     admin.from("profiles").select("id, telegram_id, preferred_locale, notifications_enabled").in("id", teacherIds),
-    admin.from("groups").select("id, teacher_id").in("id", groupIds),
+    admin.from("groups").select("id, teacher_id, name").in("id", groupIds),
     admin.from("group_teachers").select("group_id, teacher_id").in("group_id", groupIds),
+    loadAssignmentLabels(admin, rows.map((r) => r.assignment_id), "notify-homework-submission"),
   ]);
   const profMap = new Map<string, any>((profs || []).map((p: any) => [p.id, p]));
   const groupMap = new Map<string, any>((groups || []).map((g: any) => [g.id, g]));
@@ -106,12 +101,20 @@ Deno.serve(async (req) => {
       await markSent("notifications_disabled_or_no_telegram"); skipped++; continue;
     }
 
-    const loc = (teacher.preferred_locale === "ru" || teacher.preferred_locale === "en") ? teacher.preferred_locale : "uz";
+    const loc: Locale = (teacher.preferred_locale === "ru" || teacher.preferred_locale === "en") ? teacher.preferred_locale : "uz";
     // An auto-GUESSED attribution carries "(taxminiy)" in the stored title. Make it loud + offer a
     // one-tap ✏️ retag so a wrong guess is cheap to fix (the row.task_number here is already the
     // sap-aware step written by the fixed queue insert, so "Vazifa 1/2/3" now renders correctly).
     const guessed = /\(taxminiy\)/.test(row.assignment_title || "");
-    let text = (MSG as any)[loc](escHtml(row.student_name || "—"), row.module_number, row.task_number, escHtml(row.assignment_title || ""));
+    // "<course> · <group> · M<n> V<step> — <title>". Number and title are the row's own snapshot (the title
+    // may carry the "(taxminiy)" marker); the course and group name are looked up.
+    let text = submissionDmText(loc, row.student_name, {
+      courseTitle: labels.map.get(row.assignment_id)?.courseTitle ?? null,
+      groupName: grp.name ?? null,
+      moduleNumber: row.module_number,
+      step: row.task_number,
+      title: row.assignment_title,
+    });
     if (guessed) {
       text += loc === "ru"
         ? "\n\n⚠️ <b>Авто-назначено</b> — задание выбрано примерно. Если неверно — исправьте ✏️."

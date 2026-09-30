@@ -7,13 +7,16 @@ import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { logHealth } from "../_shared/edge.ts";
 import { loadGroupTeachers } from "../_shared/group-teachers.ts";
+import { loadAssignmentLabels, loadGroupNames } from "../_shared/hw-label-load.ts";
 import {
   type AdminItem,
   adminDigestText,
-  escHtml,
+  itemLabel,
   type Locale,
   normLocale,
   routeReminder,
+  teacherReminderKeyboard,
+  teacherReminderText,
   type TeacherProfile,
 } from "./route.ts";
 
@@ -38,17 +41,7 @@ function tashkentHour(): number {
   }
 }
 
-const TEACHER_COPY = {
-  uz: (s: string, t: string, h: number, n: number) =>
-    `⏳ <b>${s}</b>ning «${t}» topshirig'i ${h} soatdan beri baholanmagan. Iltimos, baholang. (eslatma ${n}/3)`,
-  ru: (s: string, t: string, h: number, n: number) =>
-    `⏳ Работа «${t}» от <b>${s}</b> не оценена уже ${h} ч. Пожалуйста, оцените. (напоминание ${n}/3)`,
-  en: (s: string, t: string, h: number, n: number) =>
-    `⏳ <b>${s}</b>'s «${t}» has been awaiting grading for ${h}h. Please grade it. (reminder ${n}/3)`,
-};
-const TEACHER_BTN: Record<Locale, string> = { uz: "🎯 Baholash", ru: "🎯 Оценить", en: "🎯 Grade" };
 const ADMIN_BTN: Record<Locale, string> = { uz: "🎯 Ko'rib chiqish", ru: "🎯 Проверить", en: "🎯 Review" };
-const TEACHER_URL = "https://aicreator.academy/teacher/homework";
 const ADMIN_URL = "https://aicreator.academy/admin/homework";
 
 function fullName(p: any): string {
@@ -97,18 +90,15 @@ Deno.serve(async (req) => {
   // instead of reading as "no rows": a masked failure would route every candidate to the wrong people.
   const studentIds = Array.from(new Set(eligible.map((s) => s.user_id)));
   const assignmentIds = Array.from(new Set(eligible.map((s) => s.assignment_id)));
-  const [{ data: students, error: studentsErr }, { data: assignments }] = await Promise.all([
+  // Label reads (task → module → course; the student's group name) never fail the run: a failed read only
+  // shortens the label, and is recorded once a day as hw_label_lookup_failed.
+  const [{ data: students, error: studentsErr }, labels] = await Promise.all([
     admin.from("profiles").select("id, name, last_name, group_id, preferred_locale").in("id", studentIds),
-    admin.from("homework_assignments").select("id, title, module_id").in("id", assignmentIds),
+    loadAssignmentLabels(admin, assignmentIds, "cron-ungraded-homework-reminder"),
   ]);
   if (studentsErr) return fail(`students read failed: ${studentsErr.message}`);
   const studentMap = new Map<string, any>((students || []).map((p: any) => [p.id, p]));
-  const assignMap = new Map<string, any>((assignments || []).map((a: any) => [a.id, a]));
-  const moduleIds = Array.from(new Set((assignments || []).map((a: any) => a.module_id).filter(Boolean)));
-  const { data: modules } = moduleIds.length
-    ? await admin.from("modules").select("id, title").in("id", moduleIds)
-    : { data: [] as any[] };
-  const moduleMap = new Map<string, any>((modules || []).map((m: any) => [m.id, m]));
+  const groupNames = (await loadGroupNames(admin, (students || []).map((p: any) => p.group_id), "cron-ungraded-homework-reminder")).map;
 
   // Teachers of each group = primary ∪ co-teachers — the same set both teacher-DM enqueue paths use.
   // Reading only groups.teacher_id sent a co-teacher nothing, and sent a group whose teachers are all
@@ -177,38 +167,42 @@ Deno.serve(async (req) => {
   }
 
   let sent = 0, skipped = 0, teacherDms = 0;
-  const adminQueue: { s: Sub; groupId: string | null; item: AdminItem }[] = [];
+  const adminQueue: { s: Sub; item: AdminItem }[] = [];
 
   for (const s of eligible) {
     try {
       const student = studentMap.get(s.user_id);
       if (!student) { skipped++; continue; }
-      const assignment = assignMap.get(s.assignment_id);
-      const mod = assignment?.module_id ? moduleMap.get(assignment.module_id) : null;
-      const rawTitle = [mod?.title, assignment?.title].filter(Boolean).join(" · ") || "—";
+      const info = labels.map.get(s.assignment_id);
       const rawName = fullName(student);
       const hours = Math.floor((Date.now() - new Date(s.submitted_at).getTime()) / 3600000);
       const n = reminderNumber(s);
+      // "<course> · <group> · M<n> V<step> — <title>"; the course is the task's own course.
+      const item: AdminItem = {
+        studentName: rawName,
+        taskTitle: info?.title || "—",
+        groupName: student.group_id ? (groupNames.get(student.group_id) ?? null) : null,
+        courseTitle: info?.courseTitle ?? null,
+        moduleNumber: info?.moduleNumber ?? null,
+        step: info?.step ?? null,
+        hours, n, reason: "no_teacher", // only read on the admin path, where the route's reason replaces it
+      };
 
       const route = routeReminder(student.group_id, teachersOf, teacherMap);
       if (route.kind === "admin") {
         // Collected and sent as ONE message per admin after the loop.
-        adminQueue.push({
-          s, groupId: student.group_id ?? null,
-          item: { studentName: rawName, taskTitle: rawTitle, groupName: null, hours, n, reason: route.reason },
-        });
+        adminQueue.push({ s, item: { ...item, reason: route.reason } });
         continue;
       }
 
-      const studentName = escHtml(rawName);
-      const taskTitle = escHtml(rawTitle);
+      const label = itemLabel(item);
       let delivered = 0;
       for (const r of route.recipients) {
         const out = await sendTelegram(BOT_TOKEN, "sendMessage", {
           chat_id: r.chatId,
-          text: TEACHER_COPY[r.locale](studentName, taskTitle, hours, n),
+          text: teacherReminderText(r.locale, rawName, label, hours, n),
           parse_mode: "HTML",
-          reply_markup: { inline_keyboard: [[{ text: TEACHER_BTN[r.locale], url: TEACHER_URL }]] },
+          reply_markup: teacherReminderKeyboard(r.locale, s.id),
         }, { admin, purpose: "ungraded_homework_reminder", recipientId: r.chatId });
         if (out.ok) delivered++;
       }
@@ -233,12 +227,7 @@ Deno.serve(async (req) => {
       if (!admins.length) {
         skipped += adminQueue.length;
       } else {
-        const gids = Array.from(new Set(adminQueue.map((q) => q.groupId).filter((x): x is string => !!x)));
-        const { data: gRows } = gids.length
-          ? await admin.from("groups").select("id, name").in("id", gids)
-          : { data: [] as any[] };
-        const gName = new Map<string, string>(((gRows || []) as any[]).map((g: any) => [g.id, g.name || "—"]));
-        for (const q of adminQueue) q.item.groupName = q.groupId ? (gName.get(q.groupId) ?? "—") : null;
+        // Each item already carries its label parts (course, group name, M/V, title) from the loop above.
         const items = adminQueue.map((q) => q.item);
 
         let delivered = 0;
