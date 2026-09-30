@@ -61,6 +61,27 @@ export async function fetchPendingQueue(): Promise<PendingSubmission[]> {
   return attachCourseTitles(rows);
 }
 
+/**
+ * Why a deep-linked submission (/tg/teacher/grade?sub=<id>, the bot's 🎯 Baholash button) is not in the queue:
+ * "graded" when it has a firm score (usually a co-teacher graded it first), else "unknown" (returned for redo,
+ * not this teacher's group, deleted — or the read failed). A read, never a write; RLS shows a teacher only her
+ * own students' rows ("hws own select": is_teacher_of). Never throws.
+ */
+export async function fetchSubmissionGradeState(submissionId: string): Promise<"graded" | "unknown"> {
+  try {
+    const { data, error } = await supabase
+      .from("homework_submissions")
+      .select("score, score_is_stale")
+      .eq("id", submissionId)
+      .maybeSingle();
+    if (error || !data) return "unknown";
+    const row = data as { score: number | null; score_is_stale: boolean | null };
+    return row.score != null && !row.score_is_stale ? "graded" : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 /** courses.title from one `homework_assignments.select("id, modules(courses(title))")` row; null if absent. */
 export function courseTitleOfAssignmentRow(row: unknown): string | null {
   // A to-one embed is an object; tolerate an array too.
