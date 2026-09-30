@@ -18,7 +18,9 @@
 --   key community_help uses -- so UNIQUE(user_id, ref_key) blocks a second payment in any cron order. Chat
 --   takes text/voice only, media takes photo/video/files, and a media reply is never an answer.
 -- * Graceful is not silent: an AI outage or a missing key DELAYS answer points (they queue for 14 days) and
---   chat never depends on the AI. Every degraded state is a DB row the watchdog reads.
+--   chat never depends on the AI. Every degraded state is a DB row the watchdog reads. A systemic failure
+--   (timeout, 429, 5xx, network, a rejected key, or an 'other' error repeating across rows) never uses up a
+--   row's attempts, so an outage of any length inside expire_days cannot turn a candidate into gave_up (d10).
 -- * Members get a forgiving sandbox: scoring is silent. No bot posts, DMs or reactions to students.
 --
 -- ═══ RULES (challenge-scope groups, inside the window; all numbers tunable in platform_settings.challenge) ═══
@@ -75,6 +77,27 @@
 --    file timestamp: community_help paid in 6.0 groups between window.start and the merge is kept, by decision.
 -- d7 Invalid judge-side keys (budget, batch, providers, models, prices, expiry) force 'hold' (enqueue continues,
 --    nothing is lost); invalid enqueue keys (lag, min letters, settle) force 'off'; A6 alarms on either.
+-- d8 challenge_qa_candidates.asker_id and group_id are NULLABLE, ON DELETE SET NULL (the spec had NOT NULL
+--    cascade). Deleting an asker (remove_user, admin-merge-duplicates) or a group must not delete the audit row
+--    of an answer that was already paid: the answerer's +3 survives (xp_events cascades only on the answerer),
+--    and a vanished candidate would make answer_awards_without_candidate > 0 forever -- a permanent A4 that
+--    also masks real breaches while latched. apply settles a missing asker as asker_moved and a missing group
+--    as answerer_moved, before any cap or pay step reads either column.
+-- d9 community_rows_in_scope is keyed on the group of the MESSAGE the community row paid for (community writes
+--    created_at = that message's sent_at), not on the student's CURRENT group: the suppression predicate
+--    reads the message's group, so a 5.0 student who earned community_help and then moved into a 6.0 group
+--    is correct behaviour and must not alarm.
+-- d10 A failed judgement is classified in SQL from the ledger entries of that attempt. SYSTEMIC (every failed
+--    call is timeout / http_429 / http_5xx / network / auth, or 'other' that at least 2 distinct candidates got
+--    from the same provider within the hour): the attempt is refunded like a release, transient_failures + 1,
+--    status 'error' with a 10..60 min backoff, result 'retry' -- it never leads to gave_up; expire_days (14 d)
+--    is the bound and A2 (backlog) / A3 (error share) are the signals. ROW-SPECIFIC (parse, schema, refusal,
+--    max_tokens, a lone 'other', an attempt with no call) and a lease expiry keep the spec's 3-attempt
+--    gave_up. The spec's "gave_up after 3 attempts, any error" contradicted I4 (an outage delays, never loses).
+--    Recovery of rows given up before this rule (none exist: nothing has shipped) or after a crash loop:
+--      update challenge_qa_candidates set status = 'pending', attempts = 0, next_attempt_at = null, updated_at = now()
+--       where status = 'gave_up' and error ~ '^(lease_expired|timeout|http_|network|auth|other)';
+-- (This file re-issues 20260930100000, which was never applied, in slot 20260930100010.)
 --
 -- NOT MODIFIED: reconcile_challenge_xp (disjoint by kind, key prefix, lock and heartbeat), challenge_health,
 -- challenge_xp_watchdog, xp_award_integrity_watchdog (label-only for new reasons; the touched-user rebuilds keep
@@ -300,9 +323,11 @@ create table if not exists public.challenge_qa_candidates (
   answer_msg_id bigint not null,
   question_msg_id bigint not null,
   thread_id bigint,
-  group_id uuid not null references public.groups(id) on delete cascade,
-  answerer_id uuid not null references auth.users(id) on delete cascade,
-  asker_id uuid not null references auth.users(id) on delete cascade,
+  -- d8: a deleted group or asker must not take a PAID answer's audit row with it (the answerer's +3 survives).
+  -- Always set at enqueue; NULL only after a delete, and apply settles such a row as moved.
+  group_id uuid references public.groups(id) on delete set null,
+  answerer_id uuid not null references auth.users(id) on delete cascade,  -- the +3 goes with the answerer too
+  asker_id uuid references auth.users(id) on delete set null,
   answer_sent_at timestamptz not null,
   question_sent_at timestamptz not null,
   day date not null,                                    -- (answer_sent_at at time zone 'Asia/Tashkent')::date
@@ -314,7 +339,8 @@ create table if not exists public.challenge_qa_candidates (
     check (status in ('pending', 'judging', 'judged', 'error', 'gave_up', 'skipped', 'expired')),
   skip_reason text check (skip_reason in ('media_message', 'no_text', 'question_no_text', 'too_short', 'injection_marker',
     'duplicate_text', 'pair_day_paid', 'answerer_capped', 'question_capped', 'answerer_judge_budget')),
-  attempts smallint not null default 0 check (attempts between 0 and 5),
+  attempts smallint not null default 0 check (attempts between 0 and 5),   -- row-specific failures (d10)
+  transient_failures integer not null default 0 check (transient_failures >= 0), -- systemic failures: never give up
   claim_token uuid,
   claimed_at timestamptz,
   next_attempt_at timestamptz,
@@ -342,7 +368,7 @@ create table if not exists public.challenge_qa_candidates (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (chat_id, answer_msg_id),
-  check (answerer_id <> asker_id),
+  check (asker_id is null or answerer_id <> asker_id),
   -- a half-written verdict is unstorable
   check (status <> 'judged' or (q_genuine is not null and q_kind is not null and a_type is not null
          and a_addresses is not null and a_repeats is not null and manipulation is not null and confidence is not null))
@@ -1151,7 +1177,9 @@ begin
   perform public.challenge_social_note_invalid(_cfg);
   _expire := (_cfg->>'expire_days')::int;
 
-  -- Step 0: sweeps
+  -- Step 0: sweeps. A lease expiry keeps its attempt (the calls of a run that died before recording are not in
+  -- the ledger, so this is what bounds unledgered spend); systemic provider failures were refunded by
+  -- challenge_qa_record (d10), so `attempts` counts only row-specific failures and expiries.
   update public.challenge_qa_candidates
      set status = 'error', error = 'lease_expired', claim_token = null, next_attempt_at = now(), updated_at = now()
    where status = 'judging' and claimed_at < now() - interval '15 minutes';
@@ -1263,6 +1291,7 @@ as $fn$
 declare
   _c record; _e jsonb; _v jsonb; _prov text; _ints int[]; _k text; _bad boolean; _cost numeric;
   _exists boolean;
+  _n_fail int := 0; _n_row int := 0; _other_provs text[] := '{}'; _transient boolean := false;
 begin
   -- (a) the cost/error ledger, ALWAYS (even for a stale token); an invalid entry is skipped, never the others
   _exists := exists (select 1 from public.challenge_qa_candidates where id = _id);
@@ -1293,6 +1322,17 @@ begin
         values (case when _exists then _id end, _e->>'provider', left(_e->>'model', 100), (_e->>'ok')::boolean,
                 _e->>'error_kind', public.challenge_cfg_int(_e->'http_status'), public.challenge_cfg_int(_e->'latency_ms'),
                 public.challenge_cfg_int(_e->'tokens_in'), public.challenge_cfg_int(_e->'tokens_out'), round(_cost, 6));
+        -- d10: what kind of failure was this attempt? (only ledgered entries count)
+        if not (_e->>'ok')::boolean then
+          _n_fail := _n_fail + 1;
+          if (_e->>'error_kind') in ('timeout', 'http_429', 'http_5xx', 'network', 'auth') then
+            null;                                                        -- systemic
+          elsif (_e->>'error_kind') = 'other' then
+            _other_provs := array_append(_other_provs, _e->>'provider'); -- systemic only if it repeats across rows
+          else
+            _n_row := _n_row + 1;                                        -- parse, schema, refusal, max_tokens, unknown
+          end if;
+        end if;
       exception when others then
         null;
       end;
@@ -1334,7 +1374,30 @@ begin
     return 'judged';
   end if;
 
-  -- (e) an error: retry with backoff, give up after 3 attempts
+  -- (e) SYSTEMIC failure (d10): every failed call of this attempt was the provider or the network, not this
+  -- row -- an 'other' counts as systemic only when >= 2 distinct candidates got it from the same provider in
+  -- the last hour (a misconfigured model or a low-credit 400 repeats; a row-specific 400 does not). The
+  -- attempt is refunded like a release, so an outage of any length never gives a row up; expire_days bounds it.
+  if _result->>'ok' is distinct from 'true' and _n_fail > 0 and _n_row = 0 then
+    _transient := not exists (
+      select 1 from unnest(_other_provs) p
+       where (select count(distinct a.candidate_id) from public.challenge_qa_ai_calls a
+               where a.provider = p and a.error_kind = 'other' and a.candidate_id is not null
+                 and a.created_at > now() - interval '1 hour') < 2);
+  end if;
+  if _transient then
+    update public.challenge_qa_candidates
+       set status = 'error',
+           error = left(coalesce(_result->>'error', 'transient'), 500),
+           attempts = greatest(attempts - 1, 0),
+           transient_failures = transient_failures + 1,
+           next_attempt_at = now() + make_interval(mins => least(10 * (transient_failures + 1), 60)),
+           claim_token = null, updated_at = now()
+     where id = _id;
+    return 'retry';
+  end if;
+
+  -- (f) a ROW-SPECIFIC error: retry with backoff, give up after 3 attempts
   update public.challenge_qa_candidates
      set status = case when _c.attempts >= 3 then 'gave_up' else 'error' end,
          error = left(coalesce(_result->>'error',
@@ -1419,22 +1482,32 @@ begin
       _st := 'not_passed';
     end if;
 
+    -- d8: a deleted group (group_id NULL) or a deleted asker (asker_id NULL) settles here, before any cap or
+    -- pay step reads either column.
     if _st is null then
-      select p.group_id, p.status::text as status, p.archived_at,
-             (p.id in (select public.challenge_social_staff_ids())) as staff
-        into _pr from public.profiles p where p.id = _r.answerer_id;
-      if not found or _pr.group_id is distinct from _r.group_id or _pr.archived_at is not null
-         or _pr.status <> 'active' or _pr.staff then
+      if _r.group_id is null then
         _st := 'answerer_moved';
+      else
+        select p.group_id, p.status::text as status, p.archived_at,
+               (p.id in (select public.challenge_social_staff_ids())) as staff
+          into _pr from public.profiles p where p.id = _r.answerer_id;
+        if not found or _pr.group_id is distinct from _r.group_id or _pr.archived_at is not null
+           or _pr.status <> 'active' or _pr.staff then
+          _st := 'answerer_moved';
+        end if;
       end if;
     end if;
     if _st is null then
-      select p.group_id, p.status::text as status, p.archived_at,
-             (p.id in (select public.challenge_social_staff_ids())) as staff
-        into _pr from public.profiles p where p.id = _r.asker_id;
-      if not found or _pr.group_id is distinct from _r.group_id or _pr.archived_at is not null
-         or _pr.status <> 'active' or _pr.staff then
+      if _r.asker_id is null then
         _st := 'asker_moved';
+      else
+        select p.group_id, p.status::text as status, p.archived_at,
+               (p.id in (select public.challenge_social_staff_ids())) as staff
+          into _pr from public.profiles p where p.id = _r.asker_id;
+        if not found or _pr.group_id is distinct from _r.group_id or _pr.archived_at is not null
+           or _pr.status <> 'active' or _pr.staff then
+          _st := 'asker_moved';
+        end if;
       end if;
     end if;
     if _st is null then
@@ -1609,7 +1682,8 @@ declare
   _cap_ad int := (_cfg->>'cap_answers_day')::int;
   _kinds text[]; _types text[];
   _hb record; _jr record;
-  _since_merge timestamptz;
+  _since_merge timestamptz; _scope uuid[];
+  _retrying int;
   _state jsonb; _queue jsonb; _ai jsonb; _verd jsonb; _out jsonb; _inv jsonb; _review jsonb;
   _pending int; _oldest numeric; _stuck int; _err24 int; _gave24 int; _exp7 int; _cal_pending int; _cal_judged int;
   _c24 int; _c2 int; _e2 int; _cost_today numeric; _cost7 numeric; _calls_today int;
@@ -1645,12 +1719,14 @@ begin
          count(*) filter (where status = 'gave_up' and updated_at > now() - interval '24 hours'),
          count(*) filter (where status = 'expired' and updated_at > now() - interval '7 days'),
          count(*) filter (where shadow_only and status in ('pending', 'error', 'judging')),
-         count(*) filter (where shadow_only and status = 'judged')
-    into _pending, _oldest, _stuck, _err24, _gave24, _exp7, _cal_pending, _cal_judged
+         count(*) filter (where shadow_only and status = 'judged'),
+         count(*) filter (where status = 'error' and transient_failures > 0)
+    into _pending, _oldest, _stuck, _err24, _gave24, _exp7, _cal_pending, _cal_judged, _retrying
     from public.challenge_qa_candidates;
   _queue := jsonb_build_object(
     'pending', _pending, 'oldest_pending_minutes', round(coalesce(_oldest, 0)), 'judging_stuck', _stuck,
     'errors_24h', _err24, 'gave_up_24h', _gave24, 'expired_7d', _exp7,
+    'retrying_after_outage', _retrying,                                -- d10: systemic failures, waiting, not lost
     'calibration_pending', _cal_pending, 'calibration_judged', _cal_judged,
     'skipped_by_reason_24h', coalesce((select jsonb_object_agg(z.skip_reason, z.n) from (
         select skip_reason, count(*) as n from public.challenge_qa_candidates
@@ -1718,6 +1794,7 @@ begin
   -- INVARIANTS: each must be 0.
   _since_merge := coalesce((select min(a.created_at) from public.admin_actions a
                              where a.action = 'challenge_social_points_applied'), now());
+  select coalesce(array_agg(s.id), '{}') into _scope from public.challenge_scope_group_ids() s(id);
   _inv := jsonb_build_object(
     'chat_cap_breaches', (select count(*) from (
         select e.user_id, (e.created_at at time zone 'Asia/Tashkent')::date as d, sum(e.amount) as s
@@ -1733,14 +1810,18 @@ begin
         where x.reason = 'challenge_answer'
           and not exists (select 1 from public.challenge_qa_candidates c
                            where c.award_status = 'awarded' and c.answerer_id = x.user_id and c.xp_ref_key = x.ref_key)),
+    -- d9: keyed on the group of the MESSAGE the row paid for (community writes created_at = its sent_at, by the
+    -- same profile), exactly what the suppression predicate reads -- never the student's CURRENT group, which
+    -- would flag a 5.0 student who earned community XP and then moved into a 6.0 group.
     'community_rows_in_scope', (select count(*) from public.xp_events x
-        join public.profiles p on p.id = x.user_id
        where x.reason in ('community_help', 'community_question')
          and x.created_at >= greatest(coalesce(_w_start, '-infinity'::timestamptz), _since_merge)
          and x.created_at > now() - interval '7 days'
          and (_w_end is null or x.created_at <= _w_end)
-         and p.group_id in (select public.challenge_scope_group_ids())
-         and public.challenge_active(x.created_at)),
+         and public.challenge_active(x.created_at)
+         and exists (select 1 from public.group_message_events g
+                      where g.profile_id = x.user_id and g.sent_at = x.created_at
+                        and g.group_id = any(_scope))),
     'shadow_rows_paid', (select count(*) from public.challenge_qa_candidates
                           where shadow_only and (award_status is not null or xp_ref_key is not null)));
 
@@ -2145,6 +2226,13 @@ begin
   if not (select relrowsecurity from pg_class where oid = 'public.challenge_qa_candidates'::regclass)
      or not (select relrowsecurity from pg_class where oid = 'public.challenge_qa_ai_calls'::regclass) then
     _bad := _bad || 'rls'::text;
+  end if;
+  -- d8: a deleted asker or group keeps the candidate (SET NULL); only the answerer's own delete cascades
+  if (select string_agg(a.attname || ':' || c.confdeltype::text, ',' order by a.attname)
+        from pg_constraint c join pg_attribute a on a.attrelid = c.conrelid and a.attnum = c.conkey[1]
+       where c.conrelid = 'public.challenge_qa_candidates'::regclass and c.contype = 'f')
+     is distinct from 'answerer_id:c,asker_id:n,group_id:n' then
+    _bad := _bad || 'candidate_fks'::text;
   end if;
   if exists (select 1 from pg_class c, aclexplode(c.relacl) a
               where c.oid in ('public.challenge_qa_candidates'::regclass, 'public.challenge_qa_ai_calls'::regclass)

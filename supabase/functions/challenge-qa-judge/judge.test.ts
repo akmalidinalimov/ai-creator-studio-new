@@ -2,7 +2,7 @@
 // No network: the Anthropic client, fetch, the Supabase admin client and the clock are all fakes.
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
-  type AnthropicErrorClasses, type AnthropicLike, type ClaimRow, costUsd, DISPATCH_BUDGET_MS, judgeRow, newRunState,
+  type AnthropicErrorClasses, type AnthropicLike, BREAKER_KINDS, type ClaimRow, costUsd, DISPATCH_BUDGET_MS, judgeRow, newRunState,
   OPENAI_URL, PROMPT_VERSION, renderUser, runJudge, runOnce, SYSTEM_PROMPT, validateVerdict, type Verdict, VERDICT_SCHEMA,
 } from "./judge.ts";
 
@@ -316,6 +316,53 @@ Deno.test("3 consecutive 429s skip the provider for the rest of the run", async 
   for (let i = 0; i < 4; i++) await judgeRow({ ...ROW, id: i }, ["anthropic", "openai"], MODELS, PRICES, deps, state, c.start + 52_000);
   assertEquals(a.calls.length, 3, "the 4th row goes straight to openai");
   assertEquals(f.bodies.length, 4);
+});
+
+Deno.test("3 consecutive network errors, or 3 consecutive 'other' 4xx, skip the provider for the rest of the run", async () => {
+  for (const step of [{ throw: new APIConnectionError() }, { throw: new APIError(400, "credit balance is too low") }] as AnthropicStep[]) {
+    const a = fakeAnthropic([step]);
+    const f = fakeFetch([openaiOk()]);
+    const c = clock();
+    const state = newRunState();
+    const deps = { anthropic: a.client, anthropicErrors: ERRS, openaiKey: "k", fetchFn: f.fn, now: c.now };
+    for (let i = 0; i < 5; i++) await judgeRow({ ...ROW, id: i }, ["anthropic", "openai"], MODELS, PRICES, deps, state, c.start + 52_000);
+    assertEquals(a.calls.length, 3, "rows 4 and 5 go straight to openai (no doomed call per row)");
+    assertEquals(f.bodies.length, 5);
+  }
+});
+
+Deno.test("row-specific failures (schema, refusal) do not open the breaker", async () => {
+  const a = fakeAnthropic([anthropicOk({ ...GOOD, confidence: 3 })]);
+  const f = fakeFetch([openaiOk()]);
+  const c = clock();
+  const state = newRunState();
+  const deps = { anthropic: a.client, anthropicErrors: ERRS, openaiKey: "k", fetchFn: f.fn, now: c.now };
+  for (let i = 0; i < 4; i++) await judgeRow({ ...ROW, id: i }, ["anthropic", "openai"], MODELS, PRICES, deps, state, c.start + 52_000);
+  assertEquals(a.calls.length, 4, "a bad output on one row says nothing about the provider");
+  assertEquals(BREAKER_KINDS.includes("schema"), false);
+  assertEquals(BREAKER_KINDS.includes("refusal"), false);
+});
+
+Deno.test("an outage: every row is sent to SQL with its failed calls (SQL refunds the attempt: 'retry')", async () => {
+  const f = fakeFetch([{ status: 503, body: { error: { message: "down" } } }]);
+  const c = clock();
+  const rows: ClaimRow[] = Array.from({ length: 6 }, (_, i) => ({ id: i + 1, token: `t${i}`, context: CTX }));
+  const recorded: { result: any; calls: any[] }[] = [];
+  const summary = await runJudge(rows, ["openai"], MODELS, PRICES, { openaiKey: "k", fetchFn: f.fn, now: c.now }, newRunState(), c.start,
+    (_row, result, calls) => {
+      recorded.push({ result, calls });
+      // challenge_qa_record's answer for an attempt whose every call failed systemically
+      return Promise.resolve("release" in result ? "released" : "retry");
+    });
+  // Four workers dispatch at once (4 doomed calls), then the breaker is open: the other two are released.
+  assertEquals(f.bodies.length, 4);
+  assertEquals(summary.errors, 4);
+  assertEquals(summary.retried, 4);
+  assertEquals(summary.released, 2);
+  for (const r of recorded.filter((x) => !("release" in x.result))) {
+    assertEquals(r.result.ok, false);
+    assertEquals(r.calls.map((x) => [x.provider, x.ok, x.error_kind, x.http_status]), [["openai", false, "http_5xx", 503]]);
+  }
 });
 
 Deno.test("no provider attempted (out of time) releases the row instead of burning an attempt", async () => {

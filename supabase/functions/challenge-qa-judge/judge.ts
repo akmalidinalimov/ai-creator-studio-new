@@ -492,7 +492,11 @@ export const HARD_DEADLINE_MS = 52_000;    // no call runs past this: the cron's
 export const MIN_CALL_MS = 3_000;          // a call with less time than this left is not started
 export const CONCURRENCY = 4;
 
-const TRANSIENT: ErrorKind[] = ["timeout", "http_5xx", "http_429"];
+// 3 consecutive failures of these kinds skip the provider for the rest of the run. 'network' is an outage
+// like a timeout; 'other' (a non-auth 4xx such as a wrong model name or a low-credit 400) repeats on every row
+// and would otherwise cost one doomed call per row before each fallback. A row's attempt is not consumed by
+// such failures either: challenge_qa_record classifies them as systemic from the ledger entries (d10).
+export const BREAKER_KINDS: readonly ErrorKind[] = ["timeout", "http_5xx", "http_429", "network", "other"];
 
 export interface RowOutcome {
   result: RecordResult;
@@ -572,7 +576,7 @@ export async function judgeRow(
       if (pe.kind === "auth") {
         st.disabled = true;
         state.authFailed.add(p);
-      } else if (TRANSIENT.includes(pe.kind)) {
+      } else if (BREAKER_KINDS.includes(pe.kind)) {
         st.transient++;
       }
     }
@@ -586,6 +590,8 @@ export interface RunSummary {
   claimed: number;
   judged: number;
   errors: number;
+  /** errors the SQL classified as systemic (provider/network down): the attempt was refunded, the row waits */
+  retried: number;
   released: number;
   stale: number;
   record_failed: number;
@@ -605,7 +611,7 @@ export async function runJudge(
   record: (row: ClaimRow, result: RecordResult, calls: CallRecord[]) => Promise<string | null>,
 ): Promise<RunSummary> {
   const s: RunSummary = {
-    claimed: rows.length, judged: 0, errors: 0, released: 0, stale: 0, record_failed: 0, calls: 0, fell_back: 0,
+    claimed: rows.length, judged: 0, errors: 0, retried: 0, released: 0, stale: 0, record_failed: 0, calls: 0, fell_back: 0,
     providers_used: [], models: [], tokens_in: 0, tokens_out: 0, cost_usd: 0,
   };
   const used = new Set<string>();
@@ -617,6 +623,10 @@ export async function runJudge(
     if (status === "judged") s.judged++;
     else if (status === "released") s.released++;
     else if (status === "error") s.errors++;
+    else if (status === "retry") {
+      s.errors++;
+      s.retried++;
+    }
     else if (status === "stale") s.stale++;
     else {
       s.record_failed++;

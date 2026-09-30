@@ -1,4 +1,4 @@
-// Applies 20260930100000_challenge_social_points.sql to a real PostgreSQL (PGlite) on top of the LIVE
+// Applies 20260930100010_challenge_social_points.sql to a real PostgreSQL (PGlite) on top of the LIVE
 // reconcile_community_xp and exercises chat points, the answer queue, the judge RPCs, apply, the community
 // suppression, health and the watchdog end to end.
 //
@@ -28,7 +28,7 @@ const md5 = (s: string) => createHash("md5").update(s).digest("hex");
 const LIVE = lf(await Deno.readTextFile(here("./reconcile_community_xp.live-2026-09-30.sql")));
 // MIG_PATH lets a draft of the migration be tested before it is written into its (edit-guarded) slot.
 const MIG = lf(await Deno.readTextFile(
-  Deno.env.get("MIG_PATH") ?? here("../../../migrations/20260930100000_challenge_social_points.sql")));
+  Deno.env.get("MIG_PATH") ?? here("../../../migrations/20260930100010_challenge_social_points.sql")));
 
 const PROD_DEF_MD5 = "449410b40b3bb549612fc11113181717";  // md5(pg_get_functiondef), prod 2026-09-30
 const PROD_BODY_MD5 = "72994ebd6807ed5acea6077223420a95"; // md5(prosrc), the migration's pin
@@ -707,17 +707,18 @@ console.log("E. the judge RPCs: gates, leases, retries, the ledger");
   const led = await q(db, "select * from challenge_qa_ai_calls");
   ok("E8 an invalid verdict (confidence 1.7) is rejected by SQL too -> error with backoff", er === "error" && erow.status === "error" && erow.error === "verdict_invalid" && erow.backoff, erow);
   ok("E8 the ledger keeps the 1 valid call and skips 4 invalid entries", led.length === 1 && led[0].candidate_id !== null && Number(led[0].cost_usd) === 0.0004, led);
-  // three failures -> gave_up
+  // three ROW-SPECIFIC failures (the model's output for this row is unusable) -> gave_up
   for (let i = 0; i < 2; i++) {
     await db.exec(`update challenge_qa_candidates set next_attempt_at = now() - interval '1 second' where id = ${r2.id}`);
     const cc = (await one(db, "select challenge_qa_claim(20, array['openai']) c")).c;
     const mine = (cc.rows as Row[]).find((x) => x.id === r2.id)!;
-    await q(db, "select challenge_qa_record($1, $2::uuid, '{\"ok\":false,\"error\":\"timeout: x\"}'::jsonb, '[]'::jsonb)", [mine.id, mine.token]);
+    await q(db, "select challenge_qa_record($1, $2::uuid, '{\"ok\":false,\"error\":\"schema: x\"}'::jsonb, $3::jsonb)", [mine.id, mine.token,
+      JSON.stringify([{ provider: "openai", model: "m", ok: false, error_kind: "schema", http_status: 200, latency_ms: 700, tokens_in: 900, tokens_out: 80, cost_usd: 0.0004 }])]);
     const other = (cc.rows as Row[]).find((x) => x.id !== r2.id);
     if (other) await q(db, "select challenge_qa_record($1, $2::uuid, '{\"release\":true}'::jsonb, '[]'::jsonb)", [other.id, other.token]);
   }
   const gu = await one(db, "select status, attempts from challenge_qa_candidates where id = $1", [r2.id]);
-  ok("E9 after 3 failed attempts -> gave_up", gu.status === "gave_up" && gu.attempts === 3, gu);
+  ok("E9 after 3 row-specific failures (schema) -> gave_up", gu.status === "gave_up" && gu.attempts === 3, gu);
   // lease reclaim
   const cc = (await one(db, "select challenge_qa_claim(20, array['openai']) c")).c;
   ok("E10 the released row is claimable again", cc.rows.length === 1 && cc.rows[0].id === r1.id, cc);
@@ -731,6 +732,83 @@ console.log("E. the judge RPCs: gates, leases, retries, the ledger");
   await db.exec(`update challenge_qa_candidates set status = 'pending', claim_token = null, created_at = now() - interval '15 days' where id = ${r1.id}`);
   await q(db, "select challenge_qa_claim(20, array['openai'])");
   ok("E11 a row older than expire_days expires", (await one(db, "select status from challenge_qa_candidates where id = $1", [r1.id])).status === "expired");
+}
+
+// ───────────── E'. an outage delays answers, never loses them (d10) ─────────────
+console.log("E'. systemic failures refund the attempt; row-specific failures give up after 3");
+{
+  await resetData(db);
+  await db.exec("delete from challenge_qa_ai_calls");
+  const qx = await post(db, { user: S2, text: "Kling da video qanday uzaytiriladi?", sent: "now() - interval '40 minutes'" });
+  await post(db, { user: S1, text: "extend tugmasini bosing albatta", replyTo: qx, sent: "now() - interval '30 minutes'" });
+  const qy = await post(db, { user: S3, text: "Veo narxi qancha turadi oyiga?", sent: "now() - interval '39 minutes'" });
+  await post(db, { user: S4, text: "oyiga yigirma dollar atrofida", replyTo: qy, sent: "now() - interval '29 minutes'" });
+  await reconcile(db, "now() - interval '2 hours'");
+  const call = (provider: string, kind: string, status: number | null) =>
+    ({ provider, model: "m", ok: false, error_kind: kind, http_status: status, latency_ms: 100, tokens_in: null, tokens_out: null, cost_usd: 0 });
+  /** One judge run in which every claimed row fails with `calls` (what judge.ts would send). */
+  const failRun = async (calls: Row[], only?: bigint | number): Promise<string[]> => {
+    await db.exec("update challenge_qa_candidates set next_attempt_at = now() - interval '1 second' where status = 'error'");
+    const cc = (await one(db, "select challenge_qa_claim(20, array['openai','anthropic']) c")).c;
+    const out: string[] = [];
+    for (const r of (cc.rows ?? []) as Row[]) {
+      if (only !== undefined && Number(r.id) !== Number(only)) {
+        await q(db, "select challenge_qa_record($1, $2::uuid, '{\"release\":true}'::jsonb, '[]'::jsonb)", [r.id, r.token]);
+        continue;
+      }
+      out.push((await one(db, "select challenge_qa_record($1, $2::uuid, $3::jsonb, $4::jsonb) s", [r.id, r.token,
+        JSON.stringify({ ok: false, error: `${calls[0].error_kind}: provider down` }), JSON.stringify(calls)])).s);
+    }
+    return out;
+  };
+  const outage = [
+    [call("openai", "http_5xx", 503)], [call("openai", "network", null)], [call("openai", "timeout", null)],
+    [call("openai", "http_429", 429)], [call("openai", "auth", 401)],
+    [call("anthropic", "http_5xx", 529), call("openai", "network", null)],
+  ];
+  const res: string[] = [];
+  for (const k of outage) res.push(...await failRun(k));
+  let rows = await q(db, `select status, attempts, transient_failures,
+                                 next_attempt_at > now() + interval '59 minutes' as backoff_capped from challenge_qa_candidates order by id`);
+  ok("E12 six outage runs in a row (503, network, timeout, 429, 401, both providers down): every attempt 'retry', 0 gave_up",
+    res.length === 12 && res.every((s) => s === "retry") &&
+    rows.every((r) => r.status === "error" && r.attempts === 0 && r.transient_failures === 6), [res, rows]);
+  ok("E12 the backoff grows to its 60-minute cap, and every call is in the ledger",
+    rows.every((r) => r.backoff_capped) && (await one(db, "select count(*)::int n from challenge_qa_ai_calls")).n === 14, rows);
+  let h = (await one(db, "select challenge_social_health() h")).h;
+  ok("E12 health shows the rows waiting after the outage, none given up",
+    h.queue.retrying_after_outage === 2 && h.queue.gave_up_24h === 0 && h.queue.pending === 2, h.queue);
+
+  // 'other' (a non-auth 4xx) that repeats across rows is systemic (a bad model name, a low-credit 400)
+  const other = [call("openai", "other", 400)];
+  const o1 = await failRun(other);
+  const o2 = await failRun(other);
+  const o3 = await failRun(other);
+  rows = await q(db, "select status, attempts from challenge_qa_candidates order by id");
+  ok("E13 'other' on 2+ rows of one provider within the hour is systemic: never gave_up",
+    [...o1, ...o2, ...o3].filter((s) => s === "retry").length >= 5 && rows.every((r) => r.status === "error" && r.attempts <= 1),
+    [o1, o2, o3, rows]);
+  // ...and once the provider recovers the delayed rows are judged normally
+  await db.exec("update challenge_qa_candidates set next_attempt_at = now() - interval '1 second'");
+  await judgeAll(db);
+  ok("E13 after the outage both rows are judged (delayed, not lost)",
+    (await q(db, "select 1 from challenge_qa_candidates where status = 'judged'")).length === 2);
+
+  // a LONE 'other' (only this row, e.g. a row-specific 400) and a mixed attempt stay row-specific
+  await db.exec("delete from challenge_qa_ai_calls");
+  const qz = await post(db, { user: S2, text: "CapCut da subtitr qanday qoʻshiladi?", sent: "now() - interval '20 minutes'" });
+  await post(db, { user: S3, text: "matn boʻlimidan avto subtitr tanlang", replyTo: qz, sent: "now() - interval '15 minutes'" });
+  await reconcile(db, "now() - interval '2 hours'");
+  const lone = (await one(db, "select id from challenge_qa_candidates where status = 'pending'")).id;
+  const l1 = await failRun(other, lone);
+  const l2 = await failRun([call("anthropic", "schema", 200), call("openai", "timeout", null)], lone);
+  const l3 = await failRun(other, lone);
+  const lr = await one(db, "select status, attempts, transient_failures from challenge_qa_candidates where id = $1", [lone]);
+  ok("E14 a lone 'other', then schema + timeout, then 'other' again: row-specific -> gave_up after 3 attempts",
+    JSON.stringify([...l1, ...l2, ...l3]) === '["error","error","error"]' && lr.status === "gave_up" && lr.attempts === 3 &&
+    lr.transient_failures === 0, [l1, l2, l3, lr]);
+  h = (await one(db, "select challenge_social_health() h")).h;
+  ok("E14 health counts it as given up, not as retrying", h.queue.gave_up_24h === 1 && h.queue.retrying_after_outage === 0, h.queue);
 }
 
 // ───────────── F. apply ─────────────
@@ -978,12 +1056,30 @@ console.log("G. health invariants + the watchdog");
   const stRow = await one(db, "select value from app_settings where key = 'challenge_social_watchdog_state'");
   ok("G2 the state row stamps checked_at (the GitHub verifier's liveness check)", !!stRow.value.checked_at, stRow);
 
-  // plant every breach
+  // d9: a 5.0 student who earned community_help in their 5.0 group and THEN moved into a 6.0 group is correct
+  // behaviour (the suppression reads the message's group), so the invariant must stay 0 and nothing alarms.
+  await db.exec("update admin_actions set created_at = now() - interval '1 day' where action = 'challenge_social_points_applied'");
+  const m5 = await ts(db, "date_trunc('second', now()) - interval '25 minutes'");
+  await post(db, { user: S5, group: G5, text: "beshinchi oqimda javob berdim", sent: `'${m5}'::timestamptz` });
+  await q(db, `insert into xp_events (user_id, amount, reason, ref_key, created_at)
+               values ('${S5}', 3, 'community_help', 'chelp:${S6}:${m5.slice(0, 10)}', '${m5}'::timestamptz)`);
+  await db.exec(`update profiles set group_id = '${G1}' where id = '${S5}'`);
+  h = (await one(db, "select challenge_social_health() h")).h;
+  w = (await one(db, "select challenge_social_watchdog() w")).w;
+  ok("G2b a 5.0 community row whose student moved into a 6.0 group: community_rows_in_scope 0, no A4, no DM",
+    h.invariants.community_rows_in_scope === 0 && !w.alarms.includes("A4") && (await q(db, "select 1 from ops_net_calls")).length === 0,
+    [h.invariants, w.alarms]);
+  await db.exec(`update profiles set group_id = '${G5}' where id = '${S5}'`);
+  await db.exec(`delete from xp_events where user_id = '${S5}'; delete from user_xp where user_id = '${S5}'`);
+
+  // plant every breach (the community leak is a real one: paid for a message sent in a 6.0 group)
   const d0 = await ts(db, "date_trunc('day', now() at time zone 'Asia/Tashkent') at time zone 'Asia/Tashkent' + interval '1 hour'");
+  const leakAt = await ts(db, "date_trunc('second', now()) - interval '4 minutes'");
+  await post(db, { user: S4, text: "oltinchi oqimda yordam berdim", sent: `'${leakAt}'::timestamptz` });
   await db.exec(`
     insert into xp_events (user_id, amount, reason, ref_key, created_at) select '${S3}', 1, 'challenge_chat', 'ch_chat:x:' || g, '${d0}'::timestamptz + g * interval '1 minute' from generate_series(1, 6) g;
     insert into xp_events (user_id, amount, reason, ref_key, created_at) values ('${S4}', 3, 'challenge_answer', 'chelp:x:1', now());
-    insert into xp_events (user_id, amount, reason, ref_key, created_at) values ('${S4}', 3, 'community_help', 'chelp:y:1', now());
+    insert into xp_events (user_id, amount, reason, ref_key, created_at) values ('${S4}', 3, 'community_help', 'chelp:y:1', '${leakAt}'::timestamptz);
     update challenge_qa_candidates set shadow_only = true, award_status = 'awarded' where id = (select min(id) from challenge_qa_candidates);`);
   await db.exec(`insert into user_xp (user_id, total_xp) values ('${S3}', 6), ('${S4}', 6) on conflict (user_id) do update set total_xp = excluded.total_xp`);
   h = (await one(db, "select challenge_social_health() h")).h;
@@ -1045,6 +1141,60 @@ console.log("G. health invariants + the watchdog");
   const st9 = await one(db, "select value from app_settings where key = 'challenge_social_watchdog_state'");
   ok("G9 before the start: report 'inactive', no alarm, checked_at stamped", w.state === "inactive" &&
     new Date(st9.value.checked_at).getTime() > Date.now() - 60_000, [w, st9.value]);
+}
+
+// ───────────── H. deleting an asker or a group keeps a PAID answer's audit row (d8) ─────────────
+console.log("H. deletes: a paid answer's candidate survives its asker / group; unsettled rows settle as moved");
+{
+  const allZero = (o: Row) => Object.values(o).every((v) => v === 0);
+  const restore = async () => {
+    await db.exec(`insert into auth.users values ('${S2}'), ('${S3}') on conflict do nothing;
+                   insert into groups values ('${G2}', 'AC CHALLENGE | 2-GURUH', '${C6}', null, 6) on conflict do nothing;
+                   update profiles set group_id = '${G2}' where id = '${X1}';`);
+  };
+  await resetData(db);
+  await cfg(db, { qa: { mode: "live" } });
+  await db.exec(`update profiles set group_id = '${G2}' where id in ('${S3}', '${S4}')`);   // S3, S4 -> group 2
+  const paid1 = await qa(db, S2, S1, { sent: "now() - interval '40 minutes'" });                 // group 1: S1 answers S2
+  const paid2 = await qa(db, S3, S4, { group: G2, sent: "now() - interval '38 minutes'" });      // group 2: S4 answers S3
+  await reconcile(db, "now() - interval '2 hours'");
+  await judgeAll(db);
+  await apply(db);
+  ok("H0 both answers are paid", (await cands(db)).filter((r) => r.award_status === "awarded").length === 2, await cands(db));
+
+  await db.exec(`delete from auth.users where id = '${S2}'`);                                   // remove_user / merge-duplicates
+  await db.exec(`delete from groups where id = '${G2}'`);                                       // a group removed
+  const kept = Object.fromEntries((await cands(db)).map((r) => [Number(r.answer_msg_id), r]));
+  let h = (await one(db, "select challenge_social_health() h")).h;
+  let w = (await one(db, "select challenge_social_watchdog() w")).w;
+  ok("H1 the asker's delete keeps the candidate (asker_id NULL, still 'awarded') and the answerer's +3",
+    kept[paid1.aid]?.asker_id === null && kept[paid1.aid]?.award_status === "awarded" &&
+    (await q(db, `select 1 from xp_events where user_id = '${S1}' and reason = 'challenge_answer'`)).length === 1, kept[paid1.aid]);
+  ok("H2 the group's delete keeps the candidate (group_id NULL, still 'awarded')",
+    kept[paid2.aid]?.group_id === null && kept[paid2.aid]?.award_status === "awarded", kept[paid2.aid]);
+  ok("H3 every invariant stays 0 and the watchdog raises no A4 (was a permanent false alarm)",
+    allZero(h.invariants) && !w.alarms.includes("A4") && (await q(db, "select 1 from ops_net_calls")).length === 0,
+    [h.invariants, w.alarms]);
+  await restore();
+
+  // judged but not yet settled when the asker / the group disappears: settled as moved, nothing paid, no error
+  await resetData(db);
+  await cfg(db, { qa: { mode: "live" } });
+  await db.exec(`update profiles set group_id = '${G2}' where id in ('${S3}', '${S4}')`);
+  const un1 = await qa(db, S2, S1, { sent: "now() - interval '40 minutes'" });
+  const un2 = await qa(db, S3, S4, { group: G2, sent: "now() - interval '38 minutes'" });
+  await reconcile(db, "now() - interval '2 hours'");
+  await judgeAll(db);
+  await db.exec(`delete from auth.users where id = '${S2}'; delete from groups where id = '${G2}'`);
+  const a = await apply(db);
+  const st = Object.fromEntries((await cands(db)).map((r) => [Number(r.answer_msg_id), r.award_status]));
+  ok("H4 unsettled rows: a deleted asker -> asker_moved, a deleted group -> answerer_moved, nothing paid",
+    a.status === "ok" && st[un1.aid] === "asker_moved" && st[un2.aid] === "answerer_moved" &&
+    (await q(db, "select 1 from xp_events where reason = 'challenge_answer'")).length === 0, [a, st]);
+  h = (await one(db, "select challenge_social_health() h")).h;
+  w = (await one(db, "select challenge_social_watchdog() w")).w;
+  ok("H4 ...and the invariants stay 0", allZero(h.invariants) && !w.alarms.includes("A4"), [h.invariants, w.alarms]);
+  await restore();
 }
 
 await db.close();
