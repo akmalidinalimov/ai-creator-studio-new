@@ -10,6 +10,7 @@
 //
 //   L0 the embedded seed IS the admin importer's output (scripts/gen-daily-tasks-seed.mjs = parsePlan + buildImportRows
 //      of src/lib/dailyTasksPlan.ts over the fixture plan), byte for byte, one item per weekday 2026-10-05 .. 11-06;
+//   L1- the world's 16 engine functions the go-live touches are md5-identical to production's (live code, not a copy);
 //   L1 applied on Thursday 2026-10-01: 25 drafts equal to their items column by column, the switch is a pure 3-key
 //      merge, the parsed config is active / valid with no miniapp_link, every self-test asserted, two audit rows, and a
 //      student's Mini App list is enabled + miniapp but shows NO draft;
@@ -529,6 +530,33 @@ async function runPinned() {
   console.log("L1. applied Thursday 2026-10-01 08:30 (Tashkent) on production's state");
   const db = await world();
   const before = await ctRow(db);
+  {
+    // every engine function the go-live reads or relies on is byte-identical to production's
+    // (md5(replace(prosrc, E'\r', '')) read live 2026-09-30), so this world runs the LIVE code, not a repo copy
+    const LIVE_MD5: Record<string, string> = {
+      "challenge_tasks_config()": "d40ab1725851c424bcde075fef3c574e",
+      "challenge_task_is_task_day(uuid,date,jsonb)": "baa7e4373d3143150dc06ad9de17c389",
+      "challenge_task_requires_problem(text,jsonb,text[])": "9b2b8c71874289e9d02f1715bc9961aa",
+      "challenge_task_render_post(challenge_tasks)": "16bb9f9548f82c265e86a20426787928",
+      "challenge_task_render_post_text(text,text,text,text,text,integer,integer,integer,integer,date,text)": "3bf9889b5f6ca7b4af6ebe6d15e154b6",
+      "challenge_task_post_context(challenge_tasks)": "9c48ea233273a70062cc85f446fb2a75",
+      "challenge_task_post_length(text)": "da53a0f4da225be7f458a5f4ec54ab99",
+      "challenge_tasks_guard()": "0b8992debc043c18f888ac777552cdfe",
+      "challenge_tasks_lock()": "45a40d721e977eacbcd04dadb1247cee",
+      "admin_challenge_tasks_import(uuid,jsonb)": "a77e52eff3d11f97e4cefe9692d3aa1d",
+      "challenge_tasks_health(timestamp with time zone)": "f5ab18b25695675f0792b6447d63a454",
+      "challenge_tasks_watchdog(timestamp with time zone)": "ab091a8a4dfba493296490c558d6d198",
+      "challenge_tasks_worker_due(jsonb)": "469daa411cf47fb30957996d3fc90d94",
+      "challenge_tasks_tick()": "7e39fa98f564daa287960c045fac7fdb",
+      "challenge_task_check_due()": "8aab4aaebdd34d2697fad3e6256e6c64",
+      "challenge_task_check_kick()": "a7b7500ad8db093a52d355b6d2849798",
+    };
+    const got = await q(db, `select p.oid::regprocedure::text sig, md5(replace(p.prosrc, E'\\r', '')) m from pg_proc p
+                             join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'`);
+    const bad = Object.entries(LIVE_MD5).filter(([sig, m]) => got.find((g) => g.sig === sig)?.m !== m)
+      .map(([sig]) => ({ sig, world: got.find((g) => g.sig === sig)?.m ?? null }));
+    ok(`L1- the world's ${Object.keys(LIVE_MD5).length} engine functions ARE production's (md5)`, bad.length === 0, bad);
+  }
   setClock(utc("2026-10-01T08:30:00"));
   {
     const e = await tx(db, GL);
