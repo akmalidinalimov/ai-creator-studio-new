@@ -244,7 +244,7 @@ export function ChallengeTaskResults({ tasks, groups, today }: { tasks: TaskRow[
       </p>
 
       <Dialog open={!!dialog} onOpenChange={(v) => { if (!v) setDialog(null); }}>
-        <DialogContent>
+        <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{dialog ? `${OP_UZ[dialog.op]} — ${dialog.sub.name ?? ""}` : ""}</DialogTitle>
           </DialogHeader>

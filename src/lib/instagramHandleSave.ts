@@ -10,7 +10,7 @@
  *      locked after an accepted Instagram task, profiles_column_guard v2) → `locked` with the DB's own message.
  * An admin preview is the expected `impersonation_readonly` no-op.
  */
-import { supabase } from "@/integrations/supabase/client";
+import { looseFrom } from "@/lib/looseTable";
 import { mutate } from "@/lib/mutate";
 import { isInstagramHandleTaken, parseInstagramHandle, type InstagramRejectReason } from "@/lib/instagramHandle";
 
@@ -27,7 +27,7 @@ export async function saveInstagramHandle(userId: string, input: string, saved: 
 
   const r = await mutate<{ id: string; instagram_username: string | null }>(
     // The generated types lag the column (it is read untyped everywhere, see Settings.tsx).
-    () => (supabase as unknown as { from: (t: string) => any }).from("profiles").update({ instagram_username: parsed.handle }).eq("id", userId),
+    () => looseFrom("profiles").update({ instagram_username: parsed.handle }).eq("id", userId),
     "id,instagram_username",
   );
   if (!r.ok) {

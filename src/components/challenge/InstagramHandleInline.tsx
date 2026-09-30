@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import { looseFrom } from "@/lib/looseTable";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button, Card } from "@/components/ui-kit";
 import { Input } from "@/components/ui/input";
@@ -30,8 +30,7 @@ export function InstagramHandleInline({ onHandle }: { onHandle?: (handle: string
     let alive = true;
     (async () => {
       try {
-        const { data } = await (supabase as unknown as { from: (t: string) => any })
-          .from("profiles").select("instagram_username").eq("id", user.id).maybeSingle();
+        const { data } = await looseFrom("profiles").select("instagram_username").eq("id", user.id).maybeSingle();
         const h = String(data?.instagram_username ?? "");
         if (!alive) return;
         setSaved(h);
@@ -73,8 +72,7 @@ export function InstagramHandleInline({ onHandle }: { onHandle?: (handle: string
       if (r.kind === "locked") return fail(r.message ?? t("settings.instagramErrors.notSaved"), "instagram_handle_save_failed", { code: r.code ?? null });
       if (r.kind === "not_stored") {
         // the DB kept the old value: show what it really holds
-        const { data } = await (supabase as unknown as { from: (t: string) => any })
-          .from("profiles").select("instagram_username").eq("id", user.id).maybeSingle();
+        const { data } = await looseFrom("profiles").select("instagram_username").eq("id", user.id).maybeSingle();
         const h = String(data?.instagram_username ?? "");
         setSaved(h);
         onHandle?.(h);

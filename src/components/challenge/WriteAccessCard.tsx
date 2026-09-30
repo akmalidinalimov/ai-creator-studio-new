@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import { looseFrom } from "@/lib/looseTable";
 import { useAuth } from "@/contexts/AuthContext";
 import { useMiniApp } from "@/lib/telegram/MiniAppContext";
 import { Button, Card } from "@/components/ui-kit";
@@ -28,8 +28,7 @@ export function WriteAccessCard() {
     let alive = true;
     (async () => {
       try {
-        const { data, error } = await (supabase as unknown as { from: (t: string) => any })
-          .from("profiles").select("telegram_write_access_at").eq("id", user.id).maybeSingle();
+        const { data, error } = await looseFrom("profiles").select("telegram_write_access_at").eq("id", user.id).maybeSingle();
         if (error || !alive || data?.telegram_write_access_at) return;
         if (webApp.initDataUnsafe?.user?.allows_write_to_pm === true && !silentTried.current) {
           silentTried.current = true;
