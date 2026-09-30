@@ -13,7 +13,7 @@
 // (daily_task_chat_id, daily_task_topic_id) — never a topic id alone (thread 10 exists in both 5- and 6-GURUH).
 //
 // THE CAPTURE VIEW. The engine classifies what it is given (challenge_task_classify): a caption is text, and text
-// counts toward a task's min_text_chars. Our header ("📱 Ali Valiyev …") is ~60 characters, so capturing the posted
+// counts toward a task's min_text_chars. Our header ("📱 Ali Valiyev — ilova orqali …") is 40+ characters, so capturing the posted
 // Message as-is would satisfy a "screenshot + text" task with no text from the student. captureView() therefore
 // hands the engine each posted Message with the header REMOVED: the student's own text on the message that carried
 // it, no text anywhere else. What the class sees in the topic and what the engine judges differ only by our header.
