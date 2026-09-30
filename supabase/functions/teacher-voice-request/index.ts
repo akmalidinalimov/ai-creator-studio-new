@@ -36,17 +36,24 @@ function normLocale(code?: string | null): Locale {
 // gvExpired) — keep the wording consistent if either side changes. `label` is the shared hw-label
 // ("5.0 · 1-GURUH PRE · M2 V1 — <title>"): the Challenge tasks are copies of the 5.0 tasks, so the title alone
 // could not tell the teacher which course's card she is voicing (audit BOT-8 / FB-3). `pending` = requests now
-// waiting, this one included: with more than one, a recording must REPLY to its student's prompt (or the bot
-// asks with buttons), so the prompt says so.
-const ASK: Record<Locale, (student: string, label: string, pending: number) => string> = {
-  uz: (s, l, n) => `🎤 <b>${s}</b>\n📌 ${l}\n\n` + (n > 1
+// waiting, this one included; `reply` = a recording must REPLY to its student's prompt to be taken without a
+// question — true with more than one pending, and also when this is the only one left of several (the bot's
+// sticky "several were pending" mark, _shared/voice-requests.ts) — so the prompt says so.
+const ASK: Record<Locale, (student: string, label: string, pending: number, reply: boolean) => string> = {
+  uz: (s, l, n, r) => `🎤 <b>${s}</b>\n📌 ${l}\n\n` + (n > 1
     ? `Sizda <b>${n} ta</b> ovozli so'rov kutilmoqda — ovozni aynan <b>shu xabarga javob (reply)</b> qilib yuboring, shunda u shu talabaga boradi (yoki /cancel).`
+    : r
+    ? `Ovozni aynan <b>shu xabarga javob (reply)</b> qilib yuboring, shunda u shu talabaga boradi (yoki /cancel).`
     : `Ovozli izohingizni shu yerga yuboring (yoki /cancel):`),
-  ru: (s, l, n) => `🎤 <b>${s}</b>\n📌 ${l}\n\n` + (n > 1
+  ru: (s, l, n, r) => `🎤 <b>${s}</b>\n📌 ${l}\n\n` + (n > 1
     ? `Ожидает запросов: <b>${n}</b> — отправьте голосовое <b>ответом (reply) на это сообщение</b>, тогда оно уйдёт этому студенту (или /cancel).`
+    : r
+    ? `Отправьте голосовое <b>ответом (reply) на это сообщение</b>, тогда оно уйдёт этому студенту (или /cancel).`
     : `Отправьте сюда голосовой комментарий (или /cancel):`),
-  en: (s, l, n) => `🎤 <b>${s}</b>\n📌 ${l}\n\n` + (n > 1
+  en: (s, l, n, r) => `🎤 <b>${s}</b>\n📌 ${l}\n\n` + (n > 1
     ? `You have <b>${n}</b> pending requests — send the voice note <b>as a reply to this message</b> so it reaches this student (or /cancel).`
+    : r
+    ? `Send the voice note <b>as a reply to this message</b> so it reaches this student (or /cancel).`
     : `Send your voice feedback here (or /cancel):`),
 };
 
@@ -145,7 +152,7 @@ Deno.serve(async (req) => {
     const { outcome: out, result: sent } = await sendTelegramResult(
       BOT_TOKEN,
       "sendMessage",
-      { chat_id: teacherTg, text: ASK[locale](escHtml(studentName), escHtml(label), parked.pending), parse_mode: "HTML" },
+      { chat_id: teacherTg, text: ASK[locale](escHtml(studentName), escHtml(label), parked.pending, parked.replyNeeded), parse_mode: "HTML" },
       { admin, purpose: "teacher_voice_prompt", recipientId: teacherTg },
     );
     if (!out.ok) {

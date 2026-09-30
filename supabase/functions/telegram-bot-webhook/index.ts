@@ -4512,7 +4512,7 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
   // the teacher's in-app recorder is dead on most devices. teacher-voice-request parks ONE REQUEST PER
   // SUBMISSION here and prompts the teacher in the bot chat, where Telegram's own recorder always works.
   // voice-bridge.ts decides which request a recording belongs to — the prompt it replies to, the only one
-  // pending, or the teacher's pick from per-student buttons, never simply the newest (audit FB-4) — and
+  // EVER pending, or the teacher's pick from per-student buttons, never simply the newest (audit FB-4) — and
   // commitBridgeVoice saves + delivers it through the same save + sendVoice path the in-bot grading flow uses.
   if (state.state === "grade_voice") {
     if (text === "/cancel") {

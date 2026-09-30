@@ -10,7 +10,9 @@
 //   * a request is NEVER re-pointed: asking again for the same card refreshes that entry, another card adds one;
 //   * a voice note that REPLIES to a prompt goes to that prompt's student;
 //   * a voice note that does not reply goes to the one pending request ONLY when exactly one was ever pending;
-//     otherwise the bot holds the note and asks "who is this for?" with one button per student;
+//     otherwise the bot holds the note and asks "who is this for?" with one button per student. "Ever" is the
+//     sticky `multi` mark (below): answering, expiring or discarding one of two requests leaves the other
+//     pending ALONE, but a note without a reply may still be a second take for the first student — so it asks;
 //   * a reply to anything that is not a pending prompt is never guessed either — it asks.
 //
 // Storage: bot_conversation_state has ONE row per telegram_id (PK), so the whole set lives in that row's
@@ -55,9 +57,21 @@ export type HeldVoice = {
   exp: string;
 };
 
-export type VoiceState = { v: 2; cas: string; reqs: VoiceRequest[]; held: HeldVoice[] };
+export type VoiceState = {
+  v: 2;
+  cas: string;
+  reqs: VoiceRequest[];
+  held: HeldVoice[];
+  /**
+   * More than one request has been pending in this row's lifetime. STICKY: set when a request is added while
+   * another is stored (live or expired-but-unpruned); claims, prunes, discards and stamps never clear it. It
+   * ends only with the row — deleted when the state empties (casWrite), or expired as a whole. `reqs` alone
+   * cannot say this: a claim or a prune removes the other request in the same write (audit PR-5 review).
+   */
+  multi: boolean;
+};
 
-export const emptyVoiceState = (): VoiceState => ({ v: 2, cas: "", reqs: [], held: [] });
+export const emptyVoiceState = (): VoiceState => ({ v: 2, cas: "", reqs: [], held: [], multi: false });
 
 const isStr = (v: unknown): v is string => typeof v === "string" && v.length > 0;
 const isInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v);
@@ -97,12 +111,12 @@ export function normalizeVoiceState(ctx: unknown, rowUpdatedAt: string, rowExpir
       if (held.some((x) => x.tok === o.tok)) continue;
       held.push({ tok: o.tok, file_id: o.file_id, key: strOrNull(o.key), mid: isInt(o.mid) ? o.mid : null, at: o.at, exp: o.exp });
     }
-    return { v: 2, cas: isStr(c.cas) ? c.cas : "", reqs, held };
+    return { v: 2, cas: isStr(c.cas) ? c.cas : "", reqs, held, multi: c.multi === true || reqs.length > 1 };
   }
   if (isStr(c.submission_id)) {
     const hex = c.submission_id.replace(/[^0-9a-f]/gi, "").toLowerCase();
     return {
-      v: 2, cas: "", held: [],
+      v: 2, cas: "", held: [], multi: false,
       reqs: [{
         rid: `l${(hex + "0000000").slice(0, 7)}`, submission_id: c.submission_id, label: strOrNull(c.label),
         student: null, mids: [], at: rowUpdatedAt, exp: rowExpiresAt,
@@ -136,6 +150,8 @@ export type AddOutcome = "added" | "refreshed" | "too_many";
  * Ask for a voice note on one submission. The same submission again refreshes ITS entry (new expiry, fresh
  * label/name — the next prompt's id is stamped on it separately); another submission gets its own entry.
  * Nothing already pending is ever re-pointed or dropped: past the cap the answer is "too_many".
+ * A new entry next to ANY other stored one (checked before pruning, so an expired one counts) sets the sticky
+ * `multi` mark: from then on a note without a reply is asked about, even once only one request is left.
  */
 export function addVoiceRequest(
   s: VoiceState,
@@ -158,7 +174,8 @@ export function addVoiceRequest(
   const req: VoiceRequest = {
     rid, submission_id: input.submission_id, label: input.label, student: input.student, mids: [], at: iso(nowMs), exp,
   };
-  return { state: { ...base, reqs: [...base.reqs, req] }, outcome: "added", req };
+  const multi = base.multi || s.reqs.some((r) => r.submission_id !== input.submission_id);
+  return { state: { ...base, reqs: [...base.reqs, req], multi }, outcome: "added", req };
 }
 
 /** Remember that prompt `mid` points at request `rid`. null when that request is gone (nothing to stamp). */
@@ -187,7 +204,8 @@ export type VoiceTarget =
  *   reply to an EXPIRED request's prompt → "expired" (never re-routed to someone else);
  *   reply to anything else              → ask (a reply names a target; if it isn't a pending one, don't guess);
  *   no reply, exactly one request ever pending (live), asked for BEFORE the note was sent → that request;
- *   no reply, several (even if some just expired), or one that appeared after the note → ask among the live ones;
+ *   no reply, several — even if the others were since answered, expired or pruned (the sticky `multi` mark) —
+ *     or one that appeared after the note → ask among the live ones;
  *   nothing live                        → "expired" (or "none" when there never was a request).
  * `sentAtMs` = when the note was sent (Telegram's `date`, 1 s resolution — pass (date + 1) * 1000): a request
  * parked while the note was in flight cannot be what she recorded it for, so it is never taken silently.
@@ -204,7 +222,7 @@ export function resolveVoiceTarget(
     return { kind: "ask", reason: "reply_not_pending", options: live };
   }
   if (!live.length) return s.reqs.length ? { kind: "expired", req: s.reqs.length === 1 ? s.reqs[0] : null } : { kind: "none" };
-  if (live.length === 1 && s.reqs.length === 1 && (sentAtMs == null || ms(live[0].at) <= sentAtMs)) {
+  if (live.length === 1 && s.reqs.length === 1 && !s.multi && (sentAtMs == null || ms(live[0].at) <= sentAtMs)) {
     return { kind: "target", req: live[0], how: "only" };
   }
   return { kind: "ask", reason: "multiple_pending", options: live };
@@ -337,8 +355,13 @@ async function casWrite(
 
 // ---- the request side (teacher-voice-request) ----
 
+/**
+ * `replyNeeded`: a recording for this request must REPLY to its prompt to be taken without a question — true
+ * whenever more than one request has been pending in this row (the sticky `multi` mark), even if this one is
+ * the only one left. The prompt copy says so (teacher-voice-request).
+ */
 export type ParkResult =
-  | { kind: "parked"; req: VoiceRequest; outcome: "added" | "refreshed"; pending: number }
+  | { kind: "parked"; req: VoiceRequest; outcome: "added" | "refreshed"; pending: number; replyNeeded: boolean }
   | { kind: "busy"; state: string }
   | { kind: "too_many"; pending: number };
 
@@ -360,7 +383,10 @@ export function parkVoiceRequest(
     }
     const r = addVoiceRequest(cur ?? emptyVoiceState(), input, nowMs, rid);
     if (r.outcome === "too_many" || !r.req) return { abort: { kind: "too_many", pending: r.state.reqs.length } };
-    return { write: r.state, result: { kind: "parked", req: r.req, outcome: r.outcome, pending: r.state.reqs.length } };
+    return {
+      write: r.state,
+      result: { kind: "parked", req: r.req, outcome: r.outcome, pending: r.state.reqs.length, replyNeeded: r.state.multi },
+    };
   }, opts);
 }
 
@@ -378,6 +404,9 @@ export function stampVoicePromptIo(
  * A claimed request whose note could NOT be saved (the homework write failed): put it back, with a fresh expiry
  * and its prompt ids, so the teacher can simply resend. Skipped when the row now holds another live flow, the
  * same submission is pending again, or the cap is reached.
+ * It comes back with the `multi` mark set: the claim may have emptied (and deleted) a row that had several
+ * requests, and her next note without a reply may be the resend or a take for someone else — so that note is
+ * asked about (one tap); a reply to the restored prompt still goes straight through.
  */
 export function restoreVoiceRequest(
   admin: Db, telegramId: number, req: VoiceRequest, opts: { now?: () => number } = {},
@@ -389,7 +418,10 @@ export function restoreVoiceRequest(
     const base = pruneVoiceState(cur ?? emptyVoiceState(), nowMs);
     if (base.reqs.some((r) => r.submission_id === req.submission_id || r.rid === req.rid)) return { abort: false };
     if (base.reqs.length >= MAX_PENDING_VOICE_REQUESTS) return { abort: false };
-    return { write: { ...base, reqs: [...base.reqs, { ...req, exp: iso(nowMs + VOICE_REQUEST_TTL_MS) }] }, result: true };
+    return {
+      write: { ...base, reqs: [...base.reqs, { ...req, exp: iso(nowMs + VOICE_REQUEST_TTL_MS) }], multi: true },
+      result: true,
+    };
   }, opts);
 }
 

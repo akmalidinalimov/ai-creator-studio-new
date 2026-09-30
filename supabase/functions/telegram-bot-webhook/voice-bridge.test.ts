@@ -12,6 +12,7 @@ const MIN = 60_000;
 const TEACHER = 777001;
 const SUB_A = "aaaaaaaa-1111-4111-8111-111111111111";
 const SUB_B = "bbbbbbbb-2222-4222-8222-222222222222";
+const SUB_C = "cccccccc-3333-4333-8333-333333333333";
 const A = { submission_id: SUB_A, label: "5.0 · 1-GURUH PRE · M2 V1 — Prompt engineering", student: "Aziza Karimova" };
 const B = { submission_id: SUB_B, label: "CH6 · AC CHALLENGE | 3-GURUH · M2 V1 — Prompt engineering", student: "Bobur Aliyev" };
 
@@ -93,10 +94,70 @@ Deno.test("FB-4 replay: two pending, a recording WITHOUT reply is held and the b
   assertEquals(pending(db), ["Bobur Aliyev"]);
   assertStringIncludes(h.edits[0].text, "Aziza Karimova");
 
-  // Her next recording (no reply) now has exactly one candidate, requested before it → Bobur.
+  // Her next recording (no reply): only Bobur is left, but TWO were pending this session — it may be a second
+  // take for Aziza, so it is held and the bot asks again ([Bobur] + "don't save"), never sends it to Bobur.
   await onBridgeVoice(h.deps, voiceMsg("VOICE-FOR-BOBUR", { mid: 301 }), "uz");
+  assertEquals(h.commits.length, 1);
+  const kb2 = h.sent[1].markup.inline_keyboard as { text: string; callback_data: string }[][];
+  assertEquals(kb2.length, 2); // Bobur + "don't save"
+  assertStringIncludes(kb2[0][0].text, "Bobur Aliyev");
+  assertEquals(kb2[1][0].text, "✖️ Saqlamaslik");
+  await onVoicePick(h.deps, { id: "cq2", data: kb2[0][0].callback_data, from: { id: TEACHER }, message: { message_id: h.sent[1].mid, chat: { id: TEACHER } } }, "uz");
   assertEquals(h.commits[1], { submission_id: SUB_B, file_id: "VOICE-FOR-BOBUR", remaining: 0 });
-  assertEquals(db.row(TEACHER), null); // nothing left pending
+  assertEquals(db.row(TEACHER), null); // nothing left pending: the row — and its "several were pending" mark — is gone
+});
+
+Deno.test("R1: after Aziza's reply is saved, a second take WITHOUT reply is asked about — never sent to Bobur", async () => {
+  const db = new FakeConvDb();
+  await parkBoth(db);
+  const h = harness(db, T0 + 3 * MIN);
+  await onBridgeVoice(h.deps, voiceMsg("AZIZA-TAKE-1", { replyTo: 101 }), "uz");
+  assertEquals(h.commits, [{ submission_id: SUB_A, file_id: "AZIZA-TAKE-1", remaining: 1 }]);
+  await onBridgeVoice(h.deps, voiceMsg("AZIZA-TAKE-2", { at: T0 + 3 * MIN + 5_000, mid: 301 }), "uz");
+  assertEquals(h.commits.length, 1); // Bobur's homework untouched, nothing sent to him
+  assertStringIncludes(h.sent[0].text, "kim uchun");
+  const kb = h.sent[0].markup.inline_keyboard as { text: string; callback_data: string }[][];
+  assertEquals(kb.map((r) => r[0].text.startsWith("👤 Bobur")), [true, false]);
+  // She taps "don't save": nothing saved, Bobur's request still pending.
+  await onVoicePick(h.deps, { id: "c1", data: kb[1][0].callback_data, from: { id: TEACHER }, message: { message_id: h.sent[0].mid, chat: { id: TEACHER } } }, "uz");
+  assertEquals(h.commits.length, 1);
+  assertEquals(pending(db), ["Bobur Aliyev"]);
+  // …a discard does not clear the mark either: the next note without a reply is still asked about…
+  await onBridgeVoice(h.deps, voiceMsg("AZIZA-TAKE-3", { mid: 302 }), "uz");
+  assertEquals(h.commits.length, 1);
+  assertStringIncludes(h.sent[1].text, "kim uchun");
+  // …while Bobur's own recording, replying to his prompt, still goes straight to him.
+  await onBridgeVoice(h.deps, voiceMsg("BOBUR-TAKE", { replyTo: 102, mid: 303 }), "uz");
+  assertEquals(h.commits[1], { submission_id: SUB_B, file_id: "BOBUR-TAKE", remaining: 0 });
+});
+
+Deno.test("R2: Aziza's request expired and her reply was refused — the resend WITHOUT reply is asked about, not sent to Bobur", async () => {
+  const db = new FakeConvDb();
+  await parkBoth(db);
+  const now = T0 + 16 * MIN; // Aziza's request expired at T0+15, Bobur's lives to T0+17
+  const h = harness(db, now);
+  await onBridgeVoice(h.deps, voiceMsg("V-A", { replyTo: 101, at: now }), "uz");
+  assertStringIncludes(h.sent[0].text, "muddati tugagan");
+  assertEquals(pending(db), ["Bobur Aliyev"]); // the expired-reply write pruned Aziza
+  await onBridgeVoice(h.deps, voiceMsg("V-A-RESEND", { at: now + 10_000, mid: 301 }), "uz");
+  assertEquals(h.commits, []);
+  assertStringIncludes(h.sent[1].text, "kim uchun");
+  assertEquals(h.sent[1].markup.inline_keyboard.length, 2); // Bobur + "don't save"
+});
+
+Deno.test("the 'several were pending' mark ends with the row: all answered → a new single request is silent again", async () => {
+  const db = new FakeConvDb();
+  await parkBoth(db);
+  const h = harness(db, T0 + 3 * MIN);
+  await onBridgeVoice(h.deps, voiceMsg("V-A", { replyTo: 101 }), "uz");
+  await onBridgeVoice(h.deps, voiceMsg("V-B", { replyTo: 102, mid: 301 }), "uz");
+  assertEquals(db.row(TEACHER), null);
+  const c = await parkVoiceRequest(db, TEACHER, { ...A, submission_id: SUB_C, student: "Charos" }, { now: () => T0 + 4 * MIN, rid: "cccc0003" });
+  assert(c.ok && c.result.kind === "parked" && c.result.pending === 1 && !c.result.replyNeeded);
+  const h2 = harness(db, T0 + 5 * MIN);
+  await onBridgeVoice(h2.deps, voiceMsg("V-C", { at: T0 + 5 * MIN, mid: 302 }), "uz");
+  assertEquals(h2.commits, [{ submission_id: SUB_C, file_id: "V-C", remaining: 0 }]);
+  assertEquals(h2.sent, []);
 });
 
 Deno.test("a recording that REPLIES to Aziza's prompt goes to Aziza even though Bobur was requested later", async () => {

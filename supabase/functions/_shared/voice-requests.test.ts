@@ -5,7 +5,7 @@
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { FakeConvDb } from "./conv-state-fake.ts";
 import {
-  addVoiceRequest, claimHeldVoice, emptyVoiceState, holdVoice, MAX_HELD_VOICES, MAX_PENDING_VOICE_REQUESTS,
+  addVoiceRequest, claimHeldVoice, dropHeldVoice, emptyVoiceState, holdVoice, MAX_HELD_VOICES, MAX_PENDING_VOICE_REQUESTS,
   normalizeVoiceState, parkVoiceRequest, parseVoicePick, pruneVoiceState, resolveVoiceTarget, restoreVoiceRequest,
   stampVoicePrompt, stampVoicePromptIo, VOICE_REQUEST_TTL_MS, voicePickData, voiceStateExpiry, type VoiceState,
   withdrawVoiceRequest,
@@ -103,6 +103,50 @@ Deno.test("resolve: a reply to an EXPIRED request's prompt is 'expired' — not 
   assertEquals(r2.kind === "ask" && r2.options.map((o) => o.submission_id), [SUB_B]);
 });
 
+Deno.test("resolve: 'ever pending' is sticky — once A is ANSWERED (claimed away), B alone is still asked about", () => {
+  const s = removeA(twoPending()); // A's claim removes it in the same write that answers it
+  assertEquals(s.reqs.map((r) => r.submission_id), [SUB_B]);
+  assert(s.multi);
+  const r = resolveVoiceTarget(s, null, T0 + 3 * MIN, T0 + 3 * MIN);
+  assertEquals(r.kind === "ask" && r.options.map((o) => o.submission_id), [SUB_B]);
+  // A reply to B's own prompt is unaffected.
+  const toB = resolveVoiceTarget(s, 102, T0 + 3 * MIN);
+  assertEquals(toB.kind === "target" && toB.how, "reply");
+});
+
+Deno.test("resolve: …and once A EXPIRED and was pruned (or a claim/hold/stamp wrote the pruned state), B alone still asks", () => {
+  const now = T0 + 16 * MIN; // A expired at T0+15
+  let s = pruneVoiceState(twoPending(), now);
+  assertEquals(s.reqs.map((r) => r.submission_id), [SUB_B]);
+  assertEquals(resolveVoiceTarget(s, null, now).kind, "ask");
+  // Every other transition keeps the mark too.
+  s = stampVoicePrompt(s, "bbbb0002", 103)!;
+  s = holdVoice(s, { tok: "0a1b2c3d", file_id: "V", key: null, mid: 1, at: "x", exp: new Date(now + 15 * MIN).toISOString() }).state;
+  s = dropHeldVoice(s, "0a1b2c3d");
+  s = addVoiceRequest(s, B, now, "zzzz9999").state; // B refreshed
+  assert(s.multi);
+  assertEquals(resolveVoiceTarget(s, null, now).kind, "ask");
+});
+
+Deno.test("add: a request next to an EXPIRED-but-stored one sets the mark; a fresh state or the same card does not", () => {
+  const one = addVoiceRequest(emptyVoiceState(), A, T0, "aaaa0001").state;
+  assert(!one.multi);
+  assert(!addVoiceRequest(one, A, T0 + MIN, "zzzz9999").state.multi); // refresh of the same card
+  const afterExpiry = addVoiceRequest(one, B, T0 + 16 * MIN, "bbbb0002").state; // A expired, not yet pruned
+  assertEquals(afterExpiry.reqs.map((r) => r.submission_id), [SUB_B]);
+  assert(afterExpiry.multi);
+});
+
+Deno.test("normalize: the mark round-trips; >1 stored requests imply it; the legacy shape starts without it", () => {
+  const one = addVoiceRequest(emptyVoiceState(), A, T0, "aaaa0001").state;
+  assertEquals(normalizeVoiceState(JSON.parse(JSON.stringify({ ...one, multi: true })), "x", "y").multi, true);
+  assertEquals(normalizeVoiceState(JSON.parse(JSON.stringify(one)), "x", "y").multi, false);
+  const two = JSON.parse(JSON.stringify({ ...twoPending(), multi: undefined }));
+  assertEquals(normalizeVoiceState(two, "x", "y").multi, true);
+  assertEquals(normalizeVoiceState({ submission_id: SUB_A, label: "L" }, "x", "y").multi, false);
+  assertEquals(emptyVoiceState().multi, false);
+});
+
 Deno.test("resolve: nothing live → expired; never anything → none", () => {
   assertEquals(resolveVoiceTarget(twoPending(), null, T0 + 60 * MIN).kind, "expired");
   assertEquals(resolveVoiceTarget(emptyVoiceState(), null, T0).kind, "none");
@@ -119,6 +163,7 @@ Deno.test("claim: the pick takes the held note AND the request together; a stale
     assertEquals(c.held.file_id, "VOICE-1");
     assertEquals(c.state.reqs.map((r) => r.submission_id), [SUB_B]);
     assertEquals(c.state.held.length, 0);
+    assert(c.state.multi); // the pick answered Aziza; Bobur is left alone but NOT "the only one ever"
     // The same buttons again: the note is gone.
     assertEquals(claimHeldVoice(c.state, "0a1b2c3d", "bbbb0002", T0 + 3 * MIN), { ok: false, reason: "held_gone" });
   }
@@ -176,10 +221,10 @@ const clock = (ms: number) => () => ms;
 Deno.test("park: Aziza then Bobur → BOTH pending in one row; the prompt ids are stamped on their own requests", async () => {
   const db = new FakeConvDb();
   const a = await parkVoiceRequest(db, TEACHER, A, { now: clock(T0), rid: "aaaa0001" });
-  assert(a.ok && a.result.kind === "parked" && a.result.pending === 1);
+  assert(a.ok && a.result.kind === "parked" && a.result.pending === 1 && !a.result.replyNeeded);
   await stampVoicePromptIo(db, TEACHER, "aaaa0001", 101, { now: clock(T0) });
   const b = await parkVoiceRequest(db, TEACHER, B, { now: clock(T0 + 2 * MIN), rid: "bbbb0002" });
-  assert(b.ok && b.result.kind === "parked" && b.result.pending === 2);
+  assert(b.ok && b.result.kind === "parked" && b.result.pending === 2 && b.result.replyNeeded);
   await stampVoicePromptIo(db, TEACHER, "bbbb0002", 102, { now: clock(T0 + 2 * MIN) });
   const row = db.row(TEACHER)!;
   assertEquals(row.state, "grade_voice");
@@ -247,6 +292,11 @@ Deno.test("restore: a claimed request whose save failed comes back (fresh expiry
   const s = normalizeVoiceState(row.context, row.updated_at, row.expires_at);
   assertEquals(s.reqs[0].mids, [101]);
   assertEquals(s.reqs[0].exp, new Date(T0 + 29 * MIN).toISOString());
+  // Restored with the mark: her next note WITHOUT a reply is asked about (resend or another take?); a reply to
+  // the restored prompt still goes straight through.
+  assert(s.multi);
+  assertEquals(resolveVoiceTarget(s, null, T0 + 15 * MIN).kind, "ask");
+  assertEquals(resolveVoiceTarget(s, 101, T0 + 15 * MIN).kind, "target");
   // Not twice.
   const again = await restoreVoiceRequest(db, TEACHER, req, { now: clock(T0 + 14 * MIN) });
   assert(again.ok && again.result === false);
