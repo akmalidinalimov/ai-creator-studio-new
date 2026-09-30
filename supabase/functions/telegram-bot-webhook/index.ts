@@ -32,6 +32,13 @@ import {
 } from "./hw-labels.ts";
 import { loadGroupRanking, loadWeeklyStar } from "../_shared/group-rank.ts";
 import { boardLines, cardRankBit, statsRankLines } from "./rank-views.ts";
+// UX quick wins #2/#7/#8/#9/#13/#14 (2026-09-30): each lives in its own module; index.ts only calls them.
+import { flagSig, liveFresh, syncMenuLive } from "./menu-button.ts";
+import { runMenuSweepTick, scheduleMenuSweepTick } from "./menu-sweep.ts";
+import { handleNotToday } from "./reminder-snooze.ts";
+import { typedIntent } from "./typed-intents.ts";
+import { langChooserKeyboard, parseProfAction, profileRows, profileWebCells, showProfileView } from "./profile-tabs.ts";
+import { sendStudentWelcome } from "./student-welcome.ts";
 import {
   bellCallback, hourPickerKeyboard, parseBellTarget, parseReminderHour, parseTimezone, saveBotSetting, tzPickerKeyboard,
 } from "./bot-settings.ts";
@@ -1158,7 +1165,7 @@ function escHtml(s: string): string {
 
 /** Student profile: compact greeting + ONE button that opens the web profile
  *  directly (all stats/badges/ratings live there — no in-chat button maze). */
-async function buildProfileCard(admin: any, userId: string, locale: Locale): Promise<{ text: string; keyboard: any }> {
+async function buildProfileCard(admin: any, userId: string, locale: Locale): Promise<{ text: string }> {
   const p = PROF_T[locale];
   const [{ data: prof }, statsRes, { ranking }] = await Promise.all([
     admin.from("profiles").select("name, last_name").eq("id", userId).maybeSingle(),
@@ -1176,19 +1183,21 @@ async function buildProfileCard(admin: any, userId: string, locale: Locale): Pro
   if (rankBit) bits.push(rankBit);
 
   const text = `👤 <b>${name}</b> · ${bits.join(" · ")}\n\n${p.profOpenHint}`;
-  const url = await createMagicLink(admin, userId, "login", "/profile");
-  // ✏️ Edit name → reuses the confirm-your-name flow (name:edit → awaiting_name → preview →
-  // name:yes writes profiles.name/last_name). Lets any student fix their own display name so
-  // the rating/leaderboard shows it correctly. ⚙️ opens /sozlamalar (reminders), which had no button.
-  const keyboard = { inline_keyboard: [
-    [{ text: p.btnProfStats, callback_data: "prof:stats" },
-     { text: p.btnProfBadges, callback_data: "prof:badges" }],
-    [{ text: p.btnProfGroup, callback_data: "prof:group" },
-     { text: p.btnProfSettings, callback_data: "prof:settings" }],
-    [{ text: p.btnProfOpen, url }],
-    [{ text: p.btnEditName, callback_data: "name:edit" }],
-  ] };
-  return { text, keyboard };
+  return { text };
+}
+
+/** The keyboard of a Profil view (profile-tabs.ts): tabs that edit in place, ↗ Mini App buttons, ✏️ name, 🌐 Til.
+ *  ✏️ reuses the confirm-your-name flow (name:edit → awaiting_name → preview → name:yes). */
+async function profileViewRows(admin: any, chatId: number, userId: string, locale: Locale, view: "card" | "stats" | "badges" | "group") {
+  const p = PROF_T[locale];
+  const web = await profileWebCells(admin, {
+    chatId, locale, openLabel: p.btnProfOpen, webhookOn: __studentMiniAppEnabled?.on === true,
+    magicLink: (lp) => createMagicLink(admin, userId, "login", lp),
+  });
+  return profileRows(view, {
+    card: p.kbProfil, stats: p.btnProfStats, badges: p.btnProfBadges, group: p.btnProfGroup,
+    settings: p.btnProfSettings, editName: p.btnEditName, lang: T[locale].kbLang,
+  }, web);
 }
 
 /** Badges list for the bot (earned + locked teaser). */
@@ -1523,26 +1532,14 @@ async function loadTeacherMiniAppEnabled(admin: any): Promise<boolean> {
   return on;
 }
 
-// Per-teacher ☰ menu button → Mini App home (enabled) or reset to default (kill-switch off).
-// Best-effort + in-memory throttled (1h per chat+state) so we never hit the Telegram API on every DM.
-// Never throws; on failure the state isn't cached, so it retries on the teacher's next interaction.
-const __teacherMenuBtn = new Map<number, { on: boolean; locale: Locale; at: number }>();
-async function syncTeacherMenuButton(chatId: number, enabled: boolean, locale: Locale) {
-  const prev = __teacherMenuBtn.get(chatId);
-  if (prev && prev.on === enabled && prev.locale === locale && Date.now() - prev.at < 3_600_000) return;
-  try {
-    await tgApi("setChatMenuButton", {
-      chat_id: chatId,
-      menu_button: enabled
-        ? { type: "web_app", text: `📝 ${PROF_T[locale].profTeacher}`, web_app: { url: `${MINIAPP_BASE}/tg/teacher` } }
-        : { type: "default" },
-    });
-    __teacherMenuBtn.set(chatId, { on: enabled, locale, at: Date.now() });
-  } catch (e) {
-    // Health signal: a systemic failure (e.g. domain not registered, API change) would otherwise be
-    // invisible. Best-effort — never rethrows; state isn't cached, so it retries next interaction.
-    console.error("teacher-miniapp: setChatMenuButton failed", e);
-  }
+// ☰ menu button (both personas) → menu-button.ts: the same labels/URLs as before (📝 Ustoz → /tg/teacher for
+// teacher/admin, 🚀 Ilovani ochish → /dashboard for students; Telegram's default menu when that role's flag is
+// off), now also re-synced on inline-button taps, with every non-ok outcome DB-visible, and swept for every
+// current member by menu-sweep.ts. Throttled per chat (1h per state); never throws.
+function menuSyncOpts(persona: Persona, locale: Locale) {
+  const s = __studentMiniAppEnabled?.on === true;
+  const t = __teacherMiniAppEnabled?.on === true;
+  return { role: persona, locale, on: persona === "student" ? s : t, base: MINIAPP_BASE, sig: flagSig(s, t, MINIAPP_BASE) };
 }
 
 // ── Student Mini App entry wiring ─────────────────────────────────────────────────────────────
@@ -1567,26 +1564,6 @@ async function loadStudentMiniAppEnabled(admin: any): Promise<boolean> {
   }
   __studentMiniAppEnabled = { on, at: Date.now() };
   return on;
-}
-
-// Per-student ☰ menu button → Mini App home (enabled) or reset to default (kill-switch off).
-// Best-effort + in-memory throttled (1h per chat+state); never throws. Mirrors syncTeacherMenuButton.
-const __studentMenuBtn = new Map<number, { on: boolean; locale: Locale; at: number }>();
-async function syncStudentMenuButton(chatId: number, enabled: boolean, locale: Locale) {
-  const prev = __studentMenuBtn.get(chatId);
-  if (prev && prev.on === enabled && prev.locale === locale && Date.now() - prev.at < 3_600_000) return;
-  try {
-    await tgApi("setChatMenuButton", {
-      chat_id: chatId,
-      menu_button: enabled
-        ? { type: "web_app", text: MINIAPP_STUDENT_LABEL[locale], web_app: { url: `${MINIAPP_BASE}/dashboard` } }
-        : { type: "default" },
-    });
-    __studentMenuBtn.set(chatId, { on: enabled, locale, at: Date.now() });
-  } catch (e) {
-    // Best-effort — never rethrows; state isn't cached on failure so it retries next interaction.
-    console.error("student-miniapp: setChatMenuButton failed", e);
-  }
 }
 
 function getTeacherKeyboard(locale: Locale, pendingCount?: number) {
@@ -4837,6 +4814,24 @@ async function handleTeacherSession(admin: any, msg: any, profileId: string, loc
   return true;
 }
 
+// /start (and a typed "Start") for a registered student: the welcome of student-welcome.ts, carrying the
+// CURRENT keyboard, then one "▶️ Keyingi dars" button (Mini App /continue, or today's magic link when off).
+async function studentWelcome(admin: any, chatId: number, profile: any, locale: Locale) {
+  await sendStudentWelcome(admin, {
+    chatId, locale, profile,
+    labels: { davom: T[locale].kbDavom, homework: T[locale].kbHomework, profil: PROF_T[locale].kbProfil },
+    appOn: __studentMiniAppEnabled?.on === true,
+    sendWithKeyboard: (text) => sendWithKeyboard(chatId, text, locale, false, "student"),
+    primaryCourseId: () => getPrimaryCourseIdForUser(admin, profile.id),
+    nextLessonId: async (courseId) => (await getNextIncompleteLesson(admin, profile.id, courseId))?.id ?? null,
+    watch: (o) => studentWatchButton(admin, {
+      chatId, text: o.text, miniPath: o.miniPath, legacyPath: o.legacyPath, src: "bot_start",
+      webhookOn: __studentMiniAppEnabled?.on === true,
+      magicLink: (p) => createMagicLink(admin, profile.id, p.startsWith("/course/") ? "deeplink_course" : "deeplink_lesson", p),
+    }),
+  });
+}
+
 async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   const chatId = msg.chat.id;
   const tgId = msg.from.id as number;
@@ -5037,8 +5032,8 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
       const { text, keyboard } = await buildTeacherProfileCard(admin, profile.id, locale);
       await sendMessage(chatId, text, keyboard);
     } else {
-      const { text, keyboard } = await buildProfileCard(admin, profile.id, locale);
-      await sendMessage(chatId, text, keyboard);
+      const { text } = await buildProfileCard(admin, profile.id, locale);
+      await sendStudentWatchMessage(admin, chatId, text, await profileViewRows(admin, chatId, profile.id, locale, "card"));
     }
     console.timeEnd(`bot:profile:${profile.id}`);
     return;
@@ -7029,7 +7024,12 @@ async function handleCallback(admin: any, cq: any) {
   const chatId = cq.message?.chat?.id;
 
   if (data === "ack:not_today") {
-    await answerCallback(cq.id, "OK 👍");
+    // 🌙 Bugun emas: skip tonight's streak warning, say so, remove the buttons (reminder-snooze.ts).
+    await handleNotToday(admin, cq, {
+      call: (method, payload) => sendTelegram(BOT_TOKEN, method, payload, { record: false }),
+      findProfile: (id) => findProfileByTelegramId(admin, id),
+      answer: (text) => answerCallback(cq.id, text),
+    });
     return;
   }
 
@@ -7179,17 +7179,20 @@ async function handleCallback(admin: any, cq: any) {
     const locale: Locale = normLocale(_clicker?.preferred_locale);
     const action = data.slice("prof:".length);
     await answerCallback(cq.id);
-    if (action === "card") {
-      const { text, keyboard } = await buildProfileCard(admin, _effId, locale);
-      await sendMessage(chatId, text, keyboard);
-    } else if (action === "stats") {
-      const text = await buildStatsMessage(admin, _effId, locale);
-      const url = await createMagicLink(admin, _effId, "login", "/profile");
-      await sendMessage(chatId, text, { inline_keyboard: [[{ text: PROF_T[locale].btnProfOpen, url }]] });
-    } else if (action === "badges") {
-      await sendMessage(chatId, await buildBadgesMessage(admin, _effId, locale));
-    } else if (action === "group") {
-      await sendMessage(chatId, await buildGroupBoardMessage(admin, _effId, locale));
+    // card | home | stats | badges | group: ONE message whose tabs edit it in place (profile-tabs.ts);
+    // prof:card (from other messages) still posts a new card.
+    const pv = parseProfAction(action);
+    if (pv) {
+      const text = pv.view === "card" ? (await buildProfileCard(admin, _effId, locale)).text
+        : pv.view === "stats" ? await buildStatsMessage(admin, _effId, locale)
+        : pv.view === "badges" ? await buildBadgesMessage(admin, _effId, locale)
+        : await buildGroupBoardMessage(admin, _effId, locale);
+      await showProfileView(admin, {
+        chatId, messageId: cq.message?.message_id, edit: pv.edit, text,
+        rows: await profileViewRows(admin, chatId, _effId, locale, pv.view),
+      });
+    } else if (action === "lang") {
+      await sendMessage(chatId, T[locale].chooseLang, langChooserKeyboard());
     } else if (action === "settings") {
       // Same panel as /sozlamalar. Under admin impersonation it shows the student's settings read-only: every
       // settings:* tap is already refused for an impersonating admin (the _isImp guard above).
@@ -8067,7 +8070,16 @@ Deno.serve(async (req) => {
       const adminC = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
       __pkLastSweep = 0; // bypass the per-instance throttle for explicit ticks
       await sweepExpiredPendingPosts(adminC);
+      // The ☰ sweep rides this minute tick in the background: bounded, lease-guarded, usually a no-op read
+      // (menu-sweep.ts; kill-switch platform_settings.menu_button_sweep {"enabled": false}).
+      scheduleMenuSweepTick(adminC, { base: MINIAPP_BASE });
       return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    if (body?.action === "menu_button_sweep") {
+      // On demand: one tick now ({"restart": true} starts a fresh pass). Same bounds as the minute tick.
+      const adminC = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      const report = await runMenuSweepTick(adminC, { base: MINIAPP_BASE, restart: body.restart === true });
+      return new Response(JSON.stringify(report), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
     return new Response(JSON.stringify({ error: "unknown action" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
@@ -8219,19 +8231,11 @@ Deno.serve(async (req) => {
       const persona: Persona = profileForLocale ? await getPersona(admin, profileForLocale.id) : "student";
       const adminFlag = persona === "admin";
 
-      // Teacher Mini App (Task 7): best-effort set the ☰ menu button → Mini App (kill-switch on) or
-      // reset to default (off). Staff-only (teacher/admin) + private-chat only — students never get it.
-      // Throttled 1h/chat; wrapped so it can never block or break the teacher's actual interaction.
-      if (isPrivateChat && (persona === "teacher" || persona === "admin")) {
-        try { await syncTeacherMenuButton(msg.chat.id, __teacherMiniAppEnabled?.on === true, locale); } catch (_e) { /* best-effort */ }
-      }
-
-      // Student Mini App (kill-switch platform_settings.student_miniapp, default OFF): mirror the
-      // teacher sync. Student persona + private chat + a RESOLVED profile (a registered member —
-      // non-members already returned upstream). Throttled 1h/chat; wrapped so it can never block or
-      // break the student's actual interaction. When the flag is off this resets the menu to default.
-      if (isPrivateChat && persona === "student" && profileForLocale) {
-        try { await syncStudentMenuButton(msg.chat.id, __studentMiniAppEnabled?.on === true, locale); } catch (_e) { /* best-effort */ }
+      // ☰ menu button for a RESOLVED member (non-members returned upstream), private chat only: 📝 Ustoz
+      // (teacher/admin, teacher_miniapp) or 🚀 Ilovani ochish (student, student_miniapp); the default menu when
+      // that flag is off. Throttled 1h/chat; can never block or break the actual interaction (menu-button.ts).
+      if (isPrivateChat && profileForLocale) {
+        try { await syncMenuLive(admin, msg.chat.id, menuSyncOpts(persona, locale)); } catch (_e) { /* best-effort */ }
       }
 
       // U1: students WILL try DMing homework media to the bot. Point them to their group's
@@ -8270,6 +8274,8 @@ Deno.serve(async (req) => {
         if (arg.startsWith("login_")) {
           const tok = arg.slice(6);
           await handleStartLogin(admin, msg, tok, locale);
+        } else if (isPrivateChat && persona === "student" && profileForLocale) {
+          await studentWelcome(admin, msg.chat.id, profileForLocale, locale);
         } else {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag, persona);
         }
@@ -8288,6 +8294,8 @@ Deno.serve(async (req) => {
             en: `Hi ${nm}! 🧑‍🏫\n${pend > 0 ? `📝 <b>${pend} submissions</b> are waiting.` : "✅ Nothing waiting to grade."}\n\nTOP students, inactive, group switching and settings live inside 👤 Profile.`,
           }[locale];
           await sendMessage(msg.chat.id, greet, getTeacherKeyboard(locale, pend));
+        } else if (isPrivateChat && persona === "student" && profileForLocale) {
+          await studentWelcome(admin, msg.chat.id, profileForLocale, locale);
         } else {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag, persona);
         }
@@ -8349,7 +8357,12 @@ Deno.serve(async (req) => {
         }
         if (!consumed) {
           const mapped = buttonTextToCommand(text);
+          // A student who TYPES "uyga vazifa" / "Давом этамиз" / "Start" gets that screen (typed-intents.ts);
+          // anything else still gets kbHint with the keyboard re-sent.
+          const intent = !mapped && isPrivateChat && persona === "student" && profileForLocale ? typedIntent(text) : null;
           if (mapped) await handleCommand(admin, msg, mapped);
+          else if (intent === "/start") await studentWelcome(admin, msg.chat.id, profileForLocale, locale);
+          else if (intent) await handleCommand(admin, msg, intent);
           else if (isPrivateChat) await sendWithKeyboard(msg.chat.id, T[locale].kbHint, locale, adminFlag, persona);
         }
       }
@@ -8374,6 +8387,18 @@ Deno.serve(async (req) => {
         return new Response("ok", { status: 200, headers: corsHeaders });
       }
       await handleCallback(admin, cq);
+      // ☰ re-sync on an inline-button tap too (not only on typed messages) — after the reply, for the clicker's
+      // OWN persona, private chat only; skips the persona lookup when this chat is fresh (menu-button.ts).
+      if (cq.message?.chat?.type === "private") {
+        try {
+          const cbLocale: Locale = cbProfile.preferred_locale ? normLocale(cbProfile.preferred_locale) : normLocale(cq.from.language_code);
+          const sig = flagSig(__studentMiniAppEnabled?.on === true, __teacherMiniAppEnabled?.on === true, MINIAPP_BASE);
+          if (!liveFresh(Number(cq.message.chat.id), sig)) {
+            const cbPersona = await getPersona(admin, cbProfile.id);
+            await syncMenuLive(admin, Number(cq.message.chat.id), menuSyncOpts(cbPersona, cbLocale));
+          }
+        } catch (_e) { /* best-effort */ }
+      }
     }
   } catch (e) {
     // A genuine, unhandled failure while processing a Telegram update — capture it DB-visibly so

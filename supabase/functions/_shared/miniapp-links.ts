@@ -40,6 +40,8 @@ export const MINIAPP_SRCS = [
   "bot_davom",
   "bot_dars",
   "bot_welcome",
+  "bot_start",
+  "bot_profile",
   "teacher_nudge",
   "reengagement",
   "broadcast",
