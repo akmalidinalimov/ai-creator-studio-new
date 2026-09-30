@@ -1,6 +1,9 @@
-// challenge-task-check — the real image decoder (imagescript: pure JS/WASM, JPEG / PNG / TIFF / GIF; HEIC and WebP
-// throw "Unsupported image type", which becomes null -> the thumbnail fallback in check.ts).
-// Kept out of media.ts so the pure dHash code and its unit tests never depend on the decoder.
+// challenge-task-check — the real image decoder (imagescript, the decoder Supabase's own edge examples use: JPEG /
+// PNG / TIFF / GIF; HEIC and WebP throw "Unsupported image type", which becomes null -> the thumbnail fallback).
+// imagescript loads its JPEG codec (WASM) from deno.land on the isolate's first decode; if that ever fails, decode()
+// answers null, the submission's fingerprint is 'unavailable' and the run heartbeat shows hashes = 0 — visible, never
+// a crash. Imported ONLY by index.ts: CI's `deno test` (no --allow-net) never loads it; the PGlite harness
+// _challenge/testing/daily-tasks-ai-check-check.ts runs it on real JPEG / PNG bytes.
 
 import { decode, Image } from "https://deno.land/x/imagescript@1.3.0/mod.ts";
 import type { DecodedImage, ImageCodec } from "./media.ts";
