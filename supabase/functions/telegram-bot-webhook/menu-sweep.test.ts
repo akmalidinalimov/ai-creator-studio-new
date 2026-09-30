@@ -82,14 +82,14 @@ Deno.test("parseSweepSettings mirrors the webhook's flag readers (student fail-c
   assertEquals(parseSweepSettings([{ key: "menu_button_sweep", value: { rerun: 2 } }]), { enabled: true, student: false, teacher: true, rerun: "2" });
 });
 
-Deno.test("planTick: first pass, continue, done, daily re-pass, state change, backoff, lease, restart", () => {
+Deno.test("planTick: first pass, continue, done, periodic re-pass, state change, backoff, lease, restart", () => {
   const now = Date.parse("2026-10-01T06:00:00Z");
   const k = "K";
   const p = (o: Partial<ReturnType<typeof freshProgress>>) => ({ ...freshProgress(k, now - 1000, 3), ...o });
   assertEquals(planTick(null, k, now), { run: true, fresh: true, reason: "first_pass" });
   assertEquals(planTick(p({}), k, now), { run: true, fresh: false, reason: "continue" });
   assertEquals(planTick(p({ done: true, finished_at: new Date(now - 3600_000).toISOString() }), k, now), { run: false, reason: "done" });
-  assertEquals(planTick(p({ done: true, finished_at: new Date(now - REPASS_MS).toISOString() }), k, now).reason, "daily_repass");
+  assertEquals(planTick(p({ done: true, finished_at: new Date(now - REPASS_MS).toISOString() }), k, now).reason, "repass");
   assertEquals(planTick(p({ done: true, finished_at: new Date(now - 60_000).toISOString() }), "OTHER", now).reason, "state_changed");
   assertEquals(planTick(p({ retry_after: new Date(now + 60_000).toISOString() }), k, now), { run: false, reason: "backoff" });
   // a state change is not held back by a backoff…
@@ -162,13 +162,13 @@ Deno.test("a full pass: bounded batches, spaced calls, right menu per role/langu
   assertEquals(pass.length, 1);
   assertEquals(pass[0].details.totals.ok, 7);
 
-  // idle until the daily re-pass: no Telegram calls
+  // idle until the periodic re-pass: no Telegram calls
   const before = tg.calls.length;
   c.advance(60_000);
   assertEquals((await runMenuSweepTick(db, opts)).reason, "done");
   assertEquals(tg.calls.length, before);
   c.advance(REPASS_MS);
-  assertEquals((await runMenuSweepTick(db, opts)).reason, "daily_repass");
+  assertEquals((await runMenuSweepTick(db, opts)).reason, "repass");
 });
 
 Deno.test("a kill-switch flip starts a new pass at once and resets that role to Telegram's default menu", async () => {
@@ -280,7 +280,7 @@ Deno.test("a tick whose progress row moved between its read and its claim runs n
       const q = db.from(t);
       if (t === "app_settings" && !bumped) {
         // deno-lint-ignore no-explicit-any
-        const qq = q as any;
+        const qq = q as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         const up = qq.update.bind(qq);
         qq.update = (patch: Row) => {
           bumped = true;

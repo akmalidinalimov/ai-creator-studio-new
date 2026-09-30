@@ -5,7 +5,7 @@
 // A table listed in `failOn` answers every read AND write with an error, to drive the failure paths.
 
 // deno-lint-ignore no-explicit-any
-export type Row = Record<string, any>;
+export type Row = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 const get = (r: Row, col: string): unknown => {
   const m = /^(\w+)->>(\w+)$/.exec(col);
@@ -124,7 +124,7 @@ class Query {
     return this.run().then(({ data, error }) => ({ data: error ? null : (data?.[0] ?? null), error }));
   }
   // deno-lint-ignore no-explicit-any
-  then(res: (v: any) => unknown, rej?: (e: unknown) => unknown) {
+  then(res: (v: any) => unknown, rej?: (e: unknown) => unknown) { // eslint-disable-line @typescript-eslint/no-explicit-any
     return this.run().then(res, rej);
   }
 

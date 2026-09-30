@@ -23,7 +23,7 @@ import { type SendOutcome } from "../_shared/telegram-send.ts";
 export type Locale = "uz" | "ru" | "en";
 type TgCall = (method: string, payload: Record<string, unknown>) => Promise<SendOutcome>;
 // deno-lint-ignore no-explicit-any
-type Db = any;
+type Db = any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 export const SNOOZE_T: Record<Locale, { done: string; toast: string; failed: string }> = {
   uz: {
@@ -75,7 +75,7 @@ export type SnoozeDeps = {
 export type SnoozeResult = "snoozed" | "no_profile" | "save_failed";
 
 // deno-lint-ignore no-explicit-any
-export async function handleNotToday(admin: Db, cq: any, d: SnoozeDeps): Promise<SnoozeResult> {
+export async function handleNotToday(admin: Db, cq: any, d: SnoozeDeps): Promise<SnoozeResult> { // eslint-disable-line @typescript-eslint/no-explicit-any
   const profile = await d.findProfile(Number(cq?.from?.id));
   if (!profile) {
     await d.answer("OK 👍"); // unreachable behind the webhook's profile gate; today's answer

@@ -21,7 +21,7 @@
 //     totals, last tick, last stop. A tick claims it with an optimistic `rev` check plus a short lease, so two
 //     overlapping ticks cannot both run a batch.
 //   * A new pass starts when the desired state changes (a flag flip, a new label/URL, a new command list, a
-//     `rerun` value) and once a day otherwise — which is how new members (Challenge 6.0 joins) get the button
+//     `rerun` value) and every 6 hours otherwise — which is how new members (Challenge 6.0 joins) get the button
 //     and how a flipped kill-switch converges on everyone, not only on the members who happen to write.
 //   * Finished pass → one admin_actions 'menu_button_sweep_pass' row with the totals. Refusals and failures are
 //     recorded by menu-button.ts (a refused web_app menu → 'miniapp_button_rejected', which
@@ -42,7 +42,7 @@ export const SWEEP_VERSION = 1;
 export const BATCH_MAX = 40;
 export const SPACING_MS = 60;
 export const TIME_BUDGET_MS = 25_000;
-export const REPASS_MS = 24 * 3_600_000;
+export const REPASS_MS = 6 * 3_600_000; // ~170 idempotent calls per re-pass; new members wait ≤ 6 h (or write to the bot)
 export const LEASE_MS = 120_000;
 export const BACKOFF_MS: Record<string, number> = {
   rejected: 30 * 60_000,
@@ -51,7 +51,7 @@ export const BACKOFF_MS: Record<string, number> = {
 };
 
 // deno-lint-ignore no-explicit-any
-type Db = any;
+type Db = any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 // ─────────────────────────── settings ───────────────────────────
 export type SweepSettings = { enabled: boolean; student: boolean; teacher: boolean; rerun: string };
@@ -155,7 +155,7 @@ export function planTick(p: Progress | null, key: string, nowMs: number, restart
   if (retry !== null && retry > nowMs) return { run: false, reason: "backoff" };
   if (!p.done) return { run: true, fresh: false, reason: "continue" };
   const fin = ms(p.finished_at);
-  if (fin === null || nowMs - fin >= REPASS_MS) return { run: true, fresh: true, reason: "daily_repass" };
+  if (fin === null || nowMs - fin >= REPASS_MS) return { run: true, fresh: true, reason: "repass" };
   return { run: false, reason: "done" };
 }
 
