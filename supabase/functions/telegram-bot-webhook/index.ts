@@ -35,6 +35,8 @@ import { boardLines, cardRankBit, statsRankLines } from "./rank-views.ts";
 import {
   bellCallback, hourPickerKeyboard, parseBellTarget, parseReminderHour, parseTimezone, saveBotSetting, tzPickerKeyboard,
 } from "./bot-settings.ts";
+import { createDailyTasks } from "./daily-tasks.ts";
+import { DAILY_COPY } from "../_shared/daily-task-render.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -5982,7 +5984,11 @@ async function sweepExpiredPendingPosts(admin: any) {
           });
           continue;
         }
-        await finalizePendingPost(admin, p, resolved.assignment.id, resolved.moduleId, true);
+        const fin = await finalizePendingPost(admin, p, resolved.assignment.id, resolved.moduleId, true);
+        // Daily Tasks PR-4 (G14): an auto-tag in a challenge-scope group may be daily work in the wrong topic.
+        if (fin === "created" || fin === "appended") {
+          try { await dailyTasks.noteMisplacedHomework(admin, p, fin); } catch (_e) { /* a counter, never the sweep */ }
+        }
       } catch (e) {
         console.error("pk:sweep-row-err", String(e));
         // The row stays pending, so the next sweep retries it; a persistent throw would loop unseen.
@@ -6132,6 +6138,61 @@ async function autoRegisterProvisionalPoster(
     return null;
   }
 }
+
+// ═══ KUNLIK VAZIFALAR (Daily Tasks PR-4) ═══════════════════════════════════════════════════════════════════
+// Everything daily-task lives in daily-tasks.ts (I/O) / daily-task-dispatch.ts (decisions) /
+// _shared/daily-task-render.ts (copy); index.ts only wires it in at five points: the group dispatcher, the
+// edited_message hook, the dt: callbacks, /start dt_<id> | ig, and my_chat_member (+ the U1 hint buttons and the
+// misplaced-homework counter). The registrar below is the daily-topic twin of autoRegisterProvisionalPoster: the
+// group comes from challenge_task_topics() (chat AND thread — never the thread alone), chat admins never register
+// (U4), the same admin-create-students engine, and NO in-thread welcome (it is folded into the first receipt, G7).
+async function autoRegisterDailyTaskPoster(
+  admin: any,
+  msg: any,
+  grp: { id: string; course_id: string },
+): Promise<{ profile: any; created: boolean } | null> {
+  const from = msg?.from;
+  if (!from?.id || from.is_bot || !grp?.id || !grp?.course_id) return null;
+  try {
+    const cmResp = await tgApi("getChatMember", { chat_id: msg.chat.id, user_id: from.id });
+    const cm: any = await cmResp.json().catch(() => null);
+    const st = cm?.result?.status;
+    if (st === "administrator" || st === "creator") {
+      await logHealthOnce(admin, "challenge_task_autoreg_skipped", `chat_admin:${msg.chat.id}:${from.id}`, {
+        reason: "chat_admin", chat_id: msg.chat.id, thread_id: msg.message_thread_id ?? null, message_id: msg.message_id,
+        telegram_id: from.id, group_id: grp.id,
+      }, { source: "telegram-bot-webhook" });
+      return null;
+    }
+  } catch (_e) { /* best-effort — proceed, like the homework registrar */ }
+  try {
+    const reg = await registerProvisionalViaEngine(admin, from, grp, "daily_task_post");
+    if (!reg) return null; // the engine path recorded its own auto_register_failed row
+    const prof = await findProfileByTelegramId(admin, from.id);
+    if (!prof) {
+      await recordAutoRegisterFailed(admin, "profile_not_linked", from, grp, "daily_task_post", {
+        engine_status: reg.status ?? null, matched_user_id: reg.userId ?? null, chat_id: msg.chat.id, message_id: msg.message_id,
+      });
+      return null;
+    }
+    return { profile: prof, created: reg.created };
+  } catch (e) {
+    await recordAutoRegisterFailed(admin, "error", from, grp, "daily_task_post", {
+      error: redactSecrets(e).slice(0, 200), chat_id: msg.chat.id, message_id: msg.message_id,
+    });
+    return null;
+  }
+}
+
+const dailyTasks = createDailyTasks({
+  botToken: BOT_TOKEN,
+  botUsername: () => Deno.env.get("TELEGRAM_BOT_USERNAME") || "",
+  answerCallback: (id, text) => answerCallback(id, text),
+  autoRegister: (admin, msg, grp) => autoRegisterDailyTaskPoster(admin, msg, grp),
+  magicLink: async (admin, userId, path) => {
+    try { return await createMagicLink(admin, userId, "login", path); } catch (_e) { return null; }
+  },
+});
 
 // Server-to-server into the proven creation engine (same pattern as staff-intake). Shared by
 // the in-topic auto-register and the DM /start membership path — one engine, all dedupe/role
@@ -7048,6 +7109,18 @@ async function handleCallback(admin: any, cq: any) {
   }
   if (_isImp && (/^grade_task:|^grade:open:|^gs:open:|^settings:|^setlang:|^ops:|^ast:/.test(data) || /^hw:(start|resub_yes):/.test(data))) {
     await answerCallback(cq.id, "👁 Faqat o'qish — /admin");
+    return;
+  }
+  // Daily Tasks PR-4 (§7.5): the dt: correction buttons (move / "Bu topshiriq emas" / undo) are WRITES — denied
+  // under impersonation like the list above (kept as its own line so the shared regex stays untouched).
+  if (_isImp && /^dt:/.test(data)) {
+    await answerCallback(cq.id, "👁 Faqat o'qish — /admin");
+    return;
+  }
+  if (data.startsWith("dt:")) {
+    // The owner lock is SQL-side (challenge_task_tg_actor on the REAL tapper's telegram id); an admin tap is a
+    // logged override. Every refusal is a friendly toast, never an error (member forgiveness).
+    await dailyTasks.onCallback(admin, cq);
     return;
   }
 
@@ -8120,10 +8193,21 @@ Deno.serve(async (req) => {
   const inboxId = await logWebhookInbox(admin, update);
 
   try {
+    // Daily Tasks PR-4 (G15): the bot's own membership / rights changed in a chat. Recorded only for a chat
+    // that holds a daily-task topic ('challenge_bot_status_changed' → health bot_status, watchdog alarm).
+    // Nothing handled my_chat_member before (it fell through to the 200 below), so nothing else changes.
+    if (update.my_chat_member) {
+      try { await dailyTasks.onMyChatMember(admin, update.my_chat_member); } catch (e) { console.error("dt:mcm:err", String(e).slice(0, 200)); }
+      return new Response("ok", { status: 200, headers: corsHeaders });
+    }
+
     // U7: a student EDITING their homework post (e.g. replacing the photo) used to be ignored —
     // the submission kept the original file. Update the stored file_id + matching media item.
     if (update.edited_message) {
       const em = update.edited_message;
+      // Daily Tasks PR-4 (C17): an edit to a captured daily-task item is re-judged by the engine (inert while
+      // challenge_tasks is off). Best-effort and first, so the homework edit handling below is unchanged.
+      try { await dailyTasks.onEdited(admin, em); } catch (e) { console.error("dt:edit:err", String(e).slice(0, 200)); }
       const emChatType = em.chat?.type;
       if ((emChatType === "supergroup" || emChatType === "group") && em.from?.id && !em.from.is_bot) {
         try {
@@ -8176,6 +8260,26 @@ Deno.serve(async (req) => {
       if (chatType === "supergroup" || chatType === "group" || chatType === "channel") {
         // v3.14.29: passively record topic messages for Statistika analytics.
         try { await recordGroupMessageEvent(admin, msg); } catch (e) { console.error("recordGroupMessageEvent failed", e); }
+        // Daily Tasks PR-4 (§11.1): a post in a KUNLIK VAZIFALAR topic — (chat, thread) from the 60-second
+        // challenge_task_topics() snapshot, never the thread number alone — goes to the SQL engine. FAIL CLOSED:
+        // not a daily topic, challenge_tasks inactive (INERT at merge), the snapshot unavailable, or the engine
+        // not taking it → handled:false, and today's handler below runs exactly as before.
+        let dtHandled = false;
+        try {
+          const dt = await dailyTasks.onGroupMessage(admin, msg);
+          if (dt.handled) {
+            dtHandled = true;
+            await updateInboxResolution(admin, inboxId, { skip_reason: "daily_task_topic", daily_task_outcome: dt.outcome ?? null });
+          }
+        } catch (e) {
+          console.error("dt:dispatch:err", String(e).slice(0, 200));
+          try {
+            await logHealth(admin, "challenge_task_capture_failed", {
+              reason: "handler_error", error: redactSecrets(e).slice(0, 200), chat_id: msg.chat?.id ?? null, message_id: msg.message_id ?? null,
+            }, { source: "telegram-bot-webhook" });
+          } catch (_e) { /* never let logging break the 200 */ }
+        }
+        if (dtHandled) return new Response("ok", { status: 200, headers: corsHeaders });
         // v3.14.40: handleGroupTopicMessage now auto-synthesizes an intent for the
         // sender when there's no pending /vazifalar intent. Strict per-sender
         // attribution is preserved inside the handler (anon/bot/unknown senders
@@ -8255,8 +8359,20 @@ Deno.serve(async (req) => {
               ru: "📌 Задания отправляются не боту, а в топик <b>UYGA VAZIFA</b> вашей группы. Там вы выберете модуль и задание кнопками.",
               en: "📌 Homework goes to your group's <b>UYGA VAZIFA</b> topic, not to the bot. Post it there and pick the module/task with the buttons.",
             }[locale];
-            await sendMessage(msg.chat.id, hint,
-              topicUrl ? { inline_keyboard: [[{ text: "📥 Vazifa topigiga o'tish", url: topicUrl }]] } : undefined);
+            // Daily Tasks PR-4 (G14): a challenge-scope student (only while challenge_tasks is active) gets BOTH
+            // topic buttons — the DM'd media may just as well be a daily task.
+            let dailyUrl: string | null = null;
+            try { dailyUrl = await dailyTasks.dailyTopicUrlFor(admin, profileForLocale.group_id); } catch (_e) { dailyUrl = null; }
+            if (dailyUrl) {
+              const dc = DAILY_COPY[locale];
+              const rows: any[] = [];
+              if (topicUrl) rows.push([{ text: dc.btnHwTopic, url: topicUrl }]);
+              rows.push([{ text: dc.btnDailyTopic, url: dailyUrl }]);
+              await sendMessage(msg.chat.id, `${hint}\n${dc.u1Daily}`, { inline_keyboard: rows });
+            } else {
+              await sendMessage(msg.chat.id, hint,
+                topicUrl ? { inline_keyboard: [[{ text: "📥 Vazifa topigiga o'tish", url: topicUrl }]] } : undefined);
+            }
             await admin.from("notifications_log").insert({
               user_id: profileForLocale.id, notification_type: "hw_dm_media_hint", sent_at: new Date().toISOString(),
             });
@@ -8270,6 +8386,12 @@ Deno.serve(async (req) => {
         if (arg.startsWith("login_")) {
           const tok = arg.slice(6);
           await handleStartLogin(admin, msg, tok, locale);
+        } else if (/^(dt_[0-9]+|ig)$/.test(arg)) {
+          // Daily Tasks PR-4 (§10.5): t.me/<bot>?start=dt_<id> from the group post → the task card with a
+          // button to the student's OWN group's daily topic (G14); ?start=ig → where to set the Instagram handle.
+          let answered = false;
+          try { answered = await dailyTasks.onStart(admin, msg, arg, locale, profileForLocale); } catch (e) { console.error("dt:start:err", String(e).slice(0, 200)); }
+          if (!answered) await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag, persona);
         } else {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag, persona);
         }
