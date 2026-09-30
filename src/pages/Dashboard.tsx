@@ -184,7 +184,9 @@ export default function Dashboard() {
             rankScore = score;
           }
         } else {
-          // A group without a course: profile_stats ranks that group by lifetime XP.
+          // The group has no course (0 such groups on 2026-09-30). profile_stats then scores the group by
+          // the student's first enrollment's course, or by lifetime XP without one; lifetime XP is the
+          // closest proxy the client has, and it only decides "any points at all", never the rank itself.
           rankScore = freshTotalXp;
         }
       }

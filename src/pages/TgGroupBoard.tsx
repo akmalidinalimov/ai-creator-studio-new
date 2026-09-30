@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
 import { Loader2, Trophy, Flame, Users as UsersIcon, Camera } from "lucide-react";
+import { displayRank } from "@/lib/studentStats";
 
 interface BoardRow {
   board: "alltime" | "weekly";
@@ -42,7 +43,12 @@ interface LoadResult {
   groups: GroupBoard[];
 }
 
-const medal = (r: number) => (r === 1 ? "🥇" : r === 2 ? "🥈" : r === 3 ? "🥉" : `${r}`);
+// No medal and no rank for 0 points: this board is screenshotted into the groups, and a Challenge 6.0 group
+// on day 1 would otherwise show 🥇🥈🥉 next to "0 XP" (the order among zeros is only streak + id).
+const medal = (r: number, xp: number) => {
+  const shown = displayRank(r, xp);
+  return shown == null ? "—" : shown === 1 ? "🥇" : shown === 2 ? "🥈" : shown === 3 ? "🥉" : `${shown}`;
+};
 const fullName = (r: BoardRow) => `${r.first_name}${r.last_initial ? " " + r.last_initial + "." : ""}`;
 // Date in the UI language; Uzbek keeps the exact "uz-UZ" formatting the board always used.
 const DATE_LOCALE: Record<string, string> = { uz: "uz-UZ", ru: "ru-RU", en: "en-US" };
@@ -65,8 +71,8 @@ function BoardCard({ title, icon, accent, rows, unit }: {
         <ol className="divide-y divide-border/60">
           {rows.map((r) => (
             <li key={`${r.board}-${r.rank}`} className="flex items-center gap-3 px-4 py-2.5">
-              <span className={`w-7 text-center text-base ${r.rank <= 3 ? "" : "text-muted-foreground text-sm font-medium"}`}>
-                {medal(r.rank)}
+              <span className={`w-7 text-center text-base ${r.rank <= 3 && r.xp > 0 ? "" : "text-muted-foreground text-sm font-medium"}`}>
+                {medal(r.rank, r.xp)}
               </span>
               <span className="flex-1 font-medium truncate">{fullName(r)}</span>
               {r.current_streak > 0 && (
