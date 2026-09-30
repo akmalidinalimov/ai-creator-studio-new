@@ -25,6 +25,7 @@ import {
 import { likeEscape } from "../_shared/username.ts";
 import { resolveGroupPoster } from "../_shared/group-poster-identity.ts";
 import { hwLabel } from "../_shared/hw-label.ts";
+import { continuePath, coursePath, lessonPath, sendStudentWatchMessage, studentWatchButton } from "./miniapp-buttons.ts";
 import { loadAssignmentLabels, loadHwLabel } from "../_shared/hw-label-load.ts";
 import {
   breakdownScopeLine, gradingHeader, hwTeacherBody, moduleCourseMark, thenWho, withLabelLine, withWho,
@@ -2800,16 +2801,14 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
     if (courseId) {
       const firstLessonId = await getFirstLesson(admin, courseId);
       if (firstLessonId) {
-        const url = await createMagicLink(admin, profile.id, "deeplink_lesson", `/lesson/${courseId}/${firstLessonId}`);
-        buttons.push([{ text: t.btnFirstLesson, url }]);
+        buttons.push([await studentWatchButton(admin, { chatId, text: t.btnFirstLesson, miniPath: lessonPath(courseId, firstLessonId), legacyPath: `/lesson/${courseId}/${firstLessonId}`, src: "bot_welcome", webhookOn: __studentMiniAppEnabled?.on === true, magicLink: (p) => createMagicLink(admin, profile.id, "deeplink_lesson", p) })]);
       }
-      const courseUrl = await createMagicLink(admin, profile.id, "deeplink_course", `/course/${courseId}`);
-      buttons.push([{ text: t.btnCourse, url: courseUrl }]);
+      buttons.push([await studentWatchButton(admin, { chatId, text: t.btnCourse, miniPath: coursePath(courseId), legacyPath: `/course/${courseId}`, src: "bot_welcome", webhookOn: __studentMiniAppEnabled?.on === true, magicLink: (p) => createMagicLink(admin, profile.id, "deeplink_course", p) })]);
     }
     if (SUPPORT_HANDLE) {
       buttons.push([{ text: t.btnHelp, url: `https://t.me/${SUPPORT_HANDLE}` }]);
     }
-    await sendMessage(chatId, t.welcome(firstName), { inline_keyboard: buttons });
+    await sendStudentWatchMessage(admin, chatId, t.welcome(firstName), buttons);
     await admin.from("profiles").update({ telegram_onboarded_at: new Date().toISOString() }).eq("id", profile.id);
   }
 
@@ -5001,8 +5000,8 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
       await sendWithKeyboard(chatId, t.noNextLesson, locale);
       return;
     }
-    const url = await createMagicLink(admin, profile.id, "deeplink_lesson", `/lesson/${courseId}/${next.id}`);
-    await sendMessage(chatId, t.nextLesson, { inline_keyboard: [[{ text: t.btnFirstLesson, url }]] });
+    const w = await studentWatchButton(admin, { chatId, text: t.btnFirstLesson, miniPath: continuePath(courseId), legacyPath: `/lesson/${courseId}/${next.id}`, src: "bot_davom", webhookOn: __studentMiniAppEnabled?.on === true, magicLink: (p) => createMagicLink(admin, profile.id, "deeplink_lesson", p) });
+    await sendStudentWatchMessage(admin, chatId, t.nextLesson, [[w]]);
     return;
   }
 
@@ -5014,8 +5013,8 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
       return;
     }
     if (courseIds.length === 1) {
-      const url = await createMagicLink(admin, profile.id, "deeplink_course", `/course/${courseIds[0]}`);
-      await sendMessage(chatId, t.coursePage, { inline_keyboard: [[{ text: t.btnCourse, url }]] });
+      const w = await studentWatchButton(admin, { chatId, text: t.btnCourse, miniPath: coursePath(courseIds[0]), legacyPath: `/course/${courseIds[0]}`, src: "bot_dars", webhookOn: __studentMiniAppEnabled?.on === true, magicLink: (p) => createMagicLink(admin, profile.id, "deeplink_course", p) });
+      await sendStudentWatchMessage(admin, chatId, t.coursePage, [[w]]);
       return;
     }
     // Rare: student enrolled in more than one course → one button per course (by title).
@@ -5023,10 +5022,9 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
     const titleById = new Map((crows || []).map((c: any) => [c.id, c.title]));
     const buttons: any[][] = [];
     for (const cid of courseIds) {
-      const url = await createMagicLink(admin, profile.id, "deeplink_course", `/course/${cid}`);
-      buttons.push([{ text: titleById.get(cid) || t.btnCourse, url }]);
+      buttons.push([await studentWatchButton(admin, { chatId, text: String(titleById.get(cid) || t.btnCourse), miniPath: coursePath(cid), legacyPath: `/course/${cid}`, src: "bot_dars", webhookOn: __studentMiniAppEnabled?.on === true, magicLink: (p) => createMagicLink(admin, profile.id, "deeplink_course", p) })]);
     }
-    await sendMessage(chatId, t.coursePage, { inline_keyboard: buttons });
+    await sendStudentWatchMessage(admin, chatId, t.coursePage, buttons);
     return;
   }
 

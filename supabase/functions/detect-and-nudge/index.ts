@@ -1,10 +1,19 @@
-// Smart nudges: detects 4 patterns, respects opt-in, paused_until, quiet hours, weekly rate limit.
+// Smart nudges: detects 3 patterns, respects opt-in, paused_until, quiet hours, weekly rate limit.
 // Modes: { mode: "test", nudge_type: "inactive_3d"|"inactive_7d"|"stuck_lesson"|"module_complete" }
 //          → sends one nudge to @alikhanova_admin (always allowed, bypasses filters).
-//        { mode: "cron" } → invoked by pg_cron; runs all 4 types over all eligible students.
+//        { mode: "cron" } → invoked by pg_cron; runs inactive_3d, inactive_7d and module_complete.
+//
+// 2026-09-30: the nudge button opens the MINI APP (web_app → /continue, the next unfinished lesson) instead
+// of a 24-hour magic link in Telegram's browser; the click is reported by the Mini App against the nudge_log
+// id (see nudge.ts). Flag platform_settings.student_miniapp off → today's magic link, unchanged.
+// stuck_lesson is RETIRED from the cron run: nudge_candidates_stuck() can never return a row
+// (lesson_progress is unique per user+lesson, so "the same lesson on >= 2 distinct days" is always 1 day),
+// it has never sent one (nudge_log: 0 rows ever), and its link (/lesson/<lesson id>) was a broken route.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 import { redactSecrets } from "../_shared/redact.ts";
+import { loadStudentMiniAppFlag, type WatchFlag } from "../_shared/miniapp-button.ts";
+import { type NudgeType, sendNudgeWith } from "./nudge.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,9 +25,8 @@ const corsHeaders = {
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 const SITE_URL = (Deno.env.get("SITE_URL") || "https://aicreator.academy").replace(/\/$/, "");
 
-type NudgeType = "inactive_3d" | "inactive_7d" | "stuck_lesson" | "module_complete";
-
-async function tgSend(chatId: number, text: string, buttonText: string, url: string) {
+// tgSend takes the PREBUILT message (nudge.ts builds the watch button: Mini App web_app, or the magic link).
+async function tgSend(payload: Record<string, unknown>) {
   // Kept raw on purpose: this drainer stores the raw Telegram result (nudge_log.telegram_message_id)
   // + echoes the body in test mode, which sendTelegram's SendOutcome intentionally does not expose.
   // Non-delivery is already DB-visible via nudge_log.error, so there is no silent-failure gap; adopting
@@ -29,12 +37,7 @@ async function tgSend(chatId: number, text: string, buttonText: string, url: str
     r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        disable_web_page_preview: true,
-        reply_markup: { inline_keyboard: [[{ text: buttonText, url }]] },
-      }),
+      body: JSON.stringify(payload),
     });
   } catch (e) {
     // TOKEN CONTAINMENT (same class as the webhook's tgApi): a Deno transport error embeds the full
@@ -80,6 +83,9 @@ async function makeMagicLink(admin: any, userId: string, targetPath: string) {
   return { token, url: `${SITE_URL}/auth/magic?t=${token}` };
 }
 
+// The student Mini App kill-switch, read once per invocation (fail-closed → today's magic links).
+let runFlag: WatchFlag = { on: false, watch: false };
+
 async function sendNudge(
   admin: any,
   templates: any,
@@ -90,28 +96,21 @@ async function sendNudge(
 ) {
   const tpl = pickTpl(templates, type, profile.preferred_locale || profile.preferred_language || "uz");
   const name = (profile.name || "").trim() || "do'stim";
-  const { token, url } = await makeMagicLink(admin, profile.id, targetPath);
   const body = render(tpl.body, { name, ...extra });
   const button = tpl.button || "Open";
   // A TRANSPORT failure (tgSend throws) used to propagate out of the whole run: the nudge_log row was
   // never written, the remaining candidates were skipped, and so were the later run types — the only
-  // trace was an HTTP 500 body. Contain it per candidate so one flaky send costs one nudge, and so the
-  // failure stays DB-visible (graceful is not silent). tgSend has already redacted the message.
-  let r: Awaited<ReturnType<typeof tgSend>>;
-  try {
-    r = await tgSend(Number(profile.telegram_id), body, button, url);
-  } catch (e) {
-    r = { ok: false, status: 0, data: { error: redactSecrets(e) } };
-  }
-  await admin.from("nudge_log").insert({
-    profile_id: profile.id,
-    nudge_type: type,
-    telegram_message_id: r.ok ? String(r.data?.result?.message_id ?? "") : null,
-    magic_token: token,
-    payload: { extra, locale: profile.preferred_locale, ok: r.ok },
-    error: r.ok ? null : JSON.stringify(r.data).slice(0, 500),
-  });
-  return r;
+  // trace was an HTTP 500 body. sendNudgeWith contains it per candidate so one flaky send costs one nudge,
+  // and the failure stays DB-visible in nudge_log.error (graceful is not silent).
+  return await sendNudgeWith({
+    admin,
+    flag: runFlag,
+    newId: () => crypto.randomUUID(),
+    makeMagicLink: (userId, path) => makeMagicLink(admin, userId, path),
+    send: tgSend,
+    insertLog: (row) => admin.from("nudge_log").insert(row),
+    redact: (e) => redactSecrets(e),
+  }, profile, type, body, button, extra, targetPath);
 }
 
 async function recentCount(admin: any, profileId: string, days = 7) {
@@ -202,21 +201,6 @@ async function runInactive7d(admin: any, templates: any) {
   return { sent, failed, skipped, total: candidates?.length || 0 };
 }
 
-async function runStuckLesson(admin: any, templates: any) {
-  const { data: candidates } = await admin.rpc("nudge_candidates_stuck");
-  let sent = 0, skipped = 0, failed = 0;
-  for (const c of candidates || []) {
-    const elig = await isEligible(admin, c, "stuck_lesson");
-    if (!elig.ok) { skipped++; continue; }
-    const recent = await recentCount(admin, c.id, 7);
-    if (recent >= 3) { skipped++; continue; }
-    const r = await sendNudge(admin, templates, c, "stuck_lesson", { lesson_title: c.lesson_title || "" }, `/lesson/${c.lesson_id}`);
-    if (r.ok) sent++; else failed++;
-    await sleep(50);
-  }
-  return { sent, failed, skipped, total: candidates?.length || 0 };
-}
-
 async function runModuleComplete(admin: any, templates: any) {
   const { data: queue } = await admin
     .from("nudge_module_celebrations")
@@ -272,6 +256,7 @@ Deno.serve(async (req) => {
     // Load templates
     const { data: settings } = await admin.from("platform_settings").select("value").eq("key", "nudge_templates").maybeSingle();
     const templates = settings?.value || {};
+    runFlag = await loadStudentMiniAppFlag(admin);
 
     if (mode === "test") {
       // Verify admin
@@ -308,9 +293,9 @@ Deno.serve(async (req) => {
     // Cron mode
     const i3 = await runInactive3d(admin, templates);
     const i7 = await runInactive7d(admin, templates);
-    const stuck = await runStuckLesson(admin, templates);
+    const stuck = { retired: true, sent: 0, failed: 0, skipped: 0, total: 0 }; // see the header
     const mc = await runModuleComplete(admin, templates);
-    return new Response(JSON.stringify({ ok: true, inactive_3d: i3, inactive_7d: i7, stuck_lesson: stuck, module_complete: mc }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ ok: true, inactive_3d: i3, inactive_7d: i7, stuck_lesson: stuck, module_complete: mc, miniapp: runFlag }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     return new Response(JSON.stringify({ error: redactSecrets((e as any)?.message ?? e) }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }

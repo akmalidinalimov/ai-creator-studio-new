@@ -7,6 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { ModuleCelebrationModal } from "@/components/ModuleCelebrationModal";
 import { tierFor, formatXp, type TierKey } from "@/lib/xp";
+import { loadCourseRows, pickResume, type CourseRow, type EnrollmentRow } from "@/lib/nextLesson";
 import { reportClientError } from "@/lib/beacon";
 import { readStatsRow, displayRank } from "@/lib/studentStats";
 import {
@@ -83,15 +84,6 @@ function tashkentWeekStartIso(): string {
     0, 0, 0, 0,
   );
   return new Date(mondayShiftedMs - TASHKENT_OFFSET_MS).toISOString();
-}
-
-interface CourseRow {
-  id: string; title: string; tagline: string | null; cover_url: string | null; duration_hours: number | null;
-  total: number; completed: number; nextLessonId?: string; nextCourseId?: string;
-  nextLessonTitle?: string; nextLessonDurationSec?: number | null;
-  nextModuleTitle?: string; nextModuleRank?: number; nextLessonPositionInModule?: number;
-  modulesTotal: number; modulesCompleted: number;
-  lastActivityMs: number; // most-recent lesson activity in this course (0 = never touched)
 }
 
 interface StatsRow {
@@ -243,79 +235,10 @@ export default function Dashboard() {
       setHwGradedCount(graded.length);
       setHwAvgScore(graded.length ? graded.reduce((s, r) => s + Number(r.score), 0) / graded.length : null);
 
-      const rows: CourseRow[] = [];
-      for (const e of enrollments || []) {
-        const c: any = (e as any).courses;
-        if (!c) continue;
-        // Tier cap: null = unlimited. Modules are ranked by position (matching
-        // has_module_access); only the first `limit` modules are accessible.
-        const limit: number | null = (e as any).course_tiers?.module_limit ?? null;
-        const { data: lessonsData } = await supabase
-          .from("lessons")
-          .select("id, position, title, duration_seconds, modules!inner(id, course_id, position, title)")
-          .eq("modules.course_id", c.id);
-        const raw = (lessonsData || []).map((l: any) => ({
-          id: l.id, lp: l.position ?? 0, title: l.title as string, dur: l.duration_seconds as number | null,
-          mid: l.modules?.id, mp: l.modules?.position ?? 0, mtitle: l.modules?.title as string,
-        }));
-        // Rank modules by position so the cap matches the backend's rank logic.
-        const modRank = new Map<string, number>();
-        Array.from(new Map(raw.map((l) => [l.mid, l.mp])).entries())
-          .sort((a, b) => a[1] - b[1])
-          .forEach(([mid], i) => modRank.set(mid, i + 1));
-        const modTitleByMid = new Map<string, string>();
-        raw.forEach((l) => { if (!modTitleByMid.has(l.mid)) modTitleByMid.set(l.mid, l.mtitle); });
-        let ordered = raw
-          .sort((a, b) => (modRank.get(a.mid)! - modRank.get(b.mid)!) || a.lp - b.lp);
-        if (limit != null) ordered = ordered.filter((l) => (modRank.get(l.mid) ?? 1e9) <= limit);
-        const lessonIds = ordered.map((l) => l.id);
-        const total = lessonIds.length;
-        const { data: progress } = await supabase
-          .from("lesson_progress")
-          .select("lesson_id, completed_at, updated_at")
-          .eq("user_id", user.id)
-          .in("lesson_id", lessonIds.length ? lessonIds : ["00000000-0000-0000-0000-000000000000"]);
-        const completedSet = new Set((progress || []).filter((p: any) => p.completed_at).map((p: any) => p.lesson_id));
-        const lastActivityMs = (progress || []).reduce((mx: number, p: any) => {
-          const ts = p.updated_at ? Date.parse(p.updated_at) : 0;
-          return ts > mx ? ts : mx;
-        }, 0);
-        const next = ordered.find((l) => !completedSet.has(l.id));
-        const nextPositionInModule = next
-          ? ordered.filter((l) => l.mid === next.mid).findIndex((l) => l.id === next.id) + 1
-          : undefined;
-
-        // Module completion (accessible modules only) for the compact "Kursim" card's
-        // "N / M modul tugallandi" line — a module counts as done when every one of its
-        // (tier-accessible) lessons is completed.
-        const moduleLessonIds = new Map<string, string[]>();
-        ordered.forEach((l) => {
-          const arr = moduleLessonIds.get(l.mid) || [];
-          arr.push(l.id);
-          moduleLessonIds.set(l.mid, arr);
-        });
-        const modulesTotal = moduleLessonIds.size;
-        const modulesCompleted = Array.from(moduleLessonIds.values())
-          .filter((ids) => ids.length > 0 && ids.every((id) => completedSet.has(id))).length;
-
-        rows.push({
-          id: c.id, title: c.title, tagline: c.tagline, cover_url: c.cover_url, duration_hours: c.duration_hours,
-          total, completed: completedSet.size,
-          nextLessonId: next?.id, nextCourseId: c.id,
-          nextLessonTitle: next?.title, nextLessonDurationSec: next?.dur,
-          nextModuleTitle: next ? modTitleByMid.get(next.mid) : undefined,
-          nextModuleRank: next ? modRank.get(next.mid) : undefined,
-          nextLessonPositionInModule: nextPositionInModule,
-          modulesTotal, modulesCompleted,
-          lastActivityMs,
-        });
-      }
+      // Per-course resume data (tier clamp, watch order, most-recent-activity first) comes from the ONE
+      // client engine in lib/nextLesson.ts, shared with the /continue route every Mini App watch button opens.
+      const rows = await loadCourseRows(supabase, user.id, (enrollments || []) as unknown as EnrollmentRow[]);
       if (cancelled) return;
-      // "Continue where you left off" must show the course the student is actually working
-      // in. Enrollment order is arbitrary, so a student enrolled in 2 courses (e.g. finished
-      // 4.0 + active 5.0) could see the stale one. Order by most-recent activity, then by
-      // progress, so the resume card + course list lead with the live course.
-      rows.sort((a, b) => (b.lastActivityMs - a.lastActivityMs) || (b.completed - a.completed));
       setCourses(rows);
      } catch (e) {
        if (!cancelled) { console.error("[Dashboard] load failed", e); setError(true); }
@@ -326,7 +249,7 @@ export default function Dashboard() {
     return () => { cancelled = true; };
   }, [user, reloadKey]);
 
-  const resume = courses.find((c) => c.nextLessonId && c.completed < c.total) || courses.find((c) => c.nextLessonId);
+  const resume = pickResume(courses);
   const hasAnyProgress = courses.some((c) => c.completed > 0);
   const totalXp = stats?.totalXp ?? 0;
   // First-run/empty per brief: 0 progress = no XP AND no completed lessons anywhere.

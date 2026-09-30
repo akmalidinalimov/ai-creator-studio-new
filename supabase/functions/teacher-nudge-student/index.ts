@@ -1,7 +1,13 @@
 // One-tap teacher nudge: sends a warm "we miss you" DM to an inactive student
 // via the bot. Teacher-scoped (is_teacher_of) + rate-limited to 1/day/student.
+//
+// 2026-09-30: with the student Mini App on (platform_settings.student_miniapp) the DM carries a "📚 Davom
+// etish" web_app button that opens the Mini App at the student's next unfinished lesson (/continue). Flag
+// off → no button, exactly as before (the text points at the reply keyboard's 📚 Davom etish).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
+import { loadStudentMiniAppFlag, sendWithWatchFallback, watchButton } from "../_shared/miniapp-button.ts";
+import { continuePath } from "../_shared/miniapp-links.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -9,6 +15,8 @@ const corsHeaders = {
 };
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+const BTN: Record<string, string> = { uz: "📚 Davom etish", ru: "📚 Продолжить", en: "📚 Continue" };
 
 const MSG: Record<string, (teacher: string) => string> = {
   uz: (t) => `👋 Salom! Ustozingiz ${t} sizni sog'indi — darslar sizni kutmoqda!\n\nBugun 1 dars ko'rib, ritmga qaytamizmi? 🚀\n👇 "📚 Davom etish" tugmasini bosing.`,
@@ -52,17 +60,23 @@ Deno.serve(async (req) => {
     if (!st?.telegram_id) return json({ error: "no_telegram" }, 400);
 
     const locale = ["uz", "ru", "en"].includes(st.preferred_locale) ? st.preferred_locale : "uz";
-    const out = await sendTelegram(
-      Deno.env.get("TELEGRAM_BOT_TOKEN")!,
-      "sendMessage",
-      { chat_id: Number(st.telegram_id), text: MSG[locale](tp?.name || "ustoz") },
-      { admin, purpose: "teacher_nudge", recipientId: Number(st.telegram_id) },
+    const w = await watchButton({
+      chat: "private", text: BTN[locale], flag: await loadStudentMiniAppFlag(admin), fn: "teacher-nudge-student", admin,
+      miniPath: continuePath(), legacyPath: "/dashboard", track: { src: "teacher_nudge" },
+      // no magicLink: flag off → no button, today's message exactly
+    });
+    const base = { chat_id: Number(st.telegram_id), text: MSG[locale](tp?.name || "ustoz") };
+    const { result: out } = await sendWithWatchFallback(
+      (p) => sendTelegram(Deno.env.get("TELEGRAM_BOT_TOKEN")!, "sendMessage", p, { admin, purpose: "teacher_nudge", recipientId: Number(st.telegram_id) }),
+      w.button ? { ...base, reply_markup: { inline_keyboard: [[w.button]] } } : base,
+      () => Promise.resolve(base), // a rejected web_app button → the plain message, as before
+      { fn: "teacher-nudge-student", admin },
     );
     if (!out.ok) return json({ error: out.error || "send_failed" }, 502);
 
     await admin.from("notifications_log").insert({
       user_id: student_id, notification_type: "teacher_nudge",
-      payload: { by: who.user.id }, sent_at: new Date().toISOString(),
+      payload: { by: who.user.id, button_mode: w.mode }, sent_at: new Date().toISOString(),
     });
     return json({ ok: true });
   } catch (e) {
