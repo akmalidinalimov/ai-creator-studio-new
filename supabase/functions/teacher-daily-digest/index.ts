@@ -6,6 +6,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
+import { type GroupPrimaryRow, type GroupTeacherRow, mergeGroupTeachers } from "../_shared/group-teachers.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -140,8 +141,19 @@ Deno.serve(async (req) => {
   } catch { /* board optional */ }
   if (boardEnabled) {
     try {
-      const { data: grpRows } = await admin.from("groups").select("id, name, course_id, teacher_id").not("teacher_id", "is", null);
-      const groups = ((grpRows || []) as any[]);
+      // A group's card goes to EVERY teacher of it — primary ∪ co-teachers (_shared/group-teachers.ts),
+      // the same groups the "📊 Guruh reytingi" Mini App (tg-group-board) already shows them. Reading
+      // only groups.teacher_id left a co-taught group off its co-teacher's digest and dropped a group
+      // whose teachers are all co-teachers from the board entirely. Who GETS a digest is still
+      // teacher_daily_report() (primary-attributed stats), unchanged here.
+      const [{ data: grpRows, error: grpErr }, { data: gtRows, error: gtErr }] = await Promise.all([
+        admin.from("groups").select("id, name, course_id, teacher_id"),
+        admin.from("group_teachers").select("group_id, teacher_id"),
+      ]);
+      if (grpErr) throw new Error(`groups read failed: ${grpErr.message}`);
+      if (gtErr) throw new Error(`group_teachers read failed: ${gtErr.message}`);
+      const teachersOf = mergeGroupTeachers((grpRows || []) as GroupPrimaryRow[], (gtRows || []) as GroupTeacherRow[]);
+      const groups = ((grpRows || []) as any[]).filter((g) => (teachersOf.get(g.id) || []).length > 0);
       const courseIds = [...new Set(groups.map((g) => g.course_id).filter(Boolean))];
       const statsById: Record<string, any> = {};
       for (const cid of courseIds) {
@@ -159,7 +171,7 @@ Deno.serve(async (req) => {
           alltime: brows.filter((r) => r.board === "alltime").sort((a, b) => a.rank - b.rank),
         };
         allGroupCards.push(card);
-        (boardByTeacher[g.teacher_id] ||= []).push(card);
+        for (const tid of teachersOf.get(g.id) || []) (boardByTeacher[tid] ||= []).push(card);
       }
     } catch (e) {
       boardEnabled = false;
