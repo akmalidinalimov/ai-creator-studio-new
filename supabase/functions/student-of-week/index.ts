@@ -67,7 +67,7 @@ Deno.serve(async (req) => {
     const weekStart = currentWeekStartTashkent();
     const { data: winners, error: wErr } = await admin
       .from("weekly_group_star")
-      .select("group_id, week_start, user_id")
+      .select("group_id, week_start, user_id, score")
       .eq("week_start", weekStart)
       .is("dm_sent_at", null);
     if (wErr) throw wErr;
@@ -76,6 +76,10 @@ Deno.serve(async (req) => {
     const today = new Date().toISOString().slice(0, 10);
 
     for (const w of (winners || [])) {
+      // A 0-score "star" is an arbitrary member of a group where nobody was active (pick_weekly_group_stars takes
+      // the top activity score even when every score is 0 — e.g. a new Challenge 6.0 group in its first week). Do
+      // not congratulate them for "the highest activity"; the bot's 📊 Statistika hides such a star too.
+      if (!(Number((w as any).score) > 0)) { skipped++; continue; }
       // 3) Load profile
       const { data: p } = await admin
         .from("profiles")

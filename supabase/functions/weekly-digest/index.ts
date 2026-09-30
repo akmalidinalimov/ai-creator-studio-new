@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
+import { type GroupRanking, loadGroupRanking, rankOf } from "../_shared/group-rank.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -31,7 +32,7 @@ Deno.serve(async (req) => {
 
   const { data: profiles } = await admin
     .from("profiles")
-    .select("id, name, telegram_id, preferred_language, digest_opt_in")
+    .select("id, name, telegram_id, preferred_language, digest_opt_in, group_id")
     .eq("digest_opt_in", true)
     .eq("status", "active")
     .not("telegram_id", "is", null);
@@ -39,27 +40,46 @@ Deno.serve(async (req) => {
   let sent = 0, skipped = 0, errors = 0;
   const since = new Date(Date.now() - 7 * 86400_000).toISOString();
 
+  // The rank line is the student's GROUP rank from the same GroupRanking the bot's 👤 card, 📊 Statistika and
+  // 👥 Guruh reytingi print (_shared/group-rank.ts → group_leaderboard). It used to be leaderboard_cache.rank: a
+  // global 30-day ACTIVITY rank across every cohort (e.g. "245-o'rin"), a third number no other screen showed.
+  // One group_leaderboard read per group (the ranks are the same for every member); no rank line without a
+  // group, with 0 points, or when the read failed (loadGroupRanking records that failure, DB-visible).
+  const rankings = new Map<string, GroupRanking | null>();
+  const groupRankFor = async (groupId: string | null, userId: string) => {
+    if (!groupId) return null;
+    if (!rankings.has(groupId)) {
+      const { ranking, failed } = await loadGroupRanking(admin, userId, "weekly-digest");
+      rankings.set(groupId, failed ? null : ranking);
+    }
+    const r = rankings.get(groupId);
+    return r ? rankOf(r, userId) : null;
+  };
+
   for (const p of profiles || []) {
     try {
-      const [{ data: prog }, { data: streak }, { data: rank }] = await Promise.all([
+      const [{ data: prog }, { data: streak }, rank] = await Promise.all([
         admin.from("lesson_progress").select("watch_seconds_total, completed_at").eq("user_id", p.id).gte("updated_at", since),
         admin.from("streaks").select("current_streak").eq("user_id", p.id).maybeSingle(),
-        admin.from("leaderboard_cache").select("rank").eq("user_id", p.id).maybeSingle(),
+        groupRankFor(p.group_id ?? null, p.id),
       ]);
       const minutes = Math.round((prog || []).reduce((s: number, r: any) => s + (Number(r.watch_seconds_total) || 0), 0) / 60);
       const lessons = (prog || []).filter((r: any) => r.completed_at && new Date(r.completed_at) >= new Date(since)).length;
       const cur = streak?.current_streak || 0;
-      const r = rank?.rank ?? "—";
 
       if (minutes === 0 && lessons === 0 && cur === 0) { skipped++; continue; }
 
       const lang = (p.preferred_language || "uz").slice(0, 2);
       const name = p.name || "Talaba";
+      const rankLine = !rank ? ""
+        : lang === "ru" ? `\n• Место в группе: ${rank.rank}/${rank.size}`
+        : lang === "en" ? `\n• Group rank: ${rank.rank}/${rank.size}`
+        : `\n• Guruhdagi o'rningiz: ${rank.rank}/${rank.size}`;
       const txt = lang === "ru"
-        ? `Привет, ${name}! 📊 Итоги недели:\n• ${minutes} минут учёбы\n• ${lessons} уроков завершено\n• Серия: 🔥 ${cur} дней\n• Место в рейтинге: ${r}`
+        ? `Привет, ${name}! 📊 Итоги недели:\n• ${minutes} минут учёбы\n• ${lessons} уроков завершено\n• Серия: 🔥 ${cur} дней${rankLine}`
         : lang === "en"
-        ? `Hi ${name}! 📊 Your week:\n• ${minutes} min studied\n• ${lessons} lessons completed\n• Streak: 🔥 ${cur} days\n• Rank: ${r}`
-        : `Salom, ${name}! 📊 Bu hafta natijalaringiz:\n• ${minutes} daqiqa o'rgandingiz\n• ${lessons} ta dars tugatdingiz\n• Streak: 🔥 ${cur} kun\n• Reyting: ${r}-o'rin`;
+        ? `Hi ${name}! 📊 Your week:\n• ${minutes} min studied\n• ${lessons} lessons completed\n• Streak: 🔥 ${cur} days${rankLine}`
+        : `Salom, ${name}! 📊 Bu hafta natijalaringiz:\n• ${minutes} daqiqa o'rgandingiz\n• ${lessons} ta dars tugatdingiz\n• Streak: 🔥 ${cur} kun${rankLine}`;
 
       if (dryRun) { sent++; continue; }
       if (!BOT_TOKEN) { errors++; continue; }

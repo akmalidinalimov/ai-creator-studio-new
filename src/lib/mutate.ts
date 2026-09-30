@@ -31,7 +31,9 @@ import { toast } from "sonner";
 export type SaveReason = "not_saved" | "error" | "impersonation_readonly";
 export type SaveResult<T = { id: string }> =
   | { ok: true; row: T }
-  | { ok: false; reason: SaveReason; message?: string };
+  // `code` is the Postgres/PostgREST error code when there is one (e.g. "23505" for a unique-index
+  // conflict), so a caller can map a specific failure to its own message instead of the raw text.
+  | { ok: false; reason: SaveReason; message?: string; code?: string };
 
 export type SaveManyReason = "not_saved" | "partial" | "error" | "impersonation_readonly";
 export type SaveManyResult<T = { id: string }> =
@@ -74,7 +76,7 @@ export async function mutate<T = { id: string }>(build: () => any, returning = "
 
   try {
     const { data, error } = await builder.select(returning).maybeSingle();
-    if (error) return { ok: false, reason: "error", message: error.message };
+    if (error) return { ok: false, reason: "error", message: error.message, ...(error.code ? { code: String(error.code) } : {}) };
     if (data == null) return { ok: false, reason: "not_saved" }; // 0 rows, no error = RLS-filtered no-op
     return { ok: true, row: data as T };
   } catch (e: any) {

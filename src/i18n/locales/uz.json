@@ -432,7 +432,18 @@
     "justNow": "hozirgina",
     "minAgo": "{{n}} daqiqa oldin",
     "hourAgo": "{{n}} soat oldin",
-    "dayAgo": "{{n}} kun oldin"
+    "dayAgo": "{{n}} kun oldin",
+    "instagramHint": "Challenge'dagi Instagram vazifalari uchun ball shu nom orqali beriladi. Profilingiz nomini yozing, masalan: @ismingiz",
+    "instagramErrors": {
+      "not_profile_link": "Bu post yoki reel havolasi, profil emas. Instagram nomingizni yozing, masalan: @ismingiz",
+      "no_handle_in_link": "Havolada Instagram nomi yo'q. Nomingizni yozing, masalan: @ismingiz",
+      "empty": "Instagram nomini yozing, masalan: @ismingiz",
+      "too_long": "Instagram nomi 30 belgidan uzun bo'lmaydi",
+      "bad_chars": "Instagram nomida faqat lotin harflari, raqamlar, nuqta (.) va pastki chiziq (_) bo'ladi. Bo'sh joy va kirill harflari bo'lmaydi",
+      "taken": "Bu Instagram nomi boshqa hisobda band. Nom to'g'riligini tekshiring yoki administratorga yozing",
+      "notSaved": "Instagram nomi saqlanmadi. Nomni tekshirib, qayta saqlang",
+      "restSaved": "Ism va boshqa ma'lumotlar saqlandi."
+    }
   },
   "validation": {
     "required": "Ushbu maydon talab qilinadi",
@@ -1280,6 +1291,8 @@
     "settingsLanguage": "Til",
     "settingsNotifications": "Bildirishnomalar",
     "settingsBoardVisibility": "Reytingda ko'rinish",
+    "settingsPersonal": "Shaxsiy ma'lumotlar",
+    "settingsPersonalHint": "Ism, familiya, Instagram",
     "boardVisibilityShown": "Guruh reytinglarida ko'rsatiladi",
     "boardVisibilityHidden": "Guruh reytinglaridan yashirildi",
     "boardVisibilityFailed": "Xatolik yuz berdi — qayta urinib ko'ring",

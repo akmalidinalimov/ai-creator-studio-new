@@ -185,18 +185,41 @@ Deno.serve(async (req) => {
     // Written SEPARATELY and best-effort on purpose. Edge functions deploy BEFORE migrations in the
     // same run, so for a few seconds this code can be live while `instagram_username` does not exist
     // yet. Folding it into the update above would fail the whole write and cost the student their
-    // tier and account type. The DB trigger normalizes "@name", spaces and profile URLs.
+    // tier and account type. The DB trigger parses it (instagram_handle_parse, 20260930154000): "@name"
+    // and profile URLs are normalized; a post/reel link or bad characters are refused there (nothing
+    // stored, an 'instagram_handle_rejected' row written). A handle another account already has is a
+    // unique violation: it used to vanish here without a trace — now it is recorded and returned, so
+    // the form tells the salesperson (the enrolment itself still succeeds).
+    let instagramOutcome: "saved" | "refused" | "taken" | "error" | null = null;
     if (instagram) {
       try {
-        await admin.from("profiles").update({ instagram_username: instagram }).eq("id", userId);
-      } catch (_e) { /* handle is a bonus, never block an enrolment */ }
+        const { data: igRow, error: igErr } = await admin.from("profiles")
+          .update({ instagram_username: instagram }).eq("id", userId)
+          .select("instagram_username").maybeSingle();
+        if (igErr) {
+          instagramOutcome = String(igErr.message ?? "").includes("uq_profiles_instagram_username") ? "taken" : "error";
+        } else {
+          instagramOutcome = igRow?.instagram_username ? "saved" : "refused";
+        }
+      } catch (_e) {
+        instagramOutcome = "error"; // handle is a bonus, never block an enrolment
+      }
+      if (instagramOutcome === "taken" || instagramOutcome === "error") {
+        await logHealth(admin, "instagram_handle_save_failed", { outcome: instagramOutcome, input: instagram.slice(0, 120) }, {
+          targetUserId: userId, targetResourceType: "profile", targetResourceId: userId, source: "staff-intake",
+        });
+      }
     }
     await admin.from("admin_actions").insert({
       actor_user_id: overrideAdminId ?? actorId, action: "staff_intake", target_user_id: userId,
       details: { course_id, tier_id, account_type, status, ...(overrideAdminId ? { cross_course_override: true } : {}) },
     });
 
-    return json({ status, userId, account_type, ...(overrideAdminId ? { cross_course_override: true } : {}) });
+    return json({
+      status, userId, account_type,
+      ...(instagramOutcome ? { instagram: instagramOutcome } : {}),
+      ...(overrideAdminId ? { cross_course_override: true } : {}),
+    });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : String(e) }, 500);
   }
