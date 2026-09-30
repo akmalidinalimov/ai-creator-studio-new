@@ -7409,7 +7409,8 @@ async function handleCallback(admin: any, cq: any) {
     }
     // PR-1: the course check runs BEFORE start_homework_resubmission. That RPC flags the old grade stale
     // first, so a refusal only inside startHomeworkIntent would still leave a previous-course grade
-    // reopened with no new attempt coming (79 low-score 5.0 grade cards carry this one-tap button).
+    // reopened with no new attempt coming (every grade card below 70% carries this one-tap button, and it
+    // never expires: 91 such 5.0 grades on 2026-09-30).
     if (await refuseOtherCourseTask(admin, chatId, profile.id, locale, "hw:resub_yes", { assignmentId })) return;
     const { error: rpcErr } = await admin.rpc("start_homework_resubmission", { p_submission_id: sub.id });
     if (rpcErr) {
