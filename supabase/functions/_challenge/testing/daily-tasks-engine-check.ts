@@ -944,6 +944,25 @@ async function run() {
     ok("X7 no live duplicates anywhere; user_xp equals the ledger", (await one(db, "select challenge_tasks_health()->'invariants' i")).i.live_duplicates === 0 && await userXpOk(db));
   }
 
+  // ───────────── O. the void tombstone (C8) ─────────────
+  console.log("O. voids stay durable");
+  {
+    // what admin_void_challenge_points does: delete the student's challenge rows, then write the tombstone
+    await db.query("delete from xp_events where user_id = $1 and (ref_key like 'ch\\_%' or reason like 'challenge\\_%')", [ST(9)]);
+    await db.query("select challenge_task_rebuild_user_xp($1)", [ST(9)]);
+    await db.query(`insert into admin_actions (action, target_user_id, details, created_at)
+                    values ('challenge_points_voided', $1, '{"removed":1}', '2026-10-05T12:00:00+05:00')`, [ST(9)]);
+    const hb = await reconcile(db);
+    const v9 = await subOf(db, ST(9), TMON);
+    ok("O1 the reconciler marks work posted before the tombstone 'voided' and never re-pays it", v9.status === "voided" &&
+      v9.points_awarded === 0 && (await xpOf(db, ST(9), `ch_task:${TMON}`)) === undefined, { hb: hb.healed, v9: v9.status });
+    const old = await cap(db, tgm({ from: TG(9), at: "2026-10-05T11:30:00", photo: "v9old", caption: T25 }));
+    ok("O2 a message dated before the tombstone is a final 'voided_sender' row", old.outcome === "voided_sender", old);
+    const nw = await cap(db, tgm({ from: TG(9), at: "2026-10-06T13:00:00", photo: "v9new" }));
+    ok("O3 work after the tombstone earns normally", nw.outcome === "created" && nw.submission?.points === 5, nw);
+    ok("O4 the ledger is consistent", (await one(db, "select challenge_tasks_health()->'invariants'->>'ledger_drift' n")).n === "0" && await userXpOk(db));
+  }
+
   // ───────────── E. edits, legacy swap ─────────────
   console.log("E. edits and the legacy swap");
   {
@@ -1071,6 +1090,22 @@ async function run() {
     const mis = (await one(db, "select challenge_task_check_record($1, $2, $3, $4::jsonb, '[]') r",
       [c26.submission_id, c26.token, c26.version, JSON.stringify({ verdict: { ...iv, handle_seen: "somebody_else", confidence: 0.95 }, link_status: "ok" })])).r;
     ok("Q10 a handle that is not the student's: rejected 'ig_handle_mismatch'", mis.submission?.reason === "ig_handle_mismatch", mis);
+
+    // dHash near-duplicate (a hard reject on instagram tasks only) and a malformed verdict
+    await db.query(`update profiles set instagram_username = 'kid_fortyseven' where id = $1`, [ST(47)]);
+    const nd = await cap(db, tgm({ from: TG(47), at: "2026-10-07T14:00:00", photo: "ig47", caption: "https://www.instagram.com/p/CODEforty47/" }));
+    const c47 = (await one(db, "select challenge_task_check_claim(10) r")).r.items.find((i: Row) => i.submission_id === nd.submission.id);
+    const inv = (await one(db, "select challenge_task_check_record($1, $2, $3, $4::jsonb, '[]') r",
+      [c47.submission_id, c47.token, c47.version, JSON.stringify({ verdict: { ...iv, extra: 1 } })])).r;
+    ok("Q10b a malformed verdict is refused (released for a retry, signalled), never guessed", inv.reason === "invalid_verdict" &&
+      (await subOf(db, ST(47), TWED)).status === "checking" &&
+      await count(db, "select count(*) n from admin_actions where action = 'challenge_task_check_invalid'") === 1, inv);
+    const c47b = (await one(db, "select challenge_task_check_claim(10) r")).r.items.find((i: Row) => i.submission_id === nd.submission.id);
+    const near = (await one(db, "select challenge_task_check_record($1, $2, $3, $4::jsonb, '[]') r",
+      [c47b.submission_id, c47b.token, c47b.version,
+       JSON.stringify({ verdict: { ...iv, handle_seen: "kid_fortyseven" }, link_status: "ok", dhash: ["ffffffffffffff01"] })])).r;
+    ok("Q10c a screenshot within dhash_max_distance of another student's accepted one: rejected 'image_near_duplicate'",
+      near.decision === "rejected" && near.submission?.reason === "image_near_duplicate", near);
 
     // fail-open: a general checking item with no verdict for 60 minutes; instagram never
     const fo = await cap(db, tgm({ from: TG(19), at: "2026-10-08T11:00:00", text: "Bugun o'rganganlarim: prompt yozish va natijani tekshirish usullari" }));
