@@ -14,6 +14,7 @@
 // identically and the guard trigger behaves the same. We NEVER touch xp_events here.
 import { supabase } from "@/integrations/supabase/client";
 import { SB_BASE } from "@/lib/supabaseBase";
+import { reportClientError } from "@/lib/beacon";
 
 export interface QueueMedia {
   kind?: string;
@@ -39,6 +40,11 @@ export interface PendingSubmission {
   is_resubmission: boolean;
   media: QueueMedia[] | null;
   submitted_image_url: string | null;
+  /**
+   * NOT from the RPC: courses.title of the TASK's course (assignment → module → course), attached by
+   * fetchPendingQueue so the card can say "5.0" / "CH6". null when unknown (the card then shows the group alone).
+   */
+  course_title?: string | null;
 }
 
 /**
@@ -51,7 +57,48 @@ export interface PendingSubmission {
 export async function fetchPendingQueue(): Promise<PendingSubmission[]> {
   const { data, error } = await supabase.rpc("teacher_pending_submissions" as any);
   if (error) throw error;
-  return Array.isArray(data) ? (data as unknown as PendingSubmission[]) : [];
+  const rows = Array.isArray(data) ? (data as unknown as PendingSubmission[]) : [];
+  return attachCourseTitles(rows);
+}
+
+/** courses.title from one `homework_assignments.select("id, modules(courses(title))")` row; null if absent. */
+export function courseTitleOfAssignmentRow(row: unknown): string | null {
+  // A to-one embed is an object; tolerate an array too.
+  const one = (r: unknown): Record<string, unknown> | null => {
+    const v = Array.isArray(r) ? r[0] : r;
+    return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+  };
+  const title = one(one(one(row)?.modules)?.courses)?.title;
+  return typeof title === "string" && title.trim() ? title : null;
+}
+
+/**
+ * The RPC returns the group but not the course, and the Challenge 6.0 tasks are copies of the 5.0 tasks, so the
+ * card could not say which course it is (audit TUI-1 / F3). One extra read — homework_assignments → modules →
+ * courses, all readable by a teacher under RLS — attaches the TASK's course. It never fails the queue: on an
+ * error every row keeps course_title null (the chip shows the group alone), and a client beacon records it
+ * (graceful, not silent).
+ */
+async function attachCourseTitles(rows: PendingSubmission[]): Promise<PendingSubmission[]> {
+  const ids = Array.from(new Set(rows.map((r) => r.assignment_id).filter(Boolean)));
+  if (!ids.length) return rows;
+  try {
+    const { data, error } = await supabase
+      .from("homework_assignments")
+      .select("id, modules(courses(title))")
+      .in("id", ids);
+    if (error) throw error;
+    const byId = new Map<string, string | null>();
+    for (const a of (data ?? []) as unknown as { id: string }[]) byId.set(a.id, courseTitleOfAssignmentRow(a));
+    return rows.map((r) => ({ ...r, course_title: byId.get(r.assignment_id) ?? null }));
+  } catch (e) {
+    reportClientError({
+      type: "other",
+      message: `hw_label_course_lookup_failed: ${String((e as { message?: string })?.message ?? e)}`.slice(0, 300),
+      extra: { assignments: ids.length },
+    });
+    return rows.map((r) => ({ ...r, course_title: null }));
+  }
 }
 
 /** One resolved media piece for a submission's grading gallery (from hw-image-url mode A). */
