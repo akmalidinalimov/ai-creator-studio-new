@@ -16,7 +16,10 @@
 //   the post is healed by the reconciler from the recorded items (I4); a Telegram failure closes the claim as failed
 //   and a retry takes it back keeping the FIRST claim time; thread 10 of 5- and 6-GURUH routed by chat; a held
 //   sender / a closed task / a kind the task does not accept post nothing; late work pays half; a classmate's text
-//   reply to a Mini App repost is a silent 'comment' (the ledger rows make it a classmate_bot_msg); every invariant 0.
+//   reply to a Mini App repost is a silent 'comment' (the ledger rows make it a classmate_bot_msg); 10 files + a text
+//   too long for the caption (11 messages: capture_miniapp takes at most 10) is refused before any claim or post, 9
+//   files + that text is captured; a recorded claim the engine refuses as 'bad_messages' is closed as failed (422),
+//   never reposted and never left 'posted' for the heal to loop on; every invariant 0.
 //
 // CI NOTE: named *-check.ts (never *_test.ts) so CI's `deno test supabase/functions/` never collects it. Run it by path.
 // TEST INFRASTRUCTURE ONLY: this directory has no index.ts, so it is never deployed.
@@ -728,6 +731,61 @@ async function runPinned() {
       out[0].fields.chat_id === CH10 && out[0].fields.message_thread_id === 10 && sf?.group_id === G10 && sf?.status === "accepted", { out, sf });
   }
 
+  // ───────────── MX. capture_miniapp takes at most 10 messages per request ─────────────
+  console.log("MX. 10 files + a text too long for a caption = 11 messages: refused before anything is claimed or posted");
+  {
+    const LONG = "Bugungi vazifa bo'yicha batafsil hisobot. ".repeat(24).trim(); // ~1000 chars: never fits a caption with the header
+    const pr = await handlePrepare(deps(), ST(10), TMON, P("Olim"));
+    const lim = pr.body.limits as Row;
+    ok("MX0 prepare says the exact caption room under THIS student's header (the Mini App caps files by it); the text is past it",
+      lim?.caption_text_max === 1024 - "📱 Olim — ilova orqali\n📅 5-oktabr · Vazifa 2026-10-05".length - 2 && lim?.max_messages === 10 &&
+      LONG.length > Number(lim?.caption_text_max), lim);
+    const n = posts.length;
+    const rx = await handleSubmit(deps(), ST(10), input(TMON, "req_mx_000001", LONG, Array.from({ length: 10 }, photo)), P("Olim"));
+    ok("MX1 10 photos + a 1000-character text: 400 too_many_files_with_text {max: 9}; nothing posted, claimed or captured",
+      rx.status === 400 && rx.body.error === "too_many_files_with_text" && rx.body.max === 9 && posts.length === n &&
+      await count(db, "select count(*) n from challenge_task_submit_claims where user_id = $1", [ST(10)]) === 0 &&
+      (await msgRows(ST(10))).length === 0, { rx, posted: posts.length - n });
+    const n2 = posts.length;
+    const rx2 = await handleSubmit(deps(), ST(10), input(TMON, "req_mx_000002", LONG, Array.from({ length: 9 }, photo)), P("Olim"));
+    const out = posts.slice(n2);
+    const sx = await liveOf(db, ST(10), TMON);
+    const cx = await claimOf(ST(10), "req_mx_000002");
+    ok("MX2 9 photos + the same text: its own text message, then an album of 9 = 10 messages, captured → accepted +5",
+      rx2.status === 200 && out.map((p) => p.kind).join(",") === "text,album" && out[1]?.items?.length === 9 &&
+      cx?.state === "captured" && cx?.items?.length === 10 && (await msgRows(ST(10))).length === 10 && sx?.status === "accepted" &&
+      (await xpOf(db, ST(10), `ch_task:${TMON}`))?.amount === 5, { body: rx2.body, kinds: out.map((p) => p.kind), cx: cx?.state, sx });
+    const n3 = posts.length;
+    const rx3 = await handleSubmit(deps(), ST(11), input(TMON, "req_mx_000003", T25, Array.from({ length: 10 }, photo)), P("Qisqa"));
+    ok("MX3 10 photos + a text that fits the caption: one album of 10, captured → accepted",
+      rx3.status === 200 && posts.length === n3 + 1 && posts[n3].kind === "album" && posts[n3].items?.length === 10 &&
+      (await claimOf(ST(11), "req_mx_000003"))?.items?.length === 10 && (await liveOf(db, ST(11), TMON))?.status === "accepted", rx3.body);
+  }
+
+  // ───────────── MY. a claim the engine refuses as 'bad_messages' is closed, never healed forever ─────────────
+  console.log("MY. a recorded claim of 11 items (the engine refuses it deterministically) → closed as failed, never reposted");
+  {
+    const views = Array.from({ length: 11 }, (_, k) => ({
+      message_id: 90_000 + k, date: Math.floor(Date.now() / 1000), chat: { id: CH1, type: "supergroup" }, message_thread_id: D1,
+      is_topic_message: true, photo: [{ file_id: "s", file_unique_id: `my_${k}_s` }, { file_id: "L", file_unique_id: `my_${k}` }] }));
+    await db.query("insert into challenge_task_submit_claims (user_id, request_id, task_id, state, items) values ($1, $2, $3, 'posted', $4::jsonb)",
+      [ST(12), "req_my_000001", TMON, JSON.stringify(views)]);
+    const n = posts.length;
+    const ry = await handleSubmit(deps(), ST(12), input(TMON, "req_my_000001", T25, [photo()]), P("Yangi"));
+    const cy = await claimOf(ST(12), "req_my_000001");
+    ok("MY1 422 capture_rejected (not 202 pending); the claim 'failed' with 'bad_messages'; nothing reposted; DB-visible",
+      ry.status === 422 && ry.body.error === "capture_rejected" && ry.body.reason === "bad_messages" && posts.length === n &&
+      cy?.state === "failed" && cy?.error === "bad_messages" && Array.isArray(cy?.items) && cy.items.length === 11 &&
+      await count(db, "select count(*) n from admin_actions where action = 'challenge_task_miniapp_capture_rejected'") === 1, { ry, cy });
+    const ry2 = await handleSubmit(deps(), ST(12), input(TMON, "req_my_000001", T25, [photo()]), P("Yangi"));
+    ok("MY2 a retry of the same request: 422 again, never taken back and reposted", ry2.status === 422 &&
+      ry2.body.error === "capture_rejected" && posts.length === n && (await claimOf(ST(12), "req_my_000001"))?.state === "failed", ry2);
+    setClock("2026-10-05T05:20:00Z");
+    await reconcile(db);
+    ok("MY3 the reconciler's Mini App heal no longer sees it (only 'posted' claims are healed)",
+      (await claimOf(ST(12), "req_my_000001"))?.state === "failed" && !(await liveOf(db, ST(12), TMON)));
+  }
+
   // ───────────── MG. gates: held sender, staff, kinds ─────────────
   console.log("MG. held sender / staff / a kind the task does not take → nothing posted");
   {
@@ -784,12 +842,12 @@ async function runPinned() {
     const inv = (await one(db, "select challenge_tasks_health()->'invariants' i")).i as Row;
     ok("MZ1 every health invariant is zero; user_xp equals the ledger", await userXpOk(db) && Object.values(inv).every((v) => Number(v) === 0), inv);
     const mini = (await one(db, "select challenge_tasks_health()->'miniapp' m")).m as Row;
-    ok("MZ2 health.miniapp: nothing stuck in 'posted' (MD's was healed, ME's was retried)",
+    ok("MZ2 health.miniapp: nothing stuck in 'posted' (MD's was healed, ME's was retried, MY's was closed)",
       Number(mini?.posted_stuck) === 0 && await count(db, "select count(*) n from challenge_task_submit_claims where state = 'posted'") === 0, mini);
     ok("MZ3 every Mini App ledger row carries a submission (no orphan reposts)",
       await count(db, "select count(*) n from challenge_task_messages where source = 'miniapp' and submission_id is null") === 0);
     ok("MZ4 the signals written are exactly the expected ones", JSON.stringify([...new Set(signals)].sort()) ===
-      JSON.stringify(["challenge_task_miniapp_capture_failed", "challenge_task_miniapp_submit_refused"]), signals);
+      JSON.stringify(["challenge_task_miniapp_capture_failed", "challenge_task_miniapp_capture_rejected", "challenge_task_miniapp_submit_refused"]), signals);
   }
   await db.close();
 

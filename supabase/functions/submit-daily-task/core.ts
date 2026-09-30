@@ -3,7 +3,8 @@
 // Everything that decides lives in the SQL engine (PR-3, spec I1): challenge_task_prepare_miniapp says whether this
 // student may submit for this task right now, challenge_task_submit_claim takes the request claim (its time IS the
 // submission time, G28), challenge_task_capture_miniapp attributes / evaluates / settles. This module only:
-//   1. validates the upload (sizes, counts, the task's accepted kinds) BEFORE anything is posted;
+//   1. validates the upload (sizes, counts, the task's accepted kinds, and that the posting plan is at most the 10
+//      messages capture_miniapp takes) BEFORE anything is claimed or posted;
 //   2. reposts the files + text into the student's OWN group's «Kunlik vazifalar» topic AS THE BOT, with a plain
 //      (no parse_mode) caption that names the student — Telegram has no "post as user" API for a Mini App;
 //   3. records what it posted (challenge_task_submit_record → claim state 'posted'), so the reconciler's Mini App heal
@@ -25,7 +26,7 @@
 //   'claimed'       → another request is posting (409 in_progress); older than CLAIM_STALE_MS = it died → take over
 //   'failed'        → nothing was posted (a Telegram error): a retry takes the claim back and posts, KEEPING the
 //                     original claim time (so a 23:59 submission that hit a 429 stays on time); a capture refusal
-//                     ('not_allowed') is final
+//                     ('not_allowed') is final, and so is 'bad_messages' (422 capture_rejected, never reposted)
 //   'abandoned'     → the reconciler gave up on it: 409 expired (the client starts a new request)
 // Both take-overs are compare-and-set on (state, updated_at), so two retries cannot both post.
 //
@@ -75,6 +76,14 @@ export const MAX_FILE_BYTES = 50 * 1024 * 1024; // sendVideo / sendDocument by a
 export const MAX_TOTAL_BYTES = 150 * 1024 * 1024;
 export const MAX_TEXT = 3500; // + the header stays under sendMessage's 4096
 export const CAPTION_MAX = 1024; // Telegram's caption limit (UTF-16 units = String.length)
+// challenge_task_capture_miniapp refuses more than 10 messages ('bad_messages') BEFORE it touches the claim, and the
+// reconciler's heal re-sends the same recorded items, so an 11-message request could never be captured. 10 files plus
+// a text too long for the caption (its own message) would be 11: handleSubmit refuses that plan before any claim.
+export const MAX_MESSAGES = 10;
+// A student text this long fits the caption under ANY header buildHeader can produce (the worst case is 255
+// characters — a 64-character name, a 32-character @username, the longest month, a 120-character title — leaving 767;
+// core.test.ts proves it). prepare answers it when it cannot say the exact room (limits.caption_text_max).
+export const CAPTION_TEXT_SAFE = 760;
 export const CLAIM_STALE_MS = 7 * 60_000; // longer than any edge wall clock: a 'claimed' row this old is dead
 export const RATE_LIMIT_WAIT_MAX_SEC = 20; // a 429 with a short retry_after is waited out inside the request
 // Every submission is a post BY THE BOT into a shared group topic, and Telegram allows a bot ~20 messages a minute in
@@ -210,6 +219,19 @@ export function planParts(files: InFile[], text: string, header: string): Part[]
   return parts;
 }
 
+/** The longest student text that still rides the first caption under this header (planParts: header + "\n\n" + text). */
+export function captionTextMax(header: string): number {
+  return Math.max(0, CAPTION_MAX - header.length - 2);
+}
+
+/**
+ * How many messages a plan puts in the topic: one per text part, one per file. An album is one message per item, and
+ * every fallback in postParts (album → single items, photo / video → document) replaces a message, never adds one.
+ */
+export function plannedMessages(parts: Part[]): number {
+  return parts.reduce((n, p) => n + (p.kind === "text" ? 1 : p.files.length), 0);
+}
+
 /** The Message keys that make it a media message (what challenge_task_classify reads a kind from). */
 const MEDIA_KEYS = ["photo", "video", "document", "audio", "voice", "video_note", "animation", "sticker"] as const;
 /** The keys of a Bot API Message the engine reads (challenge_task_classify / capture_miniapp). Everything else is dropped. */
@@ -339,8 +361,10 @@ const TEXT_OK = new Set(["closed", "done", "attempts_exhausted"]);
 /**
  * mode "prepare": may this student submit (for this task) right now, plus the task post text when it is theirs to
  * see. Read-only; allowed while impersonating. taskId null = the open-task list only.
+ * `profile` (the student's, as handleSubmit gets it) makes limits.caption_text_max exact: the room the student's text
+ * has in the caption under THEIR header — longer, it is its own message and leaves room for MAX_MESSAGES - 1 files.
  */
-export async function handlePrepare(deps: Deps, userId: string, taskId: number | null): Promise<Reply> {
+export async function handlePrepare(deps: Deps, userId: string, taskId: number | null, profile?: Profile | null): Promise<Reply> {
   const { data: prep, error } = await deps.admin.rpc("challenge_task_prepare_miniapp", { _user: userId, _task_id: taskId });
   if (error) {
     await deps.healthOnce("challenge_task_miniapp_rpc_failed", `prepare:${rpcMissing(error) ? "missing" : errCode(error)}`,
@@ -357,6 +381,9 @@ export async function handlePrepare(deps: Deps, userId: string, taskId: number |
       text = card.text;
     }
   }
+  const captionRoom = taskId !== null && p.task && profile !== undefined
+    ? captionTextMax(buildHeader(profile, { id: taskId, date: p.task.date ?? null, title: p.task.title ?? null }))
+    : CAPTION_TEXT_SAFE;
   return {
     status: 200,
     body: {
@@ -369,12 +396,16 @@ export async function handlePrepare(deps: Deps, userId: string, taskId: number |
       open_tasks: Array.isArray(p.open_tasks) ? p.open_tasks : [],
       topic_url: typeof p.topic?.url === "string" ? p.topic.url : null,
       text,
-      limits: { max_items: MAX_ITEMS, max_photo_bytes: MAX_PHOTO_BYTES, max_file_bytes: MAX_FILE_BYTES, max_text: MAX_TEXT },
+      limits: { max_items: MAX_ITEMS, max_photo_bytes: MAX_PHOTO_BYTES, max_file_bytes: MAX_FILE_BYTES, max_text: MAX_TEXT,
+                max_messages: MAX_MESSAGES, caption_text_max: captionRoom },
     },
   };
 }
 
 type Claim = { state: string; items: Any; claimed_at: string; updated_at: string; error: string | null; task_id: number };
+
+/** The claim error a capture the engine refused as 'bad_messages' closes with: final, like the engine's 'not_allowed'. */
+const CAPTURE_REJECTED = "bad_messages";
 
 async function readClaim(deps: Deps, userId: string, requestId: string): Promise<Claim | null> {
   const { data, error } = await deps.admin.from("challenge_task_submit_claims")
@@ -416,6 +447,21 @@ async function capture(deps: Deps, userId: string, taskId: number, requestId: st
   const { data, error } = await deps.admin.rpc("challenge_task_capture_miniapp", {
     _user: userId, _task_id: taskId, _request_id: requestId, _claimed_at: claimedAt, _messages: views,
   });
+  if (!error && data?.status === "error" && data?.reason === "bad_messages") {
+    // DETERMINISTIC: the engine refuses these items before it touches the claim, and neither a retry nor the
+    // reconciler's heal (it re-sends the same recorded items) can ever get past it. So this is not "pending": the
+    // claim is closed as failed with the reason (never taken back and reposted — handleSubmit treats it as final), and
+    // it is loud: the work is in the topic but uncounted, an admin's case. handleSubmit's plan cap makes it unreachable
+    // from a normal submission; this keeps any other way there from hiding behind a 202.
+    const { error: rErr } = await deps.admin.rpc("challenge_task_submit_record", {
+      _user: userId, _request_id: requestId, _messages: null, _error: CAPTURE_REJECTED,
+    });
+    await deps.health("challenge_task_miniapp_capture_rejected", {
+      request_id: requestId, task_id: taskId, reason: "bad_messages", items: Array.isArray(views) ? views.length : null,
+      claim_closed: !rErr, code: errCode(rErr),
+    }, userId);
+    return { status: 422, body: { error: "capture_rejected", reason: "bad_messages", ...extra } };
+  }
   if (error || !data || data.status === "error") {
     // The claim is 'posted' with its items: the reconciler's Mini App heal captures it within minutes (I4).
     await deps.health("challenge_task_miniapp_capture_failed", {
@@ -459,6 +505,10 @@ export async function handleSubmit(deps: Deps, userId: string, input: SubmitInpu
   if (existing && (existing.state === "posted" || existing.state === "captured") && Array.isArray(existing.items) && existing.items.length > 0) {
     return await capture(deps, userId, input.taskId, input.requestId, existing.claimed_at, existing.items, { replayed: true, topic_url: topicUrl });
   }
+  if (existing && existing.state === "failed" && existing.error === CAPTURE_REJECTED) {
+    // its work is in the topic and the engine refused it for good (see capture()): the same answer, never a repost
+    return { status: 422, body: { error: "capture_rejected", reason: CAPTURE_REJECTED, replayed: true, topic_url: topicUrl } };
+  }
 
   // 3. the engine said no: nothing is claimed, nothing is posted
   if (p.ok !== true) {
@@ -475,6 +525,20 @@ export async function handleSubmit(deps: Deps, userId: string, input: SubmitInpu
     await deps.healthOnce("challenge_task_miniapp_submit_refused", `${userId}:kind_not_accepted:${input.taskId}`,
       { reason: "kind_not_accepted", task_id: input.taskId, kind: offKind?.kind ?? "text", mime: offKind?.mime ?? null }, userId);
     return { status: 400, body: { error: "kind_not_accepted", accepts } };
+  }
+
+  // 4b. the plan fits the engine: at most MAX_MESSAGES messages per request (capture_miniapp's 'bad_messages' is final).
+  //     Only 10 files + a text too long for the caption (its own message first) exceed it: refused before any claim.
+  const header = buildHeader(profile, { id: input.taskId, date: p.task?.date ?? null, title: p.task?.title ?? null });
+  const parts = planParts(input.files, input.text, header);
+  const planned = plannedMessages(parts);
+  if (planned > MAX_MESSAGES) {
+    const max = Math.max(0, input.files.length - (planned - MAX_MESSAGES));
+    const room = captionTextMax(header);
+    await deps.healthOnce("challenge_task_miniapp_submit_refused", `${userId}:too_many_files_with_text:${input.taskId}`,
+      { reason: "too_many_files_with_text", task_id: input.taskId, files: input.files.length, text_chars: input.text.length,
+        planned, max, caption_text_max: room }, userId);
+    return { status: 400, body: { error: "too_many_files_with_text", max, caption_text_max: room } };
   }
 
   // 5. the student's OWN group's daily topic (challenge_task_topics() by their group: chat AND thread)
@@ -522,9 +586,7 @@ export async function handleSubmit(deps: Deps, userId: string, input: SubmitInpu
     claimedAt = c.claimed_at;
   }
 
-  // 7. post
-  const header = buildHeader(profile, { id: input.taskId, date: p.task?.date ?? null, title: p.task?.title ?? null });
-  const parts = planParts(input.files, input.text, header);
+  // 7. post (the plan checked in 4b)
   const run = await postParts(deps, chatId, threadId, parts, input.text);
 
   if (run.posted.length === 0) {

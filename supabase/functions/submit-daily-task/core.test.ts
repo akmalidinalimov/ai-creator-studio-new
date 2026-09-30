@@ -4,8 +4,8 @@
 // Run: deno test supabase/functions/submit-daily-task/core.test.ts
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
-  acceptsFile, buildHeader, CAPTION_MAX, captureView, type Deps, fileKindOf, handlePrepare, handleSubmit, type InFile,
-  MAX_PHOTO_BYTES, planParts, postParts, type SendResult, validateInput,
+  acceptsFile, buildHeader, CAPTION_MAX, CAPTION_TEXT_SAFE, captionTextMax, captureView, type Deps, fileKindOf, handlePrepare,
+  handleSubmit, type InFile, MAX_MESSAGES, MAX_PHOTO_BYTES, plannedMessages, planParts, postParts, type SendResult, validateInput,
 } from "./core.ts";
 import type { MediaGroupItem, SendResultOutcome } from "../_shared/telegram-send.ts";
 
@@ -195,6 +195,24 @@ Deno.test("planParts: the text rides the first caption when it fits, else it is 
   assertEquals(planParts(one, "", H), [{ kind: "media", files: one, caption: H, carriesText: false }]);
 });
 
+Deno.test("plannedMessages / captionTextMax: a text past the caption room is one more message; the safe room fits any header", () => {
+  const H = buildHeader(PROFILE, { id: 7, date: "2026-10-05", title: "Birinchi vazifa" });
+  const room = captionTextMax(H);
+  assertEquals(room, CAPTION_MAX - H.length - 2);
+  const ten = Array.from({ length: 10 }, () => file("photo"));
+  assertEquals(plannedMessages(planParts(ten, "x".repeat(room), H)), 10);       // rides the caption
+  assertEquals(plannedMessages(planParts(ten, "x".repeat(room + 1), H)), 11);   // its own message: past capture_miniapp's 10
+  assertEquals(plannedMessages(planParts(ten.slice(0, 9), "x".repeat(room + 1), H)), MAX_MESSAGES);
+  assertEquals(plannedMessages(planParts([file("photo"), file("document")], "t", H)), 2); // two albums, still one message per file
+  assertEquals(plannedMessages(planParts([], "only text", H)), 1);
+  // the Mini App's fallback room fits under the LONGEST header buildHeader can make (every month, clipped name / title)
+  for (let mo = 1; mo <= 12; mo++) {
+    const worst = buildHeader({ name: "N".repeat(80), last_name: "L".repeat(80), telegram_username: "u".repeat(32) },
+      { id: 1, date: `2026-${String(mo).padStart(2, "0")}-30`, title: "T".repeat(300) });
+    assert(CAPTION_TEXT_SAFE <= captionTextMax(worst), `month ${mo}: header ${worst.length}`);
+  }
+});
+
 Deno.test("captureView: the engine sees the STUDENT's text only (our header removed), media and ids kept", () => {
   const posted = photoMsg("📱 Ali Valiyev — ilova orqali\n📅 5-oktabr · X\n\nMatn", "G9");
   const v = captureView(posted, "Matn");
@@ -371,6 +389,61 @@ Deno.test("handleSubmit: a capture error after the post is 202 pending (the reco
   assertEquals(e.rpcs.find((x) => x.name === "challenge_task_submit_record")!.args._error, null);
 });
 
+Deno.test("handleSubmit: 10 files + a text too long for the caption (11 messages) is refused before any claim or post", async () => {
+  const long = "Batafsil hisobot. ".repeat(56); // ~1000 characters: past the caption room under the header
+  const e = fakeEngine();
+  const r = recorder();
+  const rep = await handleSubmit(depsOf(e, r.poster), U, input({ text: long, files: Array.from({ length: 10 }, () => file("photo")) }), PROFILE);
+  assertEquals(rep.status, 400);
+  assertEquals(rep.body.error, "too_many_files_with_text");
+  assertEquals(rep.body.max, 9);
+  assertEquals(rep.body.caption_text_max, captionTextMax(buildHeader(PROFILE, { id: 7, date: "2026-10-05", title: "Birinchi vazifa" })));
+  assertEquals(r.calls.length, 0);
+  assertEquals(e.rpcs.map((x) => x.name), ["challenge_task_prepare_miniapp"]); // no claim, no record, no capture
+  assertEquals(e.health.map((h) => h.action), ["challenge_task_miniapp_submit_refused"]);
+  assertEquals(e.health[0].details.reason, "too_many_files_with_text");
+
+  // 9 files + the same text: the text message first, then an album of 9 = 10 messages, all recorded and captured
+  const e2 = fakeEngine();
+  const r2 = recorder();
+  const ok = await handleSubmit(depsOf(e2, r2.poster), U, input({ text: long, files: Array.from({ length: 9 }, () => file("photo")) }), PROFILE);
+  assertEquals(ok.status, 200);
+  assertEquals(r2.calls.map((c) => c.kind), ["text", "album"]);
+  assertEquals(r2.calls[1].items!.length, 9);
+  const views = e2.rpcs.find((x) => x.name === "challenge_task_capture_miniapp")!.args._messages;
+  assertEquals(views.length, MAX_MESSAGES);
+  assertEquals(views[0].text, long); // the student's text rides the text message; the album carries the header only
+  assertEquals(views.slice(1).some((v: Any) => "caption" in v), false);
+});
+
+Deno.test("handleSubmit: capture refused as 'bad_messages' is final — 422, the claim closed as failed, loud, never reposted", async () => {
+  const e = fakeEngine({ capture: () => ({ data: { status: "error", outcome: "error", reason: "bad_messages" }, error: null }) });
+  const r = recorder();
+  const rep = await handleSubmit(depsOf(e, r.poster), U, input(), PROFILE);
+  assertEquals(rep.status, 422);
+  assertEquals(rep.body.error, "capture_rejected");
+  assertEquals(rep.body.reason, "bad_messages");
+  const recs = e.rpcs.filter((x) => x.name === "challenge_task_submit_record").map((x) => x.args._error);
+  assertEquals(recs, [null, "bad_messages"]); // recorded as posted, then closed (so the heal never loops on it)
+  assertEquals(e.health.map((h) => h.action), ["challenge_task_miniapp_capture_rejected"]);
+
+  // a retry of that request: the same answer, nothing taken back, posted or captured
+  const again = fakeEngine({ claimRow: { state: "failed", items: [{ message_id: 1 }], claimed_at: "a", updated_at: "b", error: "bad_messages", task_id: 7 } });
+  const r2 = recorder();
+  const rep2 = await handleSubmit(depsOf(again, r2.poster), U, input(), PROFILE);
+  assertEquals(rep2.status, 422);
+  assertEquals(rep2.body.error, "capture_rejected");
+  assertEquals(r2.calls.length, 0);
+  assertEquals(again.updates.length, 0);
+  assertEquals(again.rpcs.map((x) => x.name), ["challenge_task_prepare_miniapp"]);
+
+  // any OTHER capture error stays transient: 202 pending, the claim left 'posted' for the reconciler's heal
+  const other = fakeEngine({ capture: () => ({ data: { status: "error", reason: "something_else" }, error: null }) });
+  const rep3 = await handleSubmit(depsOf(other, recorder().poster), U, input(), PROFILE);
+  assertEquals(rep3.status, 202);
+  assertEquals(other.rpcs.filter((x) => x.name === "challenge_task_submit_record").length, 1);
+});
+
 Deno.test("handleSubmit: a burst of NEW requests is throttled before any claim or post (the bot's group budget)", async () => {
   const e = fakeEngine({ recent: 6 });
   const r = recorder();
@@ -411,6 +484,13 @@ Deno.test("handlePrepare: the task text only for the student's own posted task; 
   }
   const done = fakeEngine({ prep: { ok: false, reason: "done", submission_id: 3 } });
   assertEquals((await handlePrepare(depsOf(done, recorder().poster), U, 7)).body.text, "📅 <b>1-kun vazifasi</b>");
+
+  // the caption room: exact under THIS student's header when the profile is given, the safe room otherwise
+  assertEquals((await handlePrepare(depsOf(fakeEngine(), recorder().poster), U, 7, PROFILE)).body.limits,
+    { max_items: 10, max_photo_bytes: MAX_PHOTO_BYTES, max_file_bytes: 50 * 1024 * 1024, max_text: 3500, max_messages: MAX_MESSAGES,
+      caption_text_max: captionTextMax(buildHeader(PROFILE, { id: 7, date: "2026-10-05", title: "Birinchi vazifa" })) });
+  assertEquals(((await handlePrepare(depsOf(fakeEngine(), recorder().poster), U, 7)).body.limits as Any)?.caption_text_max, CAPTION_TEXT_SAFE);
+  assertEquals(((await handlePrepare(depsOf(fakeEngine(), recorder().poster), U, null, null)).body.limits as Any)?.caption_text_max, CAPTION_TEXT_SAFE);
 
   const broken = fakeEngine({ prepErr: { code: "PGRST202", message: "Could not find the function" } });
   const rep = await handlePrepare(depsOf(broken, recorder().poster), U, null);

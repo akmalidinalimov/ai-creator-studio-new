@@ -3,7 +3,8 @@
 //
 //   POST application/json { mode: "prepare", task_id?: number }
 //        → { ok, reason, detail, task, submission, open_tasks, topic_url, text, limits }   (read-only)
-//   POST multipart/form-data  task_id, request_id, text?, files[] (0..10)
+//   POST multipart/form-data  task_id, request_id, text?, files[] (0..10; 0..9 with a text too long for the caption —
+//        at most 10 posted messages per request, limits.caption_text_max says the room)
 //        → 200 { ok, result: <challenge_task_payload>, posted, failed } | 202 { ok, pending } | 4xx/5xx { error, … }
 //
 // Auth: the caller's Supabase session JWT (the Mini App gets it from tg-miniapp-auth). No config.toml entry, so the
@@ -62,6 +63,15 @@ Deno.serve(async (req) => {
     now: () => Date.now(),
   };
 
+  // The names the caption header shows (a read failure falls back to a neutral name — the same in prepare and submit,
+  // so prepare's limits.caption_text_max matches the header submit will build).
+  const readProfile = async (): Promise<Profile | null> => {
+    const { data: prof, error: profErr } = await admin.from("profiles")
+      .select("name, last_name, telegram_username").eq("id", userId).maybeSingle();
+    if (profErr) console.error("submit-daily-task: profile read failed (header falls back to a neutral name)", profErr.message);
+    return (prof ?? null) as Profile | null;
+  };
+
   const contentType = (req.headers.get("content-type") || "").toLowerCase();
   try {
     if (!contentType.includes("multipart/form-data")) {
@@ -70,7 +80,7 @@ Deno.serve(async (req) => {
       const tid = Number(body.task_id);
       const taskId = body.task_id == null ? null : (Number.isSafeInteger(tid) && tid > 0 ? tid : NaN);
       if (Number.isNaN(taskId)) return json({ error: "bad_task_id" }, 400);
-      const r = await handlePrepare(deps, userId, taskId as number | null);
+      const r = await handlePrepare(deps, userId, taskId as number | null, taskId === null ? undefined : await readProfile());
       return json(r.body, r.status);
     }
 
@@ -82,10 +92,7 @@ Deno.serve(async (req) => {
     try { form = await req.formData(); } catch { return json({ error: "bad_form" }, 400); }
     const input = parseForm(form);
 
-    const { data: prof, error: profErr } = await admin.from("profiles")
-      .select("name, last_name, telegram_username").eq("id", userId).maybeSingle();
-    if (profErr) console.error("submit-daily-task: profile read failed (header falls back to a neutral name)", profErr.message);
-    const r = await handleSubmit(deps, userId, input, (prof ?? null) as Profile | null);
+    const r = await handleSubmit(deps, userId, input, await readProfile());
     return json(r.body, r.status);
   } catch (e) {
     // Never a silent 500: the class of failure is DB-visible (no request content, no secrets).
