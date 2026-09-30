@@ -93,6 +93,9 @@ export default function TeacherGrade() {
   const voiceRecordedThisRoundRef = useRef(false);
 
   const current = remaining[0] ?? null;
+  // The last RENDERED queue, read synchronously by advance() after an await (see advance).
+  const remainingRef = useRef<PendingSubmission[]>(remaining);
+  remainingRef.current = remaining;
   const total = doneCount + remaining.length;
   const position = remaining.length ? doneCount + 1 : total;
   const pct = total > 0 ? (doneCount / total) * 100 : 100;
@@ -166,11 +169,20 @@ export default function TeacherGrade() {
     setShowFeedback(fb.trim() !== "" || voice != null);
   }, []);
 
-  const advance = useCallback(() => {
-    setRemaining((prev) => prev.slice(1));
-    setDoneCount((c) => c + 1);
-    resetInputs();
-  }, [resetInputs]);
+  // Remove the item that was just handled BY ID — never "whatever is at the head now". The grade/redo write is
+  // awaited, and while it is in flight the teacher can tap "Ortga" on the PREVIOUS card's toast, which puts that
+  // card back at the head. Dropping the head would then remove the re-opened card (her correction silently gone)
+  // and leave the just-graded one on screen with blank inputs (audit TUI-6). The inputs are cleared only when the
+  // handled card really was the one on screen, so a re-opened card keeps the score/feedback Ortga restored into it.
+  const advance = useCallback(
+    (handledId: string) => {
+      const wasOnScreen = remainingRef.current[0]?.submission_id === handledId;
+      setRemaining((prev) => prev.filter((p) => p.submission_id !== handledId));
+      setDoneCount((c) => c + 1);
+      if (wasOnScreen) resetInputs();
+    },
+    [resetInputs],
+  );
 
   // Initial load / retry.
   useEffect(() => {
@@ -274,7 +286,7 @@ export default function TeacherGrade() {
       if (res.status === "already_graded") {
         // Member-forgiveness: a co-teacher grabbed it between load and submit. Don't clobber; skip it.
         processed.current.add(item.submission_id);
-        advance();
+        advance(item.submission_id);
         invalidateBadge();
         void reconcile();
         toast.message("Boshqa ustoz baholadi", { description: `${plainName(item)} — o'tkazib yuborildi` });
@@ -294,7 +306,7 @@ export default function TeacherGrade() {
 
       // Advance immediately, offer a 6s undo (auto-advance makes a fat-finger unrecoverable).
       processed.current.add(item.submission_id);
-      advance();
+      advance(item.submission_id);
       invalidateBadge();
       toast.success(`${plainName(item)} — ${value}/${item.max_score} ✓`, {
         duration: 6000,
@@ -329,7 +341,7 @@ export default function TeacherGrade() {
   const handleSkip = () => {
     if (!current || submitting || redoing) return;
     processed.current.add(current.submission_id);
-    advance();
+    advance(current.submission_id);
   };
 
   const handleRedo = async () => {
@@ -343,7 +355,7 @@ export default function TeacherGrade() {
         return;
       }
       processed.current.add(item.submission_id);
-      advance();
+      advance(item.submission_id);
       invalidateBadge();
       void reconcile();
       toast.success(`${plainName(item)} — talabaga qaytarildi 🔓`);
