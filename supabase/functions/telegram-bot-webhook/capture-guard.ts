@@ -180,12 +180,15 @@ export async function otherCourseTask(
 }
 
 /** Where a previous-course task was refused. */
-export type OtherCoursePath = "hw:mod" | "hw:start" | "hw:resub_ask" | "hw:resub_yes" | "intent" | "picker";
+// The picker's own refusal (a held post whose student moved course) is a dropped POST, so it is counted in the
+// capture family instead: hw_capture_skipped 'pending_other_course' (capture-signals.ts).
+// thm:mod is the TEACHER's module drill-down (userId = the teacher; currentCourseIds = the active group's course).
+export type OtherCoursePath = "hw:mod" | "hw:start" | "hw:resub_ask" | "hw:resub_yes" | "intent" | "thm:mod";
 
 /**
- * DB-visible row for a refused previous-course task: admin_actions 'stale_course_button_refused', one per
- * (path, student, task course, Tashkent day). A counter, never alarmed: a moved student tapping an old
- * button is expected member behaviour.
+ * DB-visible row for a refused other-course task: admin_actions 'stale_course_button_refused', one per
+ * (path, user, task course, Tashkent day); target_user_id = the student (the teacher for thm:mod). A counter,
+ * never alarmed: a moved student tapping an old button is expected member behaviour.
  */
 export async function recordOtherCourseRefused(
   admin: Db,
