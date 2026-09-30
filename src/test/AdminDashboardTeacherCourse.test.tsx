@@ -10,6 +10,7 @@ type Q = { table: string; eq: Record<string, unknown>; inn: Record<string, unkno
 
 const h = vi.hoisted(() => ({
   dashCourseArgs: [] as unknown[],
+  g6Empty: false,
   auth: { user: { id: "t1" }, role: "teacher" },
 }));
 
@@ -62,7 +63,8 @@ vi.mock("@/integrations/supabase/client", () => {
       case "get_visible_student_ids":
         return [{ id: "u5" }, { id: "u6" }, { id: "u7" }];
       case "staff_group_members":
-        return args?._group_id === "g6" ? [{ id: "u6" }] : args?._group_id === "g7" ? [{ id: "u7" }] : [{ id: "u5" }];
+        if (args?._group_id === "g6") return h.g6Empty ? [] : [{ id: "u6" }];
+        return args?._group_id === "g7" ? [{ id: "u7" }] : [{ id: "u5" }];
       case "staff_recent_auth_events":
         return [];
       case "staff_recent_lesson_progress":
@@ -107,6 +109,7 @@ const flush = () => act(async () => { for (let i = 0; i < 40; i++) await Promise
 beforeEach(async () => {
   await i18n.changeLanguage("en");
   h.dashCourseArgs = [];
+  h.g6Empty = false;
 });
 afterEach(() => cleanup());
 
@@ -126,6 +129,14 @@ describe("AdminDashboard as the teacher dashboard (TUI-4)", () => {
     // Charos is in the teacher's OTHER Challenge group; Ali is her 5.0 student. Neither belongs on g6's page.
     expect(screen.queryByText("Charos Aliyeva")).not.toBeInTheDocument();
     expect(screen.queryByText("Ali Valiyev")).not.toBeInTheDocument();
+  });
+
+  it("an empty group (a new Challenge group) says it has no students yet — not 'you have no group'", async () => {
+    h.g6Empty = true;
+    render(<MemoryRouter initialEntries={["/admin/dashboard?group=g6"]}><AdminDashboard /></MemoryRouter>);
+    await flush();
+    expect(screen.getByText(/Bu guruhda hali o'quvchi yo'q/)).toBeInTheDocument();
+    expect(screen.queryByText(/Sizga hali biror guruh tayinlanmagan/)).not.toBeInTheDocument();
   });
 
   it("the 'My groups' cards name each group's course", async () => {

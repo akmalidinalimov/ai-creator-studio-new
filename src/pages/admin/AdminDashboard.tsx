@@ -668,8 +668,12 @@ export default function AdminDashboard() {
         </div>
 
         {noGroups && (
+          // "No students in scope". A teacher WITH no groups never reaches this view (the no-groups screen above
+          // handles it), so on a group this means the group is still empty — e.g. a new Challenge group.
           <Card className="p-6 border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-400">
-            Sizga hali biror guruh tayinlanmagan. Adminga murojaat qiling.
+            {isTeacher && groupParam
+              ? "Bu guruhda hali o'quvchi yo'q. O'quvchilar qo'shilgach, statistika shu yerda ko'rinadi."
+              : "Sizga hali biror guruh tayinlanmagan. Adminga murojaat qiling."}
           </Card>
         )}
         {!isTeacher && <AnalyticsTiles />}
