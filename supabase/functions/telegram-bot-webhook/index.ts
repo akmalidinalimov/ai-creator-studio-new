@@ -3777,19 +3777,25 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
     return;
   }
   const aIds = Array.from(new Set(list.map((s) => s.assignment_id)));
-  const { data: assigns } = await admin.from("homework_assignments").select("id, title, max_score, task_number, sap_number, parent_id, module_id, modules(position, title, courses(title))").in("id", aIds);
+  const { data: assigns } = await admin.from("homework_assignments").select("id, title, max_score, task_number, sap_number, parent_id, module_id, modules(position, title)").in("id", aIds);
   const aMap = new Map(((assigns || []) as any[]).map((a: any) => [a.id, a]));
   const moduleIds = Array.from(new Set(((assigns || []) as any[]).map((a: any) => a.module_id)));
   const topicsRes = prof?.group_id && moduleIds.length
     ? await admin.from("group_module_topics").select("module_id, telegram_topic_url").eq("group_id", prof.group_id).in("module_id", moduleIds)
     : { data: [] as any[] };
   const groupTopicRes = prof?.group_id
-    ? await admin.from("groups").select("homework_topic_url, name, courses(title)").eq("id", prof.group_id).maybeSingle()
+    ? await admin.from("groups").select("homework_topic_url, name, course_id").eq("id", prof.group_id).maybeSingle()
     : { data: null as any };
   const sharedTopicUrl: string | null = (groupTopicRes.data as any)?.homework_topic_url || null;
   // Header scope "👥 <course> · <group>", and a course marker on any module of ANOTHER course (old-course work
   // after a move): the Challenge tasks are copies of the 5.0 tasks and the same "Modul N" differs per course.
-  const groupCourseTitle: string | null = (groupTopicRes.data as any)?.courses?.title ?? null;
+  // Separate reads, so a failure can only drop the labels, never the list (recorded as hw_label_lookup_failed).
+  const grpCourseId: string | null = (groupTopicRes.data as any)?.course_id ?? null;
+  const [taskLabels, grpCourse] = await Promise.all([
+    loadAssignmentLabels(admin, aIds, "telegram-bot-webhook"),
+    grpCourseId ? admin.from("courses").select("title").eq("id", grpCourseId).maybeSingle() : Promise.resolve({ data: null as any }),
+  ]);
+  const groupCourseTitle: string | null = (grpCourse as any)?.data?.title ?? null;
   const scopeLine = breakdownScopeLine(groupCourseTitle, (groupTopicRes.data as any)?.name ?? null);
   const topicMap = new Map<string, string>();
   for (const tp of ((topicsRes.data || []) as any[])) {
@@ -3805,7 +3811,7 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
     const a: any = aMap.get(s.assignment_id);
     if (!a) continue;
     const key = a.module_id;
-    if (!byModule.has(key)) byModule.set(key, { mPos: a.modules?.position ?? 0, mTitle: a.modules?.title || "—", mCourse: a.modules?.courses?.title ?? null, mid: key, items: [] });
+    if (!byModule.has(key)) byModule.set(key, { mPos: a.modules?.position ?? 0, mTitle: a.modules?.title || "—", mCourse: taskLabels.map.get(a.id)?.courseTitle ?? null, mid: key, items: [] });
     byModule.get(key)!.items.push({ sub: s, a });
   }
   const modules = Array.from(byModule.values()).sort((x, y) => x.mPos - y.mPos);

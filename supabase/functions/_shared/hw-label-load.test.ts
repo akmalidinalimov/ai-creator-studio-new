@@ -2,6 +2,7 @@
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   ASSIGNMENT_LABEL_SELECT,
+  ASSIGNMENT_PLAIN_SELECT,
   assignmentLabelInfo,
   labelOf,
   loadAssignmentLabels,
@@ -22,8 +23,11 @@ const ROW_5 = {
 
 type Call = { table: string; select?: string; col?: string; ids?: string[]; insert?: unknown };
 
-/** Just enough of supabase-js for these readers + logHealthOnce. `fail` makes a table's read return an error. */
-function fakeDb(rows: Record<string, unknown[]>, fail: Set<string> = new Set()) {
+/**
+ * Just enough of supabase-js for these readers + logHealthOnce. `fail` makes a table's read return an error;
+ * `failEmbedded` fails only a select that embeds another table (contains "(").
+ */
+function fakeDb(rows: Record<string, unknown[]>, fail: Set<string> = new Set(), failEmbedded = false) {
   const calls: Call[] = [];
   const db = {
     calls,
@@ -37,7 +41,9 @@ function fakeDb(rows: Record<string, unknown[]>, fail: Set<string> = new Set()) 
         limit() { return Promise.resolve({ data: [], error: null }); },
         in(col: string, ids: string[]) {
           call.col = col; call.ids = ids;
-          if (fail.has(table)) return Promise.resolve({ data: null, error: { message: `${table} boom` } });
+          if (fail.has(table) || (failEmbedded && (call.select || "").includes("("))) {
+            return Promise.resolve({ data: null, error: { message: `${table} boom` } });
+          }
           const data = (rows[table] || []).filter((r) => ids.includes((r as { id: string }).id));
           return Promise.resolve({ data, error: null });
         },
@@ -98,13 +104,30 @@ Deno.test("loaders: a failed read never throws, returns the error, and records h
   const db = fakeDb({ groups: [{ id: "g1", name: "G" }] }, new Set(["homework_assignments"]));
   const r = await loadAssignmentLabels(db, ["a5"], "unit-test-src");
   assertEquals(r.map.size, 0);
-  assertEquals(r.error, "homework_assignments boom");
+  assertEquals(r.error, "homework_assignments boom; plain: homework_assignments boom");
   const ins = db.calls.find((c) => c.table === "admin_actions" && c.insert);
   assert(ins, "a health row was written");
   const row = ins!.insert as { action: string; details: Record<string, unknown> };
   assertEquals(row.action, "hw_label_lookup_failed");
   assertEquals(row.details.source, "unit-test-src");
   assertEquals(row.details.part, "assignments");
+});
+
+Deno.test("loadAssignmentLabels: an embed failure retries plain — title / max / step survive, course is dropped", async () => {
+  const plain5 = { id: "a5", title: "2-MODUL ERKAKLAR KO'Z OYNAGI", max_score: 5, task_number: 1, sap_number: null, parent_id: null, module_id: "m5" };
+  const db = fakeDb({ homework_assignments: [plain5] }, new Set(), true);
+  // Its own source: logHealthOnce dedupes per (source, part) per day inside one isolate.
+  const r = await loadAssignmentLabels(db, ["a5"], "unit-test-embed-retry");
+  assertEquals(r.error, "homework_assignments boom");
+  const info = r.map.get("a5");
+  assertEquals(info?.maxScore, 5); // a grade card's max must not silently become 10
+  assertEquals(info?.title, "2-MODUL ERKAKLAR KO'Z OYNAGI");
+  assertEquals(info?.step, 1);
+  assertEquals(info?.courseTitle, null);
+  assertEquals(labelOf(info, "2-GURUH VIP 5.0"), "2-GURUH VIP 5.0 · V1 — 2-MODUL ERKAKLAR KO'Z OYNAGI");
+  const selects = db.calls.filter((c) => c.table === "homework_assignments").map((c) => c.select);
+  assertEquals(selects, [ASSIGNMENT_LABEL_SELECT, ASSIGNMENT_PLAIN_SELECT]);
+  assert(db.calls.some((c) => c.table === "admin_actions" && c.insert), "the embed failure is still recorded");
 });
 
 Deno.test("loadHwLabel: one task + one group → label and tag; unknown task → empty label", async () => {

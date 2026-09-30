@@ -19,6 +19,8 @@ type Db = any;
 /** The homework_assignments select every label reader uses (to-one embeds: module, then its course). */
 export const ASSIGNMENT_LABEL_SELECT =
   "id, title, max_score, task_number, sap_number, parent_id, module_id, modules(position, title, courses(title))";
+/** The same row without the embeds: the retry when the embedded read fails, so title / max / step still load. */
+export const ASSIGNMENT_PLAIN_SELECT = "id, title, max_score, task_number, sap_number, parent_id, module_id";
 
 export type AssignmentLabelInfo = {
   id: string;
@@ -79,26 +81,41 @@ async function reportLookupFailed(admin: Db, source: string, part: string, error
   await logHealthOnce(admin, "hw_label_lookup_failed", `${source}:${part}`, { part, error: error.slice(0, 300) }, { source });
 }
 
-/** Label fields per assignment id. Never throws; a failed read → empty map + error (recorded once a day). */
+async function readAssignments(admin: Db, select: string, list: string[]): Promise<unknown[]> {
+  const { data, error } = await admin.from("homework_assignments").select(select).in("id", list);
+  if (error) throw new Error(String(error.message ?? error));
+  return (data || []) as unknown[];
+}
+
+/**
+ * Label fields per assignment id. Never throws. When the embedded read fails, it is recorded (once a day) and
+ * retried WITHOUT the embeds, so a sender that also takes the title / max_score from here keeps them (only the
+ * course and module number go missing). Both reads failing → empty map + error.
+ */
 export async function loadAssignmentLabels(
   admin: Db, ids: readonly (string | null | undefined)[], source: string,
 ): Promise<LoadResult<AssignmentLabelInfo>> {
   const map = new Map<string, AssignmentLabelInfo>();
   const list = uniq(ids);
   if (!list.length) return { map, error: null };
+  let rows: unknown[];
+  let error: string | null = null;
   try {
-    const { data, error } = await admin.from("homework_assignments").select(ASSIGNMENT_LABEL_SELECT).in("id", list);
-    if (error) throw new Error(String(error.message ?? error));
-    for (const r of (data || []) as unknown[]) {
-      const info = assignmentLabelInfo(r);
-      if (info) map.set(info.id, info);
-    }
-    return { map, error: null };
+    rows = await readAssignments(admin, ASSIGNMENT_LABEL_SELECT, list);
   } catch (e) {
-    const msg = String((e as Error)?.message ?? e);
-    await reportLookupFailed(admin, source, "assignments", msg);
-    return { map, error: msg };
+    error = String((e as Error)?.message ?? e);
+    await reportLookupFailed(admin, source, "assignments", error);
+    try {
+      rows = await readAssignments(admin, ASSIGNMENT_PLAIN_SELECT, list);
+    } catch (e2) {
+      return { map, error: `${error}; plain: ${String((e2 as Error)?.message ?? e2)}` };
+    }
   }
+  for (const r of rows) {
+    const info = assignmentLabelInfo(r);
+    if (info) map.set(info.id, info);
+  }
+  return { map, error };
 }
 
 /** groups.name per group id. Never throws; a failed read → empty map + error (recorded once a day). */
