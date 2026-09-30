@@ -11,6 +11,8 @@ import {
   POST_STATE_UZ, prettyDate, SOURCE_UZ, STATUS_UZ, type GroupLite, type PostRow, type TaskRow,
 } from "@/components/admin/challengeTasksShared";
 import { ChallengePlanImportDialog } from "@/components/admin/ChallengePlanImportDialog";
+import { ChallengeWeekApprove } from "@/components/admin/ChallengeWeekApprove";
+import { weekFromSearch } from "@/lib/weekApproval";
 import {
   addDays, inWindow, isoWeekday, MONTH_UZ, readCalendarConfig, requiresSummary, tashkentToday, WEEKDAY_SHORT_UZ,
   type CalendarConfig, type TaskSource,
@@ -55,8 +57,10 @@ export default function AdminChallengeTasks() {
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const today = tashkentToday();
-  const [month, setMonth] = useState(today.slice(0, 7));
-  const [view, setView] = useState<"month" | "weeks">("month");
+  // PR-9: the bot's «👀 Ko‘rib chiqish» opens …/admin/challenge/tasks?week=YYYY-MM-DD -> the week list, on that week
+  const [focusWeek] = useState<string | null>(() => weekFromSearch(typeof window !== "undefined" ? window.location.search : ""));
+  const [month, setMonth] = useState((focusWeek ?? today).slice(0, 7));
+  const [view, setView] = useState<"month" | "weeks">(focusWeek ? "weeks" : "month");
   const [drawer, setDrawer] = useState<{ open: boolean; taskId: number | null; date: string }>({ open: false, taskId: null, date: today });
   const [importOpen, setImportOpen] = useState(false);
 
@@ -114,6 +118,12 @@ export default function AdminChallengeTasks() {
 
   useEffect(() => { void reload(); }, [reload]);
 
+  // the deep-linked week scrolls into view once the list has rendered
+  useEffect(() => {
+    if (!focusWeek || loading || view !== "weeks") return;
+    document.getElementById(`week-${focusWeek}`)?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  }, [focusWeek, loading, view]);
+
   const byDate = useMemo(() => {
     const m = new Map<string, TaskRow[]>();
     for (const t of tasks) {
@@ -164,7 +174,7 @@ export default function AdminChallengeTasks() {
     list.push(t);
     weeks.set(monday, list);
   }
-
+  if (focusWeek && !weeks.has(focusWeek)) weeks.set(focusWeek, []); // a deep-linked week with no task still shows
   const openDay = (d: string) => setDrawer({ open: true, taskId: liveOn(d)?.id ?? null, date: d });
   const openTask = (t: TaskRow) => setDrawer({ open: true, taskId: t.id, date: t.task_date });
   const drawerTask = drawer.taskId !== null ? tasks.find((t) => t.id === drawer.taskId) ?? null : null;
@@ -303,10 +313,16 @@ export default function AdminChallengeTasks() {
               <Card className="p-0 overflow-x-auto shadow-soft">
                 {weeks.size === 0 && <p className="p-4 text-sm text-muted-foreground">{loading ? "Yuklanmoqda…" : "Hali vazifa yo‘q. «Rejani import qilish» yoki «+ Vazifa»."}</p>}
                 {[...weeks.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([monday, list]) => (
-                  <div key={monday} className="border-b last:border-b-0">
-                    <div className="px-4 py-2 bg-muted/40 text-xs font-medium">
-                      {prettyDate(monday)} — {prettyDate(addDays(monday, 6))}
+                  <div key={monday} id={`week-${monday}`} data-focused={monday === focusWeek ? "true" : undefined}
+                    className={`border-b last:border-b-0 ${monday === focusWeek ? "ring-2 ring-inset ring-primary" : ""}`}>
+                    <div className="px-4 py-2 bg-muted/40 text-xs font-medium flex flex-wrap items-center gap-2">
+                      <span>{prettyDate(monday)} — {prettyDate(addDays(monday, 6))}</span>
+                      {monday === focusWeek && <Badge variant="outline" className="text-[10px]">Botdagi havola</Badge>}
+                      <span className="ml-auto" />
+                      <ChallengeWeekApprove weekStart={monday} courseId={courseId}
+                        drafts={list.filter((t) => t.status === "draft").length} onDone={() => void reload()} />
                     </div>
+                    {list.length === 0 && <p className="px-4 py-3 text-xs text-muted-foreground">Bu haftada vazifa yo‘q.</p>}
                     <table className="w-full text-sm min-w-[760px]">
                       <tbody>
                         {list.map((t) => (

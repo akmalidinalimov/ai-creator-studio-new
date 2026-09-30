@@ -2920,6 +2920,10 @@ export type Database = {
         Args: { _group_id: string; _uid: string }
         Returns: boolean
       }
+      challenge_tasks_approve_week: {
+        Args: { _actor?: string; _course_id?: string; _week_start: string }
+        Returns: Json
+      }
       current_group_star: {
         Args: { uid: string }
         Returns: {
