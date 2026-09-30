@@ -130,3 +130,35 @@ export async function fetchAllKeyset(
   }
   return { rows, error: `more than ${MAX_PAGES} pages` };
 }
+
+// ─────────────────────────── reminder keyboards ───────────────────────────
+// The three reminder keyboards, exactly as the old inline code shaped them. `watch` is the watch button from
+// _shared/miniapp-button.ts: a Mini App web_app button when the student Mini App is on, else today's
+// magic-link url button (byte-identical), or null when there is nothing to link to. core.test.ts pins that the
+// flag-off output equals the old shape.
+// deno-lint-ignore no-explicit-any
+export type ReminderButton = Record<string, any>;
+export type ReminderLocale = "uz" | "ru" | "en";
+
+/** (old) the daily reminder's second row. */
+export function notTodayLabel(locale: ReminderLocale): string {
+  return locale === "ru" ? "Не сегодня" : locale === "en" ? "Not today" : "Bugun emas";
+}
+
+/** Daily reminder: [watch] (when there is a next lesson and a button label) + always [Bugun emas]. */
+export function dailyKeyboard(watch: ReminderButton | null, locale: ReminderLocale): { inline_keyboard: ReminderButton[][] } {
+  const inline: ReminderButton[][] = [];
+  if (watch) inline.push([watch]);
+  inline.push([{ text: notTodayLabel(locale), callback_data: "ack:not_today" }]);
+  return { inline_keyboard: inline };
+}
+
+/** Streak warning: [watch], or no keyboard at all. */
+export function streakKeyboard(watch: ReminderButton | null): { inline_keyboard: ReminderButton[][] } | undefined {
+  return watch ? { inline_keyboard: [[watch]] } : undefined;
+}
+
+/** Re-engagement drip: [watch] when the template has a button label, else no keyboard. */
+export function dripKeyboard(watch: ReminderButton | null): { inline_keyboard: ReminderButton[][] } | undefined {
+  return watch ? { inline_keyboard: [[watch]] } : undefined;
+}

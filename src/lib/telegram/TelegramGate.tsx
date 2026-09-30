@@ -8,6 +8,8 @@ import { applyTelegramChrome } from "./appShell";
 import { useTelegramViewport } from "./useTelegramViewport";
 import { useTelegramBackButton } from "./useTelegramBackButton";
 import TgNotLinked from "@/pages/TgNotLinked";
+import { readTrack, startParamFromInitData, startParamToPath, stripTrack, type MiniAppSrc } from "@/lib/miniappLinks";
+import { fastPathRedirect, resolveLanding } from "./landing";
 
 /**
  * TelegramGate — the "two doors" boot layer.
@@ -38,6 +40,38 @@ async function functionErrorCode(error: unknown, data: unknown): Promise<string 
     }
   }
   return error ? "error" : null;
+}
+
+/** The open signal a watch button carries: ?src=&ref= on a web_app URL, or the "__<src>" start_param suffix. */
+type OpenSignal = { src: MiniAppSrc; ref: string | null; path: string };
+
+function openSignal(pathname: string, search: string, startParam: string | null): OpenSignal | null {
+  const q = readTrack(search);
+  if (q) return { src: q.src, ref: q.ref, path: pathname };
+  const sp = startParamToPath(startParam);
+  if (sp?.src && (pathname === "/" || pathname === "")) return { src: sp.src, ref: null, path: sp.path.split("?")[0] };
+  return null;
+}
+
+/**
+ * Report each open ONCE per Mini App session: a reload (stale-build watcher, pull-to-refresh) re-runs the gate
+ * with the same URL and must not count the same tap twice. Storage can be unavailable (private mode, blocked
+ * site data) — then it simply reports; the page never depends on it.
+ */
+const openKey = (sig: OpenSignal) => `mo:${sig.src}:${sig.ref ?? "-"}`;
+
+function openReported(sig: OpenSignal): boolean {
+  try {
+    return !!window.sessionStorage.getItem(openKey(sig));
+  } catch {
+    return false; // no storage → report anyway
+  }
+}
+
+function markOpenReported(sig: OpenSignal): void {
+  try {
+    window.sessionStorage.setItem(openKey(sig), "1");
+  } catch { /* no storage: nothing to remember */ }
 }
 
 export function TelegramGate({ children }: { children: ReactNode }) {
@@ -72,6 +106,7 @@ export function TelegramGate({ children }: { children: ReactNode }) {
       try {
         const parsed = JSON.parse(new URLSearchParams(initData).get("user") || "{}") as { id?: number };
         const tgId = Number(parsed?.id) || 0;
+        const startParam = startParamFromInitData(initData);
 
         // Fast re-open: is there already a session, and does it belong to THIS Telegram user?
         const { data: sess } = await supabase.auth.getSession();
@@ -82,11 +117,32 @@ export function TelegramGate({ children }: { children: ReactNode }) {
             .eq("id", sess.session.user.id)
             .maybeSingle();
           const owns = prof && Number((prof as { telegram_id: number | null }).telegram_id) === tgId && tgId > 0;
-          if (owns) { if (!cancelled) setPhase("ready"); return; }
+          if (owns) {
+            if (cancelled) return;
+            // Fast re-open keeps the requested path (a web_app deep link already points at it). Two extras:
+            //  - a named-app direct link (t.me/<bot>/app?startapp=…) always opens at the root, so honour its
+            //    start_param here — otherwise Landing's own "/" → "/dashboard" redirect swallows it;
+            //  - a watch button's open signal is reported (fire-and-forget) and its src/ref stripped.
+            const sig = openSignal(location.pathname, location.search, startParam);
+            if (sig && !openReported(sig)) {
+              markOpenReported(sig);
+              void supabase.functions
+                .invoke("tg-miniapp-auth", { body: { initData, mode: "open", src: sig.src, ref: sig.ref, path: sig.path } })
+                .catch(() => { /* best-effort signal */ });
+            }
+            const jump = fastPathRedirect(location.pathname, startParam);
+            if (jump) navigate(jump, { replace: true });
+            else if (readTrack(location.search)) navigate(location.pathname + stripTrack(location.search), { replace: true });
+            setPhase("ready");
+            return;
+          }
           await supabase.auth.signOut(); // cross-account mismatch → drop it and re-auth as the Telegram user
         }
 
-        const { data, error } = await supabase.functions.invoke("tg-miniapp-auth", { body: { initData } });
+        // A watch button's open signal rides along with the sign-in (recorded server-side as cold:true).
+        const sig = openSignal(location.pathname, location.search, startParam);
+        const open = sig && !openReported(sig) ? sig : undefined;
+        const { data, error } = await supabase.functions.invoke("tg-miniapp-auth", { body: open ? { initData, open } : { initData } });
         if (cancelled) return;
 
         const session = (data as { session?: { access_token: string; refresh_token: string } } | null)?.session;
@@ -102,14 +158,14 @@ export function TelegramGate({ children }: { children: ReactNode }) {
           refresh_token: session.refresh_token,
         });
         if (cancelled) return;
+        if (open) markOpenReported(open); // only once the sign-in (which carried it) succeeded
 
-        // A direct deep-link open under /tg/* (e.g. /tg/teacher, /tg/teacher/grade) must survive
-        // the gate — honor the already-requested path instead of clobbering it with the default
-        // target_path. Only redirect when we landed on the app root (the normal Mini App open).
-        if (!location.pathname.startsWith("/tg/")) {
-          const target = (data as { target_path?: string }).target_path || "/dashboard";
-          navigate(target, { replace: true });
-        }
+        // Deep links survive the gate (a watch button to /lesson/…, /continue/…, /tg/teacher/grade); the root and
+        // /dashboard (🚀 Ilovani ochish, ☰ menu) take the server's role-aware target_path; a direct-link
+        // start_param at the root maps through the shared grammar. See landing.ts (pinned by landing.test.ts).
+        const serverTarget = (data as { target_path?: string }).target_path || "/dashboard";
+        const dest = resolveLanding({ pathname: location.pathname, search: location.search, startParam, serverTarget });
+        if (dest !== location.pathname + location.search) navigate(dest, { replace: true });
         setPhase("ready");
       } catch {
         if (!cancelled) setPhase("error");

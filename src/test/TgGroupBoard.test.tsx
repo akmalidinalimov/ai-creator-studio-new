@@ -123,6 +123,23 @@ describe("TgGroupBoard rendering", () => {
     expect(i18n.language).toBe("uz");
   });
 
+  it("no medal and no rank next to 0 XP (a Challenge 6.0 group on day 1 is screenshotted into the chat)", async () => {
+    await i18n.changeLanguage("uz");
+    inTelegram();
+    const row = (rank: number, first_name: string, xp: number) =>
+      ({ board: "alltime", rank, first_name, last_initial: "", xp, level: 1, current_streak: 0 });
+    h.invoke.mockResolvedValue({
+      data: { ...BOARD, groups: [{ ...BOARD.groups[0], alltime: [row(1, "Aziza", 12), row(2, "Bobur", 0), row(3, "Dilnoza", 0)] }] },
+      error: null,
+    });
+    render(<TgGroupBoard />);
+    expect(await screen.findByText("Aziza")).toBeInTheDocument();
+    expect(screen.getByText("🥇")).toBeInTheDocument();
+    expect(screen.queryByText("🥈")).toBeNull();
+    expect(screen.queryByText("🥉")).toBeNull();
+    expect(screen.getAllByText("—")).toHaveLength(2);
+  });
+
   it("shows the translated error + retry when the edge function refuses", async () => {
     await i18n.changeLanguage("uz");
     inTelegram();
