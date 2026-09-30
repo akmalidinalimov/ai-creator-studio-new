@@ -106,12 +106,15 @@ jobs:
           fi
           exit $fail
 
-      - name: Credential expiry countdown
-        # ops-merge-token (Vault OPS_GITHUB_PAT) expires 2026-10-10 — merges 401 that day.
-        # Start failing the run 9 days ahead so the owner regenerates in time.
+      - name: Credential rotation reminder
+        # ops-merge-token (Vault OPS_GITHUB_PAT) was regenerated 2026-09-30 with NO expiry (owner's choice),
+        # so there is no expiry countdown to fail on any more. A long-lived token should still be rotated
+        # about once a year: from 2027-09-30 this step WARNS (never fails the run).
+        # Rotate: github.com/settings/personal-access-tokens -> Regenerate, then in the Supabase SQL editor
+        #   select vault.update_secret((select id from vault.secrets where name='OPS_GITHUB_PAT'), '<new token>');
+        # and move the date below one year forward.
         run: |
           set -euo pipefail
-          if [ "$(date -u +%Y%m%d)" -ge 20261001 ]; then
-            echo "::error::ops-merge-token (OPS_GITHUB_PAT) expires 2026-10-10 — regenerate at github.com/settings/personal-access-tokens and vault.update_secret it NOW"
-            exit 1
+          if [ "$(date -u +%Y%m%d)" -ge 20270930 ]; then
+            echo "::warning::ops-merge-token (OPS_GITHUB_PAT) is over a year old — rotate it (see the comment on this step)"
           fi
