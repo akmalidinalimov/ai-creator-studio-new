@@ -9,11 +9,18 @@
 // stuck_lesson is RETIRED from the cron run: nudge_candidates_stuck() can never return a row
 // (lesson_progress is unique per user+lesson, so "the same lesson on >= 2 distinct days" is always 1 day),
 // it has never sent one (nudge_log: 0 rows ever), and its link (/lesson/<lesson id>) was a broken route.
+//
+// 2026-09-30 (student audience): nudges are STUDENT messages. nudge_candidates_inactive() and the module
+// celebration queue carry no role filter, so a teacher-only account got an inactive_3d and a module_complete
+// nudge. The cron run reads the staff-only ids once (_shared/student-audience.ts) and skips them in every run
+// type (skipped_staff in the response). A failed role read filters nobody and is recorded as
+// student_audience_read_failed. Test mode (one nudge to the admin test recipient) is unchanged.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 import { redactSecrets } from "../_shared/redact.ts";
 import { loadStudentMiniAppFlag, type WatchFlag } from "../_shared/miniapp-button.ts";
 import { type NudgeType, sendNudgeWith } from "./nudge.ts";
+import { loadStaffOnlyIds, skipStaffOnly, type StaffOnly } from "../_shared/student-audience.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -158,10 +165,11 @@ async function isEligible(admin: any, profile: any, type: NudgeType): Promise<{ 
   return { ok: true };
 }
 
-async function runInactive3d(admin: any, templates: any) {
+async function runInactive3d(admin: any, templates: any, staff: StaffOnly) {
   const { data: candidates } = await admin.rpc("nudge_candidates_inactive", { _days: 3 });
-  let sent = 0, skipped = 0, failed = 0;
+  let sent = 0, skipped = 0, failed = 0, skipped_staff = 0;
   for (const p of candidates || []) {
+    if (skipStaffOnly(staff, p.id)) { skipped++; skipped_staff++; continue; }
     // Skip if any nudge in last 7 days
     const recent = await recentCount(admin, p.id, 7);
     if (recent > 0) { skipped++; continue; }
@@ -174,13 +182,14 @@ async function runInactive3d(admin: any, templates: any) {
     if (r.ok) sent++; else failed++;
     await sleep(50);
   }
-  return { sent, failed, skipped, total: candidates?.length || 0 };
+  return { sent, failed, skipped, skipped_staff, total: candidates?.length || 0 };
 }
 
-async function runInactive7d(admin: any, templates: any) {
+async function runInactive7d(admin: any, templates: any, staff: StaffOnly) {
   const { data: candidates } = await admin.rpc("nudge_candidates_inactive", { _days: 7 });
-  let sent = 0, skipped = 0, failed = 0;
+  let sent = 0, skipped = 0, failed = 0, skipped_staff = 0;
   for (const p of candidates || []) {
+    if (skipStaffOnly(staff, p.id)) { skipped++; skipped_staff++; continue; }
     const last3 = await lastSentOfType(admin, p.id, "inactive_3d");
     if (last3?.clicked_at) { skipped++; continue; }
     const recent = await recentCount(admin, p.id, 7);
@@ -198,17 +207,24 @@ async function runInactive7d(admin: any, templates: any) {
     if (r.ok) sent++; else failed++;
     await sleep(50);
   }
-  return { sent, failed, skipped, total: candidates?.length || 0 };
+  return { sent, failed, skipped, skipped_staff, total: candidates?.length || 0 };
 }
 
-async function runModuleComplete(admin: any, templates: any) {
+async function runModuleComplete(admin: any, templates: any, staff: StaffOnly) {
   const { data: queue } = await admin
     .from("nudge_module_celebrations")
     .select("profile_id, module_id")
     .is("sent_at", null)
     .limit(500);
-  let sent = 0, skipped = 0, failed = 0;
+  let sent = 0, skipped = 0, failed = 0, skipped_staff = 0;
   for (const q of queue || []) {
+    // A staff-only account is not celebrated. Its queue row is closed (sent_at stamped, nothing sent, the same
+    // at-most-once rule as below), so it does not stay pending and get re-read every hour.
+    if (skipStaffOnly(staff, q.profile_id)) {
+      await admin.from("nudge_module_celebrations").update({ sent_at: new Date().toISOString() }).eq("profile_id", q.profile_id).eq("module_id", q.module_id);
+      skipped++; skipped_staff++;
+      continue;
+    }
     const { data: p } = await admin
       .from("profiles")
       .select("id, name, telegram_id, preferred_locale, preferred_language, tashkent_offset_minutes, status")
@@ -231,7 +247,7 @@ async function runModuleComplete(admin: any, templates: any) {
     if (r.ok) sent++; else failed++;
     await sleep(50);
   }
-  return { sent, failed, skipped, total: queue?.length || 0 };
+  return { sent, failed, skipped, skipped_staff, total: queue?.length || 0 };
 }
 
 Deno.serve(async (req) => {
@@ -290,12 +306,13 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ ok: r.ok, status: r.status, data: r.data }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Cron mode
-    const i3 = await runInactive3d(admin, templates);
-    const i7 = await runInactive7d(admin, templates);
+    // Cron mode. Nudges are student messages: staff-only accounts are skipped (see the header).
+    const staff = await loadStaffOnlyIds(admin, "detect-and-nudge");
+    const i3 = await runInactive3d(admin, templates, staff);
+    const i7 = await runInactive7d(admin, templates, staff);
     const stuck = { retired: true, sent: 0, failed: 0, skipped: 0, total: 0 }; // see the header
-    const mc = await runModuleComplete(admin, templates);
-    return new Response(JSON.stringify({ ok: true, inactive_3d: i3, inactive_7d: i7, stuck_lesson: stuck, module_complete: mc, miniapp: runFlag }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    const mc = await runModuleComplete(admin, templates, staff);
+    return new Response(JSON.stringify({ ok: true, inactive_3d: i3, inactive_7d: i7, stuck_lesson: stuck, module_complete: mc, miniapp: runFlag, staff_filter: staff.ids ? "ok" : "failed" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     return new Response(JSON.stringify({ error: redactSecrets((e as any)?.message ?? e) }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }

@@ -5,6 +5,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
+import { loadStaffOnlyIds, skipStaffOnly } from "../_shared/student-audience.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -72,10 +73,15 @@ Deno.serve(async (req) => {
       .is("dm_sent_at", null);
     if (wErr) throw wErr;
 
-    let sent = 0, skipped = 0, failed = 0;
+    let sent = 0, skipped = 0, failed = 0, skippedStaff = 0;
     const today = new Date().toISOString().slice(0, 10);
+    // A student message (_shared/student-audience.ts): pick_weekly_group_stars() ranks every profile with a
+    // group, so a staff-only account (teacher / admin role, no student role) placed in a group could "win".
+    // A failed role read filters nobody (DB-visible as student_audience_read_failed).
+    const staffOnly = await loadStaffOnlyIds(admin, "student-of-week");
 
     for (const w of (winners || [])) {
+      if (skipStaffOnly(staffOnly, w.user_id)) { skipped++; skippedStaff++; continue; }
       // A 0-score "star" is an arbitrary member of a group where nobody was active (pick_weekly_group_stars takes
       // the top activity score even when every score is 0 — e.g. a new Challenge 6.0 group in its first week). Do
       // not congratulate them for "the highest activity"; the bot's 📊 Statistika hides such a star too.
@@ -142,7 +148,7 @@ Deno.serve(async (req) => {
       await sleep(50);
     }
 
-    return new Response(JSON.stringify({ ok: true, week_start: weekStart, total: winners?.length || 0, sent, skipped, failed }), {
+    return new Response(JSON.stringify({ ok: true, week_start: weekStart, total: winners?.length || 0, sent, skipped, skipped_staff: skippedStaff, failed }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {

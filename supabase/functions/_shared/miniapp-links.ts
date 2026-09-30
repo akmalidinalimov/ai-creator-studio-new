@@ -41,6 +41,11 @@ export const MINIAPP_SRCS = [
   "bot_dars",
   "bot_welcome",
   "teacher_nudge",
+  // Staff buttons into the TEACHER Mini App (_shared/teacher-miniapp.ts) — counted the same way:
+  "teacher_hw_dm", //        🎯 Baholash on the new-homework DM (ref = the submission)
+  "teacher_hw_reminder", //  🎯 Baholash on the 24 h ungraded reminder (ref = the submission)
+  "teacher_report", //       the daily report's 📝 Baholash (N) / 👤 Profil
+  "teacher_card", //         the bot's 👤 Profil card (📊 Statistika / 📣 Guruhga xabar)
   "reengagement",
   "broadcast",
   "daily_task",

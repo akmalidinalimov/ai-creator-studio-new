@@ -9,6 +9,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { legacyWatchButton, loadStudentMiniAppFlag, type PrivateWatchOpts, sendWithWatchFallback, watchButton } from "../_shared/miniapp-button.ts";
+import { loadStaffOnlyIds, skipStaffOnly } from "../_shared/student-audience.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -87,7 +88,10 @@ Deno.serve(async (req) => {
       }
       const { data: list, error: lErr } = await admin.rpc("re_engagement_eligible_profiles");
       if (lErr) throw lErr;
-      recipients = list || [];
+      // A student campaign (_shared/student-audience.ts). The RPC already drops admin/teacher roles; the shared
+      // rule also drops a superadmin-only account, so every student sender answers "who is a student" alike.
+      const staffOnly = await loadStaffOnlyIds(admin, "re-engagement-send");
+      recipients = (list || []).filter((r: any) => !skipStaffOnly(staffOnly, r.id));
 
       // Skip those already sent for this campaign+attempt
       const ids = recipients.map((r: any) => r.id);

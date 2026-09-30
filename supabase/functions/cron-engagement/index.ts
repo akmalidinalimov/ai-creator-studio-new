@@ -36,6 +36,13 @@
 // row is written (one request less per reminder on the heavy 19:30 tick). Flag off → today's magic link,
 // byte-identical. The builder is _shared/miniapp-button.ts; every run reports buttons.{web_app, magic_link,
 // none, rejected, reasons} in engagement_run_done.
+//
+// v5 (2026-09-30) — student reminders go to students only. A staff-only account (teacher / admin / superadmin
+// role, no student role) passed every profile filter below, so 5 teachers got 91 daily reminders, 8 streak
+// warnings and an inactivity drip in 30 days. The staff-only ids are read ONCE per run
+// (_shared/student-audience.ts) and skipped before any window work; engagement_run_done.skipped_staff_only
+// counts them. A failed role read filters nobody (today's behaviour) and is listed in prefetch_failed as
+// "staff_roles", which engagement_run_watchdog already alarms on.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";
@@ -64,6 +71,7 @@ import {
 } from "../_shared/miniapp-button.ts";
 import { continuePath, type MiniAppSrc } from "../_shared/miniapp-links.ts";
 import type { SendOutcome } from "../_shared/telegram-send.ts";
+import { loadStaffOnlyIds, skipStaffOnly } from "../_shared/student-audience.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -519,6 +527,8 @@ type Stats = {
   processed: number;
   skipped_quiet_hours: number;
   skipped_out_of_window: number;
+  /** Staff-only accounts (no student role): never sent a student reminder. Not part of `skipped`. */
+  skipped_staff_only: number;
   deferred: number;
   errors: number;
   error_sample: string | null;
@@ -533,7 +543,7 @@ type Stats = {
 
 function newStats(): Stats {
   return {
-    eligible: 0, processed: 0, skipped_quiet_hours: 0, skipped_out_of_window: 0, deferred: 0,
+    eligible: 0, processed: 0, skipped_quiet_hours: 0, skipped_out_of_window: 0, skipped_staff_only: 0, deferred: 0,
     errors: 0, error_sample: null, sent: { daily: 0, streak: 0, drip: 0 }, drip_resets: 0,
     not_delivered: 0, log_write_failed: 0, partial: false, partial_reason: null, error: null,
   };
@@ -547,6 +557,7 @@ function runDetails(ctx: Ctx, s: Stats) {
     skipped: s.skipped_quiet_hours + s.skipped_out_of_window,
     skipped_quiet_hours: s.skipped_quiet_hours,
     skipped_out_of_window: s.skipped_out_of_window,
+    skipped_staff_only: s.skipped_staff_only,
     deferred: s.deferred,
     sent: s.sent,
     drip_resets: s.drip_resets,
@@ -607,8 +618,12 @@ async function run(ctx: Ctx, stats: Stats): Promise<Response> {
   }
   const users = prof.rows;
   stats.eligible = users.length;
+  // Student reminders go to students only (see the v5 note). A failed read filters nobody and is alarmed.
+  const staffOnly = await loadStaffOnlyIds(admin, "cron-engagement");
+  if (!staffOnly.ids) ctx.prefetchFailed.push("staff_roles");
 
   for (const u of users) {
+    if (skipStaffOnly(staffOnly, u.id)) { stats.skipped_staff_only++; continue; }
     try {
       // ── Which windows apply? Profile columns + the clock ONLY — no database call before this. ──
       // (core.ts reminderWindows: quiet hours, ±30 min of reminder_time / 21:00 / 12:00, per-day dedup,
