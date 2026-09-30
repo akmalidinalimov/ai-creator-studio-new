@@ -9,6 +9,7 @@ import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 import { type GroupPrimaryRow, type GroupTeacherRow, mergeGroupTeachers } from "../_shared/group-teachers.ts";
 import { courseShort, scopeTag } from "../_shared/hw-label.ts";
 import { logHealthOnce } from "../_shared/edge.ts";
+import { countLines, rowsByTeacher, type TeacherGroupRow } from "../_shared/teacher-group-lines.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -132,6 +133,23 @@ Deno.serve(async (req) => {
     locById[p.id] = (["uz", "ru", "en"].includes(p.preferred_locale) ? p.preferred_locale : "uz") as Loc;
   }
 
+  // One line per group under "📥 Baholanmagan vazifalar" (teacher audit BOT-6: a teacher of two groups or
+  // courses got one merged number). The rows come from teacher_group_signals(), the per-group engine the
+  // report's backlog is SUMMED from (20260930183000), so the lines add up to the total. A failed read only
+  // drops the lines -- recorded once a day as teacher_group_lines_failed -- and never costs the report.
+  let linesByTeacher = new Map<string, TeacherGroupRow[]>();
+  let groupLines: "ok" | "failed" = "ok";
+  if (rows.length) {
+    const { data: sig, error: sigErr } = await admin.rpc("teacher_group_signals");
+    if (sigErr) {
+      groupLines = "failed";
+      await logHealthOnce(admin, "teacher_group_lines_failed", "teacher-daily-digest",
+        { part: "teacher_group_signals", error: String(sigErr.message).slice(0, 300) }, { source: "teacher-daily-digest" });
+    } else {
+      linesByTeacher = rowsByTeacher((sig || []) as TeacherGroupRow[]);
+    }
+  }
+
   // --- Group board data (kill-switch: platform_settings.group_board.digest_enabled). If the row is
   // absent the migration hasn't applied yet (RPCs may not exist) → board stays off, digest unchanged.
   let boardEnabled = false;
@@ -146,8 +164,9 @@ Deno.serve(async (req) => {
       // A group's card goes to EVERY teacher of it — primary ∪ co-teachers (_shared/group-teachers.ts),
       // the same groups the "📊 Guruh reytingi" Mini App (tg-group-board) already shows them. Reading
       // only groups.teacher_id left a co-taught group off its co-teacher's digest and dropped a group
-      // whose teachers are all co-teachers from the board entirely. Who GETS a digest is still
-      // teacher_daily_report() (primary-attributed stats), unchanged here.
+      // whose teachers are all co-teachers from the board entirely. Who GETS a digest is
+      // teacher_daily_report() (every teacher); since 20260930183000 its numbers count co-taught groups
+      // too and credit "Bugun baholadingiz" to whoever graded (hs.scored_by), not the group's primary.
       // Each card is headed "<course> · <group>" (shared hw-label scopeTag), e.g. "5.0 · 1-GURUH VIP" /
       // "CH6 · 3-GURUH", so a teacher of both courses can tell the cards apart. The course titles are a
       // SEPARATE read: a failure there only drops the course from the headings (recorded once a day as
@@ -260,6 +279,9 @@ Deno.serve(async (req) => {
     lines.push(l.open(Number(t.open_questions || 0)));
     lines.push(l.backlog(Number(t.ungraded_backlog || 0),
       t.ungraded_backlog > 0 && t.oldest_pending_hours != null ? l.oldest(Number(t.oldest_pending_hours)) : ""));
+    if (Number(t.ungraded_backlog || 0) > 0) {
+      lines.push(...countLines(linesByTeacher.get(t.teacher_id), (r) => r.pending_homework, { esc: escHtml, loc }));
+    }
     if (Number(t.graded_today || 0) > 0) {
       lines.push(l.graded(Number(t.graded_today), t.avg_score_pct != null ? l.avg(Number(t.avg_score_pct)) : ""));
     }
@@ -355,7 +377,7 @@ Deno.serve(async (req) => {
 
   await admin.from("admin_actions").insert({
     actor_user_id: null, action: "teacher_daily_report_run",
-    details: { teachers: rows.length, sent, failed, admin_sent: adminSent, board_enabled: boardEnabled, groups: allGroupCards.length, board_sent: boardSent, board_failed: boardFailed, at: new Date().toISOString() },
+    details: { teachers: rows.length, sent, failed, admin_sent: adminSent, board_enabled: boardEnabled, groups: allGroupCards.length, board_sent: boardSent, board_failed: boardFailed, group_lines: groupLines, at: new Date().toISOString() },
   }).then(() => {}, () => {});
 
   return new Response(JSON.stringify({ ok: true, teachers: rows.length, sent, failed, admin_sent: adminSent, board_sent: boardSent, board_failed: boardFailed }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
