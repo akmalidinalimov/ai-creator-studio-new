@@ -66,7 +66,7 @@ check(/await handleCallback\(admin, cq\);[\s\S]{0,900}syncMenuLive\(admin, Numbe
 check(/action === "sweep_pending"[\s\S]{0,700}scheduleMenuSweepTick\(adminC, \{ base: MINIAPP_BASE \}\)/.test(src), "D sweep rides the minute tick");
 check(/action === "menu_button_sweep"[\s\S]{0,400}runMenuSweepTick\(adminC, \{ base: MINIAPP_BASE, restart: body\.restart === true \}\)/.test(src), "D on-demand sweep action");
 check(/if \(data === "ack:not_today"\) \{[\s\S]{0,300}handleNotToday\(/.test(src), "D Bugun emas → handleNotToday");
-check((src.match(/await studentWelcome\(admin, msg\.chat\.id, profileForLocale, locale\)/g) ?? []).length === 3, "D welcome on /start, /start <arg>, typed Start");
+check((src.match(/await studentWelcome\(admin, msg\.chat\.id, profileForLocale, locale\)/g) ?? []).length === 2, "D welcome on a bare /start and a typed Start (never on a /start <arg> deep link)");
 check(/typedIntent\(text\)[\s\S]{0,400}T\[locale\]\.kbHint/.test(src), "D typed intents run before kbHint");
 check(/const pv = parseProfAction\(action\);[\s\S]{0,700}showProfileView\(/.test(src), "D Profil tabs edit in place");
 

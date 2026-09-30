@@ -1163,8 +1163,8 @@ function escHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-/** Student profile: compact greeting + ONE button that opens the web profile
- *  directly (all stats/badges/ratings live there — no in-chat button maze). */
+/** Student profile card TEXT: compact greeting with level, XP, streak and group rank. Its keyboard is
+ *  profileViewRows(…, "card"); the tabs edit this same message in place (profile-tabs.ts). */
 async function buildProfileCard(admin: any, userId: string, locale: Locale): Promise<{ text: string }> {
   const p = PROF_T[locale];
   const [{ data: prof }, statsRes, { ranking }] = await Promise.all([
@@ -8274,8 +8274,6 @@ Deno.serve(async (req) => {
         if (arg.startsWith("login_")) {
           const tok = arg.slice(6);
           await handleStartLogin(admin, msg, tok, locale);
-        } else if (isPrivateChat && persona === "student" && profileForLocale) {
-          await studentWelcome(admin, msg.chat.id, profileForLocale, locale);
         } else {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag, persona);
         }

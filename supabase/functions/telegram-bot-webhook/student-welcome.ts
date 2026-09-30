@@ -4,8 +4,9 @@
 // bo'lsa, biz bilan bog'laning:" — with no greeting, no button and no contact: a dead end on first contact
 // (14 current students and 20 unregistered users sent a bare /start in 30 days).
 //
-// NOW, for a registered student in a private chat (teachers keep their greeting; admins and non-members are
-// unchanged — a non-member never reaches this, the membership gate answers first):
+// NOW, for a registered student in a private chat who sends a bare /start or types "Start" (teachers keep their
+// greeting; admins and non-members are unchanged — a non-member never reaches this, the membership gate answers
+// first; a /start <argument> deep link — login_ and the daily-task links — is left to its own handler):
 //   message 1  the welcome, carrying the CURRENT reply keyboard (so every /start also refreshes a keyboard a
 //              phone has cached for months):
 //                Salom, Aziza! 👋
