@@ -1,4 +1,7 @@
 -- Challenge 6.0 daily tasks, PR-3: the SQL ENGINE (build spec v2 §6, §8, §9.2/9.6, §13). INERT at merge:
+-- (This file re-issues 20260930150000 in slot 20260930150010: welcome receipts are queued -- never degraded -- over
+-- the per-chat budget, the 20:00 summary counts ride on post_claim, and a checked result is queued as a DM.
+-- 20260930150000 was never merged or applied.)
 -- platform_settings.challenge_tasks stays enabled=false / ai=false / miniapp=false (PR-1's seed; this file never
 -- writes that row). While paused, nothing captures, awards, posts, sends or calls an AI; the two new cron jobs write a
 -- heartbeat / a watchdog state stamp ONLY. Go-live is PR-8.
@@ -31,7 +34,9 @@
 --    sticky), 'ch_task_streak:<date>' (reason challenge_task_streak).
 -- 4. Workers' claim / record RPCs (inert while paused): AI check claim / record (SQL decides from LABELS, I3;
 --    general default-pay, instagram handle / tag / recency / 404 / dHash near-duplicate, never fail-open), receipt
---    claim / record, post claim / record, outbox claim / record (quiet hours), identity_pending (PR-5's sweep).
+--    claim / record, post claim / record (+ the anonymous 20:00 summary counts and the dt_<id> start parameter),
+--    outbox claim / record (quiet hours; a checked verdict queues a 'result' DM for a DM-eligible student),
+--    identity_pending (PR-5's sweep).
 -- 5. reconcile_challenge_tasks (cron 'challenge-tasks-reconcile' 4-59/10): a FIXED 26-hour rolling capture scan
 --    anti-joined on the ledger (C21), hold release + general fail-open (ai=true only), handle re-evaluation, Mini
 --    App heal, ledger heal (voids, drift, orphans, streak), expire. challenge_tasks_backfill(_from, _to) for
@@ -43,7 +48,7 @@
 --    against is frozen once posted or submitted) and trg_profiles_zz_ig_handle_lock (G2: the Instagram handle is
 --    locked after the first accepted instagram task; admins / definers pass).
 -- 8. ONE pinned rewrite: xp_award_integrity_watchdog gains challenge_chat, challenge_answer, challenge_task,
---    challenge_task_streak in unverifiable_by_design (G31; §6.14d). Live md5 0a7c5bae..., new 3ae2c168...
+--    challenge_task_streak in unverifiable_by_design (G31; §6.14d). Live md5 0a7c5bae..., new 994cbcee...
 --
 -- ═══ VERIFIED LIVE, 2026-09-30 (read-only) ═══
 -- * PR-0 (20260930120020), PR-1 (20260930121000), #221 (20260930130549) and PR-2 (20260930122010) are applied: all
@@ -65,7 +70,8 @@
 -- ═══ DEVIATIONS FROM THE SPEC (each argued; the PR body repeats them) ═══
 -- d1  Guard v2 is a SEPARATE trigger (trg_challenge_tasks_zz_lock, after v1 by name) instead of rewriting PR-2's
 --     challenge_tasks_guard: v1 stays byte-identical. It also freezes min_text_chars / min_duration_sec, refuses
---     approved -> draft, and audits cancel / un-cancel ('challenge_task_status_changed_with_submissions').
+--     approved -> draft, and audits cancel / un-cancel ('challenge_task_status_changed_with_submissions'). A
+--     cancelled task pays 0: the next reconcile removes its points; re-approving restores them.
 -- d2  profiles_column_guard "v2" is a SEPARATE invoker trigger (trg_profiles_zz_ig_handle_lock) + a definer helper
 --     that answers only about the caller: PR-0's security guard is not rewritten at all.
 -- d3  R4 BURST never appends new MEDIA to an already-ACCEPTED submission: a missed day's screenshot sent 2 minutes
@@ -2152,8 +2158,10 @@ begin
     end if;
   end if;
 
-  -- 9. the receipt decision (C7): one receipt per submission, edited as it changes; plain on-time acceptances
-  --    degrade to a reaction when this chat already had receipt_budget_per_chat_min receipts in the last minute.
+  -- 9. the receipt decision (C7): one receipt per submission, edited as it changes. When this chat already had
+  --    receipt_budget_per_chat_min receipts in the last minute: a plain on-time acceptance degrades to a reaction,
+  --    and a receipt that carries the auto-registration WELCOME is never degraded but QUEUED to the worker, which
+  --    paces it (§7.1, G7).
   _hint := case
     when _outcome = 'no_slot' and _found then jsonb_build_object('kind', 'no_slot_' || _reason, 'url', null)
     when _outcome = 'attempts_exhausted' and _found then jsonb_build_object('kind', 'attempts_exhausted', 'url', null)
@@ -2165,11 +2173,13 @@ begin
                     when _outcome = 'appended_album' then 'none'
                     when _outcome = 'appended' and _s.receipt_state = 'sending' then 'none'   -- the first receipt is in flight
                     else 'reply' end;
-      if _mode = 'reply' and _s.status = 'accepted' and _s.late_days = 0 and not _welcome and _src = 'topic'
+      if _mode = 'reply' and _src = 'topic'
          and (select count(*) from public.challenge_task_submissions x
                where x.receipt_chat_id = _chat and x.receipt_requested_at > now() - interval '1 minute')
              >= coalesce((_cfg->>'receipt_budget_per_chat_min')::int, 12) then
-        _mode := 'reaction';
+        _mode := case when _welcome then 'queued'
+                      when _s.status = 'accepted' and _s.late_days = 0 then 'reaction'
+                      else 'reply' end;
       end if;
       if _mode <> 'none' then
         update public.challenge_task_submissions set
@@ -2181,8 +2191,9 @@ begin
             when not coalesce((_cfg->>'receipts')::boolean, true) or _mode = 'reaction' or _src = 'backfill' then 'suppressed'
             when _src = 'reconciler' then case when _ts > now() - make_interval(mins => coalesce((_cfg->>'backfill_receipt_max_age_min')::int, 120))
                                                then 'pending' else 'suppressed' end
+            when _mode = 'queued' then 'pending'
             else 'sending' end,
-          receipt_claimed_at = case when _src = 'topic' then now() else receipt_claimed_at end,
+          receipt_claimed_at = case when _src = 'topic' and _mode <> 'queued' then now() else receipt_claimed_at end,
           receipt_sent_version = case
             when not coalesce((_cfg->>'receipts')::boolean, true) or _mode = 'reaction' or _src = 'backfill'
                  or (_src = 'reconciler' and _ts <= now() - make_interval(mins => coalesce((_cfg->>'backfill_receipt_max_age_min')::int, 120)))
@@ -2193,6 +2204,11 @@ begin
       end if;
       if _src <> 'topic' or _s.receipt_state = 'suppressed' then
         _mode := case when _mode = 'reaction' then 'reaction' else 'none' end;
+      end if;
+      if _mode = 'queued' then
+        insert into public.admin_actions (actor_user_id, action, target_user_id, details)
+        values (null, 'challenge_task_receipt_queued', _p.id, jsonb_build_object('submission_id', _sub_id, 'chat_id', _chat,
+                'reason', 'budget_welcome', 'at', now()));
       end if;
     end if;
   end if;
@@ -3173,6 +3189,13 @@ begin
          updated_at = now()
    where id = _sub;
   perform public.challenge_task_settle_ut(_s.user_id, _s.task_id, _cfg);
+  -- the verdict also goes to the student's DM when they can be DM'd (C15): one 'result' row per check version
+  if coalesce((_cfg->>'dm')::boolean, true) and public.challenge_task_dm_eligible(_s.user_id) then
+    insert into public.challenge_task_outbox (user_id, kind, task_id, submission_id, dedupe_key, payload)
+    values (_s.user_id, 'result', _s.task_id, _sub, 'result:' || _sub::text || ':' || coalesce(_version, 0)::text,
+            jsonb_build_object('decision', _decision, 'reason', _reason))
+    on conflict (dedupe_key) do nothing;
+  end if;
   return public.challenge_task_payload(_sub, 'checked', _reason, jsonb_build_object('ok', true, 'decision', _decision), _cfg);
 end
 $fn$;
@@ -3292,7 +3315,19 @@ begin
      where task_id = _r.task_id and group_id = _r.group_id and kind = _r.kind;
     _out := _out || jsonb_build_object('task_id', _r.task_id, 'group_id', _r.group_id, 'kind', _r.kind, 'token', _tok,
       'chat_id', _r.chat_id, 'thread_id', _r.thread_id,
-      'text', case when _r.kind = 'task' then (select public.challenge_task_render_post(t) from public.challenge_tasks t where t.id = _r.task_id) end);
+      'start_param', 'dt_' || _r.task_id::text,                -- the post button: t.me/<bot>?start=dt_<id> (C10)
+      'miniapp_link', _cfg->'miniapp_link',                     -- NULL until miniapp_onboarding (G28)
+      'text', case when _r.kind = 'task' then (select public.challenge_task_render_post(t) from public.challenge_tasks t where t.id = _r.task_id) end,
+      -- the 20:00 topic summary is anonymous counts only (no names)
+      'summary', case when _r.kind = 'summary' then (
+        select jsonb_build_object(
+                 'done', count(*) filter (where s.status = 'accepted'),
+                 'on_time', count(*) filter (where s.status = 'accepted' and s.late_days = 0),
+                 'checking', count(*) filter (where s.status = 'checking'),
+                 'needs_more', count(*) filter (where s.status = 'needs_more'),
+                 'task_date', (select t.task_date from public.challenge_tasks t where t.id = _r.task_id))
+          from public.challenge_task_submissions s
+         where s.task_id = _r.task_id and s.group_id = _r.group_id) end);
   end loop;
   return jsonb_build_object('ok', true, 'items', _out);
 end
@@ -3728,7 +3763,8 @@ begin
           join public.challenge_tasks t on t.id = s.task_id
           left join public.xp_events e on e.user_id = s.user_id and e.ref_key = 'ch_task:' || s.task_id::text
          where s.status = 'accepted'
-           and ((e.id is null and public.challenge_task_points_for(t, s.late_days, _cfg) > 0)
+           and ((e.id is null and t.status = 'approved' and public.challenge_task_points_for(t, s.late_days, _cfg) > 0)
+                or (e.id is not null and t.status <> 'approved')
                 or (e.id is not null and (e.amount <> public.challenge_task_points_for(t, s.late_days, _cfg) or s.points_awarded <> e.amount))
                 or s.submitted_at <= coalesce((select max(a.created_at) from public.admin_actions a
                                                 where a.action = 'challenge_points_voided' and a.target_user_id = s.user_id), '-infinity'::timestamptz))
@@ -4092,9 +4128,10 @@ begin
     from public.challenge_task_submissions s
     join public.challenge_tasks t on t.id = s.task_id
     left join public.xp_events e on e.user_id = s.user_id and e.ref_key = 'ch_task:' || s.task_id::text
-   where s.status = 'accepted' and t.status = 'approved'
-     and ((e.id is null and public.challenge_task_points_for(t, s.late_days, _cfg) > 0
+   where s.status = 'accepted'
+     and ((t.status = 'approved' and e.id is null and public.challenge_task_points_for(t, s.late_days, _cfg) > 0
            and not (t.type = 'instagram' and s.ig_shortcode is null))
+          or (t.status <> 'approved' and e.id is not null)
           or (e.id is not null and e.amount <> s.points_awarded));
   select count(*)::int into _orph
     from public.xp_events e
@@ -4158,6 +4195,8 @@ begin
                                         where m.resolved_via = 'username_match' and p.telegram_id is null
                                           and m.created_at < _at - interval '2 hours' and m.created_at >= _at - interval '26 hours'),
     'rate_limited_24h', (select count(*) from public.admin_actions a where a.action = 'telegram_rate_limited' and a.created_at >= _at - interval '24 hours'),
+    'capture_failed_24h', (select count(*) from public.admin_actions a where a.action = 'challenge_task_capture_failed' and a.created_at >= _at - interval '24 hours'),
+    'receipts_queued_24h', (select count(*) from public.admin_actions a where a.action = 'challenge_task_receipt_queued' and a.created_at >= _at - interval '24 hours'),
     'topic_missing_24h', (select count(*) from public.admin_actions a where a.action = 'challenge_task_topic_missing' and a.created_at >= _at - interval '24 hours'),
     'legacy_swaps_7d', (select count(*) from public.admin_actions a where a.action = 'challenge_task_legacy_swap' and a.created_at >= _at - interval '7 days'),
     'handle_changes_7d', (select count(*) from public.admin_actions a where a.action = 'instagram_handle_changed' and a.created_at >= _at - interval '7 days'),
@@ -4415,11 +4454,11 @@ $fn$;
 do $$
 declare
   _pin constant text := '0a7c5bae4e1ff1d6e8eb667c39af0335';       -- live md5(prosrc), re-read 2026-09-30
-  _new_pin constant text := '3ae2c168fdbf9c47b5569d77c1b659e0';  -- the rewritten body (PGlite harness + an independent recompute)
+  _new_pin constant text := '994cbcee6b3a625d56a61438e02f0442';  -- the rewritten body (PGlite harness + an independent recompute)
   _old1 constant text := E'      ''challenge_group_media'',''challenge_question'',''challenge_instagram''),\n';
   _new1 constant text :=
        E'      ''challenge_group_media'',''challenge_question'',''challenge_instagram'',\n'
-    || E'      -- 20260930150000 (Daily Tasks PR-3): the task reasons are verified by challenge_tasks_health() ledger_drift\n'
+    || E'      -- 20260930150010 (Daily Tasks PR-3): the task reasons are verified by challenge_tasks_health() ledger_drift\n'
     || E'      ''challenge_chat'',''challenge_answer'',''challenge_task'',''challenge_task_streak''),\n';
   _fn oid;
   _src text; _def text; _new text;

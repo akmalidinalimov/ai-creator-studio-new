@@ -280,7 +280,7 @@ insert into public.groups (id, name, course_id, homework_topic_url, daily_task_t
 
 Deno.test({
   name: CAN_RUN
-    ? "daily_tasks_engine: 20260930150000 on PGlite (#218 + PR-1 + PR-2 + engine; attribution, late, streak, corrections, races)"
+    ? "daily_tasks_engine: 20260930150010 on PGlite (#218 + PR-1 + PR-2 + engine; attribution, late, streak, corrections, races)"
     : "daily_tasks_engine: SKIPPED -- needs `deno test -A --node-modules-dir=none` (PGlite reads its own files)",
   ignore: !CAN_RUN,
   sanitizeOps: false,
@@ -294,7 +294,7 @@ async function run() {
   const { citext } = (await import(spec + "/contrib/citext")) as any;
 
   const MIG_PATH = Deno.env.get("MIG_PATH");
-  const MIG = lf(await Deno.readTextFile(MIG_PATH ?? here("../../../migrations/20260930150000_challenge_daily_tasks_engine.sql")));
+  const MIG = lf(await Deno.readTextFile(MIG_PATH ?? here("../../../migrations/20260930150010_challenge_daily_tasks_engine.sql")));
   const PR2 = lf(await Deno.readTextFile(here("../../../migrations/20260930122010_challenge_daily_tasks_calendar.sql")));
   const PR1 = lf(await Deno.readTextFile(here("../../../migrations/20260930121000_challenge_daily_task_topic.sql")));
   const MIG218 = lf(await Deno.readTextFile(here("../../../migrations/20260930100010_challenge_social_points.sql")));
@@ -440,7 +440,7 @@ async function run() {
     ok("W2 owner, ACL and SECURITY DEFINER unchanged",
       src.acl === integrityBefore.acl && src.proowner === integrityBefore.proowner && src.prosecdef === integrityBefore.prosecdef, [src.acl, integrityBefore.acl]);
     ok("W3 nothing else changed: the rewrite is the anchor alone",
-      src.prosrc.replace(/,\n {6}-- 20260930150000[^\n]*\n {6}'challenge_chat','challenge_answer','challenge_task','challenge_task_streak'\)/, ")") ===
+      src.prosrc.replace(/,\n {6}-- 20260930150010[^\n]*\n {6}'challenge_chat','challenge_answer','challenge_task','challenge_task_streak'\)/, ")") ===
         INTEGRITY_LIVE.slice(INTEGRITY_LIVE.indexOf("AS $function$") + 13, INTEGRITY_LIVE.lastIndexOf("$function$")));
     const d2 = await freshDb();
     await d2.exec("create or replace function public.xp_award_integrity_watchdog() returns jsonb language plpgsql security definer as $$ begin return '{}'; end $$;");
@@ -747,6 +747,21 @@ async function run() {
       at3.hint?.kind === "attempts_exhausted", [at1.outcome, at2.outcome, at3]);
     await cfgSet(db, "max_attempts_per_task", 3);
     ok("D34 user_xp equals the ledger for every student", await userXpOk(db));
+
+    // D35 the per-chat receipt budget (C7, §7.1): plain on-time -> reaction; welcome -> queued, never degraded
+    await cfgSet(db, "receipt_budget_per_chat_min", 1);
+    const rb1 = await cap(db, tgm({ from: TG(44), at: "2026-10-06T10:10:00", photo: "rb44" }));
+    const rb2 = await cap(db, tgm({ from: TG(45), at: "2026-10-06T10:10:00", photo: "rb45" }), "topic", { welcome: true });
+    const rb3 = await cap(db, tgm({ from: TG(46), at: "2026-10-05T18:00:00", photo: "rb46" }));
+    ok("D35 over budget: a plain on-time acceptance degrades to a reaction (👍), receipt suppressed",
+      rb1.receipt?.mode === "reaction" && rb1.receipt?.send === false && rb1.reaction === "👍" &&
+      (await liveOf(db, ST(44), TTUE)).receipt_state === "suppressed", rb1.receipt);
+    ok("D36 ...a WELCOME receipt is queued for the worker (pending), never degraded, and signalled",
+      rb2.receipt?.mode === "queued" && rb2.receipt?.send === false && (await liveOf(db, ST(45), TTUE)).receipt_state === "pending" &&
+      (await liveOf(db, ST(45), TTUE)).receipt_carries_welcome === true &&
+      await count(db, "select count(*) n from admin_actions where action = 'challenge_task_receipt_queued'") === 1, rb2.receipt);
+    ok("D37 ...a needs_more receipt (it asks for the missing piece) is still sent", rb3.receipt?.mode === "reply" && rb3.receipt?.send === true, rb3.receipt);
+    await cfgSet(db, "receipt_budget_per_chat_min", 12);
   }
 
   // ───────────── L. late points, streak, freeze ─────────────
@@ -1023,10 +1038,14 @@ async function run() {
     const gv = { reason: "ok", placeholder: false, inappropriate: false, secret: false, manipulation: false, on_task: "yes", confidence: 0.9 };
     const stale = (await one(db, "select challenge_task_check_record($1, gen_random_uuid(), $2, $3::jsonb, '[]') r", [it.submission_id, it.version, JSON.stringify({ verdict: gv })])).r;
     ok("Q3 a stale token changes nothing", stale.reason === "stale", stale);
+    await db.query(`insert into webhook_inbox (received_at, update_type, chat_id, message_id, from_user_id, chat_type, raw_update)
+                    values (now(), 'message', $1, 1, $1, 'private', '{}')`, [TG(27)]);
     const rec = (await one(db, "select challenge_task_check_record($1, $2, $3, $4::jsonb, $5::jsonb) r",
       [it.submission_id, it.token, it.version, JSON.stringify({ verdict: gv }), JSON.stringify([{ provider: "openai", model: "gpt-5-mini", cost_usd: 0.001 }])])).r;
     ok("Q4 a clean general verdict: accepted, +5 (paid at the Telegram time), the call is costed",
       rec.decision === "accepted" && rec.submission?.points === 5 && await count(db, "select count(*) n from challenge_task_ai_calls") === 1, rec);
+    ok("Q4b ...and a 'result' DM is queued for the DM-eligible student (once per check version)",
+      await count(db, "select count(*) n from challenge_task_outbox where kind = 'result' and user_id = $1", [ST(27)]) === 1);
     ok("Q5 the instagram submission is leased with its handle snapshot", igClaim?.handle === "kid_twentyfive", igClaim);
     const iv = { reason: "r", is_instagram_screenshot: true, handle_seen: "@kid_twentyfiv", tag_seen: true, post_age_text: "2 soat", posted_recently: "yes",
                  inappropriate: false, manipulation: false, confidence: 0.9 };
@@ -1077,7 +1096,7 @@ async function run() {
       h.invariants.topic_points_leak_24h === 0 && h.invariants.live_duplicates === 0, h.invariants);
     ok("H2 health carries every counter the watchdog reads", ["retry", "held_24h", "username_match_unlinked_24h", "rate_limited_24h", "topic_missing_24h",
       "legacy_swaps_7d", "handle_changes_7d", "ig_link_unverified_7d", "fingerprint_unavailable_7d", "misplaced_homework_autotag_24h",
-      "held_checks", "checks", "groups", "paused_messages_24h"].every((k) => k in h), Object.keys(h));
+      "held_checks", "checks", "groups", "paused_messages_24h", "capture_failed_24h", "receipts_queued_24h", "miniapp"].every((k) => k in h), Object.keys(h));
     // a leak: challenge media paid on a daily-topic message
     await db.query(`insert into group_message_events (group_id, profile_id, telegram_user_id, telegram_chat_id, telegram_message_id, telegram_thread_id, sent_at)
                     values ($1, $2, 2001, $3, 424242, $4, now())`, [G1, ST(1), CH1, D1]);
@@ -1132,6 +1151,16 @@ async function run() {
     ok("V6 a student without an accepted instagram task can", other.err === null && (other.rows as Row[])[0]?.instagram_username === "free_to_change", other);
     const adm = await as(db, AD, "update profiles set instagram_username = 'fixed_by_admin' where id = $1 returning instagram_username", [ST(25)]);
     ok("V7 an admin can always change it", adm.err === null && (adm.rows as Row[])[0]?.instagram_username === "fixed_by_admin", adm);
+    const t09 = T["2026-10-09"];
+    const can = await as(db, AD, "update challenge_tasks set status = 'cancelled' where id = $1 returning status", [t09]);
+    await reconcile(db);
+    ok("V9 CANCELLING a task with work (audited) pays 0 after the next reconcile; the streak award stays (sticky)", can.err === null &&
+      (await xpOf(db, ST(30), `ch_task:${t09}`)) === undefined && (await xpOf(db, ST(30), "ch_task_streak:2026-10-15"))?.amount === 10 &&
+      await count(db, "select count(*) n from admin_actions where action = 'challenge_task_status_changed_with_submissions'") === 1 &&
+      (await one(db, "select challenge_tasks_health()->'invariants'->>'ledger_drift' n")).n === "0", can.err);
+    const reap = await as(db, AD, "update challenge_tasks set status = 'approved' where id = $1 returning status", [t09]);
+    await reconcile(db);
+    ok("V10 ...re-approving restores the points", reap.err === null && (await xpOf(db, ST(30), `ch_task:${t09}`))?.amount === 5, reap.err);
     const wa = await as(db, ST(3), "select my_telegram_write_access_granted() r");
     ok("V8 my_telegram_write_access_granted stamps the caller only", wa.err === null &&
       (await one(db, "select telegram_write_access_at is not null s from profiles where id = $1", [ST(3)])).s === true &&
@@ -1213,6 +1242,12 @@ async function run() {
     const pi = pc.items.find((x: Row) => x.task_id === T["2026-10-16"]);
     ok("Z11 post_claim leases a queued post with the SAME rendered text the approve guard measured", pc.ok === true && !!pi &&
       pi.text.startsWith("📅 <b>") && pi.text.includes("📍 Faqat shu «Kunlik vazifalar» topikiga yuboring"), pc);
+    ok("Z11b ...with the post button's start parameter (t.me/<bot>?start=dt_<id>)", pi.start_param === `dt_${pi.task_id}` && pi.miniapp_link === null, pi);
+    await db.query(`insert into challenge_task_posts (task_id, group_id, kind, state, chat_id, thread_id) values ($1, $2, 'summary', 'queued', $3, $4)`,
+      [TMON, G1, CH1, D1]);
+    const sc = (await one(db, "select challenge_task_post_claim(5) r")).r.items.find((x: Row) => x.kind === "summary");
+    ok("Z11c the 20:00 summary carries anonymous counts only", sc?.summary?.done >= 10 && sc?.summary?.on_time >= 1 && sc.text === null &&
+      !JSON.stringify(sc.summary).includes("Student"), sc?.summary);
     const pr = (await one(db, "select challenge_task_post_record($1, $2, 'task', $3, 9200) r", [pi.task_id, G1, pi.token])).r;
     const stale = (await one(db, "select challenge_task_post_record($1, $2, 'task', gen_random_uuid(), 9201) r", [pi.task_id, G1])).r;
     ok("Z12 post_record marks it sent (a stale token cannot)", pr.ok === true && stale.ok === false &&
