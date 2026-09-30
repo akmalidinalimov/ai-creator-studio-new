@@ -20,6 +20,11 @@ import {
 } from "./ops-approve.ts";
 import { likeEscape } from "../_shared/username.ts";
 import { resolveGroupPoster } from "../_shared/group-poster-identity.ts";
+import { hwLabel } from "../_shared/hw-label.ts";
+import { loadAssignmentLabels, loadHwLabel } from "../_shared/hw-label-load.ts";
+import {
+  breakdownScopeLine, gradingHeader, hwTeacherBody, moduleCourseMark, thenWho, withLabelLine, withWho,
+} from "./hw-labels.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -3772,16 +3777,20 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
     return;
   }
   const aIds = Array.from(new Set(list.map((s) => s.assignment_id)));
-  const { data: assigns } = await admin.from("homework_assignments").select("id, title, max_score, task_number, sap_number, parent_id, module_id, modules(position, title)").in("id", aIds);
+  const { data: assigns } = await admin.from("homework_assignments").select("id, title, max_score, task_number, sap_number, parent_id, module_id, modules(position, title, courses(title))").in("id", aIds);
   const aMap = new Map(((assigns || []) as any[]).map((a: any) => [a.id, a]));
   const moduleIds = Array.from(new Set(((assigns || []) as any[]).map((a: any) => a.module_id)));
   const topicsRes = prof?.group_id && moduleIds.length
     ? await admin.from("group_module_topics").select("module_id, telegram_topic_url").eq("group_id", prof.group_id).in("module_id", moduleIds)
     : { data: [] as any[] };
   const groupTopicRes = prof?.group_id
-    ? await admin.from("groups").select("homework_topic_url").eq("id", prof.group_id).maybeSingle()
+    ? await admin.from("groups").select("homework_topic_url, name, courses(title)").eq("id", prof.group_id).maybeSingle()
     : { data: null as any };
   const sharedTopicUrl: string | null = (groupTopicRes.data as any)?.homework_topic_url || null;
+  // Header scope "👥 <course> · <group>", and a course marker on any module of ANOTHER course (old-course work
+  // after a move): the Challenge tasks are copies of the 5.0 tasks and the same "Modul N" differs per course.
+  const groupCourseTitle: string | null = (groupTopicRes.data as any)?.courses?.title ?? null;
+  const scopeLine = breakdownScopeLine(groupCourseTitle, (groupTopicRes.data as any)?.name ?? null);
   const topicMap = new Map<string, string>();
   for (const tp of ((topicsRes.data || []) as any[])) {
     if (tp.telegram_topic_url) topicMap.set(tp.module_id, tp.telegram_topic_url);
@@ -3791,20 +3800,20 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
   }
 
 
-  const byModule = new Map<string, { mPos: number; mTitle: string; mid: string; items: any[] }>();
+  const byModule = new Map<string, { mPos: number; mTitle: string; mCourse: string | null; mid: string; items: any[] }>();
   for (const s of list) {
     const a: any = aMap.get(s.assignment_id);
     if (!a) continue;
     const key = a.module_id;
-    if (!byModule.has(key)) byModule.set(key, { mPos: a.modules?.position ?? 0, mTitle: a.modules?.title || "—", mid: key, items: [] });
+    if (!byModule.has(key)) byModule.set(key, { mPos: a.modules?.position ?? 0, mTitle: a.modules?.title || "—", mCourse: a.modules?.courses?.title ?? null, mid: key, items: [] });
     byModule.get(key)!.items.push({ sub: s, a });
   }
   const modules = Array.from(byModule.values()).sort((x, y) => x.mPos - y.mPos);
 
-  const lines = [t.gradeStudentBreakdown(name), ""];
+  const lines = [t.gradeStudentBreakdown(name), ...(scopeLine ? [scopeLine] : []), ""];
   const buttons: any[][] = [];
   for (const m of modules) {
-    lines.push(`📚 <b>Modul ${m.mPos + 1} — ${csvEscapeHtml(m.mTitle)}</b>`);
+    lines.push(`📚 <b>Modul ${m.mPos + 1} — ${csvEscapeHtml(m.mTitle)}</b>${moduleCourseMark(m.mCourse, groupCourseTitle)}`);
     let anyPostUrl = false;
     for (const it of m.items) {
       const tn = displayStepNumber(it.a);
@@ -4315,10 +4324,14 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
     }
   }
   const { data: a } = await admin.from("homework_assignments").select("id, title, max_score, task_number, sap_number, parent_id").eq("id", sub.assignment_id).maybeSingle();
-  const { data: p } = await admin.from("profiles").select("id, name, last_name").eq("id", sub.user_id).maybeSingle();
+  const { data: p } = await admin.from("profiles").select("id, name, last_name, group_id").eq("id", sub.user_id).maybeSingle();
   const name = [p?.name, p?.last_name].filter(Boolean).join(" ") || "—";
   const tn = a ? ` #${displayStepNumber(a)}` : ""; // SAP sub-step → its sap_number (not the parent's task_number)
-  const header = `<b>${csvEscapeHtml(name)}</b> — ${csvEscapeHtml(a?.title || "")}${tn}`;
+  // "<course> · <group> · M<n> V<step> — <title>" (course from the task, group = the student's group): the
+  // Challenge tasks are copies of the 5.0 tasks, so name + title alone could be either course. A failed read
+  // falls back to the old one-liner (recorded once a day as hw_label_lookup_failed).
+  const lbl = await loadHwLabel(admin, sub.assignment_id, p?.group_id ?? null, "telegram-bot-webhook");
+  const header = gradingHeader(name, lbl.label, `${a?.title || ""}${tn}`);
   const body = sub.submitted_text ? csvEscapeHtml(sub.submitted_text) : "<i>(no text)</i>";
   // Regrade context: a resubmission carries the grade it's trying to improve — either the
   // previous_score stamp (picker-path resubmits, score reset to null) or, for STALE rows
@@ -4365,7 +4378,12 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
     state: "grade_score",
     // opened_sub_at: detect a resubmission landing WHILE the teacher grades (U8) — the commit
     // compares and warns instead of silently grading work that was just replaced.
-    context: { submission_id: submissionId, max_score: a?.max_score || 10, grader_id: graderId, is_admin: isAdmin, opened_sub_at: sub.submitted_at },
+    // student_name + who_tag: the score prompt, the comment prompt and the "saved" confirmation all name the
+    // student and "<course> · <group> · M V", so the teacher sees whose grade her next number becomes.
+    context: {
+      submission_id: submissionId, max_score: a?.max_score || 10, grader_id: graderId, is_admin: isAdmin, opened_sub_at: sub.submitted_at,
+      student_name: name, who_tag: lbl.tag,
+    },
     updated_at: new Date().toISOString(),
     expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
   });
@@ -4374,7 +4392,7 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
   const scoreKb = (sub.score == null || (sub as any).score_is_stale)
     ? { inline_keyboard: [[{ text: t.retagBtn, callback_data: `hwmv:${submissionId}` }]] }
     : undefined;
-  await sendMessage(chatId, t.gradeAskScore(a?.max_score || 10), scoreKb);
+  await sendMessage(chatId, withWho(t.gradeAskScore(a?.max_score || 10), name, lbl.tag), scoreKb);
 }
 
 // Handle text replies for an in-progress grading conversation. Returns true if consumed.
@@ -4455,7 +4473,7 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
       state: "grade_comment", context: ctx, updated_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
     }).eq("telegram_id", tgId);
-    await sendMessage(msg.chat.id, t.gradeAskComment);
+    await sendMessage(msg.chat.id, withWho(t.gradeAskComment, ctx.student_name, ctx.who_tag));
     return true;
   }
 
@@ -4531,7 +4549,9 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
       studentName = [stu?.name, stu?.last_name].filter(Boolean).join(" ");
       if (stu?.telegram_id) {
         const stuT = T[normLocale(stu.preferred_locale)];
-        const vo = await sendVoice(Number(stu.telegram_id), voiceFileId, stuT.gradeVoiceNote);
+        // ctx.label = the hw-label teacher-voice-request parked with the request ("<course> · <group> · M V —
+        // <title>"), so a voice note arriving on its own says which homework it is about.
+        const vo = await sendVoice(Number(stu.telegram_id), voiceFileId, withLabelLine(stuT.gradeVoiceNote, ctx.label));
         delivered = vo.ok;
         if (!vo.ok) {
           // Classified, so the watchdogs can tell "student blocked the bot" (expected) from a broken path.
@@ -4564,7 +4584,8 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
     cacheInvalidateUser(sub.user_id);
     // Name the student in the confirmation: the state is one-per-teacher, so if she requested notes for two
     // cards back to back the latest request wins — naming who received it makes any mix-up visible at once.
-    await sendWithKeyboard(msg.chat.id, t.gvSaved(csvEscapeHtml(studentName || "—"), delivered), locale, isAdmin, isAdmin ? "admin" : "teacher");
+    // …and the label line says which course/group/task it was attached to.
+    await sendWithKeyboard(msg.chat.id, withLabelLine(t.gvSaved(csvEscapeHtml(studentName || "—"), delivered), ctx.label), locale, isAdmin, isAdmin ? "admin" : "teacher");
     return true;
   }
 
@@ -4633,13 +4654,18 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
     // Auto-DM the student (always)
     if (sub) {
       const { data: a } = await admin.from("homework_assignments").select("title, max_score, task_number, sap_number, parent_id").eq("id", sub.assignment_id).maybeSingle();
-      const { data: stu } = await admin.from("profiles").select("telegram_id, preferred_locale, name").eq("id", sub.user_id).maybeSingle();
+      const { data: stu } = await admin.from("profiles").select("telegram_id, preferred_locale, name, group_id").eq("id", sub.user_id).maybeSingle();
       const max = a?.max_score || 10;
       if (stu?.telegram_id) {
         const stuLocale: Locale = normLocale(stu.preferred_locale);
         const tt = T[stuLocale] as any;
         const tn = a ? ` #${displayStepNumber(a)}` : ""; // SAP sub-step → its sap_number
-        const title = `${a?.title || ""}${tn}`;
+        // Card heading = the shared label "<course> · <group> · M<n> V<step> — <title>" (the same heading
+        // notify-grade-voice and grade-card-reconcile send), so a late 5.0 grade and a Challenge grade on the
+        // copied task read differently. Read fresh here (a retag may have moved the task since the flow
+        // opened); a failed read keeps the old "title #step".
+        const cardLbl = await loadHwLabel(admin, sub.assignment_id, stu.group_id ?? null, "telegram-bot-webhook");
+        const title = cardLbl.label || `${a?.title || ""}${tn}`;
         try {
           const url = await createMagicLink(admin, sub.user_id, "login", "/profile");
           // S4: low scores get a one-tap resubmit right in the grade card —
@@ -4740,7 +4766,9 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
           });
         }
       }
-      await sendWithKeyboard(msg.chat.id, t.gradeSaved(score, max), locale, isAdmin, isAdmin ? "admin" : "teacher");
+      // Name whose grade this was (ctx survives the state delete above; a retag-reset session has no name →
+      // the old text).
+      await sendWithKeyboard(msg.chat.id, thenWho(t.gradeSaved(score, max), ctx.student_name, ctx.who_tag), locale, isAdmin, isAdmin ? "admin" : "teacher");
     }
     return true;
   }
@@ -6704,11 +6732,8 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
 }
 
 // v3.14.40: auto-detect path removed — handleGroupTopicMessage now auto-synthesizes
-// intents for sender-attributed topic posts. hwTeacherBody is still used by
+// intents for sender-attributed topic posts. hwTeacherBody (./hw-labels.ts) is still used by
 // notifyTeachersOfSubmission below.
-function hwTeacherBody(studentName: string, groupName: string, moduleName: string, assignmentTitle: string): string {
-  return `🆕 <b>Yangi vazifa topshirildi</b>\n👤 Talaba: <b>${csvEscapeHtml(studentName)}</b>\n👥 Guruh: <b>${csvEscapeHtml(groupName)}</b>\n📚 Modul: <b>${csvEscapeHtml(moduleName)}</b>\n📝 Vazifa: <b>${csvEscapeHtml(assignmentTitle)}</b>\n\nXabarni topikda ko'ring va baholang.`;
-}
 
 async function notifyTeachersOfSubmission(
   admin: any,
@@ -6796,13 +6821,22 @@ async function notifyTeachersOfSubmission(
       + (_uname ? ` (@${_uname})` : "");
 
     // Immediate-DM body + inline keyboard are teacher-independent too → build ONCE, reuse per teacher.
-    const { data: grp } = await admin.from("groups").select("name").eq("id", groupId).maybeSingle();
-    // A3: the step is shown here (tn is sap-aware) so the teacher sees "Modul 3 · Vazifa 1".
-    const moduleName = `Modul ${mn} · Vazifa ${tn}`;
+    // The course is read from the TASK (assignment → module → course); a failed read only drops the course
+    // from the label (recorded once a day as hw_label_lookup_failed).
+    const [{ data: grp }, courseRead] = await Promise.all([
+      admin.from("groups").select("name").eq("id", groupId).maybeSingle(),
+      loadAssignmentLabels(admin, [assignmentId], "telegram-bot-webhook"),
+    ]);
+    // A3: the step is shown here (tn is sap-aware). The label "<course> · <group> · M<n> V<step> — <title>"
+    // replaces the separate group / module / task lines: the Challenge tasks are copies of the 5.0 tasks.
+    const label = hwLabel({
+      courseTitle: courseRead.map.get(assignmentId)?.courseTitle ?? null,
+      groupName: grp?.name ?? null, moduleNumber: mn, step: tn, title: aTitle || "",
+    });
     // A4: an auto-GUESSED attribution (student ignored the picker) carries the "(taxminiy)" marker
     // on aTitle. Make it loud + give the teacher a one-tap ✏️ retag right on the notification.
     const guessed = /\(taxminiy\)/.test(aTitle || "");
-    const body = hwTeacherBody(studentName, grp?.name || "—", moduleName, aTitle || "")
+    const body = hwTeacherBody(studentName, label)
       + (guessed ? "\n\n⚠️ <b>Avto-belgilangan</b> — vazifa taxminan tanlandi. Noto'g'ri bo'lsa ✏️ bilan to'g'rilang." : "");
     // grade:open:<submissionId> = 47 bytes; hwmv:<submissionId> = 41 bytes. Both under Telegram's
     // 64-byte callback_data cap (the previous grade_task:<assignmentId>:<studentId> was 84 → BUTTON_DATA_INVALID).
