@@ -6,7 +6,7 @@
  * UNIQUE index are checked server-side only (their messages come back through mutate()).
  *
  * Pure and dependency-free on purpose: the PGlite harness
- * (supabase/functions/_challenge/testing/daily_topic_check_test.ts) imports it and asserts it parses
+ * (supabase/functions/_challenge/testing/daily-topic-check.ts) imports it and asserts it parses
  * every fixture exactly like the SQL function does.
  */
 
