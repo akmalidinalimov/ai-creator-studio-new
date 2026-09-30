@@ -1417,5 +1417,8 @@
     "tBulkDone": "Yuborildi: {{ok}} · o'tkazildi: {{skipped}} (bugun allaqachon yuborilgan yoki Telegram yo'q)",
     "tQueueTruncated": "{{total}} ta kutayotgan vazifadan {{shown}} tasi ko'rsatilmoqda (eng eskilari birinchi). Bularni baholang, so'ng qolgan {{hidden}} tasini yuklash uchun navbatni yangilang.",
     "tQueueRefresh": "Navbatni yangilash"
+  },
+  "continue": {
+    "loading": "Darsingiz ochilmoqda…"
   }
 }

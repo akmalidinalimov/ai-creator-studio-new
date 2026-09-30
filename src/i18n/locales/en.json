@@ -1417,5 +1417,8 @@
     "tBulkDone": "Sent: {{ok}} · skipped: {{skipped}} (already today or no Telegram)",
     "tQueueTruncated": "Showing {{shown}} of {{total}} waiting (oldest first). Grade these, then refresh the queue to load the other {{hidden}}.",
     "tQueueRefresh": "Refresh queue"
+  },
+  "continue": {
+    "loading": "Opening your lesson…"
   }
 }
