@@ -491,6 +491,13 @@ export async function runWorker(env: WorkerEnv, io: WorkerIO, req: WorkerRequest
           inc(dms, "skipped");
           continue;
         }
+        const exp = Date.parse(String(it.payload?.expires_at ?? ""));
+        if (Number.isFinite(exp) && io.now() > exp) {
+          // a morning / evening DM that could not go out in its window is dropped, never sent late (DB-visible)
+          await outboxRecord(it, false, "expired", true);
+          inc(dms, "expired");
+          continue;
+        }
         const who = profiles.get(String(it.user_id)) ?? { name: "", locale: "uz" as Locale };
         let r: Rendered | null = null;
         try {
