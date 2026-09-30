@@ -1,6 +1,7 @@
 // Admin-only: create / delete users + send magic-link invites + audit logging.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { likeEscape } from "../_shared/username.ts";
+import { incomingTelegramVerdict } from "./telegram-link.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -217,7 +218,7 @@ Deno.serve(async (req) => {
       return ins.id;
     };
 
-    const results: Array<{ email: string; status: string; password?: string; userId?: string; error?: string; action_link?: string | null; row_index?: number; identifier_used?: string }> = [];
+    const results: Array<{ email: string; status: string; password?: string; userId?: string; error?: string; action_link?: string | null; row_index?: number; identifier_used?: string; linked_telegram_id?: boolean }> = [];
     const requestId = (crypto as any).randomUUID ? (crypto as any).randomUUID() : `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const auditLog = (row_index: number, identifier_used: string, action: string, error?: string) => {
       console.log(JSON.stringify({ scope: "admin-create-students", request_id: requestId, row_index, identifier_used, action, ...(error ? { error } : {}) }));
@@ -330,23 +331,24 @@ Deno.serve(async (req) => {
       let existingId: string | null = null;
       let existingGroupId: string | null = null;
       let existingTgUsername: string | null = null;
+      let existingTgId: number | string | null = null;
       // v3.14.35: also fetch existing email so we can match by email collision early.
       // Email-based match comes last (after tg_id, tg_username, name+last_name).
       if (tgIdNum) {
-        const { data: e1 } = await admin.from("profiles").select("id, group_id, telegram_username").eq("telegram_id", tgIdNum).maybeSingle();
-        if (e1) { existingId = (e1 as any).id; existingGroupId = (e1 as any).group_id || null; existingTgUsername = (e1 as any).telegram_username ?? null; }
+        const { data: e1 } = await admin.from("profiles").select("id, group_id, telegram_username, telegram_id").eq("telegram_id", tgIdNum).maybeSingle();
+        if (e1) { existingId = (e1 as any).id; existingGroupId = (e1 as any).group_id || null; existingTgUsername = (e1 as any).telegram_username ?? null; existingTgId = (e1 as any).telegram_id ?? null; }
       }
       if (!existingId && tgUserNorm) {
         // Case-INSENSITIVE: tgUserNorm is lowercased but stored usernames keep their case (110 profiles
         // are mixed-case). An exact .eq() missed every one of them, so re-adding such a student fell
         // through to createUser → duplicate account or a uniq_profiles_telegram_username_lower error.
         // ilike with LIKE metacharacters escaped (usernames contain "_"), then an exact compare in JS.
-        const { data: e2rows } = await admin.from("profiles").select("id, group_id, telegram_username")
+        const { data: e2rows } = await admin.from("profiles").select("id, group_id, telegram_username, telegram_id")
           .ilike("telegram_username", `%${likeEscape(tgUserNorm)}`).limit(20);
         const e2 = (e2rows || []).find(
           (p: any) => String(p.telegram_username ?? "").replace(/^@+/, "").toLowerCase() === tgUserNorm,
         ) ?? null;
-        if (e2) { existingId = (e2 as any).id; existingGroupId = (e2 as any).group_id || null; existingTgUsername = (e2 as any).telegram_username ?? null; }
+        if (e2) { existingId = (e2 as any).id; existingGroupId = (e2 as any).group_id || null; existingTgUsername = (e2 as any).telegram_username ?? null; existingTgId = (e2 as any).telegram_id ?? null; }
       }
       // Soft re-import dedupe by (lower(name), lower(last_name)) — ONLY when CSV row has
       // NEITHER telegram_user_id NOR telegram_username. Otherwise different real people sharing
@@ -354,7 +356,7 @@ Deno.serve(async (req) => {
       if (!existingId && !tgIdNum && !tgUserNorm && csvName && csvLastName) {
         const { data: e3 } = await admin
           .from("profiles")
-          .select("id, group_id, telegram_username")
+          .select("id, group_id, telegram_username, telegram_id")
           .ilike("name", csvName)
           .ilike("last_name", csvLastName)
           .limit(2);
@@ -362,6 +364,7 @@ Deno.serve(async (req) => {
           existingId = (e3[0] as any).id;
           existingGroupId = (e3[0] as any).group_id || null;
           existingTgUsername = (e3[0] as any).telegram_username ?? null;
+          existingTgId = (e3[0] as any).telegram_id ?? null;
         }
       }
       if (existingId) {
@@ -384,17 +387,68 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // IDENTITY (PR-0b): see telegram-link.ts. A system caller never re-points a profile that is linked to a
+        // DIFFERENT Telegram account (reachable only through a username match); the row is refused untouched.
+        const tgVerdict = incomingTelegramVerdict(isSystem, tgIdNum, existingTgId);
+        if (tgVerdict === "conflict_system") {
+          const err = "Bu profil boshqa Telegram hisobiga ulangan. Telegram ID o'zgartirilmadi.";
+          results.push({ email, status: "telegram_id_conflict", error: err, userId: existingId, row_index, identifier_used });
+          auditLog(row_index, identifier_used, "telegram_id_conflict");
+          await logAdminAction(admin, actorId, "telegram_id_conflict_refused", {
+            target_user_id: existingId, target_resource_type: "profile", target_resource_id: existingId,
+            details: {
+              incoming_telegram_id: tgIdNum, linked_telegram_id: existingTgId, telegram_username: tgUserNorm || null,
+              existing_group_id: existingGroupId, target_group_id: resolvedGroupId, request_id: requestId,
+            },
+          });
+          continue;
+        }
+
         const alreadyInTargetGroup = !!resolvedGroupId && existingGroupId === resolvedGroupId && incomingRole === "student";
         if (alreadyInTargetGroup) {
+          // IDENTITY FIX (PR-0b): this branch used to `continue` BEFORE the telegram_id patch below, so an
+          // intake student (username only) matched here was never linked and their topic post was dropped.
+          // Link when an id was supplied, the profile has none, and no other profile holds it: one guarded
+          // write (.is("telegram_id", null)), audited as telegram_id_linked_on_existing.
+          let linkedTg = false;
+          if (tgVerdict === "free") {
+            const { data: holder } = await admin.from("profiles").select("id").eq("telegram_id", tgIdNum!).neq("id", existingId).maybeSingle();
+            if (holder) {
+              auditLog(row_index, identifier_used, "telegram_id_link_skipped_in_use");
+            } else {
+              const { data: linkRows, error: linkErr } = await admin.from("profiles")
+                .update({ telegram_id: tgIdNum, updated_at: new Date().toISOString() })
+                .eq("id", existingId).is("telegram_id", null).select("id");
+              linkedTg = !linkErr && Array.isArray(linkRows) && linkRows.length === 1;
+              if (linkedTg) {
+                await logAdminAction(admin, actorId, "telegram_id_linked_on_existing", {
+                  target_user_id: existingId, target_resource_type: "profile", target_resource_id: existingId,
+                  details: {
+                    telegram_id: tgIdNum, telegram_username: tgUserNorm || null, group_id: existingGroupId,
+                    caller: isSystem ? "system" : "admin", request_id: requestId,
+                  },
+                });
+              } else {
+                auditLog(row_index, identifier_used, "telegram_id_link_not_written", linkErr?.message);
+              }
+            }
+          }
           // Group unchanged — but STILL honor an explicit account-type change, so re-submitting a
           // student as 'paid' (or 'provisional') upgrades/downgrades them without needing a group move.
           if (acctType) {
             const { error: acctErr } = await admin.from("profiles").update({ account_type: acctType }).eq("id", existingId);
             if (!acctErr) {
-              results.push({ email, status: "updated", userId: existingId, row_index, identifier_used });
+              results.push({ email, status: "updated", userId: existingId, row_index, identifier_used, ...(linkedTg ? { linked_telegram_id: true } : {}) });
               auditLog(row_index, identifier_used, "account_type_updated_same_group");
               continue;
             }
+          }
+          if (linkedTg) {
+            // 'updated', not a new status: every admin UI (AdminUsers/AdminGroups/GroupDetail) already treats it
+            // as success, and the bot's auto-register only needs the link to exist.
+            results.push({ email, status: "updated", userId: existingId, row_index, identifier_used, linked_telegram_id: true });
+            auditLog(row_index, identifier_used, "telegram_id_linked_on_existing");
+            continue;
           }
           const err = "Bu foydalanuvchi allaqachon shu guruhda.";
           results.push({ email, status: "already_in_group", error: err, userId: existingId, row_index, identifier_used });

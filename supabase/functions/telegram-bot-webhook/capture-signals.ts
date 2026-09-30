@@ -48,7 +48,9 @@ export type AutoRegisterFailReason =
   | "profile_not_linked"         // the engine MATCHED a profile without linking this telegram_id
   | "error";                     // autoRegisterProvisionalPoster threw
 
-export type AutoRegisterSource = "homework_topic_post" | "dm_start_member";
+// daily_task_post: the daily-task topic path (PR-4), which resolves posters through
+// _shared/group-poster-identity.ts like the homework path.
+export type AutoRegisterSource = "homework_topic_post" | "dm_start_member" | "daily_task_post";
 
 type DropDetails = {
   chatId: number;

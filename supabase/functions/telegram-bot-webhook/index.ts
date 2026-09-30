@@ -18,6 +18,7 @@ import {
   OPS_REPO, parseOpsCallback, verifyOpsPr,
 } from "./ops-approve.ts";
 import { likeEscape } from "../_shared/username.ts";
+import { resolveGroupPoster } from "../_shared/group-poster-identity.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6032,9 +6033,11 @@ async function autoRegisterProvisionalPoster(
     const prof = await findProfileByTelegramId(admin, from.id);
     if (!prof) {
       // The engine answered with a profile id, but no profile carries this telegram_id. It happens when
-      // the engine MATCHES an existing profile without linking it: status 'already_in_group' (matched by
-      // username in the same group) and 'role_conflict' (a staff profile) both return before the
-      // telegram_id patch in admin-create-students. The post is dropped either way.
+      // the engine MATCHES an existing profile without linking it: 'role_conflict' (a staff profile),
+      // 'telegram_id_conflict' (the profile is linked to another Telegram account), or 'already_in_group'
+      // when the telegram_id is not free (since PR-0b it links when it is). From the homework path a
+      // username match never gets here any more (resolveGroupPoster gates it first); the DM /start
+      // member path still can. The post is dropped either way.
       console.log("hw:autoreg:profile-not-linked", JSON.stringify({ tg: from.id, status: reg.status, group_id: grp.id }));
       await recordAutoRegisterFailed(admin, "profile_not_linked", from, grp, "homework_topic_post", {
         engine_status: reg.status ?? null, matched_user_id: reg.userId ?? null, chat_id: chatId, message_id: msg.message_id,
@@ -6331,13 +6334,23 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     // Strict per-student attribution — but an unknown group member posting real homework in a
     // registered homework topic can now SELF-REGISTER as a provisional student (flag-gated;
     // name/username/id come from Telegram, group from the chat — no form, no bot-start needed).
+    // IDENTITY (PR-0b): resolveGroupPoster first LINKS an intake student (username only, no telegram_id)
+    // whose current group lives in this chat, and refuses any other username match before the engine
+    // can move/link it; only a sender no profile knows by username reaches autoRegisterProvisionalPoster.
     if (!profile) {
-      profile = await autoRegisterProvisionalPoster(admin, msg, chatId, threadId);
+      const who = await resolveGroupPoster(admin, {
+        from: msg.from, chatId, threadId, messageId, topicKinds: ["homework", "module"], source: "homework_topic_post",
+      }, { autoRegister: () => autoRegisterProvisionalPoster(admin, msg, chatId, threadId) });
+      profile = who.profile;
       if (!profile) {
-        // Not re-recorded here: autoRegisterProvisionalPoster already wrote the one row that explains a
-        // drop in a homework topic, and a post outside one is general chat (silent by design).
-        console.log("hw:group:unknown-sender-ignored", JSON.stringify({ fromId, isAnon, chatId, threadId, messageId }));
+        // Not re-recorded here: resolveGroupPoster (group_poster_unresolved) or autoRegisterProvisionalPoster
+        // already wrote the one row that explains a drop in a homework topic, and a post outside one is
+        // general chat (silent by design).
+        console.log("hw:group:unknown-sender-ignored", JSON.stringify({ fromId, isAnon, chatId, threadId, messageId, reason: who.reason }));
         return;
+      }
+      if (who.via === "username_link") {
+        console.log("hw:group:poster-linked-by-username", JSON.stringify({ profile_id: profile.id, fromId, chatId, threadId, messageId }));
       }
     }
 
