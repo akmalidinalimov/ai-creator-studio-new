@@ -3,7 +3,14 @@
 // resolveGroupPoster (_shared/group-poster-identity.ts) calls it ONLY when no profile carries the sender's telegram_id
 // or username, so the getChatMember probe below runs only for users WITHOUT a profile (spec §10.2).
 //
-// Same rules as the bot, deliberately:
+// Same rules as the bot, deliberately, with ONE difference:
+//   * the sender must be a member of the chat NOW, and an unconfirmed answer counts as "not a member" (fail closed,
+//     like _shared/telegram-membership.ts). The bot registers at post time, when the post itself proves membership;
+//     the sweep runs up to 26 h later (regular) or days later (PR-8's window pre-step over a paused period, when the
+//     bot registered nobody), and members do leave or get removed. So 'left', 'kicked', 'restricted' with
+//     is_member=false -> 'challenge_task_autoreg_skipped' {reason: not_member}; a failed probe or an unknown status
+//     -> {reason: membership_unknown} (the 60-minute sweep backoff retries it while the 26-h candidate lives).
+//     CLAUDE.md: non-members get no account;
 //   * chat admins / the creator are never registered (U4) -> 'challenge_task_autoreg_skipped' {reason: chat_admin};
 //   * the ONE creation engine, admin-create-students, server to server with x-internal-secret (every dedupe / role
 //     rule lives there); account_type is NOT sent, so a matched platform student is never downgraded; 'provisional'
@@ -54,24 +61,47 @@ async function recordFailed(admin: Db, reason: AutoRegisterFailReason, inp: Regi
   }, { source: "daily_task_post" });
 }
 
+/** What a getChatMember answer means for the sweep. Anything not positively a member is NOT a member (fail closed). */
+export type MembershipVerdict = "member" | "chat_admin" | "not_member" | "unknown";
+
+export function membershipVerdict(ok: boolean, result: TgResult): MembershipVerdict {
+  if (!ok) return "unknown";
+  const st = String(result?.status ?? "");
+  if (st === "administrator" || st === "creator") return "chat_admin";
+  if (st === "member") return "member";
+  // ChatMemberRestricted carries is_member: false when the user has left the chat while restricted
+  if (st === "restricted") return result?.is_member === false ? "not_member" : "member";
+  if (st === "left" || st === "kicked") return "not_member";
+  return "unknown";
+}
+
 /** The profile (POSTER_PROFILE_COLS) now carrying this telegram_id, or null (declined / refused / failed — recorded). */
 export async function registerDailyTaskPoster(d: RegistrarDeps, inp: RegisterInput): Promise<Record<string, unknown> | null> {
   const from = inp.from;
   if (!from?.id || from.is_bot || !inp.groupId || !inp.courseId) return null;
   const admin = d.admin;
 
-  // U4: never the chat's admins. getChatMember is a read (record:false: a probe is never a delivery failure).
+  // Membership NOW, and U4 (never the chat's admins). getChatMember is a read (record:false: a probe is never a
+  // delivery failure). Fail closed: only a positive 'member' answer reaches the engine.
+  let verdict: MembershipVerdict = "unknown";
+  let memberStatus: string | null = null;
+  let probeError: string | null = null;
   try {
     const { outcome, result } = await d.send("getChatMember", { chat_id: inp.chatId, user_id: from.id }, { record: false });
-    const st = outcome.ok ? String(result?.status ?? "") : "";
-    if (st === "administrator" || st === "creator") {
-      await logHealthOnce(admin, "challenge_task_autoreg_skipped", `chat_admin:${inp.chatId}:${from.id}`, {
-        reason: "chat_admin", chat_id: inp.chatId, thread_id: inp.threadId, message_id: inp.messageId,
-        telegram_id: from.id, group_id: inp.groupId, via: "identity_sweep",
-      }, { source: "challenge-tasks-worker" });
-      return null;
-    }
-  } catch (_e) { /* best-effort, like the bot's registrar — proceed */ }
+    verdict = membershipVerdict(outcome.ok, result);
+    memberStatus = outcome.ok ? (String(result?.status ?? "") || null) : null;
+    if (!outcome.ok) probeError = String(outcome.error ?? outcome.klass ?? "probe_failed").slice(0, 120);
+  } catch (e) {
+    probeError = redactSecrets(e).slice(0, 120) || "probe_threw";
+  }
+  if (verdict !== "member") {
+    const reason = verdict === "chat_admin" ? "chat_admin" : verdict === "not_member" ? "not_member" : "membership_unknown";
+    await logHealthOnce(admin, "challenge_task_autoreg_skipped", `${reason}:${inp.chatId}:${from.id}`, {
+      reason, chat_id: inp.chatId, thread_id: inp.threadId, message_id: inp.messageId,
+      telegram_id: from.id, group_id: inp.groupId, via: "identity_sweep", member_status: memberStatus, probe_error: probeError,
+    }, { source: "challenge-tasks-worker" });
+    return null;
+  }
 
   try {
     const { data: sec } = await admin.rpc("internal_fn_secret");
