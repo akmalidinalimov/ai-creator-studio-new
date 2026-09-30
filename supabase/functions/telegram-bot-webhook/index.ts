@@ -4553,7 +4553,8 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
           actor_user_id: profileId, action: "grade_voice_delivery_failed",
           target_user_id: sub.user_id, target_resource_type: "homework_submission",
           target_resource_id: submissionId,
-          details: { source: "miniapp_voice_bridge", error: redactSecrets((e as any)?.message ?? e), terminal: false, transport: true },
+          // A throw (e.g. the profile read failed), not a Telegram refusal: no recipient_error, so the watchdogs count it.
+          details: { source: "miniapp_voice_bridge", error: redactSecrets((e as any)?.message ?? e), terminal: false, thrown: true },
         });
       } catch (_e2) { /* audit best-effort */ }
     }
