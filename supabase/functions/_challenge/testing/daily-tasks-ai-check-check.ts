@@ -774,7 +774,7 @@ async function runPinned() {
     const imgs = p1.messages[0].content.filter((c: Row) => c.type === "image");
     ok("E3 the provider got the 591-px photo as base64 (never a URL, never a file id) and the general prompt",
       imgs.length === 1 && imgs[0].source.type === "base64" && imgs[0].source.data.length > 1000 &&
-      !JSON.stringify(p1).includes("api.telegram.org") && !JSON.stringify(p1).includes("g31_") && /on_task/.test(p1.system), imgs.map((i: Row) => i.source.type));
+      !JSON.stringify(p1).includes("TESTTOKEN") && !JSON.stringify(p1).includes("photos/") && !JSON.stringify(p1).includes("g31_") && /on_task/.test(p1.system), imgs.map((i: Row) => i.source.type));
     ok("E4 general tasks are not fingerprinted (C13) and carry no link status", s31.check_result.dhash === null &&
       s31.check_result.fingerprint === null && s31.check_result.link_status === null, s31.check_result);
     const hb1 = (await one(db, "select details d from admin_actions where action = 'challenge_task_check_run' order by created_at desc limit 1")).d;
