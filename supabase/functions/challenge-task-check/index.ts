@@ -1,6 +1,6 @@
 // challenge-task-check — pg_cron (`challenge-task-check-kick`, every minute) calls this through ops_net_post, and
 // ONLY when platform_settings.challenge_tasks is active, ai = true and a 'checking' submission is due
-// (challenge_task_check_kick(), migration 20260930151000). While the feature is paused it is never called.
+// (challenge_task_check_kick(), migration 20260930151010). While the feature is paused it is never called.
 //
 // Labels leased Daily Tasks submissions with an AI model and records each verdict through SQL RPCs. It never
 // decides or pays points (challenge_task_check_record does, in SQL), never writes a table except through RPCs and

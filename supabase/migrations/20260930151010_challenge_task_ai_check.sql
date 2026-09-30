@@ -2,6 +2,9 @@
 -- platform_settings.challenge_tasks stays enabled=false / ai=false (this file never writes that row). While paused
 -- or with ai=false the new cron job only stamps a heartbeat row in app_settings; it never calls the checker, an AI
 -- provider or Telegram. Go-live is PR-8 (enabled=true, ai=true).
+-- RE-ISSUE: this file replaces 20260930151000 (never applied anywhere; removed in the same PR) and adds §5, the PR-6
+-- review fixes to PR-3's challenge_task_check_record — the first code that fills check_result.dhash and produces
+-- instagram verdicts is this PR's checker, so both defects become reachable only with it.
 --
 -- ═══ WHAT THIS DOES ═══
 -- 1. challenge_task_check_due()  (read-only) — what the kick would do right now: inactive | ai_off | budget | idle | due,
@@ -26,6 +29,25 @@
 --    refund=false (THIS input failed: a refusal, a truncated / schema-breaking answer, a missing screenshot) keeps
 --    the attempt spent and writes admin_actions 'challenge_task_check_failed' — after 5, general work fails open via
 --    the reconciler and instagram work waits for an admin (the engine watchdog's checks_stuck alarm).
+-- 5. A PINNED REWRITE of challenge_task_check_record (PR-3), from its LIVE definition, md5-guarded, two anchored
+--    replacements, each asserted to occur exactly once (the review of PR-6 reproduced both defects on PGlite):
+--    (a) WHO OWNS A SCREENSHOT. The dHash near-duplicate subquery compared against EVERY instagram row carrying a
+--        dHash: rejected, merged, voided, withdrawn and expired rows included, and with no order. A copy rejected
+--        first ('ig_handle_mismatch', dHash still stored) then rejected its owner 'image_near_duplicate' (a griefing
+--        path: screenshot a classmate's public post and submit it before they do); a later copy that was merely
+--        CHECKED first (the claim leases by last_item_at, two rows in flight) did the same; and a move that MERGES left
+--        the dHash on the 'merged' source row, so the student's own moved screenshot was rejected in its new task.
+--        Now only a row that pays, or can pay again, owns an image: status 'accepted', or 'withdrawn' FROM
+--        'accepted' (restore returns it WITHOUT a new check, so dropping those rows would let withdraw -> the same
+--        screenshot in another task -> restore pay one screenshot twice). Another student's row counts only when it
+--        was submitted before this one (submitted_at, then id); the student's own row in another task always counts
+--        (one screenshot pays one task, whatever order the checks ran in).
+--    (b) AN UNSURE INSTAGRAM VERDICT NEVER PAYS (C16). not_instagram, ig_handle_mismatch and ig_tag_missing only
+--        fire at confidence >= ig.min_confidence (0.6), so a verdict below it skipped all three and was ACCEPTED +8
+--        (a deliberately blurry screenshot plus any unused link, with the existence probe OFF). Now, after every
+--        other rule, confidence < ig.min_confidence rejects 'ig_unclear' ("send a clearer screenshot"): one of the
+--        3 attempts, and the retry is judged fresh (the student's own rejected row never blocks it). General tasks
+--        keep failing open by design (C16); their thresholds are unchanged.
 --
 -- The edge function (supabase/functions/challenge-task-check, same PR, no config.toml entry -> verify_jwt=true with
 -- the cron's service-key bearer, then verifyInternalSecret): claim (PR-3) -> media (3) -> getFile + bytes inside the
@@ -51,6 +73,12 @@
 --   every instagram check reports link_status 'unverified' (health ig_link_unverified_7d), never 'not_found'.
 -- * gpt-5-mini: image input + structured outputs on /v1/chat/completions ($0.25 / $2 per MTok, as configured);
 --   claude-haiku-4-5: vision + output_config json_schema ($1 / $5, as configured).
+-- * PR-3 (20260930150020) is applied and ledgered (2026-09-30 17:26 UTC). challenge_task_check_record(bigint, uuid,
+--   integer, jsonb, jsonb): md5(replace(prosrc, E'\r', '')) = c0c7e46b9b9aeea4ba3887a7da44c9c0 (= PR-3's file), owner
+--   postgres, SECURITY DEFINER, search_path=public, ACL {postgres=X, service_role=X}; each §5 anchor occurs exactly
+--   once in its live pg_get_functiondef. challenge_task_submissions has 0 rows (nothing was ever checked: no history
+--   to heal). profiles.instagram_username is UNIQUE (uq_profiles_instagram_username), so a copier cannot register the
+--   owner's exact handle; the one-character tolerance (handle_edit_distance 1) is the residual — see §5.
 --
 -- ═══ DEVIATIONS / ADDITIONS (the PR body repeats them) ═══
 -- a1 challenge_task_check_media and challenge_task_check_release are NEW (not in the spec's PR-6 list): the first
@@ -60,6 +88,9 @@
 --    counter").
 -- a3 The kick's heartbeat is an app_settings state row, not an admin_actions row per minute (1,440 rows a day of
 --    "nothing due" would bury the signals); every run that actually checks writes 'challenge_task_check_run'.
+-- a4 §5 changes PR-3's §9.6 decision function (review fixes). The spec says nothing about WHICH rows own an image
+--    or about an instagram verdict below min_confidence; the new reason code 'ig_unclear' needs student copy in
+--    PR-4's receipt renderer (until then it shows the generic "vazifa talablariga mos kelmadi").
 --
 -- ═══ KILL-SWITCHES ═══
 -- platform_settings.challenge_tasks.ai = false (or enabled = false): the kick stops calling at once (the next
@@ -68,7 +99,8 @@
 --
 -- ═══ DETECTION ═══
 -- admin_actions 'challenge_task_check_run' (every checking run: counts, decisions, reasons, cost, providers, images,
--- thumbnail / fingerprint fallbacks, download failures), 'challenge_task_check_failed' (a charged failure),
+-- thumbnail / fingerprint fallbacks, download failures; its reasons map counts 'ig_unclear' and
+-- 'image_near_duplicate'), 'challenge_task_check_failed' (a charged failure),
 -- 'challenge_task_check_no_provider' / '_no_bot_token' / '_provider_auth_failed' (once a day), 'challenge_task_ai_
 -- budget_exhausted', 'challenge_task_check_kick_failed'; challenge_task_ai_calls (every call, incl. failed ones);
 -- PR-3's challenge_tasks_health() checks / ai_24h / ig_link_unverified_7d / fingerprint_unavailable_7d and the
@@ -76,10 +108,12 @@
 --
 -- SELF-TEST: non-mutating only — catalog, ACLs, the cron row, and two READ-ONLY calls (check_due() is asserted to
 -- say inactive / ai_off only when the live config really is paused; check_media() with a random token answers
--- 'stale'). It never calls the kick, a release, a claim or a record, and never posts.
+-- 'stale'). It never calls the kick, a release, a claim or a record, and never posts. §5 asserts its own result
+-- (the stored body's md5, owner, ACL, SECURITY DEFINER) inside its block; it runs nothing.
 -- PGlite harness: supabase/functions/_challenge/testing/daily-tasks-ai-check-check.ts (#218 + PR-1 + PR-2 + PR-3 +
--- THIS file; the edge function's run() end to end against the real SQL with fake Telegram / providers).
--- Merge: after PR-3 (20260930150020) is ledgered. Label migration-approved, NEVER ops-agent. One at a time.
+-- THIS file; the edge function's run() end to end against the real SQL with fake Telegram / providers; section F
+-- reproduces the review's cases against PR-3's body — they FAIL on 20260930151000 — and proves them fixed here).
+-- Merge: PR-3 (20260930150020) is ledgered. Label migration-approved, NEVER ops-agent. One at a time.
 
 -- ═══════════════════════════════ 0. Prerequisites: PR-3 (the engine) and the outbound wrapper ═══════════════════════════════
 do $$
@@ -97,6 +131,15 @@ begin
      or to_regprocedure('public.cron_service_key()') is null or to_regprocedure('public.internal_fn_secret()') is null
      or to_regprocedure('public.challenge_cfg_int(jsonb)') is null or to_regprocedure('public.challenge_cfg_num(jsonb)') is null then
     raise exception 'ABORT: ops_net_post / cron_service_key / internal_fn_secret / challenge_cfg_int / challenge_cfg_num missing';
+  end if;
+  -- §5 rewrites challenge_task_check_record: refuse up front (before anything is created) unless it is the verified
+  -- live body, or this file's own rewrite of it (a replay)
+  if (select md5(replace(prosrc, E'\r', '')) from pg_proc
+       where oid = 'public.challenge_task_check_record(bigint, uuid, integer, jsonb, jsonb)'::regprocedure)
+     not in ('c0c7e46b9b9aeea4ba3887a7da44c9c0', '0f1387a6591d9c3bd9cf008f093a3c94') then
+    raise exception 'ABORT: challenge_task_check_record changed since it was verified (md5 %); regenerate this migration from the live definition',
+      (select md5(replace(prosrc, E'\r', '')) from pg_proc
+        where oid = 'public.challenge_task_check_record(bigint, uuid, integer, jsonb, jsonb)'::regprocedure);
   end if;
 end $$;
 
@@ -313,7 +356,80 @@ begin
 end
 $fn$;
 
--- ═══════════════════════════════ 5. Grants: service_role only ═══════════════════════════════
+-- ═══════════════════════════════ 5. Pinned rewrite: challenge_task_check_record (PR-6 review fixes) ═══════════════════════════════
+-- From the LIVE pg_get_functiondef, and only when the live prosrc (CRs stripped) is the verified md5. Two anchors, each
+-- asserted to occur exactly once. The stored definition must be exactly what was executed, with owner / ACL /
+-- SECURITY DEFINER / search_path unchanged and the harness-verified md5. Replay: the rewritten md5 is skipped.
+-- (a) who owns a screenshot (the dHash near-duplicate subquery); (b) an unsure instagram verdict -> 'ig_unclear'.
+do $$
+declare
+  _pin constant text := 'c0c7e46b9b9aeea4ba3887a7da44c9c0';       -- live md5(prosrc), read 2026-09-30 (= PR-3's file)
+  _new_pin constant text := '0f1387a6591d9c3bd9cf008f093a3c94';  -- the rewritten body (PGlite harness + an independent recompute)
+  _old1 constant text := E'                       and (x.user_id <> _s.user_id or x.task_id <> _s.task_id)) o;\n';
+  _new1 constant text :=
+       E'                       -- 20260930151010 (PR-6 review): only a row that pays, or can pay again, owns an image: accepted,\n'
+    || E'                       -- or withdrawn FROM accepted (a restore returns it unchecked). A rejected, merged, voided or expired\n'
+    || E'                       -- row never does: a copy rejected first must not block its owner, and a merged row''s screenshot\n'
+    || E'                       -- lives on in the row it merged into. Another student''s row counts only when it was submitted\n'
+    || E'                       -- BEFORE this one; the student''s own row in another task always counts (one screenshot, one task).\n'
+    || E'                       and (x.status = ''accepted'' or (x.status = ''withdrawn'' and x.withdrawn_from = ''accepted''))\n'
+    || E'                       and ((x.user_id = _s.user_id and x.task_id <> _s.task_id)\n'
+    || E'                            or (x.user_id <> _s.user_id\n'
+    || E'                                and (x.submitted_at < _s.submitted_at or (x.submitted_at = _s.submitted_at and x.id < _s.id))))) o;\n';
+  _old2 constant text := E'      _decision := ''rejected''; _reason := ''ig_post_old'';\n    end if;\n';
+  _new2 constant text :=
+       E'      _decision := ''rejected''; _reason := ''ig_post_old'';\n'
+    || E'    elsif _conf < coalesce((_cfg->''ig''->>''min_confidence'')::numeric, 0.6) then\n'
+    || E'      -- 20260930151010 (PR-6 review): an UNSURE instagram verdict never pays (C16: instagram never fails open). Every\n'
+    || E'      -- check above that needs confidence was skipped, so nothing was verified: ask for a clearer screenshot.\n'
+    || E'      _decision := ''rejected''; _reason := ''ig_unclear'';\n'
+    || E'    end if;\n';
+  _fn oid;
+  _src text; _def text; _new text;
+  _acl text; _owner oid; _secdef boolean; _conf text;
+  _n int;
+begin
+  _fn := to_regprocedure('public.challenge_task_check_record(bigint, uuid, integer, jsonb, jsonb)');
+  if _fn is null then
+    raise exception 'ABORT: public.challenge_task_check_record(bigint, uuid, integer, jsonb, jsonb) not found';
+  end if;
+  select prosrc, coalesce(array_to_string(proacl, ','), ''), proowner, prosecdef, coalesce(array_to_string(proconfig, ','), '')
+    into _src, _acl, _owner, _secdef, _conf from pg_proc where oid = _fn;
+  if md5(replace(_src, E'\r', '')) = _new_pin then               -- replay: this file's rewrite is already live
+    raise notice 'challenge_task_check_record already carries the PR-6 review fixes -- skipped';
+    return;
+  end if;
+  if md5(replace(_src, E'\r', '')) <> _pin then
+    raise exception 'ABORT: challenge_task_check_record changed since it was verified (md5 %); regenerate this migration from the live definition',
+      md5(replace(_src, E'\r', ''));
+  end if;
+  _def := pg_get_functiondef(_fn);
+  _n := (length(_def) - length(replace(_def, _old1, ''))) / length(_old1);
+  if _n <> 1 then
+    raise exception 'ABORT: challenge_task_check_record anchor (a) matched % times (want exactly 1)', _n;
+  end if;
+  _n := (length(_def) - length(replace(_def, _old2, ''))) / length(_old2);
+  if _n <> 1 then
+    raise exception 'ABORT: challenge_task_check_record anchor (b) matched % times (want exactly 1)', _n;
+  end if;
+  _new := replace(replace(_def, _old1, _new1), _old2, _new2);
+  execute _new;
+  if pg_get_functiondef(_fn) is distinct from _new then
+    raise exception 'ABORT: challenge_task_check_record -- stored definition differs from what was executed';
+  end if;
+  if (select coalesce(array_to_string(proacl, ','), '') from pg_proc where oid = _fn) <> _acl
+     or (select proowner from pg_proc where oid = _fn) <> _owner
+     or (select prosecdef from pg_proc where oid = _fn) <> _secdef
+     or (select coalesce(array_to_string(proconfig, ','), '') from pg_proc where oid = _fn) <> _conf then
+    raise exception 'ABORT: challenge_task_check_record -- owner, ACL, SECURITY DEFINER or search_path changed';
+  end if;
+  if (select md5(replace(prosrc, E'\r', '')) from pg_proc where oid = _fn) <> _new_pin then
+    raise exception 'ABORT: challenge_task_check_record -- the rewritten body is not the harness-verified one (md5 %)',
+      (select md5(replace(prosrc, E'\r', '')) from pg_proc where oid = _fn);
+  end if;
+end $$;
+
+-- ═══════════════════════════════ 6. Grants: service_role only ═══════════════════════════════
 -- anon and authenticated inherit PUBLIC, so every revoke names PUBLIC first.
 revoke execute on function public.challenge_task_check_due() from public, anon, authenticated;
 grant execute on function public.challenge_task_check_due() to service_role;
@@ -324,7 +440,7 @@ grant execute on function public.challenge_task_check_release(bigint, uuid, text
 revoke execute on function public.challenge_task_check_kick() from public, anon, authenticated;
 grant execute on function public.challenge_task_check_kick() to service_role;
 
--- ═══════════════════════════════ 6. Cron (inert while paused: a heartbeat stamp only) ═══════════════════════════════
+-- ═══════════════════════════════ 7. Cron (inert while paused: a heartbeat stamp only) ═══════════════════════════════
 do $$
 declare _j record;
 begin
@@ -334,7 +450,7 @@ begin
 end $$;
 select cron.schedule('challenge-task-check-kick', '* * * * *', $c$ select public.challenge_task_check_kick() $c$);
 
--- ═══════════════════════════════ 7. Self-test (NON-mutating: catalog, ACLs, cron, two read-only calls) ═══════════════════════════════
+-- ═══════════════════════════════ 8. Self-test (NON-mutating: catalog, ACLs, cron, two read-only calls) ═══════════════════════════════
 do $$
 declare
   _bad text[] := '{}';
@@ -373,6 +489,14 @@ begin
   if position('''Content-Type'', ''application/json''' in (select prosrc from pg_proc where oid = 'public.challenge_task_check_kick()'::regprocedure)) = 0 then
     _bad := _bad || 'kick_content_type'::text;
   end if;
+  -- §5: the decision function is the harness-verified rewrite, still definer + service_role only (catalog read only)
+  select p.oid::regprocedure::text as sig, p.prosecdef, coalesce(array_to_string(p.proacl, ','), '') as acl,
+         coalesce(array_to_string(p.proconfig, ','), '') as conf, md5(replace(p.prosrc, E'\r', '')) as m
+    into _r from pg_proc p where p.oid = 'public.challenge_task_check_record(bigint, uuid, integer, jsonb, jsonb)'::regprocedure;
+  if _r.m is distinct from '0f1387a6591d9c3bd9cf008f093a3c94' or not _r.prosecdef or _r.conf not like '%search_path=public%'
+     or _r.acl ~ '(^|,)=' or _r.acl ~ '(^|,)(anon|authenticated)=' or _r.acl !~ '(^|,)service_role=X' then
+    _bad := _bad || ('check_record:' || coalesce(_r.m, 'missing') || ':' || coalesce(_r.acl, ''));
+  end if;
   -- read-only: the checker's media view refuses a caller that holds no lease
   _m := public.challenge_task_check_media(-1, gen_random_uuid());
   if coalesce((_m->>'ok')::boolean, true) or _m->>'reason' is distinct from 'stale' then
@@ -393,7 +517,7 @@ begin
   end if;
 end $$;
 
--- ═══════════════════════════════ 8. Audit once ═══════════════════════════════
+-- ═══════════════════════════════ 9. Audit once ═══════════════════════════════
 do $$
 begin
   if not exists (select 1 from public.admin_actions where action = 'challenge_task_ai_check_applied') then
@@ -404,7 +528,9 @@ begin
       'cron', 'challenge-task-check-kick * * * * *',
       'edge_function', 'challenge-task-check',
       'ig_existence_probe', 'off (login wall answers 200 for every shortcode)',
-      'config', (select jsonb_build_object('enabled', c->'enabled', 'ai', c->'ai', 'active', c->'active')
+      'check_record', jsonb_build_object('from', 'c0c7e46b9b9aeea4ba3887a7da44c9c0', 'to', '0f1387a6591d9c3bd9cf008f093a3c94',
+                                         'fixes', jsonb_build_array('near_duplicate_owners', 'ig_unclear')),
+      'config',(select jsonb_build_object('enabled', c->'enabled', 'ai', c->'ai', 'active', c->'active')
                    from (select public.challenge_tasks_config() as c) x),
       'at', now()));
   end if;

@@ -1,5 +1,5 @@
-// PGlite harness for 20260930151000_challenge_task_ai_check.sql + the challenge-task-check edge function (Daily Tasks
-// PR-6: the AI checks).
+// PGlite harness for 20260930151010_challenge_task_ai_check.sql + the challenge-task-check edge function (Daily Tasks
+// PR-6: the AI checks). (20260930151010 re-issues 20260930151000, never applied, with the PR-6 review fixes.)
 //
 //   deno test -A --node-modules-dir=none --no-lock supabase/functions/_challenge/testing/daily-tasks-ai-check-check.ts
 //
@@ -21,6 +21,11 @@
 //        screenshot re-encoded by another student rejected 'image_near_duplicate'; a HEIC screenshot judged and
 //        fingerprinted through its thumbnail; an outage released free then checked on the next run; a broken answer
 //        charged; a handle mismatch rejected; the run heartbeat, the cost ledger and health's AI counters;
+//   F    the review fixes (the pinned rewrite of challenge_task_check_record): a copy REJECTED first never blocks the
+//        owner's own screenshot; an owner who posted first is not blocked by a later copy that was checked (and paid)
+//        first; the student's own screenshot still pays one task only; a MERGED row's screenshot does not reject the
+//        row it merged into; withdraw -> reuse in another task -> restore cannot pay one screenshot twice; an UNSURE
+//        instagram verdict (confidence < ig.min_confidence) is rejected 'ig_unclear' and a clearer retry pays;
 //   X    imagescript on real bytes: a re-encoded / downsized copy stays within dhash_max_distance, HEIC decodes to null.
 // The whole run sees a PINNED clock (PGlite's now() reads Date.now()).
 // MIG_PATH=<file> tests a draft before it is written into its (edit-guarded) slot.
@@ -303,6 +308,11 @@ revoke execute on function public.internal_fn_secret() from public; grant execut
 grant usage on schema public to service_role;
 `;
 
+// challenge_task_check_record: the LIVE body (md5(replace(prosrc, E'\r', '')) read from production 2026-09-30, = PR-3's
+// file) and the body after this migration's two anchored replacements (recomputed independently from PR-3's file text).
+const RECORD_LIVE_MD5 = "c0c7e46b9b9aeea4ba3887a7da44c9c0";
+const RECORD_NEW_MD5 = "0f1387a6591d9c3bd9cf008f093a3c94";
+
 import { runOnce } from "../../challenge-task-check/check.ts";
 import { imagescriptCodec } from "../../challenge-task-check/image.ts";
 import { dhashDistance, dhashFromRgba } from "../../challenge-task-check/media.ts";
@@ -310,7 +320,7 @@ import { Image } from "https://deno.land/x/imagescript@1.3.0/mod.ts";
 
 Deno.test({
   name: CAN_RUN
-    ? "daily_tasks_ai_check: 20260930151000 + challenge-task-check on PGlite (kick, media, release, the real run end to end)"
+    ? "daily_tasks_ai_check: 20260930151010 + challenge-task-check on PGlite (kick, media, release, the real run end to end)"
     : "daily_tasks_ai_check: SKIPPED -- needs `deno test -A --node-modules-dir=none` (PGlite reads its own files)",
   ignore: !CAN_RUN,
   sanitizeOps: false,
@@ -349,7 +359,7 @@ async function runPinned() {
   const { citext } = (await import(spec + "/contrib/citext")) as any;
 
   const MIG_PATH = Deno.env.get("MIG_PATH");
-  const MIG = lf(await Deno.readTextFile(MIG_PATH ?? here("../../../migrations/20260930151000_challenge_task_ai_check.sql")));
+  const MIG = lf(await Deno.readTextFile(MIG_PATH ?? here("../../../migrations/20260930151010_challenge_task_ai_check.sql")));
   const ENGINE = lf(await Deno.readTextFile(here("../../../migrations/20260930150020_challenge_daily_tasks_engine.sql")));
   const PR2 = lf(await Deno.readTextFile(here("../../../migrations/20260930122010_challenge_daily_tasks_calendar.sql")));
   const PR1 = lf(await Deno.readTextFile(here("../../../migrations/20260930121000_challenge_daily_task_topic.sql")));
@@ -559,12 +569,28 @@ async function runPinned() {
     ok("P2 ...and leaves nothing behind", (await one(d0, "select to_regprocedure('public.challenge_task_check_kick()') r")).r === null &&
       await count(d0, "select count(*) n from cron.job where jobname = 'challenge-task-check-kick'") === 0);
     await d0.close();
+    // a challenge_task_check_record that is not the verified live body: the pinned rewrite refuses, nothing is left
+    const d1 = await freshDb();
+    await d1.exec(`do $$ begin execute replace(pg_get_functiondef('public.challenge_task_check_record(bigint, uuid, integer, jsonb, jsonb)'::regprocedure),
+                     '-- §9.6: SQL decides', '-- (drifted) §9.6: SQL decides'); end $$;`);
+    const e1 = await tx(d1, MIG);
+    ok("P3 a drifted challenge_task_check_record aborts the file (md5 pin) with a clear message", !!e1 &&
+      e1.includes("ABORT: challenge_task_check_record changed since it was verified"), e1);
+    ok("P4 ...and leaves nothing behind (no kick, no cron row, the drifted body untouched)",
+      (await one(d1, "select to_regprocedure('public.challenge_task_check_kick()') r")).r === null &&
+      await count(d1, "select count(*) n from cron.job where jobname = 'challenge-task-check-kick'") === 0 &&
+      await count(d1, "select count(*) n from pg_proc where proname = 'challenge_task_check_record' and prosrc like '%(drifted)%'") === 1);
+    await d1.close();
   }
 
   // ───────────── M. apply, replay, audit ─────────────
   console.log("M. migration: applies (self-test included), audit once, replay");
   const db = await freshDb();
+  const recordMd5 = async () => (await one(db, `select md5(replace(prosrc, E'\\r', '')) m from pg_proc
+                                                  where oid = 'public.challenge_task_check_record(bigint, uuid, integer, jsonb, jsonb)'::regprocedure`)).m;
   {
+    ok("M0 PR-3's challenge_task_check_record in this world is the LIVE body (md5 read from production 2026-09-30)",
+      await recordMd5() === RECORD_LIVE_MD5, await recordMd5());
     const e = await tx(db, MIG);
     ok("M1 applies (including its self-test)", e === null, e);
     if (e !== null) throw new Error(`daily_tasks_ai_check: the migration did not apply -- ${e}`);
@@ -580,6 +606,15 @@ async function runPinned() {
       (await one(db, "select challenge_tasks_config() c")).c.enabled === false && (await one(db, "select challenge_tasks_config() c")).c.ai === false);
     ok("M7 the self-test did not write the kick heartbeat (it never calls the kick)",
       await count(db, "select count(*) n from app_settings where key = 'challenge_task_check_kick_state'") === 0);
+    const rec = await one(db, `select md5(replace(prosrc, E'\\r', '')) m, prosecdef, pg_get_userbyid(proowner) own,
+                                      coalesce(array_to_string(proacl, ','), '') acl, coalesce(array_to_string(proconfig, ','), '') conf
+                                 from pg_proc where oid = 'public.challenge_task_check_record(bigint, uuid, integer, jsonb, jsonb)'::regprocedure`);
+    ok("M8 challenge_task_check_record is the pinned rewrite (md5 = the independently recomputed body), still SECURITY DEFINER, " +
+       "search_path public, service_role only", rec.m === RECORD_NEW_MD5 && rec.prosecdef === true && rec.conf === "search_path=public" &&
+      /(^|,)service_role=X/.test(rec.acl) && !/(^|,)=X/.test(rec.acl) && !/(anon|authenticated)=/.test(rec.acl), rec);
+    const audit = (await one(db, "select details d from admin_actions where action = 'challenge_task_ai_check_applied'")).d;
+    ok("M9 the audit row names the rewrite (old -> new md5)", audit?.check_record?.from === RECORD_LIVE_MD5 &&
+      audit?.check_record?.to === RECORD_NEW_MD5, audit?.check_record);
   }
 
   // ───────────── G. grants ─────────────
@@ -868,6 +903,181 @@ async function runPinned() {
     ok("E24 invariants hold (ledger drift 0, live duplicates 0)", h.invariants.ledger_drift === 0 && h.invariants.live_duplicates === 0, h.invariants);
     ok("E25 every Telegram call was file retrieval (getFile / file bytes), never a send",
       tgCalls.every((u) => /\/bot123:TESTTOKEN\/getFile$/.test(u) || /\/file\/bot123:TESTTOKEN\/photos\//.test(u)), tgCalls.slice(0, 3));
+  }
+
+  // ───────────── F. the review fixes: who owns a screenshot, and an unsure verdict never pays ─────────────
+  console.log("F. near-duplicates compare against paying rows only (posted-first wins); an unsure instagram verdict is 'ig_unclear'");
+  {
+    // a second instagram task two days back (still open until Thursday 00:00): the "other task" of F3 / F4 / F6
+    const TMON = await addTask("2026-10-05", "instagram", [SHOT, IGL], ["text", "photo", "document", "link"]);
+    const handles: [number, string][] = [[41, "owner_41"], [42, "thief_42"], [43, "owner_43"], [44, "owner_4e"], [45, "kid_45"],
+                                         [46, "kid_46"], [47, "kid_47"], [48, "kid_48"], [49, "kid_49"], [50, "kid_50"]];
+    for (const [n, h] of handles) await db.query("update profiles set instagram_username = $2 where id = $1", [ST(n), h]);
+    // the pictures: an original (320 px q85 small size) and another student's / a re-upload's copy (300 px q60)
+    const shot = async (id: string, variant: number, copy = false) => {
+      const m = copy ? await screenshot(300, 647, variant).encodeJPEG(60) : await screenshot(320, 690, variant).encodeJPEG(85);
+      files.set(`${id}_s`, m); files.set(`${id}_m`, m);
+      files.set(`${id}_y`, await screenshot(591, 1280, variant).encodeJPEG(copy ? 60 : 85));
+      return m;
+    };
+    const hashOf = async (b: Uint8Array) => { const d = await imagescriptCodec.decode(b); return d ? dhashFromRgba(d) : null; };
+    const VARS = [10, 12, 14, 16, 18, 20, 22, 24];
+    const originals: Record<number, string | null> = {};
+    for (const v of VARS) originals[v] = await hashOf(await screenshot(320, 690, v).encodeJPEG(85));
+    const earlier = await q(db, "select check_result->'dhash'->>0 h from challenge_task_submissions where check_result->'dhash'->>0 is not null");
+    const all = [...VARS.map((v) => originals[v]), ...earlier.map((r) => r.h as string)];
+    const farF = VARS.every((v, i) => all.every((y, j) => i === j || (originals[v] && y && dhashDistance(originals[v]!, y)! > 4)));
+    ok("F0 the eight new screenshots are pairwise far (> 4) from each other and from every fingerprint already recorded", farF,
+      VARS.map((v) => originals[v]));
+    const igPost = (n: number, at: string, photo: string | null, code: string) =>
+      post(db, msg({ from: TG(n), at, ...(photo ? { photo, caption: `https://www.instagram.com/p/${code}/` } : { text: `https://www.instagram.com/p/${code}/` }) }));
+    const live = async (n: number, task: number) =>
+      await one(db, "select * from challenge_task_submissions where user_id = $1 and task_id = $2 order by id desc limit 1", [ST(n), task]);
+    const brief = (s: Row) => ({ st: s?.status, r: s?.reason, pts: s?.points_awarded, att: s?.attempt_no });
+
+    // F1 (review #1 / #3) a thief posts a re-encoded copy of owner_41's screenshot FIRST; the model reads owner_41, so SQL
+    // rejects the thief 'ig_handle_mismatch' (its dHash is still recorded). Then the owner posts their own screenshot.
+    await shot("t42", 10, true);
+    await shot("o41", 10);
+    const rt = await igPost(42, "2026-10-07T12:05:00", "t42", "CodeT42xx");
+    ok("F1a the thief's copy is captured into checking", rt?.submission?.status === "checking", rt);
+    answers.push(IV("owner_41"));
+    await checkRun(db);
+    const st42 = await live(42, TWED);
+    ok("F1b the thief is rejected 'ig_handle_mismatch' and the copy's dHash is on the rejected row", st42.status === "rejected" &&
+      st42.reason === "ig_handle_mismatch" && Array.isArray(st42.check_result?.dhash), brief(st42));
+    const ro = await igPost(41, "2026-10-07T12:10:00", "o41", "CodeO41xx");
+    answers.push(IV("owner_41"));
+    await checkRun(db);
+    const so41 = await live(41, TWED);
+    ok("F1c the OWNER is accepted +8 -- a rejected copy never owns a screenshot (was: rejected 'image_near_duplicate')",
+      ro?.submission?.id === so41.id && so41.status === "accepted" && so41.points_awarded === 8 &&
+      dhashDistance(so41.check_result.dhash[0], st42.check_result.dhash[0])! <= 4, brief(so41));
+
+    // F2 (review #1, race) owner_43 posts first; a copier whose handle is one character off ('owner_4e': within
+    // handle_edit_distance, so the copy PASSES) posts later but is checked first (the owner's lease is in flight).
+    await shot("o43", 12);
+    await shot("c44", 12, true);
+    const r43 = await igPost(43, "2026-10-07T12:15:00", "o43", "CodeO43xx");
+    await db.query("update challenge_task_submissions set check_token = gen_random_uuid(), check_claimed_at = now() where id = $1", [r43.submission.id]);
+    await igPost(44, "2026-10-07T12:20:00", "c44", "CodeC44xx");
+    answers.push(IV("owner_43"));
+    await checkRun(db);
+    const sc44 = await live(44, TWED);
+    ok("F2a the later copy, checked first, is accepted (the 1-character handle tolerance, not the dHash -- documented residual)",
+      sc44.status === "accepted", brief(sc44));
+    await db.query("update challenge_task_submissions set check_claimed_at = now() - interval '11 minutes' where id = $1", [r43.submission.id]);
+    answers.push(IV("owner_43"));
+    await checkRun(db);
+    const s43 = await sub(db, r43.submission.id);
+    ok("F2b the owner who posted FIRST is accepted -- another student's row owns an image only if submitted earlier " +
+       "(was: rejected 'image_near_duplicate' because the copy happened to be checked first)", s43.status === "accepted" &&
+      s43.points_awarded === 8, brief(s43));
+
+    // F3 (regression guard) the student's OWN accepted screenshot re-uploaded for another task is still a near-duplicate
+    await shot("r45", 14);
+    await shot("r45b", 14, true);
+    await igPost(45, "2026-10-07T12:00:00", "r45", "CodeR45aa");
+    answers.push(IV("kid_45"));
+    await checkRun(db);
+    ok("F3a kid_45's screenshot pays Wednesday's task", (await live(45, TWED)).status === "accepted");
+    const r45b = await igPost(45, "2026-10-07T12:30:00", "r45b", "CodeR45bb");
+    ok("F3b the re-upload with a new link fills Monday's (missed) instagram task", r45b?.submission?.status === "checking" &&
+      (await sub(db, r45b.submission.id)).task_id === TMON, r45b);
+    answers.push(IV("kid_45"));
+    await checkRun(db);
+    const s45b = await sub(db, r45b.submission.id);
+    ok("F3c ...and is rejected 'image_near_duplicate': one screenshot still pays one task", s45b.status === "rejected" &&
+      s45b.reason === "image_near_duplicate" && s45b.points_awarded === 0, brief(s45b));
+
+    // F4 (review #1, merge) kid_46's accepted Wednesday screenshot is MOVED to Monday, where a link-only submission is
+    // live: a merge. The merged source row keeps its check_result (dHash); the merged-into row is re-checked.
+    await shot("m46", 16);
+    await igPost(46, "2026-10-07T12:00:00", "m46", "CodeM46aa");
+    answers.push(IV("kid_46"));
+    await checkRun(db);
+    const s46a = await live(46, TWED);
+    ok("F4a kid_46's screenshot pays Wednesday's task", s46a.status === "accepted" && Array.isArray(s46a.check_result?.dhash), brief(s46a));
+    const r46b = await igPost(46, "2026-10-07T12:30:00", null, "CodeM46bb");
+    ok("F4b a link-only post opens Monday's instagram task (needs the screenshot)", r46b?.submission?.status === "needs_more" &&
+      (await sub(db, r46b.submission.id)).task_id === TMON, r46b);
+    const mv = (await one(db, "select challenge_task_move_core($1, $2, $3::uuid, 'bot') r", [s46a.id, TMON, ST(46)])).r;
+    const s46src = await sub(db, s46a.id);
+    const s46l = await sub(db, r46b.submission.id);
+    ok("F4c the move MERGES: the source is 'merged' (its dHash kept), the Monday row is back in checking", mv?.ok === true &&
+      s46src.status === "merged" && Array.isArray(s46src.check_result?.dhash) && s46l.status === "checking", { mv, src: brief(s46src), l: brief(s46l) });
+    answers.push(IV("kid_46"));
+    await checkRun(db);
+    const s46 = await sub(db, r46b.submission.id);
+    ok("F4d the merged-into row is accepted (+4, two days late) -- a merged row never owns its old screenshot " +
+       "(was: rejected 'image_near_duplicate' against the student's own moved screenshot)", s46.status === "accepted" &&
+      s46.points_awarded === 4, brief(s46));
+
+    // F5 (review #2) an UNSURE instagram verdict never pays
+    await shot("l47", 18);
+    await shot("l47b", 18);
+    await igPost(47, "2026-10-07T12:00:00", "l47", "CodeL47aa");
+    answers.push({ reason: "Blurry.", is_instagram_screenshot: false, handle_seen: "totally_other_acct", tag_seen: false,
+                   post_age_text: "3 yil", posted_recently: "no", inappropriate: false, manipulation: false, confidence: 0.55 });
+    const r47 = await checkRun(db);
+    const s47 = await live(47, TWED);
+    ok("F5a confidence 0.55 (< ig.min_confidence 0.6), not instagram, someone else's handle, no tag, old: rejected 'ig_unclear', " +
+       "0 points (was: ACCEPTED +8 -- every confidence-gated check was skipped)", s47.status === "rejected" && s47.reason === "ig_unclear" &&
+      s47.points_awarded === 0, brief(s47));
+    ok("F5b the run heartbeat counts the reason (DB-visible)", (r47.body as Row).reasons?.ig_unclear === 1, (r47.body as Row).reasons);
+    const r47b = await igPost(47, "2026-10-07T12:30:00", "l47b", "CodeL47bb");
+    ok("F5c a clearer retry is a new attempt (2 of 3) in the same task", r47b?.submission?.status === "checking" &&
+      (await sub(db, r47b.submission.id)).attempt_no === 2 && (await sub(db, r47b.submission.id)).task_id === TWED, r47b);
+    answers.push(IV("kid_47"));
+    await checkRun(db);
+    ok("F5d ...and pays +8 once the model is sure (the student's own rejected row never blocks the retry)",
+      (await sub(db, r47b.submission.id)).status === "accepted" && (await sub(db, r47b.submission.id)).points_awarded === 8,
+      brief(await sub(db, r47b.submission.id)));
+    await shot("u48", 20);
+    await igPost(48, "2026-10-07T12:00:00", "u48", "CodeU48aa");
+    answers.push({ ...IV("kid_48"), confidence: 0.5 });
+    await checkRun(db);
+    const s48 = await live(48, TWED);
+    ok("F5e unsure even though every label looks right (0.5): rejected 'ig_unclear' (was: accepted +8)", s48.status === "rejected" &&
+      s48.reason === "ig_unclear", brief(s48));
+    await shot("b49", 22);
+    await igPost(49, "2026-10-07T12:00:00", "b49", "CodeB49aa");
+    answers.push({ ...IV("kid_49"), confidence: 0.6 });
+    await checkRun(db);
+    ok("F5f exactly ig.min_confidence (0.6) with every label right: accepted +8", (await live(49, TWED)).status === "accepted" &&
+      (await live(49, TWED)).points_awarded === 8, brief(await live(49, TWED)));
+
+    // F6 withdraw -> the same screenshot in another task -> restore must not pay one screenshot twice: a row withdrawn
+    // FROM accepted still owns its image (restore returns it without a new check)
+    await shot("w50", 24);
+    await shot("w50b", 24, true);
+    await igPost(50, "2026-10-07T12:00:00", "w50", "CodeW50aa");
+    answers.push(IV("kid_50"));
+    await checkRun(db);
+    const a50 = await live(50, TWED);
+    const wd = (await one(db, "select challenge_task_withdraw_core($1, $2::uuid, 'bot') r", [a50.id, ST(50)])).r;
+    ok("F6a kid_50's accepted Wednesday row is withdrawn by the student", a50.status === "accepted" && wd?.ok === true &&
+      (await sub(db, a50.id)).status === "withdrawn", { a: brief(a50), wd });
+    const r50b = await igPost(50, "2026-10-07T12:30:00", "w50b", "CodeW50bb");
+    answers.push(IV("kid_50"));
+    await checkRun(db);
+    const b50 = await sub(db, r50b.submission.id);
+    ok("F6b a re-upload with a new link takes Wednesday's free slot and is accepted (same task: never compared)",
+      b50.task_id === TWED && b50.status === "accepted", brief(b50));
+    const mv50 = (await one(db, "select challenge_task_move_core($1, $2, $3::uuid, 'bot') r", [b50.id, TMON, ST(50)])).r;
+    answers.push(IV("kid_50"));
+    await checkRun(db);
+    const b50m = await sub(db, b50.id);
+    ok("F6c moved to Monday it is re-checked and rejected 'image_near_duplicate' against the WITHDRAWN-from-accepted original",
+      mv50?.ok === true && b50m.task_id === TMON && b50m.status === "rejected" && b50m.reason === "image_near_duplicate", { mv50, b: brief(b50m) });
+    const rs = (await one(db, "select challenge_task_restore_core($1, $2::uuid, 'bot') r", [a50.id, ST(50)])).r;
+    const paid50 = Number((await one(db, "select coalesce(sum(points_awarded), 0) n from challenge_task_submissions where user_id = $1", [ST(50)])).n);
+    ok("F6d the restore brings the original back: one screenshot paid ONCE (8 points in total)", rs?.ok === true &&
+      (await sub(db, a50.id)).status === "accepted" && paid50 === 8, { rs, paid50 });
+
+    const h = (await one(db, "select challenge_tasks_health() h")).h;
+    ok("F7 invariants still hold after the review cases (ledger drift 0, live duplicates 0)", h.invariants.ledger_drift === 0 &&
+      h.invariants.live_duplicates === 0, h.invariants);
   }
 
   // ───────────── Z. pause again: the kick stops at once ─────────────
