@@ -13,8 +13,8 @@
 // non-delivery that is EXPECTED and high-volume — callers/watchdogs should treat a spike of the OTHER
 // classes (transient/content) as the real alarm, and recipient non-delivery as a reach metric.
 
-import { tgResult, isTerminal, isRecipientError, isContentError } from "./telegram-classify.ts";
-import { logHealth } from "./edge.ts";
+import { tgResult, isTerminal, isRecipientError, isContentError, classifySend, type SendClass } from "./telegram-classify.ts";
+import { logHealth, logHealthOnce } from "./edge.ts";
 
 export type SendOutcome = {
   ok: boolean;            // Telegram accepted the send
@@ -142,4 +142,96 @@ export async function sendTelegram(
   await recordNonDelivery(outcome, method, opts);
 
   return outcome;
+}
+
+// ── sendTelegramWithResult (Daily Tasks PR-4, spec G7 / §11.7) ─────────────────────────────────────────────
+// ADDITIVE sibling of sendTelegram for callers that need (a) Telegram's `result` (the sent Message → its
+// message_id, which a receipt must be recorded with) and (b) the finer SendClass. sendTelegram's contract and
+// classification are untouched. Differences, all by class:
+//   not_modified → ok:true, nothing recorded (an edit whose desired state already holds).
+//   rate_limited → NOT a telegram_send_failed row (flow control, not breakage, so telegram_send_broken_24h is
+//                  not inflated); ONE 'telegram_rate_limited' row per (method, chat, minute) instead, with
+//                  retry_after. terminal:false, so the caller leaves the work for a paced retry.
+//   topic_missing / message_gone → terminal:true. With opts.topicMissingAction the topic class is recorded
+//                  under THAT action (e.g. 'challenge_task_topic_missing', which the daily-task watchdog alarms
+//                  on) instead of telegram_send_failed; without it, telegram_send_failed as before.
+//   recipient / content / transient → exactly sendTelegram's recording (recordNonDelivery).
+export type SendResultOutcome = SendOutcome & { klass: SendClass; retryAfterSec: number | null };
+
+function minuteStartIso(now: Date = new Date()): string {
+  return new Date(Math.floor(now.getTime() / 60_000) * 60_000).toISOString();
+}
+
+export async function sendTelegramWithResult(
+  botToken: string,
+  method: string,
+  payload: Record<string, unknown>,
+  opts?: {
+    admin?: any;
+    purpose?: string;
+    recipientId?: string | number | null;
+    record?: boolean;
+    topicMissingAction?: string;
+  },
+): Promise<{ outcome: SendResultOutcome; result: any }> {
+  let status = 0;
+  let j: { ok?: boolean; description?: string; result?: unknown; parameters?: { retry_after?: unknown } } | null = null;
+  try {
+    const resp = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    status = resp.status;
+    j = await resp.json().catch(() => null);
+  } catch {
+    j = { ok: false, description: "transport_error" }; // no token in the recorded description
+  }
+
+  const c = classifySend(j, status);
+  const ok = c.klass === "ok" || c.klass === "not_modified";
+  const outcome: SendResultOutcome = {
+    ok,
+    status,
+    error: c.klass === "ok" ? null : c.error,
+    terminal: ["recipient", "content", "topic_missing", "message_gone"].includes(c.klass),
+    recipient: c.klass === "recipient",
+    content: c.klass === "content",
+    klass: c.klass,
+    retryAfterSec: c.retryAfterSec,
+  };
+  const result = ok ? ((j as { result?: unknown } | null)?.result ?? null) : null;
+  if (ok || opts?.record === false) return { outcome, result };
+
+  const chatKey = String((payload as { chat_id?: unknown }).chat_id ?? opts?.recipientId ?? "-");
+  if (c.klass === "rate_limited") {
+    if (opts?.admin) {
+      await logHealthOnce(opts.admin, "telegram_rate_limited", `${method}:${chatKey}:${minuteStartIso()}`, {
+        method,
+        purpose: opts?.purpose ?? method,
+        recipient: opts?.recipientId ?? null,
+        retry_after: c.retryAfterSec,
+        error: c.error,
+      }, { source: "telegram-send", sinceIso: minuteStartIso() });
+    } else {
+      console.error("sendTelegramWithResult: rate limited, NOT recorded (no admin client passed)", { method, retry_after: c.retryAfterSec });
+    }
+    return { outcome, result };
+  }
+  if (c.klass === "topic_missing" && opts?.topicMissingAction) {
+    if (opts?.admin) {
+      await logHealth(opts.admin, opts.topicMissingAction, {
+        method,
+        purpose: opts?.purpose ?? method,
+        chat_id: (payload as { chat_id?: unknown }).chat_id ?? null,
+        thread_id: (payload as { message_thread_id?: unknown }).message_thread_id ?? null,
+        error: c.error,
+      }, { source: "telegram-send" });
+    } else {
+      console.error("sendTelegramWithResult: topic missing, NOT recorded (no admin client passed)", { method, error: c.error });
+    }
+    return { outcome, result };
+  }
+  await recordNonDelivery(outcome, method, opts);
+  return { outcome, result };
 }
