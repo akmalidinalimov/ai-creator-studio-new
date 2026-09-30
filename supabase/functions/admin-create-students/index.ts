@@ -2,6 +2,16 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { likeEscape } from "../_shared/username.ts";
 import { incomingTelegramVerdict } from "./telegram-link.ts";
+import {
+  type CourseMoveFacts,
+  type CourseMoveVerdict,
+  decideCourseMove,
+  emptyFacts,
+  isAdminUser,
+  loadCourseMoveFacts,
+  moveAuditDetails,
+} from "../_shared/course-move-guard.ts";
+import { type RefusedMoveRow, refusedMoveRow } from "./move-row.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -158,6 +168,19 @@ Deno.serve(async (req) => {
     const isCsvImport: boolean = !!body.csv_import;
     const targetGroupId: string | null = body.target_group_id || null;
     const targetCourseId: string | null = body.target_course_id || null;
+    // PR-3a: an explicit admin override of the cross-course move guard (_shared/course-move-guard.ts). A JWT
+    // caller is already a verified admin (checked above). A SYSTEM caller (staff-intake) must name the admin it
+    // verified from that admin's own session, and the id is re-checked here: the body never makes anyone admin.
+    const allowCrossCourse: boolean = body.allow_cross_course_move === true;
+    let overrideAdminId: string | null = null;
+    if (allowCrossCourse) {
+      if (isSystem) {
+        const cand = typeof body.override_admin_id === "string" ? body.override_admin_id : null;
+        overrideAdminId = cand && (await isAdminUser(admin, cand)) ? cand : null;
+      } else {
+        overrideAdminId = actorId;
+      }
+    }
 
     // Resolve fallback default group once (used when row has no group_name and no target_group_id)
     let defaultGroupId: string | null = null;
@@ -218,10 +241,48 @@ Deno.serve(async (req) => {
       return ins.id;
     };
 
-    const results: Array<{ email: string; status: string; password?: string; userId?: string; error?: string; action_link?: string | null; row_index?: number; identifier_used?: string; linked_telegram_id?: boolean }> = [];
+    // A refused move (refusedMoveRow) carries NO userId on purpose; see move-row.ts.
+    const results: Array<{ email: string; status: string; password?: string; userId?: string; error?: string; action_link?: string | null; row_index?: number; identifier_used?: string; linked_telegram_id?: boolean } | RefusedMoveRow> = [];
     const requestId = (crypto as any).randomUUID ? (crypto as any).randomUUID() : `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const auditLog = (row_index: number, identifier_used: string, action: string, error?: string) => {
       console.log(JSON.stringify({ scope: "admin-create-students", request_id: requestId, row_index, identifier_used, action, ...(error ? { error } : {}) }));
+    };
+
+    // PR-3a: the one gate in front of every write that changes an EXISTING student's group_id (the matched-
+    // profile path and the email-collision adoption path below). A move between courses is refused untouched
+    // unless a verified admin overrides it with 0 waiting homework in the old course. proceed=false: the row
+    // is already pushed + audited. `override`: the caller logs it once the write has landed.
+    const guardGroupMove = async (
+      row: { email: string; row_index: number; identifier_used: string },
+      userId: string,
+      fromGroupId: string | null,
+      toGroupId: string,
+      readFailed = false,
+    ): Promise<{ proceed: boolean; override: { facts: CourseMoveFacts; adminId: string } | null }> => {
+      const facts: CourseMoveFacts = readFailed
+        ? { ...emptyFacts(null, toGroupId, groupCourseId), lookupFailed: true }
+        : await loadCourseMoveFacts(admin, { userId, fromGroupId, toGroupId, toCourseId: groupCourseId });
+      const v: CourseMoveVerdict = readFailed
+        ? { kind: "refused", reason: "check_failed" }
+        : decideCourseMove(facts, { requested: allowCrossCourse, adminId: overrideAdminId });
+      if (v.kind === "refused") {
+        results.push(refusedMoveRow(facts, v.reason, row, userId));
+        auditLog(row.row_index, row.identifier_used, "cross_course_refused", v.reason);
+        await logAdminAction(admin, actorId ?? overrideAdminId, "cross_course_move_refused", {
+          target_user_id: userId, target_resource_type: "profile", target_resource_id: userId,
+          details: moveAuditDetails(facts, {
+            reason: v.reason, caller: isSystem ? "system" : "admin", override_requested: allowCrossCourse, request_id: requestId,
+          }),
+        });
+        return { proceed: false, override: null };
+      }
+      return { proceed: true, override: v.kind === "override" ? { facts, adminId: v.adminId } : null };
+    };
+    const logMoveOverride = async (userId: string, o: { facts: CourseMoveFacts; adminId: string }) => {
+      await logAdminAction(admin, o.adminId, "cross_course_move_override", {
+        target_user_id: userId, target_resource_type: "profile", target_resource_id: userId,
+        details: moveAuditDetails(o.facts, { caller: isSystem ? "system" : "admin", request_id: requestId }),
+      });
     };
     // Sanitize an arbitrary string into an Auth-safe email local part: lowercase ASCII alphanumerics, dot, underscore, hyphen.
     const sanitizeForEmailLocal = (raw: string): string => {
@@ -457,6 +518,13 @@ Deno.serve(async (req) => {
         }
 
         const isStaff = incomingRole === "teacher" || incomingRole === "admin";
+        // PR-3a: a student who already has a group is about to be moved. Refused untouched when it crosses courses.
+        let moveOverride: { facts: CourseMoveFacts; adminId: string } | null = null;
+        if (resolvedGroupId && !isStaff && existingGroupId && existingGroupId !== resolvedGroupId) {
+          const g = await guardGroupMove({ email, row_index, identifier_used }, existingId, existingGroupId, resolvedGroupId);
+          if (!g.proceed) continue;
+          moveOverride = g.override;
+        }
         const patch: Record<string, any> = {};
         if (acctType) patch.account_type = acctType; // explicit admin/sales choice; upgrades or sets trial
         if (resolvedGroupId && !isStaff) patch.group_id = resolvedGroupId;
@@ -474,6 +542,7 @@ Deno.serve(async (req) => {
             continue;
           }
         }
+        if (moveOverride) await logMoveOverride(existingId, moveOverride);
         if (incomingRole === "teacher") {
           const { error: rErr } = await admin.from("user_roles").upsert({ user_id: existingId, role: "teacher", ...(actorId ? { created_by: actorId } : {}) } as any, { onConflict: "user_id,role" });
           if (rErr) {
@@ -513,6 +582,17 @@ Deno.serve(async (req) => {
             if (!list?.users || list.users.length < 200) break;
           }
           if (foundId) {
+            // PR-3a: adopting an existing account re-groups it too, so it goes through the same move guard.
+            let collisionOverride: { facts: CourseMoveFacts; adminId: string } | null = null;
+            if (resolvedGroupId && s.role !== "teacher" && s.role !== "admin") {
+              const { data: fp, error: fpErr } = await admin.from("profiles").select("group_id").eq("id", foundId).maybeSingle();
+              const fromGroupId: string | null = (fp as any)?.group_id ?? null;
+              if (fpErr || (fromGroupId && fromGroupId !== resolvedGroupId)) {
+                const g = await guardGroupMove({ email, row_index, identifier_used }, foundId, fromGroupId, resolvedGroupId, !!fpErr);
+                if (!g.proceed) continue;
+                collisionOverride = g.override;
+              }
+            }
             const profilePatch: Record<string, any> = { name: displayName || null };
             if (acctType) profilePatch.account_type = acctType;
             if (csvLastName !== undefined) profilePatch.last_name = csvLastName || null;
@@ -520,6 +600,7 @@ Deno.serve(async (req) => {
             if (tgIdNum !== undefined) profilePatch.telegram_id = tgIdNum;
             if (resolvedGroupId && s.role !== "teacher" && s.role !== "admin") profilePatch.group_id = resolvedGroupId;
             await admin.from("profiles").update(profilePatch).eq("id", foundId);
+            if (collisionOverride) await logMoveOverride(foundId, collisionOverride);
             if (s.role === "teacher") {
               await admin.from("user_roles").upsert({ user_id: foundId, role: "teacher", ...(actorId ? { created_by: actorId } : {}) } as any, { onConflict: "user_id,role" });
               if (resolvedGroupId) await admin.from("groups").update({ teacher_id: foundId }).eq("id", resolvedGroupId).is("teacher_id", null); // never clobber an existing teacher
