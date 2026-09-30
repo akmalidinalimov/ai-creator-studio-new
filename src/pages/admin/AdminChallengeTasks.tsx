@@ -11,6 +11,7 @@ import {
   POST_STATE_UZ, prettyDate, SOURCE_UZ, STATUS_UZ, type GroupLite, type PostRow, type TaskRow,
 } from "@/components/admin/challengeTasksShared";
 import { ChallengePlanImportDialog } from "@/components/admin/ChallengePlanImportDialog";
+import { ChallengeTaskResults } from "@/components/admin/ChallengeTaskResults";
 import {
   addDays, inWindow, isoWeekday, MONTH_UZ, readCalendarConfig, requiresSummary, tashkentToday, WEEKDAY_SHORT_UZ,
   type CalendarConfig, type TaskSource,
@@ -56,7 +57,7 @@ export default function AdminChallengeTasks() {
   const [loading, setLoading] = useState(true);
   const today = tashkentToday();
   const [month, setMonth] = useState(today.slice(0, 7));
-  const [view, setView] = useState<"month" | "weeks">("month");
+  const [view, setView] = useState<"month" | "weeks" | "results">("month");
   const [drawer, setDrawer] = useState<{ open: boolean; taskId: number | null; date: string }>({ open: false, taskId: null, date: today });
   const [importOpen, setImportOpen] = useState(false);
 
@@ -235,12 +236,15 @@ export default function AdminChallengeTasks() {
               {cfg.windowStart && <Badge variant="outline">Challenge: {cfg.windowStart}{cfg.windowEnd ? ` — ${cfg.windowEnd}` : " dan"}</Badge>}
             </div>
 
-            <Tabs value={view} onValueChange={(v) => setView(v as "month" | "weeks")}>
+            <Tabs value={view} onValueChange={(v) => setView(v as "month" | "weeks" | "results")}>
               <TabsList>
                 <TabsTrigger value="month">Oy</TabsTrigger>
                 <TabsTrigger value="weeks">Haftalar ro‘yxati</TabsTrigger>
+                <TabsTrigger value="results">Natijalar</TabsTrigger>
               </TabsList>
             </Tabs>
+
+            {view === "results" && <ChallengeTaskResults tasks={tasks} groups={groups} today={today} />}
 
             {view === "month" && (
               <Card className="p-3 shadow-soft">

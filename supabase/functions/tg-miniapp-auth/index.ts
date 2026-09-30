@@ -23,6 +23,7 @@ import { chatIdFromTopicUrl, resolveProfile, type ResolveDeps, type StudentMatch
 import { likeEscape } from "../_shared/username.ts";
 import { startParamToPath } from "../_shared/miniapp-links.ts";
 import { handleOpen, parseOpen, recordOpen } from "./open.ts";
+import { stampWriteAccess } from "./write-access.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -87,8 +88,9 @@ async function cachedIsMember(chatId: number, tgId: number): Promise<boolean | n
 // paths), so a teacher who followed e.g. a ?startapp=hw link still reaches homework. Only the
 // DEFAULT (no/unknown start_param) is role-aware: staff land on the teacher Mini App, students on
 // their dashboard (unchanged). The grammar is the shared, whitelist-only one (_shared/miniapp-links.ts,
-// byte-identical to the Mini App's copy): hw/homework/leaderboard/profile map exactly as before, and
-// c / c_<course> / l_<lesson> (+ "__<src>") open /continue — the named-app direct links in group posts.
+// byte-identical to the Mini App's copy): hw/homework/leaderboard/profile map exactly as before,
+// c / c_<course> / l_<lesson> (+ "__<src>") open /continue — the named-app direct links in group posts — and
+// (Daily Tasks PR-7) dt → /challenge/tasks, dt_<task id> → /challenge/tasks/<id>, ig → /settings#profile.
 function targetPath(startParam: string | undefined, isStaff: boolean): string {
   return startParamToPath(startParam)?.path ?? (isStaff ? "/tg/teacher" : "/dashboard");
 }
@@ -232,6 +234,10 @@ Deno.serve(async (req) => {
     action: "miniapp_signin",
     details: { profile_id: outcome.profileId, backfilled: outcome.backfilled, at: new Date().toISOString() },
   }).then(() => {}, () => {});
+
+  // Daily Tasks PR-7 (C15): Telegram signed "the bot may message this user" → the student is DM-eligible. Stamped
+  // once from the verified initData; a failed write is DB-visible (write-access.ts) and never blocks the sign-in.
+  if (v.user.allows_write_to_pm === true) await stampWriteAccess(admin, outcome.profileId);
 
   // A watch button opened a cold Mini App: record its open signal (cold:true) with the sign-in. Best-effort.
   const openSig = parseOpen((body as { open?: unknown })?.open);
