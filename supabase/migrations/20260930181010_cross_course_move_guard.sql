@@ -1,5 +1,7 @@
 -- CROSS-COURSE MOVE GUARD (DB invariant) + CROSS-COURSE DETECTOR. Teacher audit 2026-09-30, PR-3b.
 -- Prevention hierarchy: layer 2 (a trigger no code path can skip) plus a layer-5 detector for what escapes.
+-- Replaces 20260930181000 (never applied): a PLACEMENT (no group, or a group without a course → a group of a
+-- course) is guarded too, so a move in two steps (5.0 → no group → 6.0) is refused like the direct one.
 --
 -- ═══ WHY ═══
 -- Who may see and grade a homework is decided by the student's CURRENT group: is_teacher_of(), the
@@ -15,6 +17,13 @@
 -- screens (AdminUsers bulk move, the AdminGroups CSV). It cannot cover a direct write: admin_assign_group()
 -- called by hand, a profiles UPDATE from the dashboard or SQL editor, a stale browser tab, or homework that
 -- arrives between the screen's check and its write. This file closes those paths in the database.
+-- It also closes the path PR-3a does not see at all: a student WITHOUT a group. Removing a student from their
+-- group is a plain write (GroupDetail / AdminGroups "remove"), and every layer above treats a groupless student
+-- as "not a move" (guardGroupMove runs only when the student has a group; classifyGroupMoves skips
+-- fromGroupId = null). So 5.0 → no group → 6.0 would hand the waiting 5.0 work to the 6.0 teachers exactly like
+-- the direct move, through AdminUsers, the CSV, staff-intake or the bot's auto-register. For a placement there
+-- is no "old course" to read from a group, so the harm is counted directly: the student's waiting work in any
+-- course OTHER than the new group's course is what the new group's teachers would be handed.
 --
 -- ═══ EVIDENCE (production, read-only, 2026-09-30 ~17:50 UTC) ═══
 --   * Writers of profiles.group_id: admin_assign_group() (the only SQL function; admin-gated, plain UPDATE, no
@@ -32,16 +41,26 @@
 --
 -- ═══ WHAT ═══
 -- 1. public.course_move_facts(user, from_group, to_group) — STABLE, read-only jsonb: both groups, both courses,
---    `cross` (both courses known and different) and `old_course_waiting` (the student's submissions in the
---    FROM course with score NULL or score_is_stale: the same "waiting" as the grading queue, the bot and
---    PR-3a's _shared/course-move-guard.ts).
+--    `kind`, `cross` and `old_course_waiting` ("waiting" = score NULL or score_is_stale: the same as the
+--    grading queue, the bot and PR-3a's _shared/course-move-guard.ts). Two kinds:
+--      'move'       the FROM group has a course. cross = the target group has another course;
+--                   old_course_waiting = the student's waiting submissions in the FROM group's course
+--                   (PR-3a's rule, unchanged: waiting work of a third course does not block).
+--      'placement'  no FROM group, or a FROM group without a course, and the target group has a course.
+--                   cross = the student has ANY submission in a course other than the target's (a brand-new
+--                   student has none: never cross); old_course_waiting = their waiting submissions in every
+--                   course other than the target's; from_course_id = the course holding most of them (then
+--                   the latest), from_course = the titles of every course counted.
+--    A target group without a course is never cross (not provably a course change), as in PR-3a.
 -- 2. public.profiles_course_move_guard() + trigger trg_profiles_aa_course_move_guard, AFTER UPDATE OF group_id
---    FOR EACH ROW WHEN (old and new group both set and different). A move between courses while the old course
---    still has waiting homework RAISES P0001 'cross_course_refused: <Uzbek sentence>' (DETAIL = the facts
---    jsonb): the whole statement rolls back, so a bulk admin_assign_group() moves nobody. Every cross-course
---    move that IS allowed (0 waiting) writes admin_actions 'cross_course_move' {facts, override, jwt_role},
---    whichever path made it. The same rule as PR-3a, now for every writer, including admin_assign_group(),
---    which therefore needs no signature change (see "NO p_force" below).
+--    FOR EACH ROW WHEN (the group changes and the new group is set). A move or placement between courses while
+--    waiting homework would follow the student RAISES P0001 'cross_course_refused: <Uzbek sentence>' (DETAIL =
+--    the facts jsonb): the whole statement rolls back, so a bulk admin_assign_group() moves nobody. Every
+--    cross-course move or placement that IS allowed (0 waiting) writes admin_actions 'cross_course_move'
+--    {facts incl. kind, override, jwt_role}, whichever path made it. Clearing a group (→ NULL) is not guarded:
+--    it hands the work to nobody, and the next placement is judged. The same rule as PR-3a, now for every
+--    writer, including admin_assign_group(), which therefore needs no signature change (see "NO p_force").
+--    INSERT is not guarded: a profile row is born with a brand-new user id, which has no submissions.
 --    A refusal cannot leave a row (the raise rolls it back), so it bumps course_move_refusals_seq, whose
 --    nextval survives the rollback (the #222 pattern); the watchdog reports new refusals.
 --    WHY AFTER, and why this name: BEFORE ROW triggers fire in name order and #222's profiles_guard_health()
@@ -88,7 +107,7 @@
 -- in the body). Anything else aborts with "regenerate". Three edits, each must match exactly once. After
 -- CREATE OR REPLACE (body validation on) the stored definition must equal the executed text; owner, ACL and
 -- SECURITY DEFINER must be unchanged, and anon / authenticated still unable to execute it. REPLAY-SAFE: the
--- marker "(20260930181000)" in the body means the rewrite is in place and is skipped.
+-- marker "(20260930181010)" in the body means the rewrite is in place and is skipped.
 --
 -- ═══ DEPLOY SELF-TEST (never sends, never keeps a write, needs no JWT, takes no advisory lock) ═══
 --   * static: the trigger's shape, every new function present, none executable by anon or authenticated.
@@ -96,12 +115,16 @@
 --   * course_move_facts(), cross_course_health() and hw_dm_health_stats() (all read-only): well-formed, the two
 --     new fields present and >= 0. Not asserted to be 0: a real mismatch at deploy time must not fail the
 --     migration; the first watchdog run reports it.
---   * the guard itself on LIVE data, rolled back: a student with waiting homework in their current group's
---     course is moved to a group of another course inside a sub-block. The trigger must refuse with
---     'cross_course_refused:'; if the UPDATE went through instead, a sentinel raise rolls it back and the
---     migration aborts. Either way the savepoint undoes every trigger's writes; only the refusal counter (a
---     sequence) keeps its +1, and the watchdog's baseline is seeded AFTER it. The refusal path runs no other
---     AFTER trigger (this one is first by name). Skipped (and recorded) when no such student exists.
+--   * the guard itself on LIVE data, rolled back, twice: a student with waiting homework in their current
+--     group's course is (a) moved to a group of another course, and (b) removed from their group and then
+--     placed in that group (the two-step path), each inside its own sub-block. The trigger must refuse with
+--     'cross_course_refused:' (in (b) at the second step, after the first one succeeded); if an UPDATE went
+--     through instead, a sentinel raise rolls it back and the migration aborts. Either way the savepoint undoes
+--     every trigger's writes; only the refusal counter (a sequence) keeps its +1 per refusal, and the
+--     watchdog's baseline is seeded AFTER both (a replay advances it by the replay's own refusals, so a
+--     re-run never DMs "the guard refused" for its self-test). The refusal path runs no other AFTER trigger
+--     (this one is first by name); the step to NULL fires only the two BEFORE triggers (every AFTER trigger on
+--     group_id is WHEN new.group_id IS NOT NULL). Skipped (and recorded) when no such student exists.
 --
 -- ═══ DRY-RUN, read-only against production, 2026-09-30 ~18:00 UTC ═══
 --   * pin matched (fa76b14c…); edits 1 / 1 / 1 matched exactly once; no marker yet.
@@ -112,6 +135,12 @@
 --   * the BEFORE triggers that UPDATE fires (update_updated_at_column, profiles_column_guard →
 --     profiles_guard_record_change) take no advisory lock and have no non-transactional side effect.
 --   * auth.uid(), auth.role() and cron.schedule(name, schedule, command) exist.
+-- Re-checked for the placement rule, 2026-09-30 ~18:40 UTC: pin still fa76b14c…; 0 groups without a course;
+--   530 groupless profiles, 0 of them with waiting homework (so the stricter rule refuses nobody today), 39 of
+--   them with any submission (placing one of those into a group of another course is recorded, not refused);
+--   14 waiting submissions; the live vector above has 1 waiting submission outside the target's course, so
+--   the two-step self-test runs too. AFTER triggers on profiles.group_id: sync_group_enrollment and
+--   challenge_retro_on_profile_link, both WHEN new.group_id IS NOT NULL.
 -- PGlite harness (production's hw_dm_health_stats and admin_assign_group text, byte for byte):
 --   deno run -A --node-modules-dir=none supabase/functions/_watchdogs/testing/cross-course-guard-check.ts
 --
@@ -132,29 +161,60 @@ language sql
 stable
 set search_path to 'public'
 as $function$
+  with k as (
+    select fg.id as from_group_id, fg.name as from_group, fg.course_id as from_group_course_id,
+           tg.id as to_group_id, tg.name as to_group, tg.course_id as to_course_id, tc.title as to_course,
+           case when fg.course_id is not null then 'move'
+                when tg.course_id is not null then 'placement'
+           end as kind
+      from (select 1) as one
+      left join public.groups fg on fg.id = _from_group_id
+      left join public.groups tg on tg.id = _to_group_id
+      left join public.courses tc on tc.id = tg.course_id
+  ),
+  counted as (
+    -- move: the FROM group's course. placement: every course other than the target group's.
+    select m.course_id, hs.submitted_at, (hs.score is null or coalesce(hs.score_is_stale, false)) as waiting
+      from k
+      join public.homework_submissions hs on hs.user_id = _user_id
+      join public.homework_assignments a on a.id = hs.assignment_id
+      join public.modules m on m.id = a.module_id
+     where _user_id is not null
+       and ((k.kind = 'move' and m.course_id = k.from_group_course_id)
+         or (k.kind = 'placement' and m.course_id is not null and m.course_id <> k.to_course_id))
+  ),
+  src as (
+    -- placement: the course the student comes from (most waiting work, then the latest submission)
+    select c.course_id
+      from counted c
+     group by c.course_id
+     order by count(*) filter (where c.waiting) desc, max(c.submitted_at) desc nulls last, c.course_id
+     limit 1
+  ),
+  n as (select count(*) filter (where waiting)::int as waiting, count(*)::int as total from counted)
   select jsonb_build_object(
     'user_id', _user_id,
     'student', coalesce((select coalesce(nullif(btrim(coalesce(p.name, '') || ' ' || coalesce(p.last_name, '')), ''),
                                          '@' || nullif(btrim(p.telegram_username), ''))
                            from public.profiles p where p.id = _user_id), 'Talaba'),
-    'from_group_id', fg.id, 'from_group', fg.name, 'from_course_id', fg.course_id, 'from_course', fc.title,
-    'to_group_id', tg.id, 'to_group', tg.name, 'to_course_id', tg.course_id, 'to_course', tc.title,
-    'cross', coalesce(fg.id is not null and tg.id is not null and fg.id <> tg.id
-                      and fg.course_id is not null and tg.course_id is not null
-                      and fg.course_id <> tg.course_id, false),
-    'old_course_waiting', case when fg.course_id is null or _user_id is null then 0 else (
-      select count(*)::int
-        from public.homework_submissions hs
-        join public.homework_assignments a on a.id = hs.assignment_id
-        join public.modules m on m.id = a.module_id
-       where hs.user_id = _user_id
-         and m.course_id = fg.course_id
-         and (hs.score is null or coalesce(hs.score_is_stale, false))) end)
-  from (select 1) as one
-  left join public.groups fg on fg.id = _from_group_id
-  left join public.courses fc on fc.id = fg.course_id
-  left join public.groups tg on tg.id = _to_group_id
-  left join public.courses tc on tc.id = tg.course_id;
+    'kind', k.kind,
+    'from_group_id', k.from_group_id, 'from_group', k.from_group,
+    'from_course_id', case when k.kind = 'placement' then (select course_id from src) else k.from_group_course_id end,
+    'from_course', case
+       when k.kind = 'move' then (select c.title from public.courses c where c.id = k.from_group_course_id)
+       when k.kind = 'placement' and n.waiting > 0 then
+         (select string_agg(c.title, ', ' order by c.title) from public.courses c
+           where c.id in (select course_id from counted where waiting))
+       when k.kind = 'placement' then (select c.title from public.courses c where c.id = (select course_id from src))
+     end,
+    'to_group_id', k.to_group_id, 'to_group', k.to_group, 'to_course_id', k.to_course_id, 'to_course', k.to_course,
+    'cross', coalesce(k.to_group_id is not null and k.to_course_id is not null
+                      and k.from_group_id is distinct from k.to_group_id
+                      and case k.kind when 'move' then k.from_group_course_id <> k.to_course_id
+                                      when 'placement' then n.total > 0
+                                      else false end, false),
+    'old_course_waiting', coalesce(n.waiting, 0))
+  from k, n;
 $function$;
 
 -- ── 3. The guard ──
@@ -169,9 +229,10 @@ declare
   _waiting int;
   _override boolean;
 begin
+  -- old.group_id may be NULL (or a group without a course): course_move_facts judges that as a placement.
   _f := public.course_move_facts(new.id, old.group_id, new.group_id);
   if not coalesce((_f->>'cross')::boolean, false) then
-    return null;   -- same course, or a group without a course: PR-3a's same-course flow applies
+    return null;   -- same course, a target without a course, or a placement with no other-course history
   end if;
   _waiting := coalesce((_f->>'old_course_waiting')::int, 0);
   _override := coalesce(current_setting('app.course_move_override', true), '') = 'on';
@@ -182,9 +243,9 @@ begin
       message = format('cross_course_refused: %s boshqa kursga (%s) o''tkazilmadi: eski kursda (%s) %s ta vazifa hali baholanmagan. Avval ustoz ularni baholashi kerak. Hech kim ko''chirilmadi.',
                        _f->>'student', coalesce(_f->>'to_course', '?'), coalesce(_f->>'from_course', '?'), _waiting),
       detail = _f::text,
-      hint = 'Challenge 6.0 faqat yangi o''quvchilar uchun (20260930181000).';
+      hint = 'Challenge 6.0 faqat yangi o''quvchilar uchun (20260930181010).';
   end if;
-  -- Allowed (nothing waits in the old course, or the owner's transaction-local override): record it.
+  -- Allowed (nothing waits in the old course(s), or the owner's transaction-local override): record it.
   begin
     insert into public.admin_actions (actor_user_id, action, target_user_id, target_resource_type, target_resource_id, details)
     values (auth.uid(), 'cross_course_move', new.id, 'profile', new.id,
@@ -200,7 +261,7 @@ drop trigger if exists trg_profiles_aa_course_move_guard on public.profiles;
 create trigger trg_profiles_aa_course_move_guard
   after update of group_id on public.profiles
   for each row
-  when (old.group_id is distinct from new.group_id and old.group_id is not null and new.group_id is not null)
+  when (old.group_id is distinct from new.group_id and new.group_id is not null)
   execute function public.profiles_course_move_guard();
 
 -- ── 4. The detector ──
@@ -565,7 +626,7 @@ grant  execute on function public.cross_course_watchdog() to service_role;
 do $mig$
 declare
   _pin    constant text := 'fa76b14cdcfeb3c84e5220852e0e6bef';  -- md5(replace(prosrc, CR, '')), live, 2026-09-30
-  _marker constant text := '(20260930181000)';
+  _marker constant text := '(20260930181010)';
 
   _old1 constant text := E'  _voice_dm_failed_24h int;\nbegin\n';
   _new1 constant text := E'  _voice_dm_failed_24h int;\n'
@@ -575,7 +636,7 @@ declare
 
   _old2 constant text := E'  return jsonb_build_object(\n';
   _new2 constant text :=
-       E'  -- Cross-course homework (20260930181000): waiting work whose task belongs to another course than the\n'
+       E'  -- Cross-course homework (20260930181010): waiting work whose task belongs to another course than the\n'
     || E'  -- student''s current group (a move carried it to the new group''s teachers), and work captured in the\n'
     || E'  -- Telegram chat of a group of another course. Both are 0 by design; cross_course_watchdog() DMs the\n'
     || E'  -- admins. -1 = the check itself failed: fail loud (!= 0), never 500 the whole endpoint.\n'
@@ -691,7 +752,10 @@ declare
   _from uuid;
   _to uuid;
   _outcome text;
+  _stage text;
+  _selftest_refusals int := 0;
   _live text := 'skipped: no student with waiting homework in their group''s course, or no group of another course';
+  _live2 text := 'skipped: no student with waiting homework in their group''s course, or no group of another course';
 begin
   -- Static: the trigger.
   select t.tgenabled::text as en, t.tgtype::int as ty, p.proname::text as fn, pg_get_triggerdef(t.oid) as def
@@ -771,7 +835,7 @@ begin
     raise exception 'ABORT: self-test -- hw_dm_health_stats() does not carry the two fields: %', coalesce(_s::text, 'NULL');
   end if;
   _f := public.course_move_facts(null, null, null);
-  if _f is null or (_f->>'cross') <> 'false' or (_f->>'old_course_waiting') <> '0' then
+  if _f is null or (_f->>'cross') <> 'false' or (_f->>'old_course_waiting') <> '0' or (_f->'kind') is distinct from 'null'::jsonb then
     raise exception 'ABORT: self-test -- course_move_facts(null, null, null) = %', coalesce(_f::text, 'NULL');
   end if;
 
@@ -815,32 +879,66 @@ begin
     if (select group_id from public.profiles where id = _uid) is distinct from _from then
       raise exception 'ABORT: self-test -- the refused move was not rolled back';
     end if;
+    _selftest_refusals := _selftest_refusals + 1;
     _live := 'refused as expected: ' || left(_outcome, 200);
+
+    -- The same student in two steps: out of their group (allowed, not guarded), then into the other course's
+    -- group (a placement: their waiting work would follow them). Must be refused at the SECOND step.
+    _f := public.course_move_facts(_uid, null, _to);
+    if (_f->>'kind') is distinct from 'placement' or (_f->>'cross') <> 'true'
+       or coalesce((_f->>'old_course_waiting')::int, 0) < 1 then
+      raise exception 'ABORT: self-test -- course_move_facts does not see the live placement vector: %', _f;
+    end if;
+    _stage := 'start';
+    begin
+      update public.profiles set group_id = null where id = _uid;
+      _stage := 'cleared';
+      update public.profiles set group_id = _to where id = _uid;
+      _stage := 'placed';
+      raise exception 'course_move_guard_selftest_sentinel';
+    exception when others then
+      _outcome := sqlerrm;
+    end;
+    if _stage = 'placed' then
+      raise exception 'ABORT: self-test -- the guard did NOT refuse a placement (no group → another course) with % waiting homework (rolled back)',
+        _f->>'old_course_waiting';
+    end if;
+    if _stage <> 'cleared' or _outcome not like 'cross_course_refused: %' then
+      raise exception 'ABORT: self-test -- the two-step placement failed unexpectedly at step %: %', _stage, _outcome;
+    end if;
+    if (select group_id from public.profiles where id = _uid) is distinct from _from then
+      raise exception 'ABORT: self-test -- the refused two-step placement was not rolled back';
+    end if;
+    _selftest_refusals := _selftest_refusals + 1;
+    _live2 := 'refused as expected: ' || left(_outcome, 200);
   end if;
 
-  -- The watchdog's baseline, AFTER the refusal above (its counter bump is not a new event).
-  insert into public.app_settings (key, value)
+  -- The watchdog's baseline, AFTER the refusals above (their counter bumps are not new events). On a replay the
+  -- row exists: advance it by this run's own refusals only, so a replay never reports them as real refusals.
+  insert into public.app_settings as s (key, value)
   values ('cross_course_watchdog_state', jsonb_build_object(
     'alerting', false,
     'notified_keys', '[]'::jsonb,
     'last_alert_ms', 0,
-    'refusals_seen', (_h->>'refusals_total')::bigint
-                     + case when _live like 'refused%' then 1 else 0 end,
+    'refusals_seen', (_h->>'refusals_total')::bigint + _selftest_refusals,
     'first_checked_at', now(),
-    'seeded_by', '20260930181000',
+    'seeded_by', '20260930181010',
     'last_report', _h - 'keys',
     'checked_at', now()))
-  on conflict (key) do nothing;
+  on conflict (key) do update
+    set value = s.value || jsonb_build_object('refusals_seen', (s.value->>'refusals_seen')::bigint + _selftest_refusals)
+  where _selftest_refusals > 0 and coalesce(s.value->>'refusals_seen', '') ~ '^[0-9]{1,18}$';
 
   insert into public.admin_actions (actor_user_id, action, details)
   select null, 'cross_course_move_guard_installed',
-         jsonb_build_object('migration', '20260930181000',
+         jsonb_build_object('migration', '20260930181010',
                             'trigger', 'trg_profiles_aa_course_move_guard',
                             'watchdog', 'cross-course-watchdog (hourly :49)',
                             'health_fields', jsonb_build_array('cross_course_pending', 'cross_chat_captures'),
                             'cross_course_pending', (_h->>'cross_course_pending')::int,
                             'cross_chat_captures', (_h->>'cross_chat_captures')::int,
                             'live_guard_selftest', _live,
+                            'live_placement_selftest', _live2,
                             'at', now())
   where not exists (select 1 from public.admin_actions where action = 'cross_course_move_guard_installed');
 end $selftest$;

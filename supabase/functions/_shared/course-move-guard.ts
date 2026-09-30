@@ -57,9 +57,12 @@ export const REFUSED_STATUS = "cross_course_refused";
 
 /**
  * PR-3b: the DATABASE enforces the same rule for every writer. The trigger trg_profiles_aa_course_move_guard
- * (migration 20260930181000) refuses a move between courses while the old course has waiting homework with
+ * (migration 20260930181010) refuses a move between courses while the old course has waiting homework with
  * P0001, MESSAGE "cross_course_refused: <Uzbek sentence>" and DETAIL = the course_move_facts() jsonb. The engine
- * checks first (above), so this only fires when homework arrives between that check and the write.
+ * checks a move first (above), so for a move this only fires when homework arrives between that check and the
+ * write. A PLACEMENT (the student has no group, or a group without a course) is judged by the database alone:
+ * decideCourseMove says "no_move" for it, and the trigger refuses it when the student has waiting homework in
+ * any course other than the target group's (DETAIL: kind "placement", from_group_id null).
  */
 export const DB_REFUSAL_PREFIX = "cross_course_refused:";
 

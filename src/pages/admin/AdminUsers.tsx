@@ -899,8 +899,9 @@ export default function AdminUsers() {
     // A student of ANOTHER course with homework still waiting is never moved (it would follow them to the new
     // teachers); with nothing waiting, the admin must confirm, and the override is logged. A check that
     // cannot run moves nobody. PR-3b: the database enforces the same rule on admin_assign_group itself
-    // (trg_profiles_aa_course_move_guard), so homework arriving after this check still cannot slip through;
-    // its refusal moves nobody and is shown in Uzbek below.
+    // (trg_profiles_aa_course_move_guard), so homework arriving after this check still cannot slip through, and
+    // it also judges students with no group (a placement: their waiting work of another course would follow
+    // them), which this check skips; its refusal moves nobody and is shown in Uzbek below.
     let plan: Awaited<ReturnType<typeof loadGroupMovePlan>>;
     try {
       plan = await loadGroupMovePlan(supabase, ids, groupId);

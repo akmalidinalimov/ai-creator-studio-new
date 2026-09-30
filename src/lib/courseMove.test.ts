@@ -104,7 +104,7 @@ describe("classifyGroupMoves (admin bulk move / group CSV)", () => {
   });
 });
 
-describe("dbMoveRefusalText (the database guard, migration 20260930181000)", () => {
+describe("dbMoveRefusalText (the database guard, migration 20260930181010)", () => {
   // The exact MESSAGE profiles_course_move_guard() raises (format() of the migration, verified in PGlite).
   const real = "cross_course_refused: Aziza Karimova boshqa kursga (AI CREATORS CHALLENGE 6.0) o'tkazilmadi: " +
     "eski kursda (AI CREATORS 5.0) 1 ta vazifa hali baholanmagan. Avval ustoz ularni baholashi kerak. Hech kim ko'chirilmadi.";
@@ -113,6 +113,13 @@ describe("dbMoveRefusalText (the database guard, migration 20260930181000)", () 
     expect(dbMoveRefusalText(real)).toBe(real.slice(DB_MOVE_REFUSAL_PREFIX.length).trim());
     expect(dbMoveRefusalText(real)).toContain("1 ta vazifa hali baholanmagan");
     expect(dbMoveRefusalText(`  ${real}  `)).toMatch(/^Aziza Karimova/);
+  });
+  it("a placement (student with no group) is refused with the same sentence, every other course named", () => {
+    // PGlite harness vector: no group, waiting work in 4.0 and 5.0, placed into a 6.0 group.
+    const placement = "cross_course_refused: Hasan boshqa kursga (AI CREATORS CHALLENGE 6.0) o'tkazilmadi: " +
+      "eski kursda (AI CREATORS 4.0, AI CREATORS 5.0) 2 ta vazifa hali baholanmagan. Avval ustoz ularni baholashi kerak. Hech kim ko'chirilmadi.";
+    expect(dbMoveRefusalText(placement)).toBe(placement.slice(DB_MOVE_REFUSAL_PREFIX.length).trim());
+    expect(dbMoveRefusalText(placement)).toContain("(AI CREATORS 4.0, AI CREATORS 5.0) 2 ta vazifa");
   });
   it("any other error is not ours: null, so the caller shows its own text", () => {
     expect(dbMoveRefusalText("forbidden")).toBeNull();

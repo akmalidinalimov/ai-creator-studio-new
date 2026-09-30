@@ -1,4 +1,4 @@
-// Applies 20260930181000_cross_course_move_guard.sql to a real PostgreSQL (PGlite) on top of the LIVE
+// Applies 20260930181010_cross_course_move_guard.sql to a real PostgreSQL (PGlite) on top of the LIVE
 // hw_dm_health_stats() and admin_assign_group() definitions, then drives the new guard trigger, the detector,
 // the hw_dm_health_stats fields and the watchdog end to end with a stub ops_net_post.
 //
@@ -24,7 +24,7 @@ const here = (p: string) => new URL(p, import.meta.url);
 const lf = (s: string) => s.replace(/\r\n/g, "\n"); // a Windows checkout is CRLF; production text is LF
 const LIVE_HEALTH = lf(await Deno.readTextFile(here("./hw_dm_health_stats.live-2026-09-30.sql")));
 const MIG = lf(await Deno.readTextFile(
-  Deno.env.get("CCG_MIG") ?? here("../../../migrations/20260930181000_cross_course_move_guard.sql")));
+  Deno.env.get("CCG_MIG") ?? here("../../../migrations/20260930181010_cross_course_move_guard.sql")));
 
 // production, 2026-09-30: md5(pg_get_functiondef(oid)) and md5(replace(prosrc, CR, ''))
 const PROD_HEALTH = { def: "5964793a61b404e39a1cad7cfd1d24cd", body: "fa76b14cdcfeb3c84e5220852e0e6bef" };
@@ -68,6 +68,9 @@ const S1 = "51000000-0000-0000-0000-000000000001"; // 5.0 student, 1 waiting 5.0
 const S2 = "52000000-0000-0000-0000-000000000002"; // 5.0 student, all graded
 const S3 = "53000000-0000-0000-0000-000000000003"; // 5.0 student, 1 stale 5.0 submission
 const S4 = "54000000-0000-0000-0000-000000000004"; // 5.0 student, 1 waiting 4.0 submission (a third course)
+const S5 = "55000000-0000-0000-0000-000000000005"; // no group, no submission at all (a brand-new student)
+const S6 = "56000000-0000-0000-0000-000000000006"; // no group, 1 GRADED 5.0 submission (a former 5.0 student)
+const S7 = "57000000-0000-0000-0000-000000000007"; // no group, 1 waiting 4.0 + 1 waiting 5.0 submission
 
 const SCHEMA = `
 set timezone = 'UTC';
@@ -171,13 +174,17 @@ insert into public.homework_assignments values ('${A5}', '${M5}', '2-MODUL ATIR'
 insert into public.profiles (id, name, last_name, telegram_id, group_id) values
   ('${AD1}', 'Admin', null, 9001, null), ('${AD2}', 'Super', null, 9002, null),
   ('${S1}', 'Aziza', 'Karimova', 1001, '${G5A}'), ('${S2}', 'Bobur', null, 1002, '${G5A}'),
-  ('${S3}', 'Dilnoza', null, 1003, '${G5B}'), ('${S4}', 'Eldor', null, 1004, '${G5B}');
+  ('${S3}', 'Dilnoza', null, 1003, '${G5B}'), ('${S4}', 'Eldor', null, 1004, '${G5B}'),
+  ('${S5}', 'Farruh', null, 1005, null), ('${S6}', 'Gulnora', null, 1006, null), ('${S7}', 'Hasan', null, 1007, null);
 insert into public.user_roles (user_id, role) values ('${AD1}', 'admin'), ('${AD2}', 'superadmin');
 insert into public.homework_submissions (assignment_id, user_id, submitted_at, score, score_is_stale, telegram_chat_id) values
   ('${A5}', '${S1}', now() - interval '2 days', null, false, -1003718576417),
   ('${A5}', '${S2}', now() - interval '5 days', 9, false, -1003718576417),
   ('${A5}', '${S3}', now() - interval '3 days', 6, true, -1004310467008),
-  ('${A4}', '${S4}', now() - interval '90 days', null, false, -1009999999999);
+  ('${A4}', '${S4}', now() - interval '90 days', null, false, -1009999999999),
+  ('${A5}', '${S6}', now() - interval '40 days', 8, false, null),
+  ('${A4}', '${S7}', now() - interval '80 days', null, false, null),
+  ('${A5}', '${S7}', now() - interval '20 days', null, false, null);
 delete from public.test_enrolled;   -- the seed INSERTs above fired the enrollment stand-in; tests count moves only
 `;
 
@@ -260,7 +267,7 @@ console.log("B. migration: applies, pinned, replay-safe, grants");
                                 from pg_proc where proname = 'hw_dm_health_stats'`))[0];
   ok("hw_dm_health_stats: owner / ACL / SECURITY DEFINER unchanged",
     after.a === before.a && after.o === before.o && after.s === before.s, { before, after: after.a });
-  ok("hw_dm_health_stats: carries the marker and the new block", after.prosrc.includes("(20260930181000)") &&
+  ok("hw_dm_health_stats: carries the marker and the new block", after.prosrc.includes("(20260930181010)") &&
     after.prosrc.includes("from (select public.cross_course_health() as h) x;"));
   // Every live line survives, in order (only additions).
   const bodyOf = (t: string) => t.split("AS $function$")[1].split("$function$")[0].split("\n");
@@ -288,8 +295,8 @@ console.log("B. migration: applies, pinned, replay-safe, grants");
   const tg = await q(db, `select tgname, pg_get_triggerdef(oid) d from pg_trigger
                            where tgrelid = 'public.profiles'::regclass and not tgisinternal order by tgname`);
   const g = tg.find((t) => t.tgname === "trg_profiles_aa_course_move_guard");
-  ok("trigger: AFTER UPDATE OF group_id, FOR EACH ROW, WHEN both groups set and different",
-    !!g && /AFTER UPDATE OF group_id ON public\.profiles FOR EACH ROW WHEN \(\(\(old\.group_id IS DISTINCT FROM new\.group_id\) AND \(old\.group_id IS NOT NULL\) AND \(new\.group_id IS NOT NULL\)\)\)/.test(g.d), g?.d);
+  ok("trigger: AFTER UPDATE OF group_id, FOR EACH ROW, WHEN the group changes to a set group (old may be NULL)",
+    !!g && /AFTER UPDATE OF group_id ON public\.profiles FOR EACH ROW WHEN \(\(\(old\.group_id IS DISTINCT FROM new\.group_id\) AND \(new\.group_id IS NOT NULL\)\)\)/.test(g.d), g?.d);
   const lastBefore = (await q(db, `select t.tgname from pg_trigger t where t.tgrelid = 'public.profiles'::regclass
       and not t.tgisinternal and t.tgenabled <> 'D' and (t.tgtype & 1) = 1 and (t.tgtype & 2) = 2 order by t.tgname desc limit 1`))[0].tgname;
   ok("#222's rule holds: trg_profiles_zz_column_guard is still the LAST before-row trigger", lastBefore === "trg_profiles_zz_column_guard", lastBefore);
@@ -299,14 +306,17 @@ console.log("B. migration: applies, pinned, replay-safe, grants");
   const inst = await rowsOf(db, "cross_course_move_guard_installed");
   ok("audit row once; the live guard self-test REFUSED the real vector",
     inst.length === 1 && String(inst[0].details.live_guard_selftest).startsWith("refused as expected: cross_course_refused:"), inst);
+  ok("... and the two-step self-test (out of the group, then into the other course) REFUSED it at the second step",
+    String(inst[0]?.details.live_placement_selftest).startsWith("refused as expected: cross_course_refused: Dilnoza"),
+    inst[0]?.details.live_placement_selftest);
   // The oldest waiting submission is S3's stale one (3 days), so S3 is the vector; nobody may have moved.
   ok("the self-test's refused move left everyone in place", (await groupOf(db, S3)) === G5B && (await groupOf(db, S1)) === G5A);
   ok("the self-test used the oldest waiting submission's student (S3, stale)",
     String((await rowsOf(db, "cross_course_move_guard_installed"))[0].details.live_guard_selftest).includes("Dilnoza"));
-  ok("the self-test's refusal bumped the counter once", (await refusals(db)) === 1);
+  ok("the self-test's two refusals bumped the counter twice", (await refusals(db)) === 2);
   const st = (await q(db, "select value from public.app_settings where key = 'cross_course_watchdog_state'"))[0]?.value;
-  ok("state seeded with refusals_seen = 1 (the self-test's own refusal is not a new event)",
-    st?.refusals_seen === 1 && st?.alerting === false && st?.seeded_by === "20260930181000", st);
+  ok("state seeded with refusals_seen = 2 (the self-test's own refusals are not new events)",
+    st?.refusals_seen === 2 && st?.alerting === false && st?.seeded_by === "20260930181010", st);
   ok("nothing leaked from the rolled-back self-test (no enrollment, no move row)",
     (await q(db, "select count(*)::int n from public.test_enrolled"))[0].n === 0 &&
     (await rowsOf(db, "cross_course_move")).length === 0);
@@ -317,6 +327,11 @@ console.log("B. migration: applies, pinned, replay-safe, grants");
   ok("replay: hw_dm_health_stats unchanged (marker skip)", after2 === after.prosrc);
   ok("replay: audit row still once", (await rowsOf(db, "cross_course_move_guard_installed")).length === 1);
   ok("replay: one cron job", (await q(db, "select count(*)::int n from cron.job where jobname = 'cross-course-watchdog'"))[0].n === 1);
+  const st2 = (await q(db, "select value from public.app_settings where key = 'cross_course_watchdog_state'"))[0]?.value;
+  ok("replay: its own 2 refusals advance the baseline (counter 4, refusals_seen 4), seed otherwise kept",
+    (await refusals(db)) === 4 && st2?.refusals_seen === 4 && st2?.first_checked_at === st?.first_checked_at, st2);
+  const wr = (await q(db, "select public.cross_course_watchdog() r"))[0].r as Row;
+  ok("replay: the next watchdog run reports 0 new refusals (no false 'the guard refused' DM)", wr.refusals_new === 0, wr);
   await db.close();
 }
 {
@@ -326,6 +341,8 @@ console.log("B. migration: applies, pinned, replay-safe, grants");
     String((await rowsOf(db, "cross_course_move_guard_installed"))[0]?.details.live_guard_selftest).startsWith("skipped"), err);
   ok("no live vector: counter untouched, state refusals_seen = 0", (await refusals(db)) === 0 &&
     (await q(db, "select value->>'refusals_seen' v from public.app_settings where key = 'cross_course_watchdog_state'"))[0].v === "0");
+  ok("no live vector: the two-step self-test is recorded as skipped too",
+    String((await rowsOf(db, "cross_course_move_guard_installed"))[0]?.details.live_placement_selftest).startsWith("skipped"));
   await db.close();
 }
 {
@@ -371,7 +388,7 @@ console.log("C. guard: every path, every case");
   ok("... and is recorded: cross_course_move {actor, facts, override=false, jwt_role}", mv.length === 1 &&
     mv[0].actor_user_id === AD1 && mv[0].target_user_id === S2 && mv[0].details.override === false &&
     mv[0].details.from_course_id === C5 && mv[0].details.to_course_id === C6 && mv[0].details.old_course_waiting === 0 &&
-    mv[0].details.jwt_role === "authenticated", mv);
+    mv[0].details.jwt_role === "authenticated" && mv[0].details.kind === "move" && mv[0].details.from_course === "AI CREATORS 5.0", mv);
   ok("... and enrollment sync runs after the guard", (await q(db, "select count(*)::int n from public.test_enrolled where user_id = $1", [S2]))[0].n === 1);
   e = await tryExec(db, "update public.profiles set group_id = $2 where id = $1", [S4, G6A]);
   ok("waiting homework of a THIRD course (4.0) does not block a 5.0 -> 6.0 move", e === null && (await groupOf(db, S4)) === G6A, e);
@@ -379,14 +396,66 @@ console.log("C. guard: every path, every case");
   ok("same course (5.0 -> 5.0) with waiting work: allowed, nothing recorded (PR-3a's same-course flow)",
     e === null && (await groupOf(db, S1)) === G5B && (await rowsOf(db, "cross_course_move")).length === 2, e);
   e = await tryExec(db, "update public.profiles set group_id = $2 where id = $1", [S1, GNC]);
-  ok("into a group with no course: allowed (not provably a course change)", e === null, e);
-  e = await tryExec(db, "update public.profiles set group_id = $2 where id = $1", [S1, G5A]);
-  e = await tryExec(db, "update public.profiles set group_id = null where id = $1", [S1]);
-  ok("clearing the group (-> NULL): allowed", e === null && (await groupOf(db, S1)) === null, e);
+  ok("into a group with no course: allowed (not provably a course change)", e === null && (await groupOf(db, S1)) === GNC, e);
+
+  // PLACEMENTS: no group (or a group without a course) -> a group of a course. The two-step path.
+  const movesBefore = (await rowsOf(db, "cross_course_move")).length;
+  let r1 = await refusals(db);
   e = await tryExec(db, "update public.profiles set group_id = $2 where id = $1", [S1, G6A]);
-  ok("placing a student with no group: allowed (not a move)", e === null && (await groupOf(db, S1)) === G6A, e);
-  await db.exec("update public.profiles set group_id = null where id = '" + S1 + "'");
-  await db.exec("update public.profiles set group_id = '" + G5A + "' where id = '" + S1 + "'");
+  ok("course-less group -> 6.0 with 1 waiting 5.0: refused (5.0 -> Sandbox -> 6.0 is closed)",
+    !!e && e.startsWith("cross_course_refused: Aziza Karimova boshqa kursga (AI CREATORS CHALLENGE 6.0) o'tkazilmadi: eski kursda (AI CREATORS 5.0) 1 ta vazifa hali baholanmagan.") &&
+    (await groupOf(db, S1)) === GNC && (await refusals(db)) === r1 + 1, e);
+  e = await tryExec(db, "update public.profiles set group_id = $2 where id = $1", [S1, G5A]);
+  ok("course-less group -> 5.0 (the waiting work's own course): allowed, not recorded",
+    e === null && (await groupOf(db, S1)) === G5A && (await rowsOf(db, "cross_course_move")).length === movesBefore, e);
+  e = await tryExec(db, "update public.profiles set group_id = null where id = $1", [S1]);
+  ok("clearing the group (-> NULL): allowed, not guarded (hands the work to nobody)", e === null && (await groupOf(db, S1)) === null, e);
+  // The audit's exact sequence: after the remove, admin_assign_group used to place S1 in 6.0 with 5.0 work waiting.
+  r1 = await refusals(db);
+  const al0 = (await q(db, "select count(*)::int n from public.audit_log"))[0].n;
+  e = await tryExec(db, "select public.admin_assign_group(array[$1]::uuid[], $2)", [S1, G6A]);
+  ok("NULL -> 6.0 via admin_assign_group with 1 waiting 5.0: refused with the same message",
+    !!e && e.startsWith("cross_course_refused: Aziza Karimova boshqa kursga (AI CREATORS CHALLENGE 6.0) o'tkazilmadi: eski kursda (AI CREATORS 5.0) 1 ta vazifa hali baholanmagan."), e);
+  ok("... still groupless, no enrollment in 6.0, no audit_log / move row, counter +1",
+    (await groupOf(db, S1)) === null &&
+    (await q(db, "select count(*)::int n from public.test_enrolled where user_id = $1 and group_id = $2", [S1, G6A]))[0].n === 0 &&
+    (await q(db, "select count(*)::int n from public.audit_log"))[0].n === al0 &&
+    (await rowsOf(db, "cross_course_move")).length === movesBefore && (await refusals(db)) === r1 + 1);
+  const det = await q(db, "select public.course_move_facts($1, null, $2) f", [S1, G6A]);
+  ok("... the refusal's facts: kind placement, from_course 5.0 (id), no from group, 1 waiting",
+    det[0].f.kind === "placement" && det[0].f.cross === true && det[0].f.from_group_id === null &&
+    det[0].f.from_course_id === C5 && det[0].f.from_course === "AI CREATORS 5.0" && det[0].f.old_course_waiting === 1, det[0].f);
+  e = await tryExec(db, "update public.profiles set group_id = $2 where id = $1", [S1, G6A]);
+  ok("NULL -> 6.0 by a direct UPDATE: refused too", !!e && e.startsWith("cross_course_refused:") && (await groupOf(db, S1)) === null, e);
+  e = await tryExec(db, "update public.profiles set group_id = $2 where id = $1", [S1, G5A]);
+  ok("NULL -> 5.0 with waiting 5.0 work: allowed (same course), not recorded",
+    e === null && (await groupOf(db, S1)) === G5A && (await rowsOf(db, "cross_course_move")).length === movesBefore, e);
+  const n5 = (await q(db, "select public.admin_assign_group(array[$1]::uuid[], $2) n", [S5, G6A]))[0].n;
+  const f5 = (await q(db, "select public.course_move_facts($1, null, $2) f", [S5, G6A]))[0].f;
+  ok("a brand-new student (no group, no submission) -> 6.0: allowed, not recorded (not cross)",
+    n5 === 1 && (await groupOf(db, S5)) === G6A && (await rowsOf(db, "cross_course_move")).length === movesBefore &&
+    f5.kind === "placement" && f5.cross === false && f5.old_course_waiting === 0 && f5.from_course_id === null, { n5, f5 });
+  const n6 = (await q(db, "select public.admin_assign_group(array[$1]::uuid[], $2) n", [S6, G6A]))[0].n;
+  const mv6 = (await rowsOf(db, "cross_course_move")).at(-1);
+  ok("a former 5.0 student with every submission graded (no group) -> 6.0: allowed AND recorded as a placement",
+    n6 === 1 && (await groupOf(db, S6)) === G6A && (await rowsOf(db, "cross_course_move")).length === movesBefore + 1 &&
+    mv6?.target_user_id === S6 && mv6?.actor_user_id === AD1 && mv6?.details.kind === "placement" &&
+    mv6?.details.from_group_id === null && mv6?.details.from_course_id === C5 && mv6?.details.from_course === "AI CREATORS 5.0" &&
+    mv6?.details.to_course_id === C6 && mv6?.details.old_course_waiting === 0 && mv6?.details.override === false, mv6);
+  e = await tryExec(db, "update public.profiles set group_id = $2 where id = $1", [S7, G6A]);
+  ok("no group, waiting work in TWO other courses -> 6.0: refused, both courses named, total counted",
+    !!e && e.includes("eski kursda (AI CREATORS 4.0, AI CREATORS 5.0) 2 ta vazifa hali baholanmagan") && (await groupOf(db, S7)) === null, e);
+  const f7 = (await q(db, "select public.course_move_facts($1, null, $2) f", [S7, G6A]))[0].f;
+  ok("... from_course_id = the course with most waiting work, then the latest (5.0, 20 days vs 4.0, 80 days)",
+    f7.from_course_id === C5 && f7.old_course_waiting === 2, f7);
+  e = await tryExec(db, "update public.profiles set group_id = $2 where id = $1", [S7, G5A]);
+  ok("... -> 5.0: still refused, only the OTHER course's (4.0) waiting work counts",
+    !!e && e.includes("eski kursda (AI CREATORS 4.0) 1 ta vazifa hali baholanmagan") && (await groupOf(db, S7)) === null, e);
+  e = await tryExec(db, "update public.profiles set group_id = $2 where id = $1", [S7, GNC]);
+  ok("... -> a group with no course: allowed (not provably a course change)", e === null && (await groupOf(db, S7)) === GNC, e);
+  e = await tryExec(db, "select public.admin_assign_group(array[$1, $2]::uuid[], $3)", [S2, S7, G5B]);
+  ok("bulk with one blocked placement: NOBODY moved", !!e && (await groupOf(db, S2)) === G6A && (await groupOf(db, S7)) === GNC, e);
+
   e = await tryExec(db, "update public.profiles set name = 'Aziza' where id = $1", [S1]);
   ok("an UPDATE that does not touch group_id never runs the guard", e === null);
   // The owner's escape hatch.

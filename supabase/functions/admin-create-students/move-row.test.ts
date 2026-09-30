@@ -28,7 +28,7 @@ Deno.test("the bot's auto-register reads a refusal as engine_refused (no userId 
   assertEquals(!r0.userId, true);
 });
 
-// PR-3b: the refusal the DATABASE guard raises at the write (profiles_course_move_guard, 20260930181000).
+// PR-3b: the refusal the DATABASE guard raises at the write (profiles_course_move_guard, 20260930181010).
 // MESSAGE and DETAIL exactly as the trigger builds them (verified in the PGlite harness,
 // supabase/functions/_watchdogs/testing/cross-course-guard-check.ts); PostgREST passes them through as
 // error.message / error.details.
@@ -71,4 +71,30 @@ Deno.test("unreadable DETAIL: still a refusal, and it keeps the database's own s
   assertEquals(row!.move.old_course_waiting, null);
   assertEquals(row!.error.startsWith("Aziza Karimova boshqa kursga"), true);
   assertEquals(dbRefusalFacts({ message: dbErr.message, details: "[1,2]" })!.fromCourseTitle, null);
+});
+
+// PR-3b review fix: a student with NO group placed into a group of another course (the two-step path
+// 5.0 → no group → 6.0). The engine's own check says "no_move" for it; only the database refuses, with the same
+// MESSAGE and a DETAIL whose kind is "placement", from_group_id/from_group null and from_course naming every
+// course whose waiting work would follow the student (PGlite harness vector S7).
+Deno.test("a database refusal of a PLACEMENT (no group) becomes the same refusal row, no current group", () => {
+  const placementErr = {
+    code: "P0001",
+    message: "cross_course_refused: Hasan boshqa kursga (AI CREATORS CHALLENGE 6.0) o'tkazilmadi: eski kursda " +
+      "(AI CREATORS 4.0, AI CREATORS 5.0) 2 ta vazifa hali baholanmagan. Avval ustoz ularni baholashi kerak. Hech kim ko'chirilmadi.",
+    details: JSON.stringify({
+      user_id: "u7", student: "Hasan", kind: "placement", cross: true, old_course_waiting: 2,
+      from_group_id: null, from_group: null, from_course_id: "c5", from_course: "AI CREATORS 4.0, AI CREATORS 5.0",
+      to_group_id: "g6", to_group: "AC CHALLENGE | 3-GURUH", to_course_id: "c6", to_course: "AI CREATORS CHALLENGE 6.0",
+    }),
+  };
+  const row = dbRefusedMoveRow(placementErr, rowCtx, "u7");
+  assertEquals(row!.status, "cross_course_refused");
+  assertEquals("userId" in row!, false);
+  assertEquals(row!.move, {
+    current_group: null, current_course: "AI CREATORS 4.0, AI CREATORS 5.0",
+    target_course: "AI CREATORS CHALLENGE 6.0", old_course_waiting: 2,
+  });
+  assertStringIncludes(row!.error, "(AI CREATORS 4.0, AI CREATORS 5.0) 2 ta vazifa hali baholanmagan");
+  assertEquals(dbRefusalFacts(placementErr)!.fromGroupId, null);
 });

@@ -3,8 +3,10 @@
 // this module only explains its answers (the /intake form) and applies the same rule to the admin screens
 // that change profiles.group_id without going through that engine (bulk "Guruhga ko'chirish", the group CSV).
 // Since PR-3b the DATABASE enforces it too, for every writer: the trigger trg_profiles_aa_course_move_guard
-// (migration 20260930181000) refuses a move between courses while the old course has waiting homework, so a
-// screen's own check can race or be skipped without harm. dbMoveRefusalText() turns that refusal into its
+// (migration 20260930181010) refuses a move between courses while the old course has waiting homework, and a
+// placement of a student with NO group (or a group without a course) into a group while they have waiting
+// homework of another course, so a screen's own check can race or be skipped without harm (classifyGroupMoves
+// does not judge placements at all: the database does). dbMoveRefusalText() turns that refusal into its
 // Uzbek sentence.
 //
 // Why a move between courses is refused: a teacher's access follows the student's CURRENT group, so moving a
@@ -241,7 +243,7 @@ export function crossMoveConfirmText(plan: MovePlan): string {
     `Qoida: yangi kurs faqat yangi o'quvchilar uchun. Baribir o'tkazasizmi?`;
 }
 
-/** The prefix of the database guard's refusal (profiles_course_move_guard, migration 20260930181000). */
+/** The prefix of the database guard's refusal (profiles_course_move_guard, migration 20260930181010). */
 export const DB_MOVE_REFUSAL_PREFIX = "cross_course_refused:";
 
 /**

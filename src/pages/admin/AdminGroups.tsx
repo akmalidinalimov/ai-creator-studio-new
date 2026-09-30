@@ -810,7 +810,8 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
           const patch: Record<string, any> = { group_id: group.id };
           if (acct) patch.account_type = acct; // batch choice also applies to moved existing students
           const r = await mutate(() => supabase.from("profiles").update(patch as any).eq("id", existingId));
-          // The database guard (20260930181000) may still refuse: homework can arrive after the check above.
+          // The database guard (20260930181010) may still refuse: homework can arrive after the check above, and it
+          // also judges a student with no group yet (a placement), which the check above does not.
           if (!r.ok) { if (r.reason !== "impersonation_readonly") errors.push(`${ident}: ${dbMoveRefusalText(r.message) ?? r.message ?? "saqlanmadi"}`); }
           else moved++;
         } else {

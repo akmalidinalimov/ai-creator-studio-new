@@ -279,9 +279,11 @@ Deno.serve(async (req) => {
       }
       return { proceed: true, override: v.kind === "override" ? { facts, adminId: v.adminId } : null };
     };
-    // PR-3b: the database guard (trg_profiles_aa_course_move_guard, 20260930181000) refused the profiles write
-    // itself: homework arrived after guardGroupMove checked. Reported and audited like the engine's own refusal
-    // (no userId, so no caller goes on to act on the new course). false = `err` is some other error.
+    // PR-3b: the database guard (trg_profiles_aa_course_move_guard, 20260930181010) refused the profiles write
+    // itself: homework arrived after guardGroupMove checked, or the student had NO group (a placement, which
+    // guardGroupMove does not judge: their waiting work of another course would follow them into this group).
+    // Reported and audited like the engine's own refusal (no userId, so no caller goes on to act on the new
+    // course; from_group_id is null for a placement). false = `err` is some other error.
     const reportDbRefusal = async (
       err: { message?: string; details?: string } | null,
       row: { email: string; row_index: number; identifier_used: string },

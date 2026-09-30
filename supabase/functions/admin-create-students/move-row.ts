@@ -47,8 +47,9 @@ export function refusedMoveRow(
 }
 
 /**
- * The same refusal row for a move the DATABASE guard refused at the write (PR-3b, migration 20260930181000):
- * homework arrived between the engine's check and its profiles UPDATE. null when `err` is any other error, so
+ * The same refusal row for a move the DATABASE guard refused at the write (PR-3b, migration 20260930181010):
+ * homework arrived between the engine's check and its profiles UPDATE, or the student had no group (a
+ * placement, which the engine's check does not judge). null when `err` is any other error, so
  * the caller keeps its generic "error" row. The facts come from the refusal's DETAIL; when they are unreadable
  * the database's own Uzbek sentence is kept instead of a count we do not know.
  */
