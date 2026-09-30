@@ -23,6 +23,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ChevronLeft, Pencil, Plus, Upload as UploadIcon, X, UserMinus } from "lucide-react";
 import { toast } from "sonner";
 import { GroupTopicsSection } from "@/components/admin/GroupTopicsSection";
+import { CLEAR_GROUP_WARNING, isEngineFailure } from "@/lib/courseMove";
 
 type Overview = {
   group_id: string;
@@ -348,7 +349,9 @@ export default function GroupDetail() {
       if (!r.ok || !row) { toast.error(res?.error || "Qo'shib bo'lmadi"); return; }
       if (row.status === "role_conflict") { toast.error(row.error || "Rol mos kelmaydi"); return; }
       if (row.status === "already_in_group") { toast.warning(row.error || "Allaqachon shu guruhda"); return; }
-      if (row.status === "error" || row.status === "invalid_email") { toast.error(row.error || "Xato"); return; }
+      // Any other refusal (cross_course_refused: the student is in another course; telegram_id_conflict; ...)
+      // is an error with the engine's own message — an unknown status must never read as "added".
+      if (isEngineFailure(row.status)) { toast.error(row.error || row.status || "Xato", { duration: 12000 }); return; }
       toast.success("Talaba guruhga qo'shildi");
       setAddQuery("");
       setAddAccountType("");
@@ -480,7 +483,8 @@ export default function GroupDetail() {
       const created = resultsArr.filter((x) => x.status === "created").length;
       const updated = resultsArr.filter((x) => x.status === "updated").length;
       const skipped = resultsArr.filter((x) => x.status === "skipped_already_in_group" || x.status === "already_in_group").length;
-      const failed = resultsArr.filter((x) => x.status === "error" || x.status === "invalid_email" || x.status === "role_conflict");
+      // Every non-placed row is a failure with its reason (incl. cross_course_refused), not just the old three.
+      const failed = resultsArr.filter((x) => isEngineFailure(x.status));
       const okCount = created + updated + skipped;
       const csvRowsCount = res?.csv_rows ?? toSend.length;
       const groupCountAfter = res?.group_count_after;
@@ -1062,7 +1066,7 @@ export default function GroupDetail() {
             <AlertDialogHeader>
               <AlertDialogTitle>Remove from group?</AlertDialogTitle>
               <AlertDialogDescription>
-                {removeMember ? `${[removeMember.name, removeMember.last_name].filter(Boolean).join(" ") || removeMember.email} guruhdan chiqariladi. Hisob o'chirilmaydi.` : ""}
+                {removeMember ? `${[removeMember.name, removeMember.last_name].filter(Boolean).join(" ") || removeMember.email} guruhdan chiqariladi. Hisob o'chirilmaydi. ${CLEAR_GROUP_WARNING}` : ""}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
