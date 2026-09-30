@@ -1,6 +1,9 @@
 // tg-miniapp-auth — the Telegram Mini App auth bridge (PUBLIC, verify_jwt=false).
 //
 // POST { initData } → { session:{access_token,refresh_token}, target_path } | { error }
+// POST { initData, open:{src,ref,path} } → the same, plus the watch button's OPEN signal (cold:true)
+// POST { initData, mode:"open", src, ref, path } → { ok } — the open signal of a cached-session re-open:
+//      same HMAC check + rate limit, profile by telegram_id ONLY, never links, never mints (open.ts).
 //
 // Flow: validate initData HMAC (24h freshness) → resolve/link profile (resolve.ts) → mint a Supabase
 // session (mint-session.ts) → return it. The frontend calls supabase.auth.setSession(...) and the whole
@@ -18,6 +21,8 @@ import { mintSessionForUser } from "../_shared/mint-session.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { chatIdFromTopicUrl, resolveProfile, type ResolveDeps, type StudentMatch } from "./resolve.ts";
 import { likeEscape } from "../_shared/username.ts";
+import { startParamToPath } from "../_shared/miniapp-links.ts";
+import { handleOpen, parseOpen, recordOpen } from "./open.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -81,15 +86,11 @@ async function cachedIsMember(chatId: number, tgId: number): Promise<boolean | n
 // Where the Mini App lands after auth. An explicit `start_param` deep-link always wins (student
 // paths), so a teacher who followed e.g. a ?startapp=hw link still reaches homework. Only the
 // DEFAULT (no/unknown start_param) is role-aware: staff land on the teacher Mini App, students on
-// their dashboard (unchanged).
+// their dashboard (unchanged). The grammar is the shared, whitelist-only one (_shared/miniapp-links.ts,
+// byte-identical to the Mini App's copy): hw/homework/leaderboard/profile map exactly as before, and
+// c / c_<course> / l_<lesson> (+ "__<src>") open /continue — the named-app direct links in group posts.
 function targetPath(startParam: string | undefined, isStaff: boolean): string {
-  switch (startParam) {
-    case "hw":
-    case "homework": return "/homework";
-    case "leaderboard": return "/leaderboard";
-    case "profile": return "/profile";
-    default: return isStaff ? "/tg/teacher" : "/dashboard";
-  }
+  return startParamToPath(startParam)?.path ?? (isStaff ? "/tg/teacher" : "/dashboard");
 }
 
 function makeDeps(admin: SupabaseClient): ResolveDeps {
@@ -185,6 +186,12 @@ Deno.serve(async (req) => {
   if (rateLimited(v.user.id)) return json({ error: "rate_limited" }, 429);
 
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+
+  // The open signal of an already-signed-in Mini App (fast re-open). Resolves by telegram_id only; no
+  // username link, no session. Returns before anything below can run.
+  if ((body as { mode?: unknown })?.mode === "open") {
+    return json(await handleOpen(admin, v.user.id, body));
+  }
   const outcome = await resolveProfile(makeDeps(admin), { id: v.user.id, username: v.user.username });
   if (outcome.kind === "not_linked") {
     // Health signal: the not_linked wall was previously DB-invisible (function logs only), so a
@@ -225,6 +232,10 @@ Deno.serve(async (req) => {
     action: "miniapp_signin",
     details: { profile_id: outcome.profileId, backfilled: outcome.backfilled, at: new Date().toISOString() },
   }).then(() => {}, () => {});
+
+  // A watch button opened a cold Mini App: record its open signal (cold:true) with the sign-in. Best-effort.
+  const openSig = parseOpen((body as { open?: unknown })?.open);
+  if (openSig) await recordOpen(admin, outcome.profileId, openSig, true);
 
   // Role-aware landing: teacher/admin/superadmin default to the teacher Mini App (/tg/teacher).
   // An explicit student start_param still wins inside targetPath(). Best-effort — a role read
