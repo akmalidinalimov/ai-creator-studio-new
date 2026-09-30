@@ -144,6 +144,16 @@ describe("Settings — Instagram handle", () => {
     expect(h.beacon).toHaveBeenCalledWith(expect.objectContaining({ message: "instagram_handle_not_stored" }));
   });
 
+  it("a DB rule's own Uzbek refusal (P0001, e.g. a handle locked after an accepted Instagram task) is shown as written", async () => {
+    h.storedHandle = "old.handle";
+    const locked = "Instagram profilingizni o‘zgartirish uchun admin bilan bog‘laning";
+    h.igResult = { data: null, error: { code: "P0001", message: locked } };
+    await openAndType("new.handle");
+    expect(await screen.findByRole("alert")).toHaveTextContent(locked);
+    expect(h.toast.success).not.toHaveBeenCalled();
+    expect(h.beacon).toHaveBeenCalledWith(expect.objectContaining({ message: "instagram_handle_save_failed", extra: expect.objectContaining({ code: "P0001" }) }));
+  });
+
   it("clearing the field clears the handle (a blank is not an error)", async () => {
     h.storedHandle = "old.handle";
     await openAndType("   ");

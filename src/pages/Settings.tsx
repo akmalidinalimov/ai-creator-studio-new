@@ -179,8 +179,10 @@ export default function Settings() {
           if (isInstagramHandleTaken(ig)) {
             igFail(t("settings.instagramErrors.taken"), "instagram_handle_taken", { code: ig.code ?? null }, true);
           } else {
-            igFail(t("settings.instagramErrors.notSaved"), "instagram_handle_save_failed",
-              { reason: ig.reason, code: ig.code ?? null }, true);
+            // P0001 is a DB rule speaking to the student in Uzbek on purpose (e.g. the daily-tasks engine's
+            // "handle locked after an accepted Instagram task", #222's guard): show it as written.
+            const msg = ig.code === "P0001" && ig.message ? ig.message : t("settings.instagramErrors.notSaved");
+            igFail(msg, "instagram_handle_save_failed", { reason: ig.reason, code: ig.code ?? null }, true);
           }
           return;
         }
