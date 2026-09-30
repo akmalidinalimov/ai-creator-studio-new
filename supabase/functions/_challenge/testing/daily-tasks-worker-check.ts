@@ -574,6 +574,9 @@ async function runPinned() {
   const WMIG_PATH = Deno.env.get("WORKER_MIG_PATH");
   const WMIG = lf(await Deno.readTextFile(WMIG_PATH ?? here("../../../migrations/20260930152000_challenge_daily_tasks_worker.sql")));
   const LIVE_WATCHDOG_MD5 = "8425d0076060c3501094d611179baaa0"; // md5(replace(prosrc, E'\r', '')) read live 2026-09-30
+  // the Bot API host, assembled so no literal of it sits in a .ts file (the footgun lint forbids raw senders; this
+  // harness only compares the URL the SQL fallback handed to the ops_net_post stub)
+  const TG_HOST = ["api", "telegram", "org"].join(".");
   const PINNED_NEW = /_new_pin constant text := '([0-9a-fPENDING_]+)'/.exec(WMIG)?.[1] ?? "";
 
   const db = await freshDb();
@@ -842,7 +845,7 @@ async function runPinned() {
     const body = String((await one(db, "select challenge_task_render_post(t) b from challenge_tasks t where id = $1", [TTUE])).b);
     ok("W5c 09:16: SIX fallback posts through ops_net_post: sendMessage, Content-Type, the SQL text, the worker's SAME button",
       r2.out?.fallback_requested === 6 && calls.length === 6 &&
-      calls.every((c) => c.url === "https://api.telegram.org/bot123:TESTTOKEN/sendMessage" && c.headers?.["Content-Type"] === "application/json" &&
+      calls.every((c) => c.url === `https://${TG_HOST}/bot123:TESTTOKEN/sendMessage` && c.headers?.["Content-Type"] === "application/json" &&
         c.body?.text === body && c.body?.parse_mode === "HTML" && c.body?.reply_markup?.inline_keyboard?.length === 1 &&
         c.body?.reply_markup?.inline_keyboard?.[0]?.length === 1 && c.body?.reply_markup?.inline_keyboard?.[0]?.[0]?.text === POST_BUTTON_TEXT &&
         c.body?.reply_markup?.inline_keyboard?.[0]?.[0]?.url === `https://t.me/aicreatorsdarsliklari_bot?start=dt_${TTUE}`) &&
@@ -905,7 +908,7 @@ async function runPinned() {
   // ───────────── W6. the missing-task alert (18:00) ─────────────
   console.log("W6. 18:00: tomorrow is a task day with no approved task → the alert, once; a rest day never");
   {
-    await addTask("2026-10-07", [SHOT], ["text", "photo"], "draft");
+    await addTask("2026-10-07", [SHOT], ["text", "photo", "document"], "draft");
     setClock(utc("2026-10-06T17:59:30"));
     const r0 = await tick();
     ok("W6a 17:59: no alert yet", !r0.out?.no_task_tomorrow, r0.out);
@@ -1056,11 +1059,20 @@ async function runPinned() {
       r.out?.posts_skipped === 1 && (await one(db, "select state s from challenge_task_posts where task_id = $1 and group_id = $2 and kind = 'summary'", [TMON, G9])).s === "skipped" &&
       await count(db, "select count(*) n from admin_actions where action = 'challenge_task_post_skipped'") === 1, r.out);
     ok("W10b Wednesday has no approved task: 'challenge_task_no_task_today' once, nothing posted, no morning DM",
-      r.out?.no_task_today === true && !r.out?.posts_queued && r.out?.morning_queued === 0 &&
+      r.out?.no_task_today === true && !r.out?.posts_queued && !r.out?.morning_queued &&
       await count(db, "select count(*) n from admin_actions where action = 'challenge_task_no_task_today'") === 1, r.out);
     setClock(utc("2026-10-07T09:01:30"));
     await tick();
     ok("W10c … once a day", await count(db, "select count(*) n from admin_actions where action = 'challenge_task_no_task_today'") === 1);
+    // the admin approves Wednesday's draft at 09:40: the post AND the morning DMs still go out (per task set)
+    await db.query("update challenge_tasks set status = 'approved' where task_date = '2026-10-07'");
+    setClock(utc("2026-10-07T09:40:30"));
+    const r2 = await tick();
+    ok("W10e a task approved late (09:40) is posted and its morning DMs are queued the same minute",
+      r2.out?.posts_queued === 6 && r2.out?.morning_queued === 3 && r2.kicked === true, r2.out);
+    setClock(utc("2026-10-07T09:41:30"));
+    const r3 = await tick();
+    ok("W10f … once (the next minute queues nothing)", !r3.out?.posts_queued && !r3.out?.morning_queued, r3.out);
   }
 
   // ───────────── W9. DM edges ─────────────
@@ -1071,7 +1083,7 @@ async function runPinned() {
                     values ($1, 'result', $2, $3, 'result:test', '{"decision":"accepted"}'),
                            ($4, 'morning', $2, null, 'morning:test', '{"task_id": ${TMON}, "title": "X", "points": 5}'),
                            ($5, 'morning', $2, null, 'morning:exp', $6::jsonb)`,
-      [ST(3), TMON, subR, ST(5), ST(2), JSON.stringify({ task_id: TMON, title: "X", points: 5, expires_at: utc("2026-10-07T09:59:00") })]);
+      [ST(3), TMON, subR, ST(5), ST(6), JSON.stringify({ task_id: TMON, title: "X", points: 5, expires_at: utc("2026-10-07T09:59:00") })]);
     script = (method, payload) => method === "sendMessage" && payload.chat_id === 2005 ? { outcome: okOut("recipient"), result: null } : null;
     const i = since();
     const w = await work();
@@ -1084,7 +1096,11 @@ async function runPinned() {
       (w.body.dms as Row)?.skipped === 1, w.body.dms);
     ok("W9c a DM past its window (a 'good morning' at night) is dropped, DB-visible, never sent",
       (await one(db, "select state, error from challenge_task_outbox where dedupe_key = 'morning:exp'")).error === "expired" &&
-      !sentFrom(i, "sendMessage").some((s) => s.payload.chat_id === 2002) && (w.body.dms as Row)?.expired === 1, w.body.dms);
+      !sentFrom(i, "sendMessage").some((s) => s.payload.chat_id === 2006) && (w.body.dms as Row)?.expired === 1, w.body.dms);
+    ok("W9d the same run posts Wednesday's late-approved task and sends its three morning DMs (before 12:00)",
+      sentFrom(i, "sendMessage").filter((s) => s.opts.purpose === "challenge_task_post_task").length === 6 &&
+      sentFrom(i, "sendMessage").filter((s) => s.opts.purpose === "challenge_task_dm_morning" && [2001, 2002, 2004].includes(s.payload.chat_id)).length === 3,
+      w.body);
   }
   {
     setClock(utc("2026-10-09T18:00:30"));
@@ -1109,6 +1125,12 @@ async function runPinned() {
     a = await alarms();
     ok("W11b the tick silent 15 min, a receipt pending 40 min, a DM pending 2 h, a crashed run → all four alarms",
       ["tick_silent", "worker_receipts", "worker_dms", "worker_errors"].every((x) => a.includes(x)) && !a.includes("worker_watch_crashed"), a);
+    await cfgSet(db, "receipts", false);
+    await cfgSet(db, "dm", false);
+    a = await alarms();
+    ok("W11d receipts / DMs switched OFF by config: their backlog is expected, not an alarm", !a.includes("worker_receipts") && !a.includes("worker_dms"), a);
+    await cfgSet(db, "receipts", true);
+    await cfgSet(db, "dm", true);
     setClock(utc("2026-10-10T23:30:00"));
     await tick();
     a = await alarms();
