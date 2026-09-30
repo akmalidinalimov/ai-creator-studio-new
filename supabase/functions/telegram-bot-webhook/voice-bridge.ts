@@ -168,7 +168,7 @@ export async function onBridgeVoice(
   if (!out.ok) {
     await d.send(chatId, c.tryAgain);
     await logHealth(d.admin, "grade_voice_unrouted", { reason: out.reason, error: out.error ?? null, voice_key: key }, {
-      source: "telegram-bot-webhook", actorUserId: d.actorId,
+      source: "miniapp_voice_bridge", actorUserId: d.actorId,
     });
     return;
   }
@@ -181,21 +181,21 @@ export async function onBridgeVoice(
     await d.send(chatId, askText(r.reason, r.options.length, locale), pickKeyboard(tok, r.options, locale));
     // Countable: how often a teacher records without saying for whom (the bridge's ambiguity rate).
     await logHealth(d.admin, "grade_voice_target_asked", { reason: r.reason, pending: r.options.length, voice_key: key }, {
-      source: "telegram-bot-webhook", actorUserId: d.actorId,
+      source: "miniapp_voice_bridge", actorUserId: d.actorId,
     });
     return;
   }
   if (r.kind === "expired") {
     await d.send(chatId, c.expired(r.req?.student ? esc(r.req.student) : ""));
-    await logHealth(d.admin, "grade_voice_request_expired", { source_path: "miniapp_voice_bridge", voice_key: key }, {
-      source: "telegram-bot-webhook", actorUserId: d.actorId,
+    await logHealth(d.admin, "grade_voice_request_expired", { voice_key: key }, {
+      source: "miniapp_voice_bridge", actorUserId: d.actorId,
       targetResourceType: r.req ? "homework_submission" : null, targetResourceId: r.req?.submission_id ?? null,
     });
     return;
   }
   await d.send(chatId, c.noRequest);
   await logHealth(d.admin, "grade_voice_unrouted", { reason: "no_request", reply: replyMid != null, voice_key: key }, {
-    source: "telegram-bot-webhook", actorUserId: d.actorId,
+    source: "miniapp_voice_bridge", actorUserId: d.actorId,
   });
 }
 
@@ -263,7 +263,7 @@ export async function onVoicePick(
     await d.answer(cq.id);
     if (qMid) await d.edit(chatId, qMid, c.discarded);
     await logHealth(d.admin, "grade_voice_unrouted", { reason: "discarded_by_teacher" }, {
-      source: "telegram-bot-webhook", actorUserId: d.actorId,
+      source: "miniapp_voice_bridge", actorUserId: d.actorId,
     });
     return;
   }
@@ -280,7 +280,7 @@ export async function onVoicePick(
     }
     if (!r.options.length) {
       await logHealth(d.admin, "grade_voice_unrouted", { reason: "no_request_left" }, {
-        source: "telegram-bot-webhook", actorUserId: d.actorId,
+        source: "miniapp_voice_bridge", actorUserId: d.actorId,
       });
     }
     return;
