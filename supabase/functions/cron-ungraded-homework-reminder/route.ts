@@ -51,8 +51,12 @@ export function routeReminder(
 export const escHtml = (s: string = "") =>
   String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-// Cut BEFORE escaping, so a cut can never split an HTML entity.
-const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+// Cut BEFORE escaping, so a cut can never split an HTML entity; cut by code point, so an emoji in a
+// name is never split into a lone surrogate.
+const clip = (s: string, n: number) => {
+  const cps = Array.from(s);
+  return cps.length > n ? cps.slice(0, n - 1).join("") + "…" : s;
+};
 
 export type AdminItem = {
   studentName: string; // raw (unescaped)

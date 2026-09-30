@@ -98,3 +98,10 @@ Deno.test("admin digest: long names are clipped and the message stays under Tele
     assert(t.split("\n").some((l) => l.startsWith("… ")));
   }
 });
+
+Deno.test("admin digest: clipping never splits an emoji into a lone surrogate", () => {
+  const face = "\u{1F600}";
+  const t = adminDigestText([item(1, { studentName: face.repeat(60) })], "en");
+  assert(t.includes(face.repeat(39) + "…"));
+  assert(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(t));
+});
