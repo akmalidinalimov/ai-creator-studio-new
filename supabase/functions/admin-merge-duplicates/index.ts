@@ -2,6 +2,7 @@
 // Duplicate clusters are grouped by telegram_id (preferred) or telegram_username
 // (fallback). Canonical = oldest created_at in cluster.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { reassignDailyTasks } from "./daily-tasks.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -96,7 +97,17 @@ async function mergeCluster(admin: any, actorId: string, cluster: Cluster) {
   }
 
   const merged_ids: string[] = [];
+  const kept: { id: string; reason: string }[] = [];
+  const daily_tasks: Record<string, unknown>[] = [];
   for (const d of duplicates) {
+    // Daily tasks (G24): the duplicate's task work cascades with its profile, so move it to the canonical student
+    // FIRST. If that fails the duplicate is KEPT (not deleted) and the failure is DB-visible.
+    const moved = await reassignDailyTasks(admin, d.id, canonical.id);
+    if (!moved.ok) {
+      kept.push({ id: d.id, reason: `daily_tasks_reassign_failed: ${moved.reason}` });
+      continue;
+    }
+    if (moved.submissions > 0 || moved.merged > 0) daily_tasks.push({ from: d.id, ...moved });
     // Delete auth user; this cascades the profile via FK or we delete profile manually
     try {
       await admin.auth.admin.deleteUser(d.id);
@@ -125,12 +136,14 @@ async function mergeCluster(admin: any, actorId: string, cluster: Cluster) {
         canonical_profile_id: canonical.id,
         merged_ids,
         applied_updates: update,
+        kept,
+        daily_tasks,
       },
     });
   } catch (e) {
     console.error("audit insert failed", e);
   }
-  return { canonical_id: canonical.id, merged_ids };
+  return { canonical_id: canonical.id, merged_ids, kept };
 }
 
 Deno.serve(async (req) => {
