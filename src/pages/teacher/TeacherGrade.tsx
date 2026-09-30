@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { GradePhoto } from "@/components/teacher/GradePhoto";
 import { VoiceRecorder } from "@/components/homework/VoiceRecorder";
 import { uploadFeedbackVoice, removeFeedbackVoice } from "@/lib/homeworkAudio";
+import { hwLabel, scopeTag } from "@/lib/hwLabel";
 import {
   fetchPendingQueue,
   submitScore,
@@ -229,6 +230,11 @@ export default function TeacherGrade() {
     current != null && chosen != null && Number.isInteger(chosen) && chosen >= 0 && chosen <= current.max_score;
 
   const chipValues = current ? chipValuesFor(current.max_score) : [];
+  // Card label parts: "5.0 · 1-GURUH PRE" (chip) and "M2 V1 — <title>" (line). course_title is the TASK's course.
+  const currentScope = current ? scopeTag(current.course_title, current.group_name) : "";
+  const currentTask = current
+    ? hwLabel({ moduleNumber: current.module_number, step: current.task_number, title: current.assignment_title })
+    : "";
 
   const handleSubmit = async () => {
     if (!current || !chosenValid || submitting || redoing) return;
@@ -425,14 +431,24 @@ export default function TeacherGrade() {
       <Card className="space-y-3.5">
         <GradePhoto submissionId={current.submission_id} media={current.media} alt={current.assignment_title} />
 
-        {/* Student + module/task label + submitted-ago. */}
+        {/* Student + course/group chip + "M<n> V<step> — <title>" + submitted-ago. Chip and line together are
+            the shared hw-label ("5.0 · 1-GURUH PRE · M2 V1 — <title>", src/lib/hwLabel.ts): the Challenge
+            6.0 tasks are copies of the 5.0 tasks, so name + "Modul 2 · Vazifa 1" alone could be either course. */}
         <div className="min-w-0 space-y-1">
           <div className="truncate text-[15px] font-extrabold tracking-tight text-foreground">
             {current.student_name}
           </div>
+          {currentScope && (
+            <span
+              className="inline-block max-w-full truncate rounded-full bg-tint px-2.5 py-1 align-middle text-[11px] font-extrabold text-foreground"
+              title={currentScope}
+            >
+              {currentScope}
+            </span>
+          )}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="truncate text-[12.5px] font-semibold text-muted-foreground">
-              Modul {current.module_number} · Vazifa {current.task_number}
+            <span className="min-w-0 max-w-full truncate text-[12.5px] font-semibold text-muted-foreground" title={currentTask}>
+              {currentTask}
             </span>
             <span className="text-[12.5px] font-semibold text-muted-foreground">· {agoUz(current.submitted_at)}</span>
           </div>

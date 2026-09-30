@@ -9,12 +9,14 @@
 // confirming delivery, stamps grade_card_dm_heartbeat. Idempotent, graceful, internal-secret gated
 // (only pg_cron may call it), quiet-hours gated (no student DMs 22:00-08:00 Tashkent).
 //
-// The card TEXT mirrors notify-grade-voice / the bot's gradeStudentDM (hand-synced; a follow-up can
-// consolidate all three into one _shared/grade-card.ts helper).
+// The card TEXT is _shared/grade-card.ts (shared with notify-grade-voice; the bot's gradeStudentDM is the same
+// text), headed by the shared hw-label "<course> · <group> · M<n> V<step> — <title>".
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 import { GRADE_CARD_SKIP_WINDOW_DAYS, recordGradeCardSkipped } from "../_shared/grade-card-signals.ts";
+import { GRADE_CARD, gradeCardHeading } from "../_shared/grade-card.ts";
+import { loadHwLabel } from "../_shared/hw-label-load.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -50,13 +52,6 @@ function normLocale(code?: string | null): Locale {
   if (l === "en") return "en";
   return "uz";
 }
-// Same TEXT as notify-grade-voice GRADE_CARD / the bot's tt.gradeStudentDM (webhook index.ts:280/567/846).
-const GRADE_CARD: Record<Locale, (title: string, sc: number, mx: number, fb: string, xp?: number) => string> = {
-  uz: (t, sc, mx, fb, xp) => `🎉 Vazifangiz baholandi!\n\n📝 <b>${t}</b>\nBaho: <b>${sc}/${mx}</b>${xp ? `\n⚡ +${xp} XP` : ""}${fb ? `\nIzoh: ${fb}` : ""}`,
-  ru: (t, sc, mx, fb, xp) => `🎉 Ваша работа оценена!\n\n📝 <b>${t}</b>\nОценка: <b>${sc}/${mx}</b>${xp ? `\n⚡ +${xp} XP` : ""}${fb ? `\nКомментарий: ${fb}` : ""}`,
-  en: (t, sc, mx, fb, xp) => `🎉 Your homework was graded!\n\n📝 <b>${t}</b>\nScore: <b>${sc}/${mx}</b>${xp ? `\n⚡ +${xp} XP` : ""}${fb ? `\nFeedback: ${fb}` : ""}`,
-};
-const TITLE_FALLBACK: Record<Locale, string> = { uz: "Uy vazifasi", ru: "Домашнее задание", en: "Homework" };
 
 async function logHealth(admin: any, studentUserId: string | null, action: string, details: Record<string, unknown>, submissionId: string | null) {
   try {
@@ -173,7 +168,7 @@ Deno.serve(async (req) => {
       continue;
     }
 
-    const { data: student } = await admin.from("profiles").select("telegram_id, preferred_locale").eq("id", sub.user_id).maybeSingle();
+    const { data: student } = await admin.from("profiles").select("telegram_id, preferred_locale, group_id").eq("id", sub.user_id).maybeSingle();
     const tgId = student?.telegram_id ?? null;
     if (!tgId) {
       // No telegram_id — un-claim (restore prior marker) so a future run reaches them if they link
@@ -190,9 +185,11 @@ Deno.serve(async (req) => {
     }
     const locale = normLocale(student?.preferred_locale);
     // Compose from the FRESH claimed row (validated identical to the batch snapshot by the guard above).
-    const { data: a } = await admin.from("homework_assignments").select("title, max_score").eq("id", claimed.assignment_id).maybeSingle();
-    const title = (a?.title && String(a.title).trim()) || TITLE_FALLBACK[locale];
-    const max = (a?.max_score as number) || 10;
+    // Heading = the shared label (course from the task, group from the student's group). A failed read falls
+    // back to the old defaults and is recorded once a day as hw_label_lookup_failed.
+    const lbl = await loadHwLabel(admin, claimed.assignment_id, student?.group_id ?? null, "grade-card-reconcile");
+    const title = gradeCardHeading(lbl.label, lbl.info?.title, locale);
+    const max = lbl.info?.maxScore || 10;
     const fb = typeof claimed.score_feedback === "string" ? claimed.score_feedback.trim() : "";
     const prev = claimed.previous_score as number | null;
     const score = claimed.score as number;

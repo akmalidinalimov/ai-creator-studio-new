@@ -5,7 +5,11 @@ import {
   ADMIN_DIGEST_MAX_LINES,
   type AdminItem,
   adminDigestText,
+  itemLabel,
   routeReminder,
+  teacherReminderKeyboard,
+  teacherReminderText,
+  TEACHER_URL,
   type TeacherProfile,
 } from "./route.ts";
 
@@ -66,10 +70,45 @@ Deno.test("admin digest: one message lists every submission with its group and r
   const t = adminDigestText([item(1), item(2, { reason: "unreachable_teacher", n: 2 }), item(3, { groupName: null, reason: "no_group" })], "en");
   assert(t.includes("<b>3</b>"));
   assert(t.includes("Student 1") && t.includes("Student 2") && t.includes("Student 3"));
-  assert(t.includes("AC CHALLENGE | 1-GURUH · no teacher · 31 h (1/3)"));
+  // No course known → the group name stays whole.
+  assert(t.includes("«AC CHALLENGE | 1-GURUH — Modul 1 · Vazifa 1» · no teacher · 31 h (1/3)"));
   assert(t.includes("teacher unreachable on Telegram · 32 h (2/3)"));
   assert(t.includes("«Modul 1 · Vazifa 3» · no group · 33 h (1/3)"));
   assert(!t.includes("more"));
+});
+
+Deno.test("admin digest: each line carries the full label (course · group · M V — title)", () => {
+  const t = adminDigestText([
+    item(1, { courseTitle: "AI CREATORS CHALLENGE 6.0", moduleNumber: 2, step: 1, taskTitle: "2-MODUL ERKAKLAR KO'Z OYNAGI" }),
+    item(2, { courseTitle: "AI CREATORS 5.0", groupName: "2-GURUH VIP 5.0", moduleNumber: 2, step: 1, taskTitle: "2-MODUL ERKAKLAR KO'Z OYNAGI" }),
+  ], "uz");
+  assert(t.includes("«CH6 · 1-GURUH · M2 V1 — 2-MODUL ERKAKLAR KO'Z OYNAGI» · o'qituvchi biriktirilmagan"));
+  assert(t.includes("«5.0 · 2-GURUH VIP · M2 V1 — 2-MODUL ERKAKLAR KO'Z OYNAGI»"));
+});
+
+Deno.test("teacher reminder: the label names the course and group, so 5.0 and its Challenge copy differ", () => {
+  const parts = { taskTitle: "1- MODUL: PROMPT ENGINEERING", moduleNumber: 1, step: 1 };
+  const a = teacherReminderText("uz", "Aziza", itemLabel({ ...parts, courseTitle: "AI CREATORS 5.0", groupName: "1-GURUH VIP 5.0" }), 26, 1);
+  const b = teacherReminderText("uz", "Aziza", itemLabel({ ...parts, courseTitle: "AI CREATORS CHALLENGE 6.0", groupName: "AC CHALLENGE | 1-GURUH" }), 26, 1);
+  assertEquals(a, "⏳ <b>Aziza</b>ning «5.0 · 1-GURUH VIP · M1 V1 — 1- MODUL: PROMPT ENGINEERING» topshirig'i 26 soatdan beri baholanmagan. Iltimos, baholang. (eslatma 1/3)");
+  assertEquals(b, "⏳ <b>Aziza</b>ning «CH6 · 1-GURUH · M1 V1 — 1- MODUL: PROMPT ENGINEERING» topshirig'i 26 soatdan beri baholanmagan. Iltimos, baholang. (eslatma 1/3)");
+});
+
+Deno.test("teacher reminder: user text escaped; an empty label reads as —", () => {
+  const t = teacherReminderText("en", "<i>x</i>", "a<b", 30, 2);
+  assert(t.includes("&lt;i&gt;x&lt;/i&gt;") && t.includes("«a&lt;b»"));
+  assert(teacherReminderText("ru", "", "", 30, 3).includes("«—» от <b>—</b>"));
+});
+
+Deno.test("teacher reminder: 🎯 opens THIS submission (gs:open:<id>, ≤ 64 bytes); the web link stays second", () => {
+  const id = "0b7c2d4e-9f10-4a2b-8c3d-5e6f7a8b9c0d";
+  for (const loc of ["uz", "ru", "en"] as const) {
+    const kb = teacherReminderKeyboard(loc, id);
+    const cb = (kb.inline_keyboard[0][0] as { callback_data: string }).callback_data;
+    assertEquals(cb, `gs:open:${id}`);
+    assert(new TextEncoder().encode(cb).length <= 64, `${cb.length} bytes`);
+    assertEquals((kb.inline_keyboard[1][0] as { url: string }).url, TEACHER_URL);
+  }
 });
 
 Deno.test("admin digest: user text is HTML-escaped (a raw < would make Telegram reject the whole message)", () => {

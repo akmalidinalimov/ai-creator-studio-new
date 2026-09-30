@@ -20,6 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, Upload as UploadIcon, Search, Copy, RefreshCw, Trash2, Download, Mail, Unlock, ChevronDown, ChevronRight, AlertTriangle, X, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { mutate, mutateMany } from "@/lib/mutate";
+import { blockedMoveText, crossMoveConfirmText, isEngineFailure, loadGroupMovePlan, REFUSED_STATUS } from "@/lib/courseMove";
 import Papa from "papaparse";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
@@ -757,7 +758,9 @@ export default function AdminUsers() {
       else bump(gname, "errors");
     }
     const totalCreated = results.filter((x: any) => x.status === "created").length;
-    const totalErrors = results.filter((x: any) => x.status === "error" || x.status === "invalid_email" || x.status === "role_conflict").length;
+    // Every non-placed row counts (incl. cross_course_refused / telegram_id_conflict), not just the old three.
+    const totalErrors = results.filter((x: any) => isEngineFailure(x.status)).length;
+    const crossRefused = results.filter((x: any) => x.status === REFUSED_STATUS).length;
     const lines: string[] = [];
     for (const [key, b] of Array.from(buckets.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
       const label = key === "__none__"
@@ -771,6 +774,7 @@ export default function AdminUsers() {
       lines.push(`${label}: ${parts.join(" ") || "0"}`);
     }
     if (totalErrors) lines.push(`Xato: ${totalErrors}`);
+    if (crossRefused) lines.push(`Boshqa kursda — o'tkazilmadi: ${crossRefused} (yangi kurs faqat yangi o'quvchilar uchun)`);
     const summary = lines.join("\n");
     const head = t("admin.users.toasts.imported", { n: totalCreated, total: toCreate.length });
     if (summary.length > 220) {
@@ -891,8 +895,35 @@ export default function AdminUsers() {
   const bulkAssignGroup = async (groupId: string) => {
     if (selected.size === 0) return;
     const ids = Array.from(selected);
+    // PR-3a: admin_assign_group has no course check yet (PR-3b adds it in SQL), so apply the intake rule here.
+    // A student of ANOTHER course with homework still waiting is never moved (it would follow them to the new
+    // teachers); with nothing waiting, the admin must confirm, and the override is logged. A check that
+    // cannot run moves nobody.
+    let plan: Awaited<ReturnType<typeof loadGroupMovePlan>>;
+    try {
+      plan = await loadGroupMovePlan(supabase, ids, groupId);
+    } catch (e: any) {
+      setBulkGroupId("");
+      return toast.error(`Kursni tekshirib bo'lmadi: ${e?.message || "xato"}. Hech kim ko'chirilmadi.`);
+    }
+    if (plan.blocked.length) {
+      setBulkGroupId("");
+      return toast.error(blockedMoveText(plan), { duration: 12000 });
+    }
+    if (plan.cross.length && !window.confirm(crossMoveConfirmText(plan))) {
+      setBulkGroupId("");
+      return;
+    }
     const { data, error } = await supabase.rpc("admin_assign_group", { _user_ids: ids, _group_id: groupId });
     if (error) return toast.error(error.message);
+    if (plan.cross.length) {
+      logAction("cross_course_move_override", {
+        details: {
+          source: "admin_users_bulk_assign", to_group_id: groupId, to_course_id: plan.targetCourseId,
+          moved: plan.cross.map((r) => ({ user_id: r.userId, from_group_id: r.fromGroupId, from_course_id: r.fromCourseId, old_course_waiting: r.waiting })),
+        },
+      });
+    }
     toast.success(t("admin.users.toasts.bulkMoved", { defaultValue: "{{n}} users moved", n: data || ids.length }));
     setSelected(new Set());
     setBulkGroupId("");

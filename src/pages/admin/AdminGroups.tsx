@@ -19,6 +19,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { getSiteUrl } from "@/lib/siteUrl";
 import { mutate, mutateMany } from "@/lib/mutate";
 import { DAILY_TOPIC_MSG, dailyTopicError, dailyTopicSaveMessage, parseTopicUrl } from "@/lib/dailyTaskTopic";
+import { CLEAR_GROUP_WARNING, isEngineFailure, loadGroupMovePlan } from "@/lib/courseMove";
 import { toast } from "sonner";
 
 const FN_BASE = `${SB_BASE}/functions/v1`;
@@ -747,6 +748,7 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
   };
 
   const remove = async (id: string) => {
+    if (!window.confirm(`Talaba guruhdan chiqarilsinmi?\n\n${CLEAR_GROUP_WARNING}`)) return;
     const r = await mutate(() => supabase.from("profiles").update({ group_id: null }).eq("id", id));
     if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
     toast.success("Removed"); reload();
@@ -789,6 +791,22 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
           // Check if already in this group
           const { data: prof } = await supabase.from("profiles").select("group_id").eq("id", existingId).maybeSingle();
           if ((prof as any)?.group_id === group.id) { alreadyInGroup++; continue; }
+          // PR-3a: this direct write bypasses the engine's move guard, so apply the same rule here: a student
+          // of ANOTHER course is never moved by a CSV (their waiting homework would follow them to this group's
+          // teachers). Same-course moves go ahead as before. A check that cannot run moves nobody.
+          if ((prof as any)?.group_id) {
+            try {
+              const plan = await loadGroupMovePlan(supabase, [existingId], group.id);
+              const c = plan.cross[0];
+              if (c) {
+                errors.push(`${ident}: boshqa kursda ("${c.fromGroupName || "—"}", ${c.fromCourseTitle || "boshqa kurs"}) — o'tkazilmadi. Yangi kurs faqat yangi o'quvchilar uchun.`);
+                continue;
+              }
+            } catch (e: any) {
+              errors.push(`${ident}: kursni tekshirib bo'lmadi (${e?.message || "xato"}) — o'tkazilmadi`);
+              continue;
+            }
+          }
           const patch: Record<string, any> = { group_id: group.id };
           if (acct) patch.account_type = acct; // batch choice also applies to moved existing students
           const r = await mutate(() => supabase.from("profiles").update(patch as any).eq("id", existingId));
@@ -813,7 +831,10 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
           for (const r of results) {
             if (r.status === "created") created++;
             else if (r.status === "updated") moved++;
-            else if (r.status === "error" || r.status === "invalid_email") errors.push(`${r.email}: ${r.error || r.status}`);
+            else if (r.status === "already_in_group" || r.status === "skipped_already_in_group") alreadyInGroup++;
+            // Every other status is a refusal/failure to SHOW (cross_course_refused, telegram_id_conflict, ...);
+            // it used to vanish from the report when it wasn't "error"/"invalid_email".
+            else if (isEngineFailure(r.status)) errors.push(`${r.identifier_used || r.email}: ${r.error || r.status}`);
           }
         }
       }

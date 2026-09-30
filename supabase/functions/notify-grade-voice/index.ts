@@ -30,6 +30,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { appVoiceKey, gradeCardOwed, recordGradeCardSkipped, recordGradeVoiceSkipped } from "../_shared/grade-card-signals.ts";
+import { GRADE_CARD, gradeCardHeading, VOICE_CAPTION } from "../_shared/grade-card.ts";
+import { loadHwLabel } from "../_shared/hw-label-load.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -56,21 +58,11 @@ function normLocale(code?: string | null): Locale {
   return "uz";
 }
 
-// The grade card — the SAME TEXT as the bot's tt.gradeStudentDM (webhook index.ts:280/567/846), so a
-// student reads the same score/feedback whether graded via bot or app. (The bot additionally attaches a
-// resubmit + open-site inline keyboard; this is text parity, not the buttons — a follow-up can add them.)
-// title + fb are HTML-escaped by the caller.
-const GRADE_CARD: Record<Locale, (title: string, sc: number, mx: number, fb: string, xp?: number) => string> = {
-  uz: (title, sc, mx, fb, xp) => `🎉 Vazifangiz baholandi!\n\n📝 <b>${title}</b>\nBaho: <b>${sc}/${mx}</b>${xp ? `\n⚡ +${xp} XP` : ""}${fb ? `\nIzoh: ${fb}` : ""}`,
-  ru: (title, sc, mx, fb, xp) => `🎉 Ваша работа оценена!\n\n📝 <b>${title}</b>\nОценка: <b>${sc}/${mx}</b>${xp ? `\n⚡ +${xp} XP` : ""}${fb ? `\nКомментарий: ${fb}` : ""}`,
-  en: (title, sc, mx, fb, xp) => `🎉 Your homework was graded!\n\n📝 <b>${title}</b>\nScore: <b>${sc}/${mx}</b>${xp ? `\n⚡ +${xp} XP` : ""}${fb ? `\nFeedback: ${fb}` : ""}`,
-};
-const VOICE_CAPTION: Record<Locale, (title: string) => string> = {
-  uz: (title) => `🎧 "${title}" bo'yicha yangi ovozli izoh — balingizni ko'rish uchun ilovani oching.`,
-  ru: (title) => `🎧 Новый голосовой комментарий к "${title}" — откройте приложение, чтобы увидеть оценку.`,
-  en: (title) => `🎧 New voice feedback on "${title}" — open the app for your score.`,
-};
-const TITLE_FALLBACK: Record<Locale, string> = { uz: "Uy vazifasi", ru: "Домашнее задание", en: "Homework" };
+// The grade card text (GRADE_CARD / VOICE_CAPTION) lives in _shared/grade-card.ts, shared with
+// grade-card-reconcile — the SAME TEXT as the bot's tt.gradeStudentDM, so a student reads the same
+// score/feedback whether graded via bot or app. (The bot additionally attaches a resubmit + open-site inline
+// keyboard; this is text parity, not the buttons — a follow-up can add them.) Its heading is the shared
+// hw-label "<course> · <group> · M<n> V<step> — <title>".
 
 // Incident doctrine: failures DB-visible (not log-only). Best-effort; never breaks the response, never
 // carries the bot token or the signed audio URL.
@@ -180,11 +172,12 @@ Deno.serve(async (req) => {
     }
     const locale = normLocale(student?.preferred_locale);
 
-    // --- 5. Assignment (title + max_score). ---
-    const { data: assignment } = await admin
-      .from("homework_assignments").select("title, max_score").eq("id", sub.assignment_id).maybeSingle();
-    const title = (assignment?.title && String(assignment.title).trim()) || TITLE_FALLBACK[locale];
-    const max = (assignment?.max_score as number) || 10;
+    // --- 5. Assignment (max_score) + the card heading: the shared label, course from the TASK, group from the
+    // student's group read above. A failed read falls back to the old defaults (bare title / "Uy vazifasi",
+    // max 10, exactly as before) and is recorded once a day as hw_label_lookup_failed. ---
+    const lbl = await loadHwLabel(admin, sub.assignment_id, groupId, "notify-grade-voice");
+    const title = gradeCardHeading(lbl.label, lbl.info?.title, locale);
+    const max = lbl.info?.maxScore || 10;
 
     let cardSent = false;
     let voiceSent = false;

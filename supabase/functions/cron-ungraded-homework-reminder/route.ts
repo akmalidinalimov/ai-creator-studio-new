@@ -5,7 +5,12 @@
 //     (_shared/group-teachers.ts, the same set the teacher-DM enqueue paths fan out to);
 //   * nobody reachable -> the admins, in ONE message per run that lists every such submission.
 //     Before, admins got one DM per submission per run, up to 200 in an hour.
+//
+// Every submission is named by the shared label "<course> · <group> · M<n> V<step> — <title>"
+// (_shared/hw-label.ts): the Challenge 6.0 tasks are copies of the 5.0 tasks, so "«module · task»" alone could
+// not say which course a reminder was about (audit BOT-6).
 import { isReachableTeacher, type TeacherContact } from "../_shared/group-teachers.ts";
+import { hwLabel } from "../_shared/hw-label.ts";
 
 export type Locale = "uz" | "ru" | "en";
 export const normLocale = (c?: string | null): Locale => {
@@ -60,12 +65,53 @@ const clip = (s: string, n: number) => {
 
 export type AdminItem = {
   studentName: string; // raw (unescaped)
-  taskTitle: string;   // raw (unescaped)
+  taskTitle: string;   // raw (unescaped): the assignment title
   groupName: string | null; // raw; null when the student has no group
+  courseTitle?: string | null; // courses.title of the TASK's course; null/absent when unknown
+  moduleNumber?: number | null;
+  step?: number | null;
   hours: number;
   n: number; // this reminder's number for the submission, 1..3
   reason: AdminReason;
 };
+
+// --- Teacher reminder (one DM per reachable teacher per submission) ---
+
+const TEACHER_COPY: Record<Locale, (s: string, label: string, h: number, n: number) => string> = {
+  uz: (s, t, h, n) => `⏳ <b>${s}</b>ning «${t}» topshirig'i ${h} soatdan beri baholanmagan. Iltimos, baholang. (eslatma ${n}/3)`,
+  ru: (s, t, h, n) => `⏳ Работа «${t}» от <b>${s}</b> не оценена уже ${h} ч. Пожалуйста, оцените. (напоминание ${n}/3)`,
+  en: (s, t, h, n) => `⏳ <b>${s}</b>'s «${t}» has been awaiting grading for ${h}h. Please grade it. (reminder ${n}/3)`,
+};
+const TEACHER_BTN: Record<Locale, string> = { uz: "🎯 Baholash", ru: "🎯 Оценить", en: "🎯 Grade" };
+const TEACHER_SITE_BTN: Record<Locale, string> = { uz: "🌐 Saytda ochish", ru: "🌐 Открыть на сайте", en: "🌐 Open on the site" };
+export const TEACHER_URL = "https://aicreator.academy/teacher/homework";
+
+/** Raw inputs (unescaped); escaped here. `label` is the hw-label; "" falls back to "—". */
+export function teacherReminderText(loc: Locale, studentName: string, label: string, hours: number, n: number): string {
+  return TEACHER_COPY[loc](escHtml(studentName || "—"), escHtml(label || "—"), hours, n);
+}
+
+/**
+ * 🎯 opens THIS submission in the bot's grading flow (gs:open:<id> = 44 bytes, under Telegram's 64-byte
+ * callback_data cap; the handler re-checks the teacher's scope). Before, the only button was the generic web
+ * /teacher/homework page, which never opened the submission itself. The web link stays as the second button.
+ */
+export function teacherReminderKeyboard(loc: Locale, submissionId: string) {
+  return {
+    inline_keyboard: [
+      [{ text: TEACHER_BTN[loc], callback_data: `gs:open:${submissionId}` }],
+      [{ text: TEACHER_SITE_BTN[loc], url: TEACHER_URL }],
+    ],
+  };
+}
+
+/** The label of one reminder item. */
+export function itemLabel(it: Pick<AdminItem, "taskTitle" | "groupName" | "courseTitle" | "moduleNumber" | "step">): string {
+  return hwLabel({
+    courseTitle: it.courseTitle ?? null, groupName: it.groupName, moduleNumber: it.moduleNumber ?? null,
+    step: it.step ?? null, title: it.taskTitle,
+  });
+}
 
 const ADMIN_DIGEST: Record<Locale, {
   head: (n: number) => string;
@@ -105,10 +151,10 @@ export function adminDigestText(items: readonly AdminItem[], loc: Locale): strin
   let shown = 0;
   for (const it of items) {
     if (shown >= ADMIN_DIGEST_MAX_LINES) break;
-    // No group: the reason already says so, so the group segment is left out.
-    const group = it.groupName ? `${escHtml(clip(it.groupName, 40))} · ` : "";
-    const line = `• <b>${escHtml(clip(it.studentName || "—", 40))}</b> — «${escHtml(clip(it.taskTitle || "—", 60))}» · ` +
-      `${group}${c.reason[it.reason]} · ${it.hours} ${c.h} (${it.n}/3)`;
+    // The label carries course · group · M V — title. No group: the reason already says so, and the label
+    // simply has no group part.
+    const line = `• <b>${escHtml(clip(it.studentName || "—", 40))}</b> — «${escHtml(clip(itemLabel(it) || "—", 100))}» · ` +
+      `${c.reason[it.reason]} · ${it.hours} ${c.h} (${it.n}/3)`;
     // Reserve room for the "… and N more" line.
     if (len + line.length + 1 + 40 > ADMIN_DIGEST_MAX_CHARS) break;
     out.push(line);

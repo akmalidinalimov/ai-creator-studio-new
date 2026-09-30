@@ -3,9 +3,20 @@
 // INTAKE_ACCESS_CODE with a constant-time compare) exactly like sheet-sync's
 // x-sheet-secret — NO user session. Serves the course/tier/group dropdowns
 // (action:"options") and adds ONE student (course + tier + group) via the proven
-// admin-create-students engine, then sets tier + phone and audit-logs (no staff actor).
+// admin-create-students engine, then sets tier + phone and audit-logs (no staff actor, except an admin who
+// overrides the cross-course move guard from their own signed-in session — see the move guard below).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { likeEscape } from "../_shared/username.ts";
+import { logHealth } from "../_shared/edge.ts";
+import {
+  adminIdFromBearer,
+  decideCourseMove,
+  isCrossCourse,
+  loadCourseMoveFacts,
+  moveAuditDetails,
+  REFUSED_STATUS,
+} from "../_shared/course-move-guard.ts";
+import { intakeMoveOutcome } from "./move.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -85,25 +96,49 @@ Deno.serve(async (req) => {
       if (!tier) return json({ error: "unknown_tier" }, 400);
     }
 
-    // Move guard: if this student already exists in a DIFFERENT group, don't move
-    // them silently — return "exists_in_other_group" so the salesperson can confirm.
-    // Skipped when confirm_move=true (they've chosen the target group).
-    if (!confirmMove) {
-      const unameNorm = username.replace(/^@/, "").toLowerCase();
-      const { data: cands } = await admin
-        .from("profiles").select("id, group_id, telegram_username")
-        .ilike("telegram_username", `%${likeEscape(unameNorm)}`).limit(10);
-      const existing = (cands || []).find(
-        (p: any) => String(p.telegram_username ?? "").replace(/^@/, "").toLowerCase() === unameNorm,
-      );
-      if (existing?.group_id) {
-        const { data: tgrp } = await admin
-          .from("groups").select("id").eq("course_id", course_id).ilike("name", group_name).limit(1);
-        const targetGroupId = (tgrp || [])[0]?.id ?? null;
-        if (existing.group_id !== targetGroupId) {
-          const { data: curg } = await admin.from("groups").select("name").eq("id", existing.group_id).maybeSingle();
-          return json({ status: "exists_in_other_group", userId: existing.id, current_group: curg?.name ?? null });
+    // Move guard. If this student already exists in a DIFFERENT group, never move them silently.
+    //  - Same course (e.g. 5.0 PRE -> 5.0 VIP): return "exists_in_other_group" so the salesperson confirms;
+    //    confirm_move=true then moves them, as before.
+    //  - Another course (e.g. 5.0 -> Challenge 6.0): REFUSED, even with confirm_move (PR-3a). Their waiting
+    //    homework would follow them to the new course's teachers and the old teacher would lose it. Only a
+    //    verified admin, signed in on this browser, may override (admin_override=true), and only with 0 waiting
+    //    homework in the old course. Every refusal is written to admin_actions; the engine records the override.
+    // Runs on EVERY submit (it used to be skipped on confirm_move), so a crafted confirm cannot skip it, and
+    // admin-create-students re-checks at the write anyway.
+    const adminOverride = body?.admin_override === true;
+    let overrideAdminId: string | null = null;
+    const unameNorm = username.replace(/^@/, "").toLowerCase();
+    const { data: cands } = await admin
+      .from("profiles").select("id, group_id, telegram_username")
+      .ilike("telegram_username", `%${likeEscape(unameNorm)}`).limit(10);
+    const existing = (cands || []).find(
+      (p: any) => String(p.telegram_username ?? "").replace(/^@/, "").toLowerCase() === unameNorm,
+    );
+    if (existing?.group_id) {
+      const { data: tgrp } = await admin
+        .from("groups").select("id").eq("course_id", course_id).ilike("name", group_name).limit(1);
+      const targetGroupId = (tgrp || [])[0]?.id ?? null;
+      if (existing.group_id !== targetGroupId) {
+        const facts = await loadCourseMoveFacts(admin, {
+          userId: existing.id, fromGroupId: existing.group_id, toGroupId: targetGroupId, toCourseId: course_id,
+        });
+        // Whose session is this? Asked only for a move between courses (can_override / the override itself).
+        const callerAdminId = isCrossCourse(facts) ? await adminIdFromBearer(admin, req.headers.get("Authorization")) : null;
+        const verdict = decideCourseMove(facts, { requested: adminOverride, adminId: callerAdminId });
+        const outcome = intakeMoveOutcome(facts, verdict, { confirmMove, callerAdminId, userId: existing.id });
+        if (outcome.action === "respond") {
+          if (outcome.refused) {
+            await logHealth(admin, "cross_course_move_refused", moveAuditDetails(facts, {
+              reason: outcome.refused, confirm_move: confirmMove, override_requested: adminOverride,
+              caller: callerAdminId ? "admin_session" : "intake_code",
+            }), {
+              actorUserId: callerAdminId, targetUserId: existing.id,
+              targetResourceType: "profile", targetResourceId: existing.id, source: "staff-intake",
+            });
+          }
+          return json(outcome.body);
         }
+        overrideAdminId = outcome.overrideAdminId;
       }
     }
 
@@ -125,13 +160,19 @@ Deno.serve(async (req) => {
         courseIds: [course_id],
         target_course_id: course_id,
         csv_import: true,
+        // The engine re-verifies this admin id and the 0-waiting rule at the write, then audits the override.
+        ...(overrideAdminId ? { allow_cross_course_move: true, override_admin_id: overrideAdminId } : {}),
       }),
     });
     const out = await resp.json().catch(() => ({}));
     const res0 = (out?.results || [])[0] || {};
     const status = res0.status || (resp.ok ? "unknown" : "error");
     const userId = res0.userId as string | undefined;
-    if (!userId) return json({ status, message: res0.error || `HTTP ${resp.status}` }, resp.ok ? 200 : 502);
+    if (!userId) {
+      // A refusal from the engine (e.g. the move guard firing at the write) keeps its details for the form.
+      const extra = status === REFUSED_STATUS ? { reason: res0.reason ?? null, ...(res0.move || {}), can_override: false } : {};
+      return json({ status, message: res0.error || `HTTP ${resp.status}`, ...extra }, resp.ok ? 200 : 502);
+    }
 
     // Tier + account type + optional phone (idempotent) + audit with the real staff actor.
     await admin.rpc("set_enrollment_tier_system", { _user_id: userId, _course_id: course_id, _tier_id: tier_id });
@@ -151,11 +192,11 @@ Deno.serve(async (req) => {
       } catch (_e) { /* handle is a bonus, never block an enrolment */ }
     }
     await admin.from("admin_actions").insert({
-      actor_user_id: actorId, action: "staff_intake", target_user_id: userId,
-      details: { course_id, tier_id, account_type, status },
+      actor_user_id: overrideAdminId ?? actorId, action: "staff_intake", target_user_id: userId,
+      details: { course_id, tier_id, account_type, status, ...(overrideAdminId ? { cross_course_override: true } : {}) },
     });
 
-    return json({ status, userId, account_type });
+    return json({ status, userId, account_type, ...(overrideAdminId ? { cross_course_override: true } : {}) });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : String(e) }, 500);
   }
