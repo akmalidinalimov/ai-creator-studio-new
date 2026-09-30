@@ -14,6 +14,9 @@ vi.mock("@/lib/teacherApi", () => ({
   notifyGradeVoice: vi.fn(),
   requestTeacherVoiceInTelegram: vi.fn(),
 }));
+vi.mock("@/hooks/useSelectedGroup", () => ({
+  useSelectedGroup: () => ({ groups: [], groupId: null, setGroupId: vi.fn(), loading: false, error: false, reload: vi.fn() }),
+}));
 vi.mock("@/components/teacher/GradePhoto", () => ({ GradePhoto: () => null }));
 vi.mock("@/components/homework/VoiceRecorder", () => ({ VoiceRecorder: () => null }));
 vi.mock("@/lib/homeworkAudio", () => ({ uploadFeedbackVoice: vi.fn(), removeFeedbackVoice: vi.fn() }));
@@ -26,7 +29,7 @@ const row = (over: Record<string, unknown>) => ({
   group_name: "AC CHALLENGE | 3-GURUH", module_number: 1, task_number: 1, assignment_id: "a6",
   assignment_title: "1- MODUL: PROMPT ENGINEERING", max_score: 10, submitted_at: new Date().toISOString(),
   previous_score: null, is_resubmission: false, media: null, submitted_image_url: null,
-  course_title: "AI CREATORS CHALLENGE 6.0", ...over,
+  course_id: "c6", course_title: "AI CREATORS CHALLENGE 6.0", ...over,
 });
 
 function renderPage() {
@@ -48,15 +51,22 @@ describe("TeacherGrade card label", () => {
     expect(screen.getByText("M1 V1 — 1- MODUL: PROMPT ENGINEERING")).toBeInTheDocument();
   });
 
-  it("the same task in 5.0 reads differently", async () => {
-    h.rows = [row({ group_name: "1-GURUH VIP 5.0", course_title: "AI CREATORS 5.0", assignment_id: "a5" })];
+  it("the same task in 5.0 reads differently, in the course's own colour", async () => {
+    h.rows = [row({ group_name: "1-GURUH VIP 5.0", course_id: "c5", course_title: "AI CREATORS 5.0", assignment_id: "a5" })];
     renderPage();
-    expect(await screen.findByText("5.0 · 1-GURUH VIP")).toBeInTheDocument();
+    const chip = await screen.findByText("5.0 · 1-GURUH VIP");
+    expect(chip).toHaveAttribute("data-course-tone", "course");
   });
 
-  it("unknown course (lookup failed) → the group name alone, whole", async () => {
-    h.rows = [row({ course_title: null })];
+  it("a Challenge card's chip is in the Challenge colour", async () => {
+    h.rows = [row({})];
     renderPage();
-    expect(await screen.findByText("AC CHALLENGE | 3-GURUH")).toBeInTheDocument();
+    expect(await screen.findByText("CH6 · 3-GURUH")).toHaveAttribute("data-course-tone", "challenge");
+  });
+
+  it("unknown course (lookup failed) → the group name alone, whole, neutral", async () => {
+    h.rows = [row({ course_id: null, course_title: null })];
+    renderPage();
+    expect(await screen.findByText("AC CHALLENGE | 3-GURUH")).toHaveAttribute("data-course-tone", "unknown");
   });
 });

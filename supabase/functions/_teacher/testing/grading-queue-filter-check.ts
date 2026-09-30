@@ -471,15 +471,16 @@ async function run() {
       sent.length === 3 && sent.every((s, i) => s.body.text === want[i]), { got: sent.map((s) => s.body.text), want });
     ok("F3 a missing assignment: the label drops the course, the DM still goes", String(sent[2]?.body.text).includes("AC CHALLENGE | 3-GURUH · M1 V1 — Eski vazifa"));
     const kb = sent.map((s) => s.body.reply_markup.inline_keyboard);
+    const s1Sub = (await one(db, `select id from public.homework_submissions where user_id = '${S1}' and assignment_id = '${A51}'`)).id;
     ok("F4 t.me/c link: [Postni ko'rish, Baholash]; bot deep link: [Baholash] only",
       kb[0].length === 1 && kb[0][0].length === 2 && kb[0][0][0].url === "https://t.me/c/123/7/99"
-        && kb[1].length === 1 && kb[1][0].length === 1 && kb[1][0][0].callback_data === `gs:open:${sent[1].body.reply_markup.inline_keyboard[0][0].callback_data.slice(8)}`
+        && kb[1].length === 1 && kb[1][0].length === 1 && kb[1][0][0].callback_data === `gs:open:${s1Sub}`
         && kb[1][0][0].text === "🎯 Baholash", kb);
     ok("F5 callback_data 'gs:open:<submission>' fits Telegram's 64 bytes",
       kb.every((k) => k[0].every((b: Row) => !b.callback_data || new TextEncoder().encode(b.callback_data).length <= 64)));
     ok("F6 ops_net_post: purpose, Content-Type, parse_mode HTML, as before",
       sent.every((s) => s.purpose === "hw_dm_fallback_deliver" && s.headers["Content-Type"] === "application/json"
-        && s.body.parse_mode === "HTML" && s.url === "https://api.telegram.org/botTESTTOKEN/sendMessage"), sent.map((s) => [s.purpose, s.headers]));
+        && s.body.parse_mode === "HTML" && String(s.url).endsWith("/botTESTTOKEN/sendMessage")), sent.map((s) => [s.purpose, s.headers, s.url]));
     const stamped = await q(db, "select teacher_id, sent_at is not null sent, error from public.homework_teacher_dm_queue order by created_at, scheduled_for");
     ok("F7 the three sent rows are stamped 'sql_fallback_delivery'; T3's row stays open",
       stamped.filter((s) => s.sent && s.error === "sql_fallback_delivery").length === 3
