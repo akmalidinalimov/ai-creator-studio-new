@@ -1,0 +1,360 @@
+{
+  "source": "daily_tasks_plan.json (owner-reviewed 25-task plan, v2, 2026-09-30) -- importer fields only; test fixture",
+  "weeks": [
+    {
+      "week": 1,
+      "theme_uz": "1-hafta: ChatGPT — har kuni ishlatadigan shaxsiy tizimingiz",
+      "tasks": [
+        {
+          "week": 1,
+          "day": 1,
+          "title_uz": "ChatGPTʼni oʻzingizga moslang",
+          "task_uz": "Settings → Personalization boʻlimiga oʻzingiz haqingizda yozing: kimsiz, sohangiz, auditoriyangiz va sizga qulay javob uslubi (masalan, “oʻzbekcha, qisqa, misollar bilan”). Keyin yangi chat ochib, soʻrang: “Sohamda AIʼdan foydalanishning 3 ta usulini ayt.” Javob sizga moslashmagan boʻlsa, sozlamani aniqroq qilib qayta yozing va yana soʻrang.",
+          "learn_uz": "Nimani oʻrganasiz: ChatGPTʼga har safar oʻzingizni qayta tanishtirmaslikni — endi har bir chat (post, mijozga javob, prompt) sohangiz va uslubingizni bilgan holda boshlanadi.",
+          "submit_uz": "Topshirish: 2 ta skrinshot — toʻldirilgan Personalization sozlamasi va yangi chatdagi javob (email koʻrinmasin).",
+          "type": "general",
+          "points": 5,
+          "format": "screenshot (2)",
+          "auto_check": "Two screenshots: (1) ChatGPT Settings > Personalization / custom instructions filled with the student's own context (who they are, niche, audience, preferred answer style); (2) a reply in a new chat that reflects that context (niche-specific, in the requested style) and lists about 3 ways to use AI. Reject if the Personalization fields are empty, only one screenshot is sent, or the reply is unrelated. Flag a visible email or password.",
+          "minutes": 10
+        },
+        {
+          "week": 1,
+          "day": 2,
+          "title_uz": "Shaxsiy prompt shabloningiz",
+          "task_uz": "Har hafta takrorlanadigan bitta ishingizni tanlang: post matni, mijozga javob yoki mahsulot tavsifi. Avval buni bitta qisqa gap bilan soʻrang, keyin yangi chatda formula bilan yozing — Rol + Vazifa + Kontekst (kim uchun, qaysi ohangda) + Format (hajmi, tuzilishi) — va ikki javobni solishtiring. Yaxshiroq chiqqan promptdagi oʻzgaruvchan joylarni [mahsulot], [auditoriya] kabi kvadrat qavsli soʻzlar bilan almashtiring, soʻng Notes yoki Google Docsʼda “Retseptlar kitobi” nomli hujjat ochib, uni birinchi retsept sifatida saqlang.",
+          "learn_uz": "Nimani oʻrganasiz: har safar noldan yozmay, faqat qavs ichini almashtirib ishlatiladigan shablon tuzishni — bu Retseptlar kitobingizdagi 1-retsept; 2–3-haftalarda unga rasm va video retseptlari qoʻshiladi.",
+          "submit_uz": "Topshirish: [qavsli] shablon matni + shu shablon bilan olingan javob skrinshoti.",
+          "type": "general",
+          "points": 5,
+          "format": "text + screenshot",
+          "auto_check": "A reusable prompt template that contains role, task, context (audience/tone) and format parts and at least 2 [bracketed] placeholders such as [product] or [audience], plus one screenshot of a ChatGPT answer produced with the template filled in. Reject if there are no placeholders, most of the four parts are missing, or no answer screenshot is sent.",
+          "minutes": 15
+        },
+        {
+          "week": 1,
+          "day": 3,
+          "title_uz": "Brendingiz uchun Project",
+          "task_uz": "ChatGPTʼda brendingiz yoki sohangiz nomi bilan Project yarating. Instructionsʼga kimligingiz, auditoriyangiz, ohangingiz va nimalarni yozmaslik kerakligini kiriting, fayl sifatida esa xizmatlaringiz roʻyxatini yoki 3–5 ta eski postingizni yuklang. Keyin Project ichida real vaziyatni sinab koʻring: “Mijoz narxingiz qimmat deb yozdi — mening uslubimda xushmuomala javob yoz.”",
+          "learn_uz": "Nimani oʻrganasiz: brendingizni biladigan doimiy ish joyi yaratishni — mijozlarga javob, eʼlon va boshqa matnlarni endi shu Project ichida bir necha soniyada tayyorlaysiz.",
+          "submit_uz": "Topshirish: Project skrinshoti (nomi, Instructions va fayl koʻrinsin) + shu Project ichidagi javob skrinshoti.",
+          "type": "general",
+          "points": 5,
+          "format": "screenshot (2)",
+          "auto_check": "(1) Screenshot of a ChatGPT Project showing a name, filled Instructions (who/audience/tone/don'ts) and at least one uploaded file; (2) screenshot of a reply inside that Project to a client objection about price, written in a brand-consistent tone. Reject a normal chat with no Project, empty Instructions or no uploaded file. Flag a visible phone number, email or password.",
+          "minutes": 15
+        },
+        {
+          "week": 1,
+          "day": 4,
+          "title_uz": "Work rejimi: raqobatchilar jadvali",
+          "task_uz": "ChatGPTʼda Work rejimini yoqing va vazifani toʻliq yozib bering: “Sohamdagi 5 ta kuchli Instagram akkaunt yoki raqobatchini top va jadval qil: nomi, havolasi, kontent turi, eng yaxshi ishlaydigan post formati va men undan nimani olishim mumkin. Natijani .xlsx fayl qilib ber.” Work oʻzi reja tuzib ishlaydi — biroz kuting. Hisobingizda Work boʻlmasa, oddiy chatda Search (web qidiruv) bilan bajaring.",
+          "learn_uz": "Nimani oʻrganasiz: koʻp bosqichli izlanishni AIʼga topshirib, tayyor jadval olishni — keyingi haftalarda gʻoya, namuna va narxlarni izlaganda ham xuddi shu usulni qoʻllaysiz.",
+          "submit_uz": "Topshirish: tayyor jadval (.xlsx fayl yoki skrinshot) — 5 ta qator, har birida havola.",
+          "type": "general",
+          "points": 5,
+          "format": "file (.xlsx/.csv) or screenshot",
+          "auto_check": "A table as an .xlsx/.csv file or a screenshot with about 5 rows (accounts or competitors in one niche) and columns such as name, link, content type, best-performing format and a takeaway for the student. Links look like real profile or website URLs. A Chat + Search result is accepted as the fallback. Reject if there is no table, fewer than 3 rows, or no links.",
+          "minutes": 20
+        },
+        {
+          "week": 1,
+          "day": 5,
+          "title_uz": "Tanishuv posti: captionʼni Project yozadi",
+          "task_uz": "Brend Projectʼingizda soʻrang: “Mening ohangimda tanishuv posti uchun Instagram caption yoz: kimligim va nega AI oʻrganayotganim, kuchli birinchi qator, 3–4 ta qisqa gap va obunachilarga savol.” Captionʼni oʻz soʻzlaringiz bilan tahrirlang, oʻz suratingiz bilan post qiling va @aicreators.studentsʼni belgilang. Shu akkaunt 5-haftada portfoliongizga aylanadi.",
+          "learn_uz": "Nimani oʻrganasiz: Projectʼdan olingan matnni oʻzingizniki qilib tahrirlashni — keyingi har bir post captionʼini shu tartibda 5 daqiqada tayyorlaysiz.",
+          "submit_uz": "Topshirish: username koʻrinib turgan post skrinshoti + post havolasi.",
+          "type": "instagram",
+          "points": 8,
+          "format": "Instagram post: screenshot + link",
+          "auto_check": "Screenshot of an Instagram feed post or Reel with the student's username visible, @aicreators.students tagged or mentioned, and a self-introduction / 'why I am learning AI' caption; plus a valid instagram.com/p/ or /reel/ link. Reject a story without a post link, a missing tag, or no visible username.",
+          "minutes": 15
+        }
+      ]
+    },
+    {
+      "week": 2,
+      "theme_uz": "2-hafta: Rasm mashqlari — yorugʻlik, kamera burchagi, obyektiv va realizm",
+      "tasks": [
+        {
+          "week": 2,
+          "day": 1,
+          "title_uz": "Yorugʻlik mashqi: 1 sahna, 3 xil yorugʻlik",
+          "task_uz": "Bitta sahna tanlang: oʻylab topilgan odam portreti (masalan, nonvoyxonadagi nonvoy) yoki mahsulotingiz. Bitta promptni bitta vositada — ChatGPT, Nano Banana (Gemini) yoki Higgsfieldʼda — 3 marta ishlating va har safar faqat yorugʻlik qismini almashtiring, masalan: “golden hour side light”, “soft window light”, “hard midday sun” yoki “neon night light”. Qaysi yorugʻlikda rasm eng real chiqqanini aniqlang va 3 ta yorugʻlik retseptini Retseptlar kitobingizga yozing.",
+          "learn_uz": "Nimani oʻrganasiz: yorugʻlik soʻzlari rasmni qanchalik real qilishini oʻz koʻzingiz bilan koʻrasiz — mahsulot yoki portret buyurtmasida darhol ishlatadigan 3 ta sinalgan yorugʻlik retseptingiz boʻladi.",
+          "submit_uz": "Topshirish: 3 ta rasm + 3 ta prompt (faqat yorugʻlik soʻzlari farq qiladi).",
+          "type": "general",
+          "points": 5,
+          "format": "image (3) + text (3 prompts)",
+          "auto_check": "Three images of the same subject/scene with visibly different lighting (e.g. warm low sun, soft diffused window light, hard shadows, neon), plus three prompts that are identical except for the lighting phrase. Reject if there are fewer than 3 images or prompts, the subject changes between images, or the prompts differ in more than the lighting part. Quality is not graded; watermarks are fine.",
+          "minutes": 20
+        },
+        {
+          "week": 2,
+          "day": 2,
+          "title_uz": "Kamera burchagi: 4 rasmli karusel",
+          "task_uz": "Bitta mahsulot yoki qahramon uchun asosiy prompt yozing va unga “eye level, medium shot” soʻzlarini qoʻshing. Keyin shu promptdan yana 3 ta rasm yarating, har safar faqat shu qismni almashtirib: “low angle”, “high angle, top-down” va “close-up”. 4 ta rasmni karusel qilib Instagramʼga joylang, captionʼga asosiy promptni va har bir rasmning burchak nomini yozing hamda @aicreators.studentsʼni belgilang.",
+          "learn_uz": "Nimani oʻrganasiz: burchak kadrning maʼnosini oʻzgartirishini — low angle mahsulotni kuchli koʻrsatadi, top-down taom va mahsulot uchun qulay, close-up esa tafsilot va sifatni ochib beradi; 4 ta burchak retsepti kitobingizga qoʻshiladi.",
+          "submit_uz": "Topshirish: username koʻrinib turgan post skrinshoti + post havolasi.",
+          "type": "instagram",
+          "points": 8,
+          "format": "Instagram carousel: screenshot + link",
+          "auto_check": "Screenshot of an Instagram carousel with the student's username visible and @aicreators.students tagged or mentioned; the slides show the same product or character, and the caption names the angles/shot sizes (eye level, low angle, high angle/top-down, close-up) and contains the base prompt. Plus a valid instagram.com/p/ link. Reject a single image or a story, a missing link or tag, no visible username, or a caption without angle names.",
+          "minutes": 20
+        },
+        {
+          "week": 2,
+          "day": 3,
+          "title_uz": "Obyektiv va fon: 35mm yoki 85mm",
+          "task_uz": "Shu haftadagi sahnalaringizdan birini oling va 2 ta rasm yarating: birida “35mm lens, f/8, everything in sharp focus”, ikkinchisida “85mm lens, f/1.8, shallow depth of field, blurred background” boʻlsin. Promptning qolgan qismi soʻzma-soʻz bir xil qolsin. Natijaga qarab, qaysi biri mahsulot yoki portretga, qaysi biri joy yoki interyerga mosligini bir gapda yozing va ikkala retseptni kitobingizga qoʻshing.",
+          "learn_uz": "Nimani oʻrganasiz: fonni xiralashtirib asosiy obyektni ajratishni (85mm, f/1.8) va butun joyni aniq koʻrsatishni (35mm, f/8) — mahsulot, portret va interyer suratlari uchun 2 ta tayyor obyektiv retsepti.",
+          "submit_uz": "Topshirish: 2 ta rasm + 2 ta prompt + qaysi biri qayerga mosligi haqida 1 gap.",
+          "type": "general",
+          "points": 5,
+          "format": "image (2) + text",
+          "auto_check": "Two images of the same scene, one with deep focus (background sharp) and one with shallow depth of field (background clearly blurred), plus two prompts identical except for the lens/aperture phrase (e.g. 35mm f/8 vs 85mm f/1.8) and one sentence on when to use each. Reject if the prompts differ in more than the lens part, the two images look the same in focus, or a prompt is missing.",
+          "minutes": 15
+        },
+        {
+          "week": 2,
+          "day": 4,
+          "title_uz": "Plastik koʻrinishdan haqiqiy suratga",
+          "task_uz": "Shu haftadagi rasmlaringizdan eng sunʼiy koʻrinadiganini tanlang: silliq, plastikdek teri, haddan tashqari yorqin ranglar yoki juda mukammal yuzalar. Promptga faqat realizm qatorini qoʻshib, rasmni qayta yarating, masalan: “natural skin texture with visible pores, small imperfections, fabric wrinkles, natural colour grade, subtle film grain, candid photo”. Ikki rasmni yonma-yon qoʻyib, qaysi sunʼiylik belgilari yoʻqolganini koʻring va shu qatorni Retseptlar kitobingizga yozing.",
+          "learn_uz": "Nimani oʻrganasiz: AI rasmidagi plastik koʻrinishni yoʻqotadigan realizm qatorini — endi uni har bir mijoz rasmi promptining oxiriga qoʻshasiz.",
+          "submit_uz": "Topshirish: “oldin” va “keyin” rasmlari + promptga qoʻshilgan realizm qatori.",
+          "type": "general",
+          "points": 5,
+          "format": "image (2) + text",
+          "auto_check": "Two images of the same scene (before and after; an album or side-by-side is fine) where the after image looks more photographic (visible texture, less plastic smoothness or oversaturation), plus the realism line added to the prompt (texture, imperfections, natural colour, grain or similar). Reject if only one image is sent, the scenes are unrelated, or no realism line is written. Quality is not graded strictly.",
+          "minutes": 15
+        },
+        {
+          "week": 2,
+          "day": 5,
+          "title_uz": "Telefon suratidan reklama suratiga",
+          "task_uz": "Uydagi biror buyumni (krujka, atir, krossovka yoki oʻz mahsulotingiz) telefonda suratga oling va ChatGPT yoki Nano Bananaʼga yuklang. Promptga shu haftadagi eng yaxshi yorugʻlik, burchak va obyektiv retseptlaringizdan bittadan qoʻshing hamda “shakli, rangi va yozuvlarini oʻzgartirma” deb yozing. “Telefon surati → AI reklama” karuselini Instagramʼga joylang, captionʼda ishlatgan 3 ta retseptingizni yozing va @aicreators.studentsʼni belgilang.",
+          "learn_uz": "Nimani oʻrganasiz: haqiqiy mahsulotni oʻzgartirmasdan professional reklama sahnasiga joylashtirishni — bu mijozlar eng koʻp soʻraydigan xizmat, 5-haftada aynan shuni sotasiz.",
+          "submit_uz": "Topshirish: username koʻrinib turgan post skrinshoti + post havolasi.",
+          "type": "instagram",
+          "points": 8,
+          "format": "Instagram carousel: screenshot + link",
+          "auto_check": "Screenshot of an Instagram carousel with the student's username visible, showing a real phone photo of an object and an AI-restaged ad version of the same object (same shape/label), with @aicreators.students tagged or mentioned and a caption naming the lighting, angle and lens recipes used; plus a valid instagram.com/p/ link. Reject if the link is missing, the tag is absent, the username is not visible, or the two images show different products.",
+          "minutes": 20
+        }
+      ]
+    },
+    {
+      "week": 3,
+      "theme_uz": "3-hafta: Video mashqlari — harakat formulasi, rasm → video, kamera harakati va izchillik",
+      "tasks": [
+        {
+          "week": 3,
+          "day": 1,
+          "title_uz": "Harakat formulasi: birinchi 5 soniya",
+          "task_uz": "Darsdagi formula boʻyicha video prompt yozing va har bir qismini alohida qatorga joylang: kim/nima + nima qilyapti + kamera harakati + joy va yorugʻlik + uslub (masalan, “5 seconds, realistic, cinematic”). Seedance, Kling yoki Omni Flashʼda (qaysi birida bepul kredit boʻlsa, oʻshanda) bitta 5 soniyalik video yarating — bu hafta har vazifaga koʻpi bilan 2 ta video yetadi. Inglizcha yozish qiyin boʻlsa, Projectʼingizga tarjima qildiring. Oxirida formulani [qavsli] shablon qilib Retseptlar kitobingizga saqlang.",
+          "learn_uz": "Nimani oʻrganasiz: video modelga nimani va qanday tartibda aytish kerakligini — shu shablon bilan har qanday reklama kadrini 1–2 urinishda olasiz va kreditlarni behuda sarflamaysiz.",
+          "submit_uz": "Topshirish: qismlarga ajratilgan prompt + tayyor 5 soniyalik video.",
+          "type": "general",
+          "points": 5,
+          "format": "video + text",
+          "auto_check": "An AI-generated video (file, screen recording or link to the generated clip) and a prompt split into labelled parts: subject, action, camera movement, environment/light, style/duration. The clip plausibly matches the prompt (same subject and setting). Watermarks are fine. Reject if the video or the prompt is missing, the prompt has fewer than 4 of the parts, or the video is a stock clip or a still image.",
+          "minutes": 20
+        },
+        {
+          "week": 3,
+          "day": 2,
+          "title_uz": "Rasmingizni jonlantiring: rasm → video",
+          "task_uz": "2-haftadagi eng yaxshi rasmingizni (masalan, reklama suratingizni) image-to-video orqali videoga aylantiring. Promptda rasmni qayta tasvirlamang — faqat nima harakatlanishini va kamera qanday yurishini yozing, masalan: “steam slowly rises from the cup, slow push-in”; harakat sekin va kichik boʻlsa, yozuv va shakllar buzilmaydi. Baʼzi servislar haqiqiy odam yuzi tushgan rasmni qabul qilmaydi, shuning uchun mahsulot yoki AI-qahramon rasmini tanlang. “Rasm → Video” Reelsʼini Instagramʼga joylang, captionʼga harakat promptingizni yozing va @aicreators.studentsʼni belgilang.",
+          "learn_uz": "Nimani oʻrganasiz: image-to-video promptida faqat harakatni yozish qoidasini — mijozning tayyor mahsulot suratini bir necha daqiqada harakatli Reelsʼga aylantirasiz.",
+          "submit_uz": "Topshirish: username koʻrinib turgan Reels skrinshoti + post havolasi.",
+          "type": "instagram",
+          "points": 8,
+          "format": "Instagram Reel: screenshot + link",
+          "auto_check": "Screenshot of an Instagram Reel or post with the student's username visible and @aicreators.students tagged or mentioned, showing an AI video animated from a still image (ideally still and clip as before/after, or 'Rasm → Video' in the caption) with the motion prompt in the caption; plus a valid instagram.com/reel/ or /p/ link. Reject a story without a post link, a missing tag, or no visible username.",
+          "minutes": 25
+        },
+        {
+          "week": 3,
+          "day": 3,
+          "title_uz": "Kamera harakati: 1 kadr, 2 xil harakat",
+          "task_uz": "Kechagi rasmingizni yana boshlangʻich kadr qilib oling va 2 ta video yarating: prompt bir xil, faqat kamera harakati boshqa — masalan, “slow push-in” va “orbit around the subject” (yoki “pull-out”, “pan left”, “crane up”, “handheld”). Boshlangʻich rasm bir xil boʻlgani uchun farqni faqat kamera harakati beradi. Har bir harakat qachon kerakligini bir qatordan Retseptlar kitobingizga yozing.",
+          "learn_uz": "Nimani oʻrganasiz: kamera harakati kadrga maʼno berishini — push-in eʼtiborni mahsulotga tortadi, orbit uni har tomondan koʻrsatadi, pull-out atrofni ochib beradi; endi reklama uchun harakatni taxminan emas, ongli ravishda tanlaysiz.",
+          "submit_uz": "Topshirish: 2 ta video + 2 ta prompt (faqat kamera harakati farq qiladi).",
+          "type": "general",
+          "points": 5,
+          "format": "video (2) + text",
+          "auto_check": "Two AI-generated clips (or one screen recording showing both) animated from the same starting image, plus two prompts identical except for the camera-movement phrase (e.g. push-in vs orbit, pull-out, pan, crane, tracking, handheld). The clips show different camera motion of the same scene. Watermarks are fine. Reject a single video, prompts that differ in more than the camera phrase, or unrelated scenes.",
+          "minutes": 25
+        },
+        {
+          "week": 3,
+          "day": 4,
+          "title_uz": "Izchillik: bitta mahsulot, 2 ta kadr",
+          "task_uz": "Mahsulotingiz yoki qahramoningiz uchun 2–3 gaplik doimiy tavsif yozing: rangi, shakli, yozuvi yoki kiyimi. Kechagi videolaringizdan biri 1-kadr boʻladi; 2-kadrni oʻsha rasmdan boshqa planda yarating (masalan, 1-kadr umumiy plan boʻlsa, 2-kadr “close-up”) va promptga doimiy tavsifni soʻzma-soʻz qoʻshing. Ikki kadrni yonma-yon koʻrib, mahsulot oʻzgarmaganini tekshiring; buni Klingʼdagi Start/End Frame yoki Multishot bilan ham qilsa boʻladi.",
+          "learn_uz": "Nimani oʻrganasiz: izchillik retseptini — bitta reference rasm va har bir promptda soʻzma-soʻz takrorlanadigan doimiy tavsif; shunda mijoz mahsuloti butun reklama davomida bir xil koʻrinadi.",
+          "submit_uz": "Topshirish: 2 ta video (eski 1-kadr va yangi 2-kadr) + doimiy tavsif matni.",
+          "type": "general",
+          "points": 5,
+          "format": "video (2) + text",
+          "auto_check": "Two AI clips (an earlier one reused as shot 1 plus a new shot 2) showing the same product or character with the same colours, shape and label/clothing in two different framings (e.g. wide and close-up), plus an anchor description of 2-3 sentences that appears word-for-word in the shot-2 prompt. Reject if only one clip is sent, the product/character clearly changes between clips, or the anchor text is missing.",
+          "minutes": 25
+        },
+        {
+          "week": 3,
+          "day": 5,
+          "title_uz": "3 kadrlik mini-reklama: ritm va kesish",
+          "task_uz": "Shu haftadagi videolaringizdan 3 kadrlik ketma-ketlik yigʻing: 1) hook — birinchi soniyada eʼtibor tortadigan kadr, 2) tafsilot — close-up, 3) yakun — mahsulot va qisqa yozuv. Har bir kadrni 2–3 soniyagacha qisqartiring va harakat davom etayotgan joyda kesing; CapCut yoki Instagram muharririda montaj qiling, yangi video yaratish shart emas (kerak boʻlsa, koʻpi bilan 1 ta). Instagramʼga Reels qilib joylang, captionʼga 3 kadrlik rejangizni yozing va @aicreators.studentsʼni belgilang.",
+          "learn_uz": "Nimani oʻrganasiz: kliplarni reklama ritmiga solishni — hook, tafsilot, yakun va 2–3 soniyalik kesishlar; har bir mijoz Reelsʼini shu sxema boʻyicha yigʻasiz.",
+          "submit_uz": "Topshirish: username koʻrinib turgan Reels skrinshoti + post havolasi.",
+          "type": "instagram",
+          "points": 8,
+          "format": "Instagram Reel: screenshot + link",
+          "auto_check": "Screenshot of an Instagram Reel with the student's username visible and @aicreators.students tagged or mentioned, and a caption that lists a 3-shot plan (hook / detail or close-up / ending); plus a valid instagram.com/reel/ or /p/ link. Reject a story without a post link, a missing tag, no visible username, or a caption without the shot plan. Length and editing quality are not graded.",
+          "minutes": 25
+        }
+      ]
+    },
+    {
+      "week": 4,
+      "theme_uz": "4-hafta: Claude va Codex bilan avtomatlashtirish — oʻz ish tizimingizni quring",
+      "tasks": [
+        {
+          "week": 4,
+          "day": 1,
+          "title_uz": "Claude Project: kontent yordamchingiz",
+          "task_uz": "claude.aiʼda (bepul akkaunt yetadi) “Kontent yordamchim” nomli Project yarating. Instructionsʼga brendingiz, auditoriyangiz, ohangingiz va taqiqlarni yozing, Knowledgeʼga esa Retseptlar kitobingiz va xizmatlaringiz roʻyxatini yuklang (telefon raqami, pasport maʼlumotlari va parollarni qoʻshmang). Keyin soʻrang: “Keyingi hafta uchun 5 kunlik kontent-reja tuz: har bir kun uchun gʻoya, format (rasm yoki Reels) va caption.”",
+          "learn_uz": "Nimani oʻrganasiz: brendingiz va retseptlaringizni biladigan yordamchi yaratishni — haftalik kontent-reja endi bir soʻrovda tayyor boʻladi, siz faqat tanlab, tahrirlaysiz.",
+          "submit_uz": "Topshirish: Project skrinshoti (nomi, Instructions va Knowledge fayllari koʻrinsin) + Claude tuzgan 5 kunlik reja (matn yoki skrinshot).",
+          "type": "general",
+          "points": 5,
+          "format": "screenshot + text",
+          "auto_check": "Screenshot from claude.ai (not ChatGPT) of a Project with a visible name, non-empty Instructions (brand/audience/tone) and at least one Knowledge file (ideally the recipe book); plus Claude's reply inside that Project with a 5-day content plan (idea, format and caption per day). Reject a plain chat with no Project, empty Instructions, no file, or a plan with fewer than 5 days. Flag a visible phone number, address, email, passport or password.",
+          "minutes": 20
+        },
+        {
+          "week": 4,
+          "day": 2,
+          "title_uz": "Skill: gʻoyadan tayyor promptgacha",
+          "task_uz": "Skill — Claudeʼga bir marta oʻrgatiladigan va istalgan chatda ishlaydigan tayyor usul. Claudeʼga yozing: “Menga skill yarat: men gʻoya yoki mahsulot nomini yozaman, sen esa mening formulam boʻyicha 1 ta rasm prompti (obyekt, joy, yorugʻlik, burchak, obyektiv, realizm) va 1 ta 5 soniyalik video prompti (harakat, kamera, muhit, uslub) berasan.” Skillʼni saqlang va yangi chatda boshqa mahsulot bilan sinab koʻring. Skills boʻlimi (Settings → Capabilities) koʻrinmasa, Claude bergan SKILL.md faylini saqlab qoʻying.",
+          "learn_uz": "Nimani oʻrganasiz: 2–3-haftadagi formulangizni har safar qayta tushuntirmasdan ishlatishni — mijoz gʻoyasini 30 soniyada tayyor rasm va video promptiga aylantirasiz.",
+          "submit_uz": "Topshirish: Skills roʻyxatidagi skillʼingiz (yoki SKILL.md) skrinshoti + yangi chatda skill yozib bergan rasm va video prompti.",
+          "type": "general",
+          "points": 5,
+          "format": "screenshot + text",
+          "auto_check": "(1) A screenshot of Claude's Skills list showing a custom skill (or of a SKILL.md file) about turning an idea into image and video prompts; (2) output from a new chat (text or screenshot) containing one image prompt with lighting, angle and lens details and one video prompt with an action and a camera move. Reject an ordinary chat with no sign of a skill or SKILL.md, or output without both prompts. Flag a visible email.",
+          "minutes": 20
+        },
+        {
+          "week": 4,
+          "day": 3,
+          "title_uz": "Gʻoyadan postgacha: yordamchingiz bilan",
+          "task_uz": "Kontent-rejangizdan bitta gʻoyani oling, uni skillʼingizga bering va chiqqan rasm promptini ChatGPT yoki Nano Bananaʼda ishlating. Captionʼni Claude Projectʼingizda yozdiring, oʻz soʻzlaringiz bilan biroz tahrirlang va oxiriga “Prompt: Claude skill + mening retseptlarim” deb qoʻshing. Postni Instagramʼga joylang va @aicreators.studentsʼni belgilang.",
+          "learn_uz": "Nimani oʻrganasiz: reja → skill → rasm → caption zanjirini 20 daqiqada bosib oʻtishni — bu sizning kundalik kontent tayyorlash jarayoningiz.",
+          "submit_uz": "Topshirish: username koʻrinib turgan post skrinshoti + post havolasi.",
+          "type": "instagram",
+          "points": 8,
+          "format": "Instagram post: screenshot + link",
+          "auto_check": "Screenshot of a published Instagram post or Reel with the student's username visible, an AI-generated image or clip, @aicreators.students tagged or mentioned, and a caption that mentions the Claude skill/recipes; plus a valid instagram.com/p/ or /reel/ link. Reject a story without a post link, a missing tag, or no visible username.",
+          "minutes": 20
+        },
+        {
+          "week": 4,
+          "day": 4,
+          "title_uz": "Cowork: papka va Retseptlar kitobi tartibda",
+          "task_uz": "Kompyuteringizda “AI-ishlarim” papkasini yarating va unga 2–3-haftadagi rasm va videolaringizni hamda Retseptlar kitobingizni joylang (shaxsiy hujjat va parollarni qoʻymang). Claude Coworkʼga shu papkani ochib bering va yozing: “Fayllarni rasm va video papkalariga ajrat, nomlarini tushunarli qil va retseptlarimdan yorugʻlik, burchak, obyektiv, realizm va kamera harakati boʻlimlari bor Retseptlar-kitobi.docx faylini yarat.” Hisobingizda Cowork boʻlmasa, xuddi shu vazifani Codexʼda bajaring; kompyuter boʻlmasa, faqat hujjatni ChatGPT yoki Claude chatida yarating.",
+          "learn_uz": "Nimani oʻrganasiz: fayllar bilan bogʻliq zerikarli ishni agentga topshirishni — har bir mijoz loyihasini shu tarzda bitta buyruq bilan tartibga solasiz, Retseptlar kitobingiz esa tayyor hujjatga aylanadi.",
+          "submit_uz": "Topshirish: tartibga solingan papka skrinshoti + yaratilgan Retseptlar kitobi fayli (.docx, .pdf yoki .md).",
+          "type": "general",
+          "points": 5,
+          "format": "screenshot + file",
+          "auto_check": "(1) A screenshot of a folder (file explorer or the Cowork/Codex session) with files sorted into subfolders such as images/videos and readable names; (2) a document (.docx, .pdf or .md) titled like a recipe book with sections such as lighting, angle, lens, realism and camera movement containing prompt recipes. A Codex session is an accepted fallback; phone-only students may send only the document. Reject if only a chat is shown with no folder or file, or the document is empty or unrelated. Flag visible passwords, API keys or personal documents.",
+          "minutes": 20
+        },
+        {
+          "week": 4,
+          "day": 5,
+          "title_uz": "Codex: portfolio sahifangiz",
+          "task_uz": "Kompyuterda Codexʼni oching va kechagi “AI-ishlarim” papkasini tanlang. Yozing: “Shu papkadagi rasm va videolarimdan bir sahifali portfolio sayt yarat: ismim, 3 ta xizmatim, ishlar galereyasi va Telegram orqali bogʻlanish tugmasi; telefonda ham chiroyli koʻrinsin.” Saytni brauzerda ochib, sizga yoqmagan bitta joyini ikkinchi prompt bilan tuzating (saytga telefon raqamingizni yozmang). Kompyuter boʻlmasa, shu soʻrovni ChatGPT chatiga yuboring va natijani Canvas Preview orqali koʻring.",
+          "learn_uz": "Nimani oʻrganasiz: Codex yordamida oʻz fayllaringizdan ishlaydigan sahifa yaratishni — mijozlarga koʻrsatadigan portfolio sahifangizning tayyor fayli qoʻlingizda boʻladi.",
+          "submit_uz": "Topshirish: brauzerda ochilgan portfolio sahifangiz skrinshoti (galereya va bogʻlanish tugmasi koʻrinsin; API kalit va token koʻrinmasin).",
+          "type": "general",
+          "points": 5,
+          "format": "screenshot",
+          "auto_check": "A screenshot of a rendered one-page portfolio website in a browser or ChatGPT Canvas Preview with a name/title, services, a gallery of images (the student's AI works, or placeholders in the Canvas fallback) and a contact/Telegram button. Reject a screenshot of raw code only or an unrelated website. Flag a visible phone number, API key, token or password.",
+          "minutes": 20
+        }
+      ]
+    },
+    {
+      "week": 5,
+      "theme_uz": "5-hafta: Oʻz ishlaringizdan daromad — taklif, brif, portfolio va birinchi mijozlar",
+      "tasks": [
+        {
+          "week": 5,
+          "day": 1,
+          "title_uz": "Xizmatingiz va 3 ta paket",
+          "task_uz": "2–4-haftalarda eng yaxshi chiqqan ishingizni tanlang (mahsulot surati, rasm → video reklama yoki kontent yordamchi) va shu asosida xizmatingizni belgilang. ChatGPT yoki Claude Projectʼingizdan 3 ta paket tuzib berishni soʻrang — Start, Standart va Premium: har biriga nima kiradi (masalan, “3 xil yorugʻlikda 5 ta mahsulot surati”), necha kunda tayyor boʻladi va narxi qancha (soʻmda). Har bir paketga oʻzingiz yaratgan bitta namunani biriktiring — mijozga aynan shuni koʻrsatasiz.",
+          "learn_uz": "Nimani oʻrganasiz: koʻnikmani aniq natija, muddat va narxga ega mahsulotga aylantirishni — mijoz “nima qilasiz, narxi qancha?” deb soʻrasa, tayyor javobingiz boʻladi.",
+          "submit_uz": "Topshirish: 3 ta paketli narxnoma (har bir paketning tarkibi, muddati, narxi va namunasi bilan).",
+          "type": "general",
+          "points": 5,
+          "format": "text (or screenshot)",
+          "auto_check": "Text or a screenshot of a price list with 3 packages (e.g. Start/Standart/Premium) for an AI service aimed at a named niche, each with contents, delivery time, a price (so'm or another currency) and a reference to one of the student's own sample works. Reject empty or off-topic submissions, fewer than 3 packages, or a copy of the task text.",
+          "minutes": 15
+        },
+        {
+          "week": 5,
+          "day": 2,
+          "title_uz": "Mijoz brifi: 7 ta savol",
+          "task_uz": "Har bir buyurtma savoldan boshlanadi: mijoz nimani xohlashini aniq bilmasangiz, ishni qayta-qayta oʻzgartirishga toʻgʻri keladi. Projectʼingizdan xizmatingiz uchun 7 savoldan iborat brif tuzishni soʻrang: mahsulot, auditoriya, format (4:5 yoki 9:16), kayfiyat va yorugʻlik, namunalar, muddat va qayerda ishlatilishi. Savollarni oʻzingizga moslang va Telegramʼda yuborishga tayyor xabar yoki Google Forms koʻrinishiga keltiring.",
+          "learn_uz": "Nimani oʻrganasiz: mijoz javoblarini retseptlaringizga bogʻlashni — “iliq, kechki kayfiyat” degan javob darhol golden hour retseptiga aylanadi va tuzatishlar kamayadi.",
+          "submit_uz": "Topshirish: 7 savollik brif (matn, skrinshot yoki Google Forms havolasi).",
+          "type": "general",
+          "points": 5,
+          "format": "text, screenshot or link",
+          "auto_check": "A client brief with about 7 questions (text, screenshot or a Google Forms link) covering items such as product, audience, format/aspect ratio, mood/lighting, references, deadline and where it will be used, adapted to the student's service. Reject fewer than 5 questions, a generic text unrelated to image/video/content services, or a copy of the task text.",
+          "minutes": 15
+        },
+        {
+          "week": 5,
+          "day": 3,
+          "title_uz": "Portfolio karusel: haqiqiy ishlaringiz",
+          "task_uz": "2–4-haftadagi eng yaxshi 4–5 ta ishingizni bitta karuselga jamlang: birinchi slaydga eng kuchli “oldin → keyin” juftligini qoʻying va bitta videoni ham qoʻshing. Captionʼda har bir slayd qaysi xizmatga tegishli ekanini, 1-kundagi paketlardan birini va “Buyurtma uchun Directʼga yozing” chaqirigʻini yozing. Postni Instagramʼga joylang va @aicreators.studentsʼni belgilang.",
+          "learn_uz": "Nimani oʻrganasiz: tarqoq mashqlarni mijoz olib keladigan portfolioga aylantirishni — 5-kundagi xabarlaringizda aynan shu post havolasini yuborasiz.",
+          "submit_uz": "Topshirish: username koʻrinib turgan post skrinshoti + post havolasi.",
+          "type": "instagram",
+          "points": 8,
+          "format": "Instagram carousel: screenshot + link",
+          "auto_check": "Screenshot of an Instagram carousel with the student's username visible, showing AI-made work (images and/or video), a caption that names the services, a package or price and a call to action (e.g. DM to order), with @aicreators.students tagged or mentioned; plus a valid instagram.com/p/ link. Reject a story without a post link, a missing tag, or no visible username.",
+          "minutes": 20
+        },
+        {
+          "week": 5,
+          "day": 4,
+          "title_uz": "30 soniyalik ovozli taklif",
+          "task_uz": "ChatGPTʼning ovozli rejimini (Voice) yoqing va unga yoʻnalishingizdagi biznes egasi rolini bering: u xizmatingizni tinglab, 2 ta eʼtiroz bildirsin (masalan, “qimmat” yoki “AI rasm sunʼiy koʻrinadi”), siz esa javob berib mashq qiling. Keyin 30–60 soniyalik ovozli xabar yozib oling: kimsiz, qanday xizmat taklif qilasiz, kimlar uchun, paketingiz narxi va siz bilan qanday bogʻlanish mumkin. Misol sifatida portfolio postingizdagi bitta natijani tilga oling.",
+          "learn_uz": "Nimani oʻrganasiz: oʻzingizni 30 soniyada taqdim etishni va eng koʻp uchraydigan 2 ta eʼtirozga javob berishni — buni mijoz bilan qoʻngʻiroqda yoki ovozli xabarda darhol ishlatasiz.",
+          "submit_uz": "Topshirish: 30–60 soniyalik ovozli xabar yoki dumaloq video xabar.",
+          "type": "general",
+          "points": 5,
+          "format": "voice (or round video note)",
+          "auto_check": "A voice message or round video note of roughly 20-90 seconds spoken by the student (Uzbek, Russian or English) whose transcript mentions (1) an AI service they offer, (2) who it is for, (3) a price or package and (4) how to contact/order. Reject silence, music only, text-only submissions, or content unrelated to offering a service. Delivery quality is not graded.",
+          "minutes": 15
+        },
+        {
+          "week": 5,
+          "day": 5,
+          "title_uz": "Birinchi 3 ta taklifni yuboring",
+          "task_uz": "Instagram yoki Telegramʼda yoʻnalishingizdagi 3 ta biznes sahifasini toping va ularning rasm yoki videolarini qanday yaxshilash mumkinligini aniqlang (masalan, “suratlaringiz qorongʻi — yumshoq yorugʻlikda mahsulot ancha jozibali koʻrinadi”). Har biriga alohida qisqa xabar yozib yuboring: samimiy maqtov, bitta aniq gʻoya, portfolio postingiz havolasi va bepul namuna taklifi. Faqat biznes sahifalariga yozing, spam qilmang: javob kelmasa ham, boshlaganingizning oʻzi katta qadam.",
+          "learn_uz": "Nimani oʻrganasiz: shablon emas, aniq biznesga moslangan xabar yozishni — har hafta 3 ta shunday xabar yuborish mijoz topishdagi asosiy odatingizga aylanadi.",
+          "submit_uz": "Topshirish: 3 ta biznesga yuborilgan xabarlar skrinshoti (qabul qiluvchi nomini yashirsangiz boʻladi).",
+          "type": "general",
+          "points": 5,
+          "format": "screenshot (up to 3)",
+          "auto_check": "Screenshot(s) showing at least 3 direct messages actually sent (not drafts) on Instagram or Telegram to 3 different accounts, each with a specific improvement idea, a link or reference to the student's portfolio and a free-sample offer. Recipient names may be blurred. Reject a ChatGPT chat only, the same screenshot repeated, or fewer than 3 sent messages.",
+          "minutes": 20
+        }
+      ]
+    }
+  ]
+}
