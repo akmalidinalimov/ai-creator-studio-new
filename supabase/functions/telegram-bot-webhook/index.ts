@@ -26,6 +26,7 @@ import { likeEscape } from "../_shared/username.ts";
 import { resolveGroupPoster } from "../_shared/group-poster-identity.ts";
 import { hwLabel } from "../_shared/hw-label.ts";
 import { continuePath, coursePath, lessonPath, sendStudentWatchMessage, studentWatchButton } from "./miniapp-buttons.ts";
+import { editTeacherCard, sendHwTeacherDm, sendTeacherCard, teacherCardKeyboard, teacherStartGreeting } from "./teacher-ux.ts";
 import { loadAssignmentLabels, loadHwLabel } from "../_shared/hw-label-load.ts";
 import {
   breakdownScopeLine, gradingHeader, hwTeacherBody, moduleCourseMark, thenWho, withLabelLine, withWho,
@@ -1231,9 +1232,9 @@ async function buildGroupBoardMessage(admin: any, userId: string, locale: Locale
   })].join("\n");
 }
 
-/** Teacher profile card with per-group stats and one-tap group switching. */
+/** Teacher profile card with per-group stats, one-tap group switching and the teacher-ux.ts action buttons. */
 async function buildTeacherProfileCard(
-  admin: any, teacherId: string, locale: Locale, groupId?: string | null,
+  admin: any, teacherId: string, locale: Locale, groupId?: string | null, chatId?: number | null,
 ): Promise<{ text: string; keyboard: any }> {
   const p = PROF_T[locale];
   const [{ data: prof }, statsRes, groupsRes, xpRes, weekRes, lbRes] = await Promise.all([
@@ -1309,11 +1310,13 @@ async function buildTeacherProfileCard(
     lines.push(`👥 ${p.tTeam}: <b>${teamXp}</b> XP`);
   }
 
-  // One-tap group switching: a button per OTHER group re-renders this card in place.
+  // One-tap group switching: a button per OTHER group re-renders this card in place. Above them (teacher-ux.ts):
+  // 🏆 TOP · 😴 Faolsizlar · ⚙️ Sozlamalar for the group on this card, and 📊 / 📣 into the teacher Mini App.
   const others = groups.filter((g) => g.group_id !== sel.group_id);
-  const keyboard = others.length
-    ? { inline_keyboard: others.map((g) => [{ text: `👥 ${g.group_name}`, callback_data: `tprof:g:${g.group_id}` }]) }
-    : undefined;
+  const keyboard = await teacherCardKeyboard(admin, {
+    chatId, locale, groupId: sel.group_id, canPick: (await getPersona(admin, teacherId)) === "teacher",
+    switchRows: others.map((g) => [{ text: `👥 ${g.group_name}`, callback_data: `tprof:g:${g.group_id}` }]),
+  });
   if (others.length) lines.push("", p.tSwitchHint);
   return { text: lines.join("\n"), keyboard };
 }
@@ -5034,8 +5037,8 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
     // students (incl. student impersonation) get the student profile card.
     const persona = effectivePersona || realPersona;
     if (persona === "teacher" || persona === "admin") {
-      const { text, keyboard } = await buildTeacherProfileCard(admin, profile.id, locale);
-      await sendMessage(chatId, text, keyboard);
+      const { text, keyboard } = await buildTeacherProfileCard(admin, profile.id, locale, null, chatId);
+      await sendTeacherCard(admin, chatId, text, keyboard);
     } else {
       const { text, keyboard } = await buildProfileCard(admin, profile.id, locale);
       await sendMessage(chatId, text, keyboard);
@@ -6926,13 +6929,8 @@ async function notifyTeachersOfSubmission(
     const guessed = /\(taxminiy\)/.test(aTitle || "");
     const body = hwTeacherBody(studentName, label)
       + (guessed ? "\n\n⚠️ <b>Avto-belgilangan</b> — vazifa taxminan tanlandi. Noto'g'ri bo'lsa ✏️ bilan to'g'rilang." : "");
-    // grade:open:<submissionId> = 47 bytes; hwmv:<submissionId> = 41 bytes. Both under Telegram's
-    // 64-byte callback_data cap (the previous grade_task:<assignmentId>:<studentId> was 84 → BUTTON_DATA_INVALID).
-    const inlineKb = [
-      [{ text: "🎯 Baholash", callback_data: `grade:open:${submissionId}` }],
-      ...(guessed ? [[{ text: "✏️ Vazifani o'zgartirish", callback_data: `hwmv:${submissionId}` }]] : []),
-      [{ text: "📌 Topikga o'tish", url: messageUrl }],
-    ];
+    // The keyboard is teacher-ux.ts hwTeacherDmKeyboard: 🎯 Baholash opens THIS submission in the teacher Mini App
+    // (teacher_miniapp on) with the in-chat grade:open flow second; off → today's [🎯][✏️?][📌], byte-identical.
 
     // Fan out: one queue row + one immediate DM per teacher (primary ∪ co-teachers).
     for (const teacherId of teacherIds) {
@@ -6998,17 +6996,14 @@ async function notifyTeachersOfSubmission(
           console.log("hw:group:teacher-skip", JSON.stringify({ teacher_id: teacherId, has_tg: !!teacher?.telegram_id, notif: teacher?.notifications_enabled }));
         } else {
           try {
-            const resp = await sendMessage(Number(teacher.telegram_id), body, { inline_keyboard: inlineKb });
-            let okBody: any = null;
-            try { okBody = await resp.clone().json(); } catch { /* ignore */ }
-            if (resp.ok && okBody?.ok) {
+            const out = await sendHwTeacherDm(admin, { chatId: Number(teacher.telegram_id), body, submissionId, messageUrl, guessed });
+            if (out.ok) {
               if (queued?.id) {
                 await admin.from("homework_teacher_dm_queue").update({ sent_at: new Date().toISOString() }).eq("id", queued.id);
               }
-              console.log("hw:group:teacher-dm-ok", JSON.stringify({ teacher_id: teacherId, submission_id: submissionId }));
+              console.log("hw:group:teacher-dm-ok", JSON.stringify({ teacher_id: teacherId, submission_id: submissionId, button: out.button }));
             } else {
-              const errTxt = okBody ? JSON.stringify(okBody).slice(0, 200) : await resp.text().catch(() => "");
-              console.error("hw:group:teacher-dm-fail", JSON.stringify({ teacher_id: teacherId, status: resp.status, err: String(errTxt).slice(0, 200) }));
+              console.error("hw:group:teacher-dm-fail", JSON.stringify({ teacher_id: teacherId, status: out.status, err: String(out.error ?? "").slice(0, 200) }));
               // leave queue row unsent so cron retries
             }
           } catch (e) {
@@ -7214,16 +7209,9 @@ async function handleCallback(admin: any, cq: any) {
           { targetUserId: _effId, source: "telegram-bot-webhook" });
       }
     }
-    const { text, keyboard } = await buildTeacherProfileCard(admin, _effId, locale, gid);
+    const { text, keyboard } = await buildTeacherProfileCard(admin, _effId, locale, gid, chatId);
     await answerCallback(cq.id);
-    await tgApi("editMessageText", {
-      chat_id: chatId,
-      message_id: cq.message?.message_id,
-      text,
-      parse_mode: "HTML",
-      disable_web_page_preview: true,
-      ...(keyboard ? { reply_markup: keyboard } : {}),
-    });
+    await editTeacherCard(admin, chatId, cq.message?.message_id, text, keyboard);
     return;
   }
 
@@ -8282,11 +8270,9 @@ Deno.serve(async (req) => {
             pend = ((pg || []) as any[]).reduce((s, g) => s + (g.pending_homework || 0), 0);
           } catch (_e) { /* best-effort */ }
           const nm = csvEscapeHtml(profileForLocale.name || "");
-          const greet = {
-            uz: `Salom, ${nm}! 🧑‍🏫\n${pend > 0 ? `📝 <b>${pend} ta vazifa</b> baholashni kutmoqda.` : "✅ Baholanmagan vazifalar yo'q."}\n\nTOP talabalar, faolsizlar, guruh almashtirish va sozlamalar — 👤 Profil ichida.`,
-            ru: `Салом, ${nm}! 🧑‍🏫\n${pend > 0 ? `📝 <b>${pend} заданий</b> ждут проверки.` : "✅ Непроверенных заданий нет."}\n\nТОП, неактивные, смена группы и настройки — внутри 👤 Профиль.`,
-            en: `Hi ${nm}! 🧑‍🏫\n${pend > 0 ? `📝 <b>${pend} submissions</b> are waiting.` : "✅ Nothing waiting to grade."}\n\nTOP students, inactive, group switching and settings live inside 👤 Profile.`,
-          }[locale];
+          // teacher-ux.ts: the Profil line is now true (the card has TOP / Faolsizlar / Sozlamalar buttons), plus
+          // where the ☰ "📝 Ustoz" app is. The reply keyboard is unchanged.
+          const greet = teacherStartGreeting(locale, nm, pend, __teacherMiniAppEnabled?.on === true);
           await sendMessage(msg.chat.id, greet, getTeacherKeyboard(locale, pend));
         } else {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag, persona);

@@ -85,7 +85,7 @@ Deno.test("loadStaffOnlyIds: two reads → only the staff without a student role
 
 Deno.test("loadStaffOnlyIds: no staff at all → empty set, one read", async () => {
   const s = await loadStaffOnlyIds(fakeAdmin([{ user_id: "stu", role: "student" }]), "test");
-  assertEquals(s, { ids: new Set(), error: null });
+  assertEquals(s, { ids: new Set<string>(), error: null });
 });
 
 for (const fail of ["staff", "student", "throw"] as const) {

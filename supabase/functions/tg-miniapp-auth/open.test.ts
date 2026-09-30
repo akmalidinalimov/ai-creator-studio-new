@@ -122,6 +122,22 @@ Deno.test("a fresh sign-in's open is recorded cold:true", async () => {
   assertEquals(d.tables.admin_actions[0].details.cold, true);
 });
 
+// The teacher Mini App buttons (_shared/teacher-miniapp.ts, 2026-09-30) report their taps through this same open
+// signal. NOTE: a _shared/ change alone does not redeploy this function (the pipeline deploys changed function
+// DIRS) — this test lives here so the new sources ship with it.
+Deno.test("teacher sources: accepted, counted, and never stamp a nudge / re-engagement row", async () => {
+  for (const src of ["teacher_hw_dm", "teacher_hw_reminder", "teacher_report", "teacher_card"] as const) {
+    assertEquals(clickTableFor(src), null);
+    const d = db();
+    // The Mini App reports the PATH only (the ?sub= query is not part of it); ref is the submission id.
+    const r = await handleOpen(d, 7, { mode: "open", src, ref: NUDGE, path: "/tg/teacher/grade" });
+    assertEquals(r, { ok: true, stamped: false });
+    const row = d.tables.admin_actions.find((a) => a.action === "miniapp_open")!;
+    assertEquals([row.details.src, row.details.ref, row.details.path], [src, NUDGE, "/tg/teacher/grade"]);
+    assertEquals(d.tables.nudge_log[0].clicked_at, null);
+  }
+});
+
 Deno.test("targetPath grammar: every existing start_param is unchanged", () => {
   const target = (p: string | undefined, staff: boolean) => startParamToPath(p)?.path ?? (staff ? "/tg/teacher" : "/dashboard");
   assertEquals(target("hw", false), "/homework");
