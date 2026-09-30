@@ -8,7 +8,7 @@ import {
 } from "./dailyTasksPlan";
 
 // The SQL mirrors (challenge_task_requires_valid / _requires_problem / _parse_message_url) are checked against this
-// module fixture-by-fixture in supabase/functions/_challenge/testing/daily_tasks_calendar_test.ts.
+// module fixture-by-fixture in supabase/functions/_challenge/testing/daily-tasks-calendar-check.ts.
 
 const SHOT = { any: ["photo", "image_doc"], min: 1, label: "screenshot" } as RequiresGroup;
 const TEXT = { any: ["text"], min: 1, label: "text" } as RequiresGroup;

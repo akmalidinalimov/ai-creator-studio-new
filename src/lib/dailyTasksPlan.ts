@@ -1,12 +1,12 @@
 /**
- * Challenge 6.0 «Kunlik vazifalar» calendar (Daily Tasks PR-2, migration 20260930122000): the pure rules the
+ * Challenge 6.0 «Kunlik vazifalar» calendar (Daily Tasks PR-2, migration 20260930122010): the pure rules the
  * admin page and the plan importer share with SQL.
  *
  * The DATABASE is the authority. The SQL mirrors are:
  *   requiresValid          <-> public.challenge_task_requires_valid(jsonb)        (the table CHECK)
  *   requiresProblem        <-> public.challenge_task_requires_problem(text, jsonb, text[])  (the approve guard)
  *   parseMessageUrl        <-> public.challenge_task_parse_message_url(text)      (manual-post links)
- * The PGlite harness (supabase/functions/_challenge/testing/daily_tasks_calendar_test.ts) imports THIS file and
+ * The PGlite harness (supabase/functions/_challenge/testing/daily-tasks-calendar-check.ts) imports THIS file and
  * asserts each mirror agrees with SQL fixture-by-fixture, and that every task of the real 25-task plan imports
  * and passes the approve guard. Dependency-free on purpose (no "@/..." imports) so Deno can load it.
  *

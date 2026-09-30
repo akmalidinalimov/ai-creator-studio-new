@@ -204,7 +204,7 @@ export default function AdminChallengeTasks() {
         )}
         {missing && (
           <Card className="p-4 text-sm border-amber-500/40">
-            Kalendar jadvali hali bazada yo‘q — migratsiya (20260930122000) qo‘llanganidan keyin sahifa ishlaydi.
+            Kalendar jadvali hali bazada yo‘q — migratsiya (20260930122010) qo‘llanganidan keyin sahifa ishlaydi.
           </Card>
         )}
         {loadErr && <Card className="p-4 text-sm text-rose-600">Yuklab bo‘lmadi: {loadErr}</Card>}

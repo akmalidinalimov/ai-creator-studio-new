@@ -1,6 +1,6 @@
-// PGlite harness for 20260930122000_challenge_daily_tasks_calendar.sql (Daily Tasks PR-2: the task calendar).
+// PGlite harness for 20260930122010_challenge_daily_tasks_calendar.sql (Daily Tasks PR-2: the task calendar).
 //
-//   deno test -A --node-modules-dir=none --no-lock supabase/functions/_challenge/testing/daily_tasks_calendar_test.ts
+//   deno test -A --node-modules-dir=none --no-lock supabase/functions/_challenge/testing/daily-tasks-calendar-check.ts
 //
 // Builds production's state on a real PostgreSQL -- the live reconcilers, #218 (20260930100010) and PR-1
 // (20260930121000, which seeds the four «KUNLIK VAZIFALAR» topics) -- then applies THIS migration and checks:
@@ -14,10 +14,11 @@
 // Run it after ANY change to the migration and before asking for the migration-approved label.
 // MIG_PATH=<file> tests a draft before it is written into its (edit-guarded) slot.
 //
-// CI NOTE: CI runs `deno test supabase/functions/` with NO permission flags. Without --allow-read PGlite cannot
-// load its own data files, so this suite registers as IGNORED there (visible in the log, never a false red) --
-// the same as daily_topic_check_test.ts. The pure rules it cross-checks are ALSO covered by vitest
-// (src/lib/dailyTasksPlan.test.ts), which does gate merges.
+// CI NOTE: named *-check.ts, not *_test.ts, so CI's `deno test supabase/functions/` never collects it -- the
+// convention of its siblings (daily-topic-check.ts: collecting a PGlite harness failed #220's CI run with "Could not
+// find @types/node"). Run it by path as above. The pure rules it cross-checks are ALSO covered by vitest
+// (src/lib/dailyTasksPlan.test.ts + src/test/AdminChallengeTasks.test.tsx), which does gate merges; the SQL side
+// also self-tests at apply time.
 // TEST INFRASTRUCTURE ONLY: this directory has no index.ts, so it is never deployed.
 
 import {
@@ -40,7 +41,7 @@ const CAN_RUN = granted("read") && granted("env") && granted("net");
 const here = (p: string) => new URL(p, import.meta.url);
 const lf = (s: string) => s.replace(/\r\n/g, "\n"); // a Windows checkout is CRLF; production text is LF
 
-// ── the same fixture world as daily_topic_check_test.ts (PR-1's harness), so PR-1's seed assertions hold ──
+// ── the same fixture world as daily-topic-check.ts (PR-1's harness), so PR-1's seed assertions hold ──
 const C6 = "f502f631-2104-4834-b6c2-702cd3080e27";
 const C5 = "78011384-4024-49b0-b72d-b0b2e3a04ee8";
 const CT = "cccccccc-0000-0000-0000-00000000000e";   // a separate E2E test course (G26)
@@ -55,7 +56,7 @@ const G8 = "88888888-8888-8888-8888-888888888888"; // the E2E test group (course
 const U = (n: number) => `aaaaaaaa-0000-0000-0000-${String(n).padStart(12, "0")}`;
 const S1 = U(1), S2 = U(2), S3 = U(3), S4 = U(4), S5 = U(5), S6 = U(6), X1 = U(7), T1 = U(8), AD = U(11);
 
-// SCHEMA: a VERBATIM copy of daily_topic_check_test.ts's (PR-1). Keep the two identical.
+// SCHEMA: a VERBATIM copy of daily-topic-check.ts's (PR-1). Keep the two identical.
 const SCHEMA = `
 set timezone = 'UTC';
 create role anon; create role authenticated; create role service_role;
@@ -240,7 +241,7 @@ grant usage on schema auth to authenticated, anon;
 
 Deno.test({
   name: CAN_RUN
-    ? "daily_tasks_calendar: 20260930122000 on PGlite (#218 + PR-1 + calendar; guard, RLS, importer, manual posts)"
+    ? "daily_tasks_calendar: 20260930122010 on PGlite (#218 + PR-1 + calendar; guard, RLS, importer, manual posts)"
     : "daily_tasks_calendar: SKIPPED -- needs `deno test -A --node-modules-dir=none` (PGlite reads its own files)",
   ignore: !CAN_RUN,
   sanitizeOps: false,
@@ -254,7 +255,7 @@ async function run() {
   const { PGlite } = (await import(spec)) as any;
 
   const MIG_PATH = Deno.env.get("MIG_PATH");
-  const MIG = lf(await Deno.readTextFile(MIG_PATH ?? here("../../../migrations/20260930122000_challenge_daily_tasks_calendar.sql")));
+  const MIG = lf(await Deno.readTextFile(MIG_PATH ?? here("../../../migrations/20260930122010_challenge_daily_tasks_calendar.sql")));
   const PR1 = lf(await Deno.readTextFile(here("../../../migrations/20260930121000_challenge_daily_task_topic.sql")));
   const MIG218 = lf(await Deno.readTextFile(here("../../../migrations/20260930100010_challenge_social_points.sql")));
   const RCX_LIVE = lf(await Deno.readTextFile(here("./reconcile_challenge_xp.live-2026-09-30.sql")));

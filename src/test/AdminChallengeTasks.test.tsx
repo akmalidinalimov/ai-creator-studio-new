@@ -5,7 +5,8 @@ import plan from "@/lib/__fixtures__/challenge6-daily-tasks-plan.json";
 
 // A smoke test of the «Kunlik vazifalar» admin page against a mocked Supabase: the month grid, the tomorrow
 // banner (task days only), the day drawer's SQL-rendered preview, and the importer calling the import RPC with
-// the whole plan. The SQL side of every rule is tested on PGlite (daily_tasks_calendar_test.ts).
+// the whole plan. The SQL side of every rule is tested on PGlite (supabase/functions/_challenge/testing/
+// daily-tasks-calendar-check.ts).
 
 const C6 = "f502f631-2104-4834-b6c2-702cd3080e27";
 type Res = { data: unknown; error: { message: string; code?: string } | null };

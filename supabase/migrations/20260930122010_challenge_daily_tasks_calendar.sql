@@ -35,11 +35,15 @@
 -- ═══ VERIFIED LIVE, 2026-09-30 (read-only) ═══
 -- * No challenge_task* table or function exists; no admin_challenge_* function exists.
 -- * courses.id uuid; platform_settings.challenge: course_ids [f502f631… = AI CREATORS CHALLENGE 6.0], group_ids [],
---   window.start 2026-10-01T00:00+05, end null. Its 4 groups (1..4-GURUH) are the ones PR-1 links.
+--   window.start 2026-10-01T00:00+05, end null. Its 6 groups (1..6-GURUH) all have a «KUNLIK VAZIFALAR» topic
+--   (PR-1 #220 linked 1..4, #221 registered 5 and 6).
 -- * New public tables are born anon=arwdDxtm / authenticated=arwdDxtm (default privileges) -> every grant below is
 --   explicit: REVOKE ALL from public, anon, authenticated first.
 -- * has_role(uuid, app_role) is STABLE SECURITY DEFINER; RLS on groups/platform_settings is admin-only.
--- * PR-1 (20260930121000) is NOT ledgered yet; this file refuses to run before it (step 0).
+-- * PR-1 (20260930121000) is ledgered (12:59 UTC); this file still refuses to run without it (step 0).
+-- * This name sorts BEFORE 20260930130549 (#221, ledgered 13:13 UTC): the slot was reserved for PR-2 before #221
+--   existed. Neither file references anything the other creates, so replay order is irrelevant, and the deploy
+--   pipeline applies the files a merge ADDS, whatever their names.
 --
 -- ═══ DEVIATIONS FROM THE SPEC (each argued) ═══
 -- d1 Columns learn_line (the plan's learn_uz, <= 500) and plan_format (<= 200) are added: the post shows the
@@ -59,6 +63,10 @@
 --    Telegram's own count (4096 after entity parsing), never looser. Every post carries 4-6 astral emoji.
 -- d8 The post template itself is v1 (§10.3's topic line included). PR-3/PR-5 may CREATE OR REPLACE
 --    challenge_task_render_post_text; the guard and the preview always measure whichever version is live.
+-- d9 One live task per day is keyed WHERE status <> 'cancelled' (spec §5.1), not only among approved rows: it
+--    implies one APPROVED task per day, and also stops a second import from stacking drafts on a taken day.
+-- d10 This file was first written as 20260930122000; it is re-issued here (next reserved slot) only to name the
+--    harness by its final file name. 20260930122000 was never merged or applied.
 --
 -- ═══ KILL-SWITCH / INERTNESS ═══
 -- Nothing reads these tables until PR-3/PR-5, which stay behind platform_settings.challenge_tasks.enabled (false).
@@ -73,10 +81,10 @@
 -- SELF-TEST: non-mutating only -- pure fixtures (requires validator + consistency, message-link parser, renderer),
 -- object / RLS / policy / index / trigger presence, ACLs, and that every already-approved task still renders
 -- <= 4000. It never inserts, never calls an RPC that needs a JWT.
--- PGlite harness: supabase/functions/_challenge/testing/daily_tasks_calendar_test.ts applies #218, PR-1 and THIS
+-- PGlite harness: supabase/functions/_challenge/testing/daily-tasks-calendar-check.ts applies #218, PR-1 and THIS
 -- file, and checks the guard matrix, RLS as student/admin, grants, the TS mirrors (src/lib/dailyTasksPlan.ts), the
 -- real 25-task plan importing and approving, the manual-post RPC, replay.
--- Merge: after PR-1 (20260930121000) is ledgered; label migration-approved, NEVER ops-agent.
+-- Merge: PR-1 (20260930121000) is ledgered, so this can merge now; label migration-approved, NEVER ops-agent.
 
 -- ═══════════════════════════════ 0. Prerequisite: PR-1 ═══════════════════════════════
 do $$
