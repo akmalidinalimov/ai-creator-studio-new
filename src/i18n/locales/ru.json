@@ -690,6 +690,8 @@
       "subtitle": "Аналитика обучения в реальном времени.",
       "selectCourse": "Выберите курс",
       "draftSuffix": " (черновик)",
+      "courseLabel": "Курс",
+      "courseLockedHint": "Курс группы — статистика по этому курсу",
       "stats": {
         "totalStudents": "Всего студентов",
         "logins30d": "Входы (30д)",

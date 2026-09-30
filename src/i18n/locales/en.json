@@ -690,6 +690,8 @@
       "subtitle": "Real-time learning analytics.",
       "selectCourse": "Select course",
       "draftSuffix": " (draft)",
+      "courseLabel": "Course",
+      "courseLockedHint": "The group's course — statistics are for this course",
       "stats": {
         "totalStudents": "Total students",
         "logins30d": "Logins (30d)",

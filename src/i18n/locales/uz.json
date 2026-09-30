@@ -690,6 +690,8 @@
       "subtitle": "Real vaqt o'qish analitikasi.",
       "selectCourse": "Kursni tanlang",
       "draftSuffix": " (qoralama)",
+      "courseLabel": "Kurs",
+      "courseLockedHint": "Guruhning kursi — statistika shu kurs bo'yicha",
       "stats": {
         "totalStudents": "Jami talabalar",
         "logins30d": "Kirishlar (30k)",
