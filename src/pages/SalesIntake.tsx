@@ -6,13 +6,14 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { UserPlus, CheckCircle2, Loader2, AlertTriangle, Info, X, Lock } from "lucide-react";
+import { UserPlus, CheckCircle2, Loader2, AlertTriangle, Info, X, Lock, ShieldAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { describeIntakeRefusal, REFUSED_STATUS, sameCourseMoveNote } from "@/lib/courseMove";
 
 type TierOpt = { id: string; name: string };
 type CourseOpt = { id: string; title: string; published: boolean; tiers: TierOpt[]; groups: string[] };
 type Recent = { name: string; status: string; cls: string };
-type ResultKind = "success" | "duplicate" | "exists" | "error";
+type ResultKind = "success" | "duplicate" | "exists" | "error" | "blocked";
 type Result = { kind: ResultKind; title: string; detail: string };
 
 const BANNER: Record<ResultKind, { cls: string; Icon: typeof CheckCircle2 }> = {
@@ -20,6 +21,7 @@ const BANNER: Record<ResultKind, { cls: string; Icon: typeof CheckCircle2 }> = {
   duplicate: { cls: "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300", Icon: AlertTriangle },
   exists:    { cls: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300", Icon: Info },
   error:     { cls: "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300", Icon: AlertTriangle },
+  blocked:   { cls: "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300", Icon: ShieldAlert },
 };
 
 // Passwordless sales-intake form. No login: the ?code= in the link is the gate.
@@ -47,8 +49,11 @@ export default function SalesIntake() {
   const [submitting, setSubmitting] = useState(false);
   const [recent, setRecent] = useState<Recent[]>([]);
   const [result, setResult] = useState<Result | null>(null);
-  const [movePrompt, setMovePrompt] = useState<{ userId: string; currentGroup: string | null } | null>(null);
+  // Same-course move ("5.0 PRE -> 5.0 VIP"): the salesperson confirms. A move to ANOTHER course never gets this
+  // prompt: the server refuses it (PR-3a) and the form shows why, plus an override only a signed-in admin sees.
+  const [movePrompt, setMovePrompt] = useState<{ userId: string; currentGroup: string | null; waiting: number | null } | null>(null);
   const [moveTargetGroup, setMoveTargetGroup] = useState("");
+  const [overridePrompt, setOverridePrompt] = useState<{ groupName: string; note: string | null } | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -85,7 +90,7 @@ export default function SalesIntake() {
   // A course without tiers (e.g. Challenge 6.0) has nothing to choose: tier_id null = every module.
   const hasTiers = !!selCourse && selCourse.tiers.length > 0;
 
-  const runIntake = async (opts: { confirmMove: boolean; groupName: string }) => {
+  const runIntake = async (opts: { confirmMove: boolean; groupName: string; adminOverride?: boolean }) => {
     if (!selCourse) { toast.error("Kursni tanlang"); return; }
     const tier_id = !hasTiers || tier === "Full" ? null : (selCourse.tiers.find((t) => t.name === tier)?.id ?? null);
     setSubmitting(true);
@@ -103,6 +108,8 @@ export default function SalesIntake() {
         course_id: selCourse.id, tier_id, group_name: groupName,
         phone: phone.trim(), email: email.trim(), instagram_username: instagram.trim(),
         confirm_move: opts.confirmMove,
+        // Honoured only for a verified admin session with 0 waiting old-course homework (checked server-side).
+        admin_override: opts.adminOverride === true,
         account_type: accountType,
       };
       // A transient network blip (common on mobile / Telegram's in-app browser) surfaces
@@ -124,13 +131,30 @@ export default function SalesIntake() {
       const st = (data as any)?.status as string;
 
       if (st === "exists_in_other_group") {
-        // Existing student in a DIFFERENT group — ask before moving. Keep fields.
-        setMovePrompt({ userId: (data as any)?.userId, currentGroup: (data as any)?.current_group ?? null });
+        // Existing student in a DIFFERENT group of the SAME course — ask before moving. Keep fields.
+        setMovePrompt({
+          userId: (data as any)?.userId,
+          currentGroup: (data as any)?.current_group ?? null,
+          waiting: typeof (data as any)?.old_course_waiting === "number" ? (data as any).old_course_waiting : null,
+        });
         setMoveTargetGroup(groupName);
+        setOverridePrompt(null);
         setSubmitting(false);
         return;
       }
       setMovePrompt(null);
+
+      if (st === REFUSED_STATUS) {
+        // Another course: refused. No "change group" button; keep the fields so an admin can override.
+        const d = describeIntakeRefusal(data as any, uname);
+        // Why an admin could not override either ("N ta vazifa baholanmaguncha...") belongs in the banner.
+        setResult({ kind: "blocked", title: d.title, detail: !d.canOverride && d.overrideNote ? `${d.detail} ${d.overrideNote}` : d.detail });
+        setOverridePrompt(d.canOverride ? { groupName, note: d.overrideNote } : null);
+        toast.error(d.title);
+        setRecent((p) => [{ name: who, status: "⛔ Boshqa kurs", cls: "text-rose-600" }, ...p].slice(0, 20));
+        return;
+      }
+      setOverridePrompt(null);
 
       if (st === "created") {
         setResult({ kind: "success", title: "✅ Muvaffaqiyatli qo'shildi!", detail: `${who} (@${uname}) — ${courseTitle}, "${groupName}" guruhiga qo'shildi.${acctSuffix}` });
@@ -143,7 +167,8 @@ export default function SalesIntake() {
         setRecent((p) => [{ name: who, status: "⚠️ Dublikat", cls: "text-rose-600" }, ...p].slice(0, 20));
       } else if (st === "updated" || st === "matched") {
         if (opts.confirmMove) {
-          setResult({ kind: "success", title: "✅ Guruh o'zgartirildi!", detail: `${who || uname} (@${uname}) endi "${groupName}" guruhida.${acctSuffix}` });
+          const overridden = (data as any)?.cross_course_override === true ? " (admin: kurs o'zgartirildi)" : "";
+          setResult({ kind: "success", title: "✅ Guruh o'zgartirildi!", detail: `${who || uname} (@${uname}) endi "${groupName}" guruhida.${overridden}${acctSuffix}` });
           toast.success(`✅ Guruh o'zgartirildi: @${uname} → ${groupName}`);
           setRecent((p) => [{ name: who, status: "✅ Guruh o'zgartirildi", cls: "text-emerald-600" }, ...p].slice(0, 20));
         } else {
@@ -178,12 +203,19 @@ export default function SalesIntake() {
       return;
     }
     setMovePrompt(null);
+    setOverridePrompt(null);
     void runIntake({ confirmMove: false, groupName: group });
   };
 
   const confirmGroupMove = () => {
     if (!moveTargetGroup.trim()) { toast.error("Yangi guruhni tanlang"); return; }
     void runIntake({ confirmMove: true, groupName: moveTargetGroup });
+  };
+
+  // Admin-only: move a student to ANOTHER course. The server re-checks the admin session and 0 waiting homework.
+  const confirmAdminOverride = () => {
+    if (!overridePrompt) return;
+    void runIntake({ confirmMove: true, groupName: overridePrompt.groupName, adminOverride: true });
   };
 
   if (loadingOpts) {
@@ -242,6 +274,9 @@ export default function SalesIntake() {
                   @{username.trim().replace(/^@/, "")} allaqachon <b>"{movePrompt.currentGroup || "—"}"</b> guruhida.
                   Uni yangi guruhga o'tkazasizmi?
                 </div>
+                {sameCourseMoveNote(movePrompt.waiting) && (
+                  <div className="opacity-90 mt-1">{sameCourseMoveNote(movePrompt.waiting)}</div>
+                )}
               </div>
             </div>
             <div className="space-y-1.5">
@@ -256,6 +291,27 @@ export default function SalesIntake() {
                 {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guruhni o'zgartirish"}
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setMovePrompt(null)} disabled={submitting}>Bekor qilish</Button>
+            </div>
+          </Card>
+        )}
+
+        {overridePrompt && (
+          // Shown ONLY when the server said a signed-in admin could override (0 waiting homework in the old
+          // course). A salesperson using the link never sees it.
+          <Card className="p-4 space-y-3 border-rose-500/40 bg-rose-500/[0.05]">
+            <div className="flex items-start gap-2.5 text-rose-800 dark:text-rose-200">
+              <ShieldAlert className="h-5 w-5 shrink-0 mt-0.5" />
+              <div className="text-sm">
+                <div className="font-semibold">Admin: kursni baribir o'zgartirish</div>
+                {overridePrompt.note && <div className="opacity-90">{overridePrompt.note}</div>}
+                <div className="opacity-90 mt-1">Yangi guruh: <b>"{overridePrompt.groupName}"</b>. Bu amal jurnalga yoziladi.</div>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="destructive" onClick={confirmAdminOverride} disabled={submitting}>
+                {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Admin sifatida o'tkazish"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setOverridePrompt(null)} disabled={submitting}>Bekor qilish</Button>
             </div>
           </Card>
         )}
@@ -279,7 +335,7 @@ export default function SalesIntake() {
 
           <div className="space-y-1.5">
             <Label>Kurs <span className="text-rose-500">*</span></Label>
-            <Select value={course} onValueChange={(v) => { setCourse(v); setTier(""); setGroup(""); }}>
+            <Select value={course} onValueChange={(v) => { setCourse(v); setTier(""); setGroup(""); setMovePrompt(null); setOverridePrompt(null); }}>
               <SelectTrigger><SelectValue placeholder="Kursni tanlang" /></SelectTrigger>
               <SelectContent>
                 {courses.map((c) => (
