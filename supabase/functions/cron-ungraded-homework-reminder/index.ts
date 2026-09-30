@@ -6,7 +6,8 @@
 // 2026-09-30: with platform_settings.teacher_miniapp on, 🎯 opens THIS submission in the teacher Mini App
 // (web_app → /tg/teacher/grade?sub=<id>, _shared/teacher-miniapp.ts); the in-chat flow and the web page stay as
 // the second row. Off → today's keyboard, byte-identical. A web_app button Telegram rejects is resent once with
-// today's keyboard (alarmed as miniapp_button_rejected). The audit row's details.buttons counts both kinds.
+// today's keyboard (recorded as teacher_miniapp_button_rejected — never the student watch-button alarm's
+// miniapp_button_rejected). The audit row's details.buttons counts both kinds.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";

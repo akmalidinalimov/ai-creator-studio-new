@@ -64,7 +64,16 @@ Deno.test("a malformed MINIAPP_BASE → null + the bad_base alarm row", async ()
     admin, base: "http://insecure.example",
   });
   assertEquals(b, null);
-  assertEquals(inserts[0]?.action, "miniapp_button_fallback");
+  // The TEACHER fault row — 'miniapp_button_fallback' would raise the STUDENT watch-button alarm (any fn).
+  assertEquals(inserts.map((r) => r.action), ["teacher_miniapp_button_fallback"]);
+});
+
+Deno.test("a path that only starts like /tg/teacher, or a student src, gets no button (its faults/opens would be filed as student)", async () => {
+  assertEquals(await teacherAppButton({ text: "x", flag: ON, chatId: 1, path: "/tg/teachers", src: "teacher_card", fn: "t" }), null);
+  assertEquals(await teacherAppButton({ text: "x", flag: ON, chatId: 1, path: "/tg/teacherx/grade", src: "teacher_card", fn: "t" }), null);
+  // 'teacher_nudge' is a STUDENT source (the type refuses it; a JS caller is refused at runtime).
+  assertEquals(await teacherAppButton({ text: "x", flag: ON, chatId: 1, path: TEACHER_HOME_PATH, src: "teacher_nudge" as never, fn: "t" }), null);
+  assertEquals(await teacherAppButton({ text: "x", flag: ON, chatId: 1, path: "/tg/teacher?x=1", src: "teacher_card", fn: "t" }) !== null, true);
 });
 
 Deno.test("parseTeacherMiniAppFlag: absent → on (like the webhook); present → only a literal true", () => {

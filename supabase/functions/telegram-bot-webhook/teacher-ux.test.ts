@@ -103,7 +103,9 @@ Deno.test("sendHwTeacherDm: Telegram rejects the web_app button → resent ONCE 
   assertEquals(sent.length, 2);
   assertEquals(sent[1].reply_markup, hwTeacherDmKeyboard({ submissionId: SUB, messageUrl: TOPIC, guessed: false, gradeApp: null }));
   assertEquals(out, { ok: true, status: 200, error: null, button: "callback" });
-  assert(admin.health.some((r) => r.action === "miniapp_button_rejected"));
+  // The TEACHER fault row; never the student watch-button alarm's miniapp_button_rejected (watch_button_health, any fn).
+  assert(admin.health.some((r) => r.action === "teacher_miniapp_button_rejected"));
+  assertEquals(admin.health.filter((r) => r.action === "miniapp_button_rejected").length, 0);
   _resetTeacherMiniAppFlagCache();
 });
 
@@ -189,7 +191,9 @@ Deno.test("sendTeacherCard: HTML, no preview, recorded; a rejected web_app butto
   assertEquals(calls[0].p.parse_mode, "HTML");
   assertEquals(calls[0].p.disable_web_page_preview, true);
   assertEquals(calls[1].p.reply_markup, { inline_keyboard: [[{ text: "⚙️ Sozlamalar", callback_data: "prof:settings" }]] });
-  assert(admin.health.some((r) => r.action === "miniapp_button_rejected"));
+  // The TEACHER fault row; never the student watch-button alarm's miniapp_button_rejected (watch_button_health, any fn).
+  assert(admin.health.some((r) => r.action === "teacher_miniapp_button_rejected"));
+  assertEquals(admin.health.filter((r) => r.action === "miniapp_button_rejected").length, 0);
 });
 
 Deno.test("editTeacherCard: 'not modified' is a success; 'message to edit not found' is neither retried nor alarmed", async () => {
@@ -202,7 +206,7 @@ Deno.test("editTeacherCard: 'not modified' is a success; 'message to edit not fo
   const gone = await editTeacherCard(admin, 9, 100, "card", CARD_KB, { send: (m, p, r) => { n++; assertEquals(m, "editMessageText"); assertEquals(p.message_id, 100); assertEquals(r, false); return Promise.resolve(bad("Bad Request: message to edit not found")); } });
   assertEquals(gone.ok, false);
   assertEquals(n, 1);
-  assertEquals(admin.health.filter((r) => r.action === "miniapp_button_rejected").length, 0);
+  assertEquals(admin.health.filter((r) => /miniapp_button_rejected/.test(r.action)).length, 0);
 });
 
 // ─────────────────────────── /start ───────────────────────────

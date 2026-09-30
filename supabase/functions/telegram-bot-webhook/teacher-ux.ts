@@ -5,7 +5,8 @@
 //   hwTeacherDmKeyboard / sendHwTeacherDm — the immediate new-homework DM (notifyTeachersOfSubmission).
 //       🎯 Baholash opens THIS submission in the teacher Mini App (/tg/teacher/grade?sub=<id>); the in-chat flow
 //       (grade:open) stays as the second button — it is where Telegram's voice recorder works. Flag off → today's
-//       keyboard, byte-identical. A web_app button Telegram rejects is resent ONCE with today's keyboard.
+//       keyboard, byte-identical. A web_app button Telegram rejects is resent ONCE with today's keyboard
+//       (recorded as 'teacher_miniapp_button_rejected' — never the student watch-button alarm's row).
 //   teacherCardRows / teacherCardKeyboard — the 👤 Profil card's buttons. /start has always said "TOP, faolsizlar,
 //       guruh almashtirish va sozlamalar — 👤 Profil ichida", but the card only had group switchers, so
 //       /ttop, /tinactive and /sozlamalar could only be typed. Now: [🏆 TOP] [😴 Faolsizlar] [⚙️ Sozlamalar]
@@ -16,7 +17,7 @@
 //
 // PRIVATE CHATS ONLY: web_app buttons work only there. Every caller is a private-chat handler (group updates return
 // early in index.ts), and teacherAppButton also refuses a non-positive chat id.
-import { hasWebAppButton, sendWithWatchFallback } from "../_shared/miniapp-button.ts";
+import { BUTTON_FAULT_ACTIONS, hasWebAppButton, sendWithWatchFallback } from "../_shared/miniapp-button.ts";
 import { isUuid } from "../_shared/miniapp-links.ts";
 import { sendTelegram, type SendOutcome } from "../_shared/telegram-send.ts";
 import { logHealthOnce } from "../_shared/edge.ts";
@@ -192,7 +193,7 @@ export function isNotModified(error: string | null | undefined): boolean {
  * Telegram refused a BUTTON (BUTTON_TYPE_INVALID, BUTTON_URL_INVALID, "…Web App URL … is invalid") — the only
  * 400 a resend without the web_app buttons can fix. Narrower than the shared isWatchContentRejection on purpose:
  * an edit also fails with "message to edit not found" / "message can't be edited", which must neither be retried
- * nor raise the miniapp_button_rejected alarm.
+ * nor raise the teacher_miniapp_button_rejected signal.
  */
 export function isButtonRejection(r: { ok: boolean; status: number; error: string | null }): boolean {
   return !r.ok && r.status === 400 && /button|web ?app/i.test(r.error || "");
@@ -217,8 +218,9 @@ async function cardSend(
   try {
     const first = await send(payload(keyboard));
     if (first.ok || !hasWebAppButton(keyboard) || !isButtonRejection(first)) return first;
-    // The same shared alarm the other senders raise (watch_button_watchdog reads it), once per day for the card.
-    await logHealthOnce(admin, "miniapp_button_rejected", `rejected:${FN}:teacher_card`, {
+    // The TEACHER fault row (BUTTON_FAULT_ACTIONS.teacher), once per day for the card: the card's web_app buttons
+    // open /tg/teacher, and 'miniapp_button_rejected' would raise the STUDENT watch-button alarm.
+    await logHealthOnce(admin, BUTTON_FAULT_ACTIONS.teacher.rejected, `rejected:${FN}:teacher_card`, {
       fn: FN, what: "teacher_card", method, status: first.status, error: first.error,
     });
     return await send(payload(withoutWebApp(keyboard)));

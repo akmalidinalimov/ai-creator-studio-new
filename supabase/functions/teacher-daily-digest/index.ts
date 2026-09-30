@@ -301,7 +301,8 @@ Deno.serve(async (req) => {
     });
 
     // Core report — its own message, never at risk from the board below. A web_app button Telegram rejects is
-    // resent ONCE with today's magic link (alarmed as miniapp_button_rejected), so the report itself is never lost.
+    // resent ONCE with today's magic link (recorded as teacher_miniapp_button_rejected — the buttons open
+    // /tg/teacher, so never the student watch-button alarm), so the report itself is never lost.
     // record:false: a failure writes its own teacher_daily_report_failed row below.
     const { result: rep, retried } = await sendWithWatchFallback(
       (p) => sendTelegram(BOT_TOKEN, "sendMessage", p, { admin, purpose: "teacher_daily_report", recipientId: Number(t.telegram_id), record: false }),

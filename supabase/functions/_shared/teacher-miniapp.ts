@@ -18,19 +18,27 @@
 // Built on _shared/miniapp-button.ts (watchButton: MINIAPP_BASE validation + its bad_base alarm, the open-signal
 // tracking params). It never builds a magic link (each sender's today-button IS its fallback) and never a group
 // link: web_app buttons work only in private chats (a positive chat id). A web_app button Telegram rejects is
-// resent ONCE with today's button by the sender, through sendWithWatchFallback (alarmed as
-// miniapp_button_rejected). The tap is reported by the Mini App as admin_actions 'miniapp_open' {src, ref}.
+// resent ONCE with today's button by the sender, through sendWithWatchFallback.
+//
+// TEACHER SIGNALS STAY OUT OF THE STUDENT DETECTOR. watch_button_health() / watch_button_watchdog count every
+// 'miniapp_open' and every 'miniapp_button_fallback' / 'miniapp_button_rejected' row as STUDENT watch-button
+// evidence (opens_missing, fallback_fault — with the student kill-switch as the advice). So, by construction:
+//   the tap        → 'teacher_miniapp_open' {src, ref}  (tg-miniapp-auth/open.ts, TEACHER_MINIAPP_SRCS)
+//   a bad base     → 'teacher_miniapp_button_fallback'   (miniapp-button.ts: the path is under /tg/teacher)
+//   a rejection    → 'teacher_miniapp_button_rejected'   (miniapp-button.ts: every web_app button is /tg/teacher)
+// All three stay DB-visible in admin_actions; no watchdog reads them yet (a teacher-button detector needs a
+// migration of its own).
 //
 // KILL-SWITCH: platform_settings.teacher_miniapp = {"enabled": bool} — the SAME row the bot's 📝 Baholash
 // keyboard button and the ☰ "📝 Ustoz" menu button follow. Absent row → ON (the seed is {"enabled": true} and
 // the webhook reads an absent row the same way); present row → only a literal true. UNLIKE the webhook's
 // keyboard reader, a READ ERROR here is OFF (today's buttons always work) and DB-visible
 // ('teacher_miniapp_flag_read_failed', once a day per sending function).
-import { type InlineButton, watchButton, type WatchFlag, FLAG_OFF } from "./miniapp-button.ts";
-import { isUuid, type MiniAppSrc } from "./miniapp-links.ts";
+import { type InlineButton, isTeacherAppPath, TEACHER_APP_ROOT, watchButton, type WatchFlag, FLAG_OFF } from "./miniapp-button.ts";
+import { isTeacherMiniAppSrc, isUuid, type TeacherMiniAppSrc } from "./miniapp-links.ts";
 import { logHealthOnce } from "./edge.ts";
 
-export const TEACHER_HOME_PATH = "/tg/teacher";
+export const TEACHER_HOME_PATH = TEACHER_APP_ROOT;
 export const TEACHER_GRADE_PATH = "/tg/teacher/grade";
 export const TEACHER_STATS_PATH = "/tg/teacher/stats";
 export const TEACHER_BROADCAST_PATH = "/tg/teacher/broadcast";
@@ -102,7 +110,8 @@ export type TeacherAppButtonOpts = {
   chatId: number | string | null | undefined;
   /** An in-app path under /tg/teacher (TEACHER_*_PATH or teacherGradePath(id)). */
   path: string;
-  src: MiniAppSrc;
+  /** A TEACHER source only (by type): its tap is recorded as 'teacher_miniapp_open', never as a student open. */
+  src: TeacherMiniAppSrc;
   /** Rides in the open signal (e.g. the submission id). Dropped when not a UUID. */
   ref?: string | null;
   fn: string;
@@ -113,12 +122,14 @@ export type TeacherAppButtonOpts = {
 
 /**
  * The web_app button into the teacher Mini App, or null when the sender must keep today's button: flag off,
- * a malformed MINIAPP_BASE (alarmed once a day as miniapp_button_fallback), a path outside /tg/teacher, or a
- * chat that is not private. Never throws.
+ * a malformed MINIAPP_BASE (recorded once a day as teacher_miniapp_button_fallback), a path outside /tg/teacher,
+ * a source that is not a teacher source, or a chat that is not private. Never throws.
  */
 export async function teacherAppButton(o: TeacherAppButtonOpts): Promise<InlineButton | null> {
   if (!(Number(o.chatId) > 0)) return null;
-  if (!o.path.startsWith(TEACHER_HOME_PATH)) return null;
+  // The same path test the fault rows use (isTeacherAppPath) — "/tg/teachers" must not pass here and then be
+  // filed as a STUDENT fault; and a JS caller's student src would make the tap a student open.
+  if (!isTeacherAppPath(o.path) || !isTeacherMiniAppSrc(o.src)) return null;
   try {
     const r = await watchButton({
       chat: "private", text: o.text, flag: o.flag, fn: o.fn, admin: o.admin,

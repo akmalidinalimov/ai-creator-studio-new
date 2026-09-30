@@ -1,8 +1,8 @@
 // Pins the Mini App open signal: the open mode never links or mints, resolves by telegram_id only, and stamps
 // clicked_at only on the ref row of the OWNING profile. Run: deno test supabase/functions/tg-miniapp-auth/
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { clickTableFor, handleOpen, parseOpen, recordOpen } from "./open.ts";
-import { startParamToPath } from "../_shared/miniapp-links.ts";
+import { clickTableFor, handleOpen, openActionFor, parseOpen, recordOpen } from "./open.ts";
+import { MINIAPP_SRCS, startParamToPath, TEACHER_MINIAPP_SRCS } from "../_shared/miniapp-links.ts";
 
 const OWNER = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
@@ -125,16 +125,36 @@ Deno.test("a fresh sign-in's open is recorded cold:true", async () => {
 // The teacher Mini App buttons (_shared/teacher-miniapp.ts, 2026-09-30) report their taps through this same open
 // signal. NOTE: a _shared/ change alone does not redeploy this function (the pipeline deploys changed function
 // DIRS) — this test lives here so the new sources ship with it.
-Deno.test("teacher sources: accepted, counted, and never stamp a nudge / re-engagement row", async () => {
-  for (const src of ["teacher_hw_dm", "teacher_hw_reminder", "teacher_report", "teacher_card"] as const) {
+//
+// They are recorded as 'teacher_miniapp_open', NEVER 'miniapp_open': watch_button_health() counts every
+// 'miniapp_open' row (any src) as proof the STUDENT watch buttons work — opens_missing fires only when there are
+// zero in 48 h — so a single teacher tap on 🎯 Baholash would mask a broken student sign-in.
+Deno.test("teacher sources: accepted and counted as teacher_miniapp_open — never a student open, never a stamp", async () => {
+  for (const src of TEACHER_MINIAPP_SRCS) {
     assertEquals(clickTableFor(src), null);
     const d = db();
     // The Mini App reports the PATH only (the ?sub= query is not part of it); ref is the submission id.
     const r = await handleOpen(d, 7, { mode: "open", src, ref: NUDGE, path: "/tg/teacher/grade" });
     assertEquals(r, { ok: true, stamped: false });
-    const row = d.tables.admin_actions.find((a) => a.action === "miniapp_open")!;
+    assertEquals(d.tables.admin_actions.length, 1);
+    const row = d.tables.admin_actions[0];
+    assertEquals(row.action, "teacher_miniapp_open", src);
     assertEquals([row.details.src, row.details.ref, row.details.path], [src, NUDGE, "/tg/teacher/grade"]);
     assertEquals(d.tables.nudge_log[0].clicked_at, null);
+    // The cold (fresh sign-in) path uses the same action.
+    const c = db();
+    await recordOpen(c, OWNER, parseOpen({ src, path: "/tg/teacher" })!, true);
+    assertEquals([c.tables.admin_actions[0].action, c.tables.admin_actions[0].details.cold], ["teacher_miniapp_open", true]);
+  }
+});
+
+Deno.test("openActionFor: exactly the four teacher sources are teacher opens; 'teacher_nudge' is a STUDENT open", () => {
+  const teacher = MINIAPP_SRCS.filter((s) => openActionFor(s) === "teacher_miniapp_open");
+  assertEquals([...teacher].sort(), ["teacher_card", "teacher_hw_dm", "teacher_hw_reminder", "teacher_report"]);
+  // A teacher's nudge is a button the STUDENT opens (teacher-nudge-student) — it must keep feeding the student detector.
+  assertEquals(openActionFor("teacher_nudge"), "miniapp_open");
+  for (const s of ["daily_reminder", "streak_warning", "nudge_3d", "reengagement", "bot_dars", "broadcast", "daily_task"] as const) {
+    assertEquals(openActionFor(s), "miniapp_open", s);
   }
 });
 

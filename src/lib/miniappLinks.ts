@@ -25,7 +25,10 @@
 //   src/lib/miniappLinks.ts                       (the web / Mini App bundle, which cannot import supabase/functions)
 // src/test/miniapp-links-parity.test.ts fails if the two copies drift. Edit one, copy it over the other.
 
-/** Where a watch button came from — the open signal (admin_actions 'miniapp_open') is counted per source. */
+/**
+ * Where a watch button came from — the open signal (admin_actions 'miniapp_open', or 'teacher_miniapp_open' for
+ * TEACHER_MINIAPP_SRCS) is counted per source.
+ */
 export const MINIAPP_SRCS = [
   "daily_reminder",
   "streak_warning",
@@ -41,7 +44,7 @@ export const MINIAPP_SRCS = [
   "bot_dars",
   "bot_welcome",
   "teacher_nudge",
-  // Staff buttons into the TEACHER Mini App (_shared/teacher-miniapp.ts) — counted the same way:
+  // Staff buttons into the TEACHER Mini App (_shared/teacher-miniapp.ts) — see TEACHER_MINIAPP_SRCS:
   "teacher_hw_dm", //        🎯 Baholash on the new-homework DM (ref = the submission)
   "teacher_hw_reminder", //  🎯 Baholash on the 24 h ungraded reminder (ref = the submission)
   "teacher_report", //       the daily report's 📝 Baholash (N) / 👤 Profil
@@ -56,6 +59,26 @@ const SRC_SET: ReadonlySet<string> = new Set<string>(MINIAPP_SRCS);
 
 export function isMiniAppSrc(s: unknown): s is MiniAppSrc {
   return typeof s === "string" && SRC_SET.has(s);
+}
+
+/**
+ * The sources of buttons into the TEACHER Mini App. Their taps are recorded as 'teacher_miniapp_open', NOT
+ * 'miniapp_open': watch_button_health() counts every 'miniapp_open' row as proof that the STUDENT watch buttons
+ * work, so one teacher tap would hide a broken student sign-in for 48 h. An explicit list, never a 'teacher_'
+ * prefix: 'teacher_nudge' is a STUDENT button (a teacher's nudge, opened by the student).
+ */
+export const TEACHER_MINIAPP_SRCS = [
+  "teacher_hw_dm",
+  "teacher_hw_reminder",
+  "teacher_report",
+  "teacher_card",
+] as const satisfies readonly MiniAppSrc[];
+export type TeacherMiniAppSrc = (typeof TEACHER_MINIAPP_SRCS)[number];
+
+const TEACHER_SRC_SET: ReadonlySet<string> = new Set<string>(TEACHER_MINIAPP_SRCS);
+
+export function isTeacherMiniAppSrc(s: unknown): s is TeacherMiniAppSrc {
+  return typeof s === "string" && TEACHER_SRC_SET.has(s);
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
