@@ -6,7 +6,8 @@ import { effectiveLeafGrades, summarizeHomework } from "./homework-stats.ts";
 import { fanOutBroadcast } from "./broadcast-fanout.ts";
 import { isContentError, isRecipientError, isTerminal, tgResult } from "../_shared/telegram-classify.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";
-import { logHealth } from "../_shared/edge.ts";
+import { logHealth, logHealthOnce } from "../_shared/edge.ts";
+import { taughtScope } from "./teacher-scope.ts";
 import { botVoiceKey, recordGradeCardSkipped, recordGradeVoiceSkipped } from "../_shared/grade-card-signals.ts";
 import {
   type AutoRegisterSource, isRealReply, isRegisteredHomeworkTopic, mergeCappedMedia, recordAutoRegisterFailed,
@@ -7076,8 +7077,17 @@ async function handleCallback(admin: any, cq: any) {
     if (!_effId || (_effPersona !== "teacher" && _effPersona !== "admin")) { await answerCallback(cq.id); return; }
     const locale: Locale = normLocale(_clicker?.preferred_locale);
     const gid = data.slice("tprof:g:".length);
-    // Persist as the active group so other teacher flows follow along.
-    if (!_isImp) await admin.from("profiles").update({ active_teacher_group_id: gid }).eq("id", _effId);
+    // Persist as the active group so other teacher flows follow along, but only a group this user
+    // teaches: callback data is client-supplied (teacher-scope.ts). The card below falls back on its own.
+    if (!_isImp) {
+      if (taughtScope(gid, await teacherGroups(admin, _effId))) {
+        await admin.from("profiles").update({ active_teacher_group_id: gid }).eq("id", _effId);
+      } else {
+        await logHealthOnce(admin, "teacher_scope_ignored", `${_effId}:${gid}`,
+          { teacher_id: _effId, group_id: gid, callback: "tprof:g" },
+          { targetUserId: _effId, source: "telegram-bot-webhook" });
+      }
+    }
     const { text, keyboard } = await buildTeacherProfileCard(admin, _effId, locale, gid);
     await answerCallback(cq.id);
     await tgApi("editMessageText", {
@@ -7688,7 +7698,16 @@ async function handleCallback(admin: any, cq: any) {
     let groupIdScope: string | null = null;
     if (!isAdmin) {
       const { data: pr } = await admin.from("profiles").select("active_teacher_group_id").eq("id", _effId).maybeSingle();
-      groupIdScope = pr?.active_teacher_group_id || null;
+      const stored: string | null = pr?.active_teacher_group_id || null;
+      // A preference, not a grant (teacher-scope.ts): a foreign or stale group falls back to all own groups.
+      if (stored && _effId) {
+        groupIdScope = taughtScope(stored, await teacherGroups(admin, _effId));
+        if (!groupIdScope) {
+          await logHealthOnce(admin, "teacher_scope_ignored", `${_effId}:${stored}`,
+            { teacher_id: _effId, group_id: stored, callback: data.split(":").slice(0, 2).join(":") },
+            { targetUserId: _effId, source: "telegram-bot-webhook" });
+        }
+      }
     }
     await answerCallback(cq.id);
     if (data.startsWith("gs:grp:")) {
