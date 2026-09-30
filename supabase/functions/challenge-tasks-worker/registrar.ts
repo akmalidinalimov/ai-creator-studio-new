@@ -17,12 +17,15 @@ import type { SendResultOutcome } from "../_shared/telegram-send.ts";
 
 // deno-lint-ignore no-explicit-any
 type Db = any;
+// Telegram's `result` (a Message, a ChatMember, true …) — read field by field, like the bot's SendFn.
+// deno-lint-ignore no-explicit-any
+type TgResult = any;
 
 export type SendFn = (
   method: string,
   payload: Record<string, unknown>,
   opts?: { admin?: Db; purpose?: string; recipientId?: string | number | null; record?: boolean; topicMissingAction?: string },
-) => Promise<{ outcome: SendResultOutcome; result: any }>;
+) => Promise<{ outcome: SendResultOutcome; result: TgResult }>;
 
 export interface RegistrarDeps {
   admin: Db;
@@ -102,7 +105,7 @@ export async function registerDailyTaskPoster(d: RegistrarDeps, inp: RegisterInp
       await recordFailed(admin, "engine_error", inp, { error: redactSecrets(e).slice(0, 200) });
       return null;
     }
-    const out = await resp.json().catch(() => ({})) as Record<string, any>;
+    const out = await resp.json().catch(() => ({})) as TgResult;
     const r0 = (Array.isArray(out?.results) ? out.results[0] : null) ?? {};
     if (!r0.userId) {
       await recordFailed(admin, "engine_refused", inp, {

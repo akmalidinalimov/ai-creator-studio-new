@@ -21,7 +21,7 @@ function out(klass: SendResultOutcome["klass"] = "ok", extra: Partial<SendResult
 }
 
 /** A fake service-role client: rpc handlers by name (each call recorded), table rows for from() reads, inserts recorded. */
-function fake(rpc: Record<string, (args: Row, n: number) => Row | null>, tables: Record<string, Row[]> = {}) {
+function fake(rpc: Record<string, (args: Row, n: number) => Row | null>, tables: Record<string, Row[]> = {}, failing: string[] = []) {
   const calls: { name: string; args: Row }[] = [];
   const inserts: { table: string; row: Row }[] = [];
   const counts = new Map<string, number>();
@@ -43,7 +43,9 @@ function fake(rpc: Record<string, (args: Row, n: number) => Row | null>, tables:
         gte: () => b, limit: () => b, is: () => b, order: () => b,
         update: () => b,
         insert: (row: Row) => { inserts.push({ table, row }); return Promise.resolve({ data: null, error: null }); },
-        maybeSingle: () => Promise.resolve({ data: rows()[0] ?? null, error: null }),
+        maybeSingle: () => Promise.resolve(failing.includes(table)
+          ? { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } }
+          : { data: rows()[0] ?? null, error: null }),
         then: (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) => Promise.resolve({ data: rows(), error: null }).then(res, rej),
       };
       return b;
@@ -127,7 +129,7 @@ Deno.test("posts: sent → recorded with the message id; 429 → left leased (no
     { task_id: 1, group_id: "g3", kind: "summary", token: "t3", chat_id: -1003, thread_id: 10, summary: { done: 1, on_time: 1 } },
   ];
   const f = fake({ ...cfgOnly(ACTIVE), challenge_task_post_claim: once(items), challenge_task_post_record: () => ({ data: { ok: true }, error: null }) });
-  const r = recorder((m, p) => p.chat_id === -1002 ? { outcome: out("rate_limited", { retryAfterSec: 9 }), result: null }
+  const r = recorder((_m, p) => p.chat_id === -1002 ? { outcome: out("rate_limited", { retryAfterSec: 9 }), result: null }
     : p.chat_id === -1003 ? { outcome: out("topic_missing"), result: null } : null);
   const res = await runWorker(ENV, io(f.admin, r.send).io, {});
   assertEquals(r.sent.length, 3);
@@ -205,7 +207,7 @@ Deno.test("DMs: sent / blocked → skipped (terminal) / expired → dropped / 42
   ];
   const f = fake({ ...cfgOnly(ACTIVE), challenge_task_outbox_claim: once(items), challenge_task_outbox_record: () => ({ data: { ok: true }, error: null }) },
     { profiles: [{ id: "u1", name: "Aziz", preferred_locale: "ru" }] });
-  const r = recorder((m, p) => p.chat_id === 22 ? { outcome: out("recipient"), result: null }
+  const r = recorder((_m, p) => p.chat_id === 22 ? { outcome: out("recipient"), result: null }
     : p.chat_id === 44 ? { outcome: out("rate_limited", { retryAfterSec: 3 }), result: null } : null);
   const res = await runWorker(ENV, io(f.admin, r.send).io, {});
   assert(String(r.sent[0].payload.text).startsWith("☀️ Aziz, доброе утро!"), "the student's locale");
@@ -216,6 +218,40 @@ Deno.test("DMs: sent / blocked → skipped (terminal) / expired → dropped / 42
   assertEquals(rec[3]._error, "no_telegram_id");
   assert(String(rec[4]._error).startsWith("rate_limited"), "a 429 DM is re-queued (+10 min), not terminal");
   assertEquals(res.body.dms, { sent: 1, skipped: 2, expired: 1, deferred: 2 }, "the item after the 429 waits for its lease to expire");
+});
+
+Deno.test("result DM: rendered from the CURRENT state; a read failure is retried (failed, not skipped); a moved one is skipped", async () => {
+  const items = [
+    { id: 7, token: "o7", user_id: "u1", telegram_id: 11, kind: "result", submission_id: 70, payload: { decision: "accepted" } },
+    { id: 8, token: "o8", user_id: "u1", telegram_id: 11, kind: "result", submission_id: 80, payload: { decision: "rejected" } },
+  ];
+  const tables = {
+    challenge_task_submissions: [
+      { id: 70, status: "accepted", points_awarded: 3, late_days: 1, task_id: 5, group_id: "g1" },
+      { id: 80, status: "withdrawn", reason: null, points_awarded: 0, late_days: 0, task_id: 5, group_id: "g1" },
+    ],
+    challenge_tasks: [{ id: 5, title: "Prompt <1>", task_date: "2026-10-05" }],
+    groups: [{ id: "g1", daily_task_topic_url: "https://t.me/c/4440955972/144" }],
+  };
+  const rpc = { ...cfgOnly(ACTIVE), challenge_task_outbox_claim: once(items), challenge_task_outbox_record: () => ({ data: { ok: true }, error: null }) };
+  const f = fake(rpc, tables);
+  const r = recorder();
+  await runWorker(ENV, io(f.admin, r.send).io, {});
+  assertEquals(r.sent.length, 1);
+  assertEquals(r.sent[0].payload.text, "✅ «Prompt &lt;1&gt;» (5-oktabr) qabul qilindi: +3 ball (kechikkan — yarim ball).");
+  assertEquals(r.sent[0].opts.purpose, "challenge_task_dm_result");
+  const rec = f.named("challenge_task_outbox_record").map((x) => x.args);
+  assertEquals(rec.map((x) => [x._id, x._ok, x._terminal, x._error]), [[7, true, false, null], [8, false, true, "nothing_to_send"]],
+    "a submission withdrawn since the verdict: the group receipt says it; no DM");
+
+  const g = fake(rpc, tables, ["challenge_task_submissions"]);
+  const r2 = recorder();
+  const res = await runWorker(ENV, io(g.admin, r2.send).io, {});
+  assertEquals(r2.sent.length, 0);
+  const rec2 = g.named("challenge_task_outbox_record").map((x) => x.args);
+  assertEquals(rec2.map((x) => [x._id, x._ok, x._terminal]), [[7, false, false], [8, false, false]]);
+  assert(String(rec2[0]._error).startsWith("render_error: "));
+  assertEquals(res.body.status, "partial", "the read failure is in the run row");
 });
 
 Deno.test("identity sweep: every candidate through the resolver; linked / registered / unresolved tallied; 'attempted' recorded", async () => {

@@ -451,10 +451,12 @@ export async function runWorker(env: WorkerEnv, io: WorkerIO, req: WorkerRequest
       case "result": {
         const sid = Number(it.submission_id);
         if (!Number.isSafeInteger(sid) || sid <= 0) return null;
-        const { data: s } = await admin.from("challenge_task_submissions")
+        const { data: s, error: se } = await admin.from("challenge_task_submissions")
           .select("status, reason, points_awarded, late_days, task_id, group_id").eq("id", sid).maybeSingle();
+        if (se) throw new Error(`submission read: ${errCode(se)}`); // a read failure is retried, never a skipped DM
         if (!s) return null;
-        const { data: t } = await admin.from("challenge_tasks").select("id, title, task_date").eq("id", Number(s.task_id)).maybeSingle();
+        const { data: t, error: te } = await admin.from("challenge_tasks").select("id, title, task_date").eq("id", Number(s.task_id)).maybeSingle();
+        if (te) throw new Error(`task read: ${errCode(te)}`);
         let topicUrl: string | null = null;
         if (typeof s.group_id === "string") {
           const { data: g } = await admin.from("groups").select("daily_task_topic_url").eq("id", s.group_id).maybeSingle();
@@ -503,7 +505,11 @@ export async function runWorker(env: WorkerEnv, io: WorkerIO, req: WorkerRequest
         try {
           r = await renderDm(it, who.locale, who.name);
         } catch (e) {
+          // a transient read failure: failed (re-queued in 10 minutes by outbox_record), not skipped
           errors.push(`dm_render: ${redactSecrets(e).slice(0, 160)}`);
+          await outboxRecord(it, false, `render_error: ${redactSecrets(e).slice(0, 200)}`, false);
+          inc(dms, "failed");
+          continue;
         }
         if (!r || !r.text.trim()) {
           await outboxRecord(it, false, "nothing_to_send", true);
