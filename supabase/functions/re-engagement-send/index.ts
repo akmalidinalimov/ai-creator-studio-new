@@ -1,8 +1,14 @@
 // Sends re-engagement Telegram messages for a campaign.
 // Modes: { mode: "test" } -> sends only to @alikhanova_admin (always allowed).
 //        { mode: "all", confirm: "YUBORISH" } -> sends to all eligible students (requires campaign.enabled=true).
+//
+// 2026-09-30: with the student Mini App on, the campaign button opens the Mini App (web_app → /dashboard)
+// instead of a 7-day magic link in Telegram's browser. The delivery id is generated before the send and rides
+// in the button as ?ref=<id>; the Mini App's open signal stamps re_engagement_deliveries.clicked_at on it
+// (magic_token is null on that path). Flag off → the magic link, unchanged.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
+import { legacyWatchButton, loadStudentMiniAppFlag, type PrivateWatchOpts, sendWithWatchFallback, watchButton } from "../_shared/miniapp-button.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -100,6 +106,8 @@ Deno.serve(async (req) => {
     let sent = 0, failed = 0;
     const errors: any[] = [];
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const flag = await loadStudentMiniAppFlag(admin);
+    const buttons = { web_app: 0, magic_link: 0 };
 
     for (const r of recipients) {
       // 25/sec rate limit
@@ -107,33 +115,57 @@ Deno.serve(async (req) => {
 
       try {
         if (!r.telegram_id) throw new Error(`profile ${r.id} has no telegram_id`);
-        // Generate magic-link token (uses existing telegram_magic_links table)
-        const token = crypto.randomUUID();
-        const { error: tErr } = await admin.from("telegram_magic_links").insert({
-          token,
-          user_id: r.id,
-          purpose: "reengagement",
-          target_path: "/dashboard",
-          expires_at: expiresAt,
-        });
-        if (tErr) throw new Error(`magic_link insert failed: ${tErr.message || JSON.stringify(tErr)}`);
-
-        const url = `${SITE_URL}/auth/magic?t=${token}`;
+        // The delivery row's id, known BEFORE the send: it is the Mini App button's ref.
+        const deliveryId = crypto.randomUUID();
         const { body: tplBody, btn } = pickTpl(campaign, r.preferred_locale);
         const text = render(tplBody, r);
-        // Drainer adoption: send via the shared primitive but CLASSIFY ONLY (record:false) — this loop
-        // writes its own per-row re_engagement_deliveries status below, so recording here would double-log.
-        // Payload is unchanged (no parse_mode; the magic-link url button preserved). Note: SendOutcome does
-        // not surface the response body, so the (write-only, never-read) telegram_message_id is no longer
-        // captured — the sent/failed status + the Telegram error description are still recorded.
-        const send = await sendTelegram(BOT_TOKEN, "sendMessage", {
+        // Today's link (the fallback): a magic-link token in telegram_magic_links — a failed insert still
+        // fails this recipient, exactly as before.
+        const magicLink = async (targetPath: string) => {
+          const token = crypto.randomUUID();
+          const { error: tErr } = await admin.from("telegram_magic_links").insert({
+            token,
+            user_id: r.id,
+            purpose: "reengagement",
+            target_path: targetPath,
+            expires_at: expiresAt,
+          });
+          if (tErr) throw new Error(`magic_link insert failed: ${tErr.message || JSON.stringify(tErr)}`);
+          return { url: `${SITE_URL}/auth/magic?t=${token}`, token };
+        };
+        const opts: PrivateWatchOpts = {
+          chat: "private", text: btn, flag, fn: "re-engagement-send", admin,
+          miniPath: "/dashboard", legacyPath: "/dashboard", track: { src: "reengagement", ref: deliveryId }, magicLink,
+        };
+        const w = await watchButton(opts);
+        if (!w.button) throw new Error("magic_link insert failed: no button");
+        let token: string | null = w.token ?? null;
+        if (w.mode === "web_app") buttons.web_app++; else buttons.magic_link++;
+        const payload = (button: Record<string, unknown>) => ({
           chat_id: Number(r.telegram_id),
           text,
           disable_web_page_preview: true,
-          reply_markup: { inline_keyboard: [[{ text: btn, url }]] },
-        }, { record: false });
+          reply_markup: { inline_keyboard: [[button]] },
+        });
+        // Drainer adoption: send via the shared primitive but CLASSIFY ONLY (record:false) — this loop
+        // writes its own per-row re_engagement_deliveries status below, so recording here would double-log.
+        // Payload is unchanged (no parse_mode; the watch button — Mini App or the magic link — preserved). Note:
+        // SendOutcome does not surface the response body, so the (write-only, never-read) telegram_message_id is
+        // not captured — the sent/failed status + the Telegram error description are still recorded.
+        const { result: send } = await sendWithWatchFallback(
+          (p) => sendTelegram(BOT_TOKEN, "sendMessage", p, { record: false }),
+          payload(w.button),
+          async () => {
+            const lg = await legacyWatchButton(opts, "ok");
+            if (!lg.button) return null;
+            token = lg.token ?? null;
+            return payload(lg.button);
+          },
+          { fn: "re-engagement-send", admin },
+        );
 
         await admin.from("re_engagement_deliveries").insert({
+          id: deliveryId,
           campaign_id,
           profile_id: r.id,
           attempt_num: mode === "test" ? 0 : attempt_num,
@@ -161,7 +193,7 @@ Deno.serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ ok: true, mode, campaign_id, attempted: recipients.length, sent, failed, errors: errors.slice(0, 10) }),
+      JSON.stringify({ ok: true, mode, campaign_id, attempted: recipients.length, sent, failed, buttons, errors: errors.slice(0, 10) }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (e) {

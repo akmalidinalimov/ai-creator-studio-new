@@ -3,10 +3,22 @@
 // lease) so overlapping ticks can't double-send; check the Telegram `ok` field; terminal failures
 // (blocked / never-started / bad content) are recorded, transient ones retried (cap 5). Never marks a
 // failed send as sent. Recomputes broadcasts.sent/failed from the deliveries and flips status→done.
+//
+// 2026-09-30: a button whose url is OUR site opens inside the student Mini App (web_app, signed in) instead of
+// Telegram's built-in browser, when platform_settings.student_miniapp is on. Other urls are untouched; a
+// rejected web_app button is resent once with the original url.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { isTerminal } from "../_shared/telegram-classify.ts";
 import { sendTelegram, type SendOutcome } from "../_shared/telegram-send.ts";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
+import {
+  DEFAULT_MINIAPP_BASE,
+  loadStudentMiniAppFlag,
+  MINIAPP_BASE,
+  sendWithWatchFallback,
+  watchButton,
+} from "../_shared/miniapp-button.ts";
+import { siteButtonPath } from "./site-link.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,6 +28,8 @@ const corsHeaders = {
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const MAX_ATTEMPTS = 5;
+// Our site, in every spelling a broadcast author might paste.
+const SITE_ORIGINS = [MINIAPP_BASE, DEFAULT_MINIAPP_BASE, "https://aicreator.academy", Deno.env.get("SITE_URL") || ""].filter(Boolean);
 const CLAIM_LEASE_MS = 90_000;
 const BATCH = 100;
 
@@ -79,6 +93,7 @@ Deno.serve(async (req) => {
 
   const stamp = () => new Date().toISOString();
   let processed = 0, sent = 0, failed = 0, retrying = 0, deferred = 0;
+  const flag = await loadStudentMiniAppFlag(admin);
 
   // Quiet hours (22:00–08:00 Tashkent, UTC+5): mode='all' rows that come due at night — e.g. a
   // transient retry landing just after 22:00 — are re-deferred to the next 08:00 rather than sent,
@@ -103,20 +118,33 @@ Deno.serve(async (req) => {
 
     const loc = localeById.get(d.user_id) || "uz";
     const body: string = (loc === "ru" ? b.body_ru : loc === "en" ? b.body_en : null) || b.body_uz;
-    const button = b.button_label && b.button_url
+    const plain = b.button_label && b.button_url
       ? { inline_keyboard: [[{ text: b.button_label, url: b.button_url }]] }
       : undefined;
+    // A site link → the Mini App (private DM, flag on); flag off / other urls → the plain url button above.
+    const sitePath = plain ? siteButtonPath(b.button_url, SITE_ORIGINS) : null;
+    const w = sitePath
+      ? await watchButton({
+        chat: "private", text: b.button_label, flag, fn: "broadcast-drainer", admin,
+        miniPath: sitePath, legacyPath: sitePath, track: { src: "broadcast", ref: b.id },
+        magicLink: () => Promise.resolve(b.button_url as string), // the "legacy" link is the author's own url
+      })
+      : null;
+    const button = w?.button ? { inline_keyboard: [[w.button]] } : plain;
     const chatId = Number(d.telegram_id);
 
     // Drainer adoption: send via the shared primitive but CLASSIFY ONLY (record:false) — this loop
     // writes its own per-row broadcast_deliveries status below, so recording here would double-log.
-    let res: SendOutcome;
-    if (b.image_path) {
-      const photo = `${SUPABASE_URL}/storage/v1/object/public/broadcast-images/${b.image_path}`;
-      res = await sendTelegram(BOT_TOKEN, "sendPhoto", { chat_id: chatId, photo, caption: body, parse_mode: "HTML", reply_markup: button }, { record: false });
-    } else {
-      res = await sendTelegram(BOT_TOKEN, "sendMessage", { chat_id: chatId, text: body, parse_mode: "HTML", disable_web_page_preview: true, reply_markup: button }, { record: false });
-    }
+    const payload: Record<string, unknown> = b.image_path
+      ? { chat_id: chatId, photo: `${SUPABASE_URL}/storage/v1/object/public/broadcast-images/${b.image_path}`, caption: body, parse_mode: "HTML", reply_markup: button }
+      : { chat_id: chatId, text: body, parse_mode: "HTML", disable_web_page_preview: true, reply_markup: button };
+    const method = b.image_path ? "sendPhoto" : "sendMessage";
+    const { result: res }: { result: SendOutcome } = await sendWithWatchFallback(
+      (p) => sendTelegram(BOT_TOKEN, method, p, { record: false }),
+      payload,
+      () => Promise.resolve({ ...payload, reply_markup: plain }),
+      { fn: "broadcast-drainer", admin },
+    );
 
     if (res.ok) {
       await admin.from("broadcast_deliveries").update({ status: "sent", sent_at: stamp(), error: null }).eq("id", d.id);

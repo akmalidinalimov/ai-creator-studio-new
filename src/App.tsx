@@ -45,6 +45,8 @@ const Leaderboard = lazy(() => import("./pages/Leaderboard"));
 const Profile = lazy(() => import("./pages/Profile"));
 const Homework = lazy(() => import("./pages/Homework"));
 const ModuleHomework = lazy(() => import("./pages/ModuleHomework"));
+// /continue[/:courseId] — the landing of every Mini App watch button: resolves the next unfinished lesson.
+const Continue = lazy(() => import("./pages/Continue"));
 
 
 // Lazy-load admin pages (code-split)
@@ -140,6 +142,8 @@ const App = () => (
             <Route path="/lessons" element={<RequireAuth><Lessons /></RequireAuth>} />
             <Route path="/course/:courseId" element={<RequireAuth><CoursePage /></RequireAuth>} />
             <Route path="/lesson/:courseId/:lessonId" element={<RequireAuth><LessonPage /></RequireAuth>} />
+            <Route path="/continue" element={<RequireAuth><Continue /></RequireAuth>} />
+            <Route path="/continue/:courseId" element={<RequireAuth><Continue /></RequireAuth>} />
             <Route path="/quiz/:moduleId" element={<RequireAuth><QuizPage /></RequireAuth>} />
             <Route path="/settings" element={<RequireAuth><Settings /></RequireAuth>} />
             <Route path="/leaderboard" element={<RequireAuth><Leaderboard /></RequireAuth>} />
