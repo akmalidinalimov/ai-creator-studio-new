@@ -28,11 +28,42 @@
 // Reminder semantics are deliberately UNCHANGED: same ±30-minute windows, quiet hours, reminder_time
 // quirks, dedup columns, messages, buttons, deep links and drip reset. Each rule below carries a note
 // saying which old line it reproduces.
+//
+// v4 (2026-09-30) — the watch buttons open the MINI APP. The daily / streak / drip button used to be a
+// magic-link url button, which Telegram opens in its built-in browser. With platform_settings.student_miniapp
+// on (and its watch_buttons sub-key not false) it is now a web_app button to /continue/<course> (drip 14:
+// /dashboard) — the Mini App signs the student in from initData and resumes their next lesson; no magic-link
+// row is written (one request less per reminder on the heavy 19:30 tick). Flag off → today's magic link,
+// byte-identical. The builder is _shared/miniapp-button.ts; every run reports buttons.{web_app, magic_link,
+// none, rejected, reasons} in engagement_run_done.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { logHealth } from "../_shared/edge.ts";
-import { fetchAllKeyset, reminderWindows, type Row, type WindowUser, ymdInTz } from "./core.ts";
+import {
+  dailyKeyboard,
+  dripKeyboard,
+  fetchAllKeyset,
+  reminderWindows,
+  type Row,
+  streakKeyboard,
+  type WindowUser,
+  ymdInTz,
+} from "./core.ts";
+import {
+  type ButtonTally,
+  FLAG_OFF,
+  legacyWatchButton,
+  loadStudentMiniAppFlag,
+  newButtonTally,
+  type PrivateWatchOpts,
+  sendWithWatchFallback,
+  tallyButton,
+  watchButton,
+  type WatchFlag,
+} from "../_shared/miniapp-button.ts";
+import { continuePath, type MiniAppSrc } from "../_shared/miniapp-links.ts";
+import type { SendOutcome } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -101,6 +132,10 @@ type Ctx = {
   content: Map<string, Promise<CourseContent | null>>;
   completed: Map<string, () => Promise<Map<string, Set<string>> | null>>;
   notifBuffer: Row[];
+  /** platform_settings.student_miniapp, read ONCE per run (fail-closed). */
+  flag: WatchFlag;
+  /** How every watch button of this run was built — reported in engagement_run_done. */
+  buttons: ButtonTally;
 };
 
 type CourseContent = {
@@ -135,6 +170,8 @@ function newCtx(): Ctx {
     content: new Map(),
     completed: new Map(),
     notifBuffer: [] as Row[],
+    flag: FLAG_OFF,
+    buttons: newButtonTally(),
   } as unknown as Ctx;
   const countingFetch: typeof fetch = (input, init) => {
     ctx.requests++;
@@ -158,6 +195,32 @@ function newCtx(): Ctx {
 function tg(ctx: Ctx, method: string, body: any, purpose: string) {
   ctx.requests++;
   return sendTelegram(BOT_TOKEN, method, body, { admin: ctx.admin, purpose, recipientId: body?.chat_id ?? null });
+}
+
+// The watch button for one reminder (Mini App web_app, or today's magic link when the flag is off) plus a
+// `legacy()` that rebuilds today's magic-link button — used only if Telegram rejects the web_app button.
+async function reminderWatch(
+  ctx: Ctx, userId: string, text: string, miniPath: string, legacyPath: string, src: MiniAppSrc,
+) {
+  const opts: PrivateWatchOpts = {
+    chat: "private", text, flag: ctx.flag, fn: "cron-engagement", admin: ctx.admin,
+    miniPath, legacyPath, track: { src },
+    magicLink: (p) => magicLink(ctx.admin, userId, p),
+  };
+  const r = await watchButton(opts);
+  tallyButton(ctx.buttons, r);
+  return { button: r.button, legacy: async () => (await legacyWatchButton(opts, "ok")).button };
+}
+
+// Send a reminder; a web_app button Telegram refuses (content error) is resent ONCE with the magic link.
+async function sendReminder(
+  ctx: Ctx, payload: Record<string, unknown>, rebuild: () => Promise<Record<string, unknown> | null>, purpose: string,
+): Promise<SendOutcome> {
+  const { result, retried } = await sendWithWatchFallback(
+    (p) => tg(ctx, "sendMessage", p, purpose), payload, rebuild, { fn: "cron-engagement", admin: ctx.admin },
+  );
+  if (retried) ctx.buttons.rejected++;
+  return result;
 }
 
 function randomToken(len = 32): string {
@@ -495,6 +558,11 @@ function runDetails(ctx: Ctx, s: Stats) {
     partial_reason: s.partial_reason,
     error: s.error,
     prefetch_failed: ctx.prefetchFailed,
+    // Mini App watch buttons: web_app = opened in the Mini App; magic_link = today's fallback (reasons says
+    // why: flag_off / watch_off expected, anything else is a fault the watchdog reports); rejected = Telegram
+    // refused a web_app button and the magic link was resent.
+    buttons: ctx.buttons,
+    miniapp: ctx.flag,
     requests: ctx.requests,
     duration_ms: Date.now() - ctx.startedAt,
   };
@@ -522,6 +590,8 @@ async function run(ctx: Ctx, stats: Stats): Promise<Response> {
   const admin = ctx.admin;
   const courseId = await getDefaultCourseId(admin);
   const templates = await loadTemplates(admin);
+  // The student Mini App kill-switch, once per run: every watch button below follows it (fail-closed).
+  ctx.flag = await loadStudentMiniAppFlag(admin);
 
   // Paginated: the old single select silently stopped at PostgREST's 1000-row cap.
   const prof = await fetchAllKeyset(
@@ -591,13 +661,14 @@ async function run(ctx: Ctx, stats: Stats): Promise<Response> {
           const tpl = pickTemplate(templates, "daily_reminder", locale);
           const text = interpolate(tpl.body, { first_name: firstName || "👋" });
           const nextId = await getNextIncompleteLesson(ctx, u.id, userCourseId);
-          const inline: any[][] = [];
-          if (nextId && tpl.button_label) {
-            const url = await magicLink(admin, u.id, `/lesson/${userCourseId}/${nextId}`);
-            inline.push([{ text: tpl.button_label, url }]);
-          }
-          inline.push([{ text: locale === "ru" ? "Не сегодня" : locale === "en" ? "Not today" : "Bugun emas", callback_data: "ack:not_today" }]);
-          const out = await tg(ctx, "sendMessage", { chat_id: chatId, text, reply_markup: { inline_keyboard: inline } }, "daily_reminder");
+          // (old) a button only when nextId && button_label; "Bugun emas" always. The Mini App button opens
+          // /continue/<course>, which resolves the next lesson when TAPPED (never a stale one).
+          const w = nextId && tpl.button_label
+            ? await reminderWatch(ctx, u.id, tpl.button_label, continuePath(userCourseId), `/lesson/${userCourseId}/${nextId}`, "daily_reminder")
+            : null;
+          const payload = { chat_id: chatId, text, reply_markup: dailyKeyboard(w?.button ?? null, locale) };
+          const out = await sendReminder(ctx, payload,
+            async () => (w ? { ...payload, reply_markup: dailyKeyboard(await w.legacy(), locale) } : null), "daily_reminder");
           // sent.* counts DELIVERED messages only (it is a health signal in engagement_run_done); a failed
           // send is not_delivered. The dedup stamp below is written either way, as it always was: a student
           // who never pressed Start or blocked the bot must not be retried every tick.
@@ -618,12 +689,12 @@ async function run(ctx: Ctx, stats: Stats): Promise<Response> {
             const tpl = pickTemplate(templates, "streak_warning", locale);
             const text = interpolate(tpl.body, { first_name: firstName, streak_days: cs });
             const nextId = await getNextIncompleteLesson(ctx, u.id, userCourseId);
-            const inline: any[][] = [];
-            if (nextId && tpl.button_label) {
-              const url = await magicLink(admin, u.id, `/lesson/${userCourseId}/${nextId}`);
-              inline.push([{ text: tpl.button_label, url }]);
-            }
-            const out = await tg(ctx, "sendMessage", { chat_id: chatId, text, reply_markup: inline.length ? { inline_keyboard: inline } : undefined }, "streak_warning");
+            const w = nextId && tpl.button_label
+              ? await reminderWatch(ctx, u.id, tpl.button_label, continuePath(userCourseId), `/lesson/${userCourseId}/${nextId}`, "streak_warning")
+              : null;
+            const payload = { chat_id: chatId, text, reply_markup: streakKeyboard(w?.button ?? null) };
+            const out = await sendReminder(ctx, payload,
+              async () => (w ? { ...payload, reply_markup: streakKeyboard(await w.legacy()) } : null), "streak_warning");
             if (out.ok) stats.sent.streak++; else stats.not_delivered++;
             await admin.from("profiles").update({ last_streak_warning_at: new Date().toISOString() }).eq("id", u.id);
             await logNotif(ctx, stats, u.id, "streak_warning", { streak: cs });
@@ -666,16 +737,21 @@ async function run(ctx: Ctx, stats: Stats): Promise<Response> {
           const tpl = pickTemplate(templates, key, locale);
           const text = interpolate(tpl.body, { first_name: firstName || "👋" });
           let path = "/dashboard";
+          let miniPath = "/dashboard"; // (old) stage 14 always links the dashboard
           if (stage !== 14) {
             const userCourseId = await userCourse();
             if (userCourseId) {
+              miniPath = continuePath(userCourseId);
               const nextId = await getNextIncompleteLesson(ctx, u.id, userCourseId);
               if (nextId) path = `/lesson/${userCourseId}/${nextId}`;
             }
           }
-          const url = await magicLink(admin, u.id, path);
-          const reply_markup = tpl.button_label ? { inline_keyboard: [[{ text: tpl.button_label, url }]] } : undefined;
-          const out = await tg(ctx, "sendMessage", { chat_id: chatId, text, reply_markup }, "reengagement_drip");
+          const w = tpl.button_label
+            ? await reminderWatch(ctx, u.id, tpl.button_label, miniPath, path, `drip_${stage}` as MiniAppSrc)
+            : null;
+          const payload = { chat_id: chatId, text, reply_markup: dripKeyboard(w?.button ?? null) };
+          const out = await sendReminder(ctx, payload,
+            async () => (w ? { ...payload, reply_markup: dripKeyboard(await w.legacy()) } : null), "reengagement_drip");
           if (out.ok) stats.sent.drip++; else stats.not_delivered++;
           await admin.from("profiles").update({
             last_inactive_warning_at: new Date().toISOString(),

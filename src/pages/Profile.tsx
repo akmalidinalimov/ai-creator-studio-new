@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { Camera, Zap, TrendingUp, Flame, Award, Globe, Bell, Eye, ChevronRight } from "lucide-react";
+import { Camera, Zap, TrendingUp, Flame, Award, Globe, Bell, Eye, ChevronRight, UserPen } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { mutate } from "@/lib/mutate";
+import { reportClientError } from "@/lib/beacon";
+import { readStatsRow } from "@/lib/studentStats";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { Switch } from "@/components/ui/switch";
@@ -101,11 +103,23 @@ function StudentProfile({ userId }: { userId: string | null }) {
             .eq("user_id", userId),
         ]);
         if (cancelled) return;
+        // The numbers ARE this screen: a failed or empty profile_stats read shows the retry state,
+        // never "0 XP · level 1 · Bronza" as if it were true — and it is beaconed (graceful ≠ silent).
+        const statsRead = readStatsRow<StatsRow>(sRes as any);
+        if (!statsRead.ok) {
+          reportClientError({ type: "other", message: "profile_stats_failed", extra: { code: statsRead.code, surface: "profile" } });
+          setError(true);
+          return;
+        }
+        // The other reads degrade (no name / group / badge list) but never silently.
+        const failed = [["profiles", pRes], ["public_profile", pubRes], ["user_badges", ubRes]]
+          .filter(([, r]) => (r as any)?.error)
+          .map(([name, r]) => `${name}:${(r as any).error.code || (r as any).error.message || "error"}`);
+        if (failed.length) reportClientError({ type: "other", message: "profile_read_failed", extra: { parts: failed, surface: "profile" } });
         setProfile((pRes.data as any) || null);
         const pubRow: any = Array.isArray(pubRes.data) ? pubRes.data[0] : pubRes.data;
         setGroupName(pubRow?.group_name ?? null);
-        const sRow: any = Array.isArray(sRes.data) ? sRes.data[0] : sRes.data;
-        setStats(sRow || null);
+        setStats(statsRead.row);
         const eb = (((ubRes.data as any) || []) as any[])
           .map((r) => r.badges)
           .filter(Boolean) as EarnedBadge[];
@@ -321,6 +335,16 @@ function StudentProfile({ userId }: { userId: string | null }) {
         {/* settings */}
         <SectionHeader title={t("profile.settingsTitle")} />
         <Card className="divide-y divide-border p-0">
+          {/* Name / surname / Instagram live in the Settings "Profil" card — say so here, where a
+              student looks for "edit my info" (Challenge 6.0 Instagram points need the handle). */}
+          <Link to="/settings#profile" className="flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-tint/40">
+            <UserPen className="size-[18px] flex-none text-muted-foreground" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13.5px] font-bold text-foreground">{t("profile.settingsPersonal")}</span>
+              <span className="block text-xs font-semibold text-muted-foreground">{t("profile.settingsPersonalHint")}</span>
+            </span>
+            <ChevronRight className="size-4 flex-none text-muted-foreground" />
+          </Link>
           <Link to="/settings" className="flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-tint/40">
             <Globe className="size-[18px] flex-none text-muted-foreground" />
             <span className="flex-1 text-[13.5px] font-bold text-foreground">{t("profile.settingsLanguage")}</span>

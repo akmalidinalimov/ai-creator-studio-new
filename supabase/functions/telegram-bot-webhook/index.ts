@@ -25,10 +25,16 @@ import {
 import { likeEscape } from "../_shared/username.ts";
 import { resolveGroupPoster } from "../_shared/group-poster-identity.ts";
 import { hwLabel } from "../_shared/hw-label.ts";
+import { continuePath, coursePath, lessonPath, sendStudentWatchMessage, studentWatchButton } from "./miniapp-buttons.ts";
 import { loadAssignmentLabels, loadHwLabel } from "../_shared/hw-label-load.ts";
 import {
   breakdownScopeLine, gradingHeader, hwTeacherBody, moduleCourseMark, thenWho, withLabelLine, withWho,
 } from "./hw-labels.ts";
+import { loadGroupRanking, loadWeeklyStar } from "../_shared/group-rank.ts";
+import { boardLines, cardRankBit, statsRankLines } from "./rank-views.ts";
+import {
+  bellCallback, hourPickerKeyboard, parseBellTarget, parseReminderHour, parseTimezone, saveBotSetting, tzPickerKeyboard,
+} from "./bot-settings.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -155,8 +161,7 @@ const T = {
     kbStreakOld: "📊 Statistikam",
     kbCertOld: "🎓 Sertifikat",
     statsTitle: "📊 <b>Statistikam</b>",
-    levelNames: ["Boshlovchi", "O'quvchi", "Bilimdon", "Usta", "Master"],
-    statsLevel: (emoji: string, name: string, score: number, barStr: string, isMax: boolean, nextEmoji: string, nextName: string) => `⭐ Daraja: ${emoji} <b>${name}</b> (${score}/100)\n${barStr}${isMax ? " — eng yuqori daraja! 🏆" : ` → ${nextEmoji} ${nextName}`}`,
+    statsLevel: (level: number, xp: number, toNext: string) => `⭐ Daraja: <b>${level}</b> · ⚡${xp} XP${toNext ? `\n${toNext}` : ""}`,
     statsLessons: (d: number, tot: number, watch: string) => `📚 Darslar: <b>${d}/${tot}</b>${watch ? ` · ${watch} jami` : ""}\n${bar(d, tot)}`,
     statsStreak: (cur: number, best: number, barStr: string, next: number | null, atMilestone: boolean) => `🔥 <b>${cur} kunlik streak</b>${atMilestone ? " 🎉 yangi bosqich!" : ""} · rekord: ${best}\n${barStr}${next ? ` → ${next} kun` : " 🏆 eng yuqori!"}`,
     statsStreakNone: "🔥 Streak: hali boshlanmadi",
@@ -166,15 +171,13 @@ const T = {
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Uy vazifalari: <b>${sub}/${totalLeaves}</b>${scored ? ` (${scored} ta baholangan)` : ""}\n${bar(sub, totalLeaves)}`,
     statsHomeworkPoints: (earned: number, maxTotal: number) => `📈 Vazifa ballari: <b>${earned}/${maxTotal}</b>`,
     statsHomeworkNone: "📝 Uy vazifalari: hali topshirilmadi",
-    statsRanking: (r: number, tot: number, sc: number) => `🏆 Reyting: <b>${r}-o'rin</b> / ${tot} talaba`,
-    statsRankingNone: "🏆 Reyting: hali sanalmadi (faollik kerak — kamida 1 ta dars ko'ring)",
     statsGroupTitle: "🏆 <b>Guruh reytingi</b>",
-    statsGroupRow: (rankLabel: string, name: string, score: number) => `${rankLabel} ${name} — ${score}`,
-    statsGroupRowMe: (rankLabel: string, score: number) => `<b>${rankLabel} 👉 Siz — ${score}</b>`,
+    statsGroupRow: (rankLabel: string, name: string, score: number) => `${rankLabel} ${name} — ⚡${score}`,
+    statsGroupRowMe: (rankLabel: string, score: number) => `<b>${rankLabel} 👉 Siz — ⚡${score}</b>`,
     statsGroupSummary: (rank: number, total: number, gap: string) => `📊 Guruhdagi o'rningiz: <b>${rank}/${total}</b>${gap}`,
     statsStar: (name: string) => `⭐ Hafta yulduzi: <b>${name}</b>`,
     statsStarMe: "⭐ <b>Bu hafta siz guruh yulduzisiz!</b> 🎉",
-    statsGroupGap: (nextRank: number, gap: number) => ` · ${nextRank}-o'ringa ${gap} ball qoldi`,
+    statsGroupGap: (nextRank: number, gap: number) => ` · ${nextRank}-o'ringa ${gap} XP qoldi`,
     statsBadges: (e: number, tot: number) => `🏅 Nishonlar: <b>${e}/${tot}</b>`,
     statsBadgesShowcase: (icons: string, earned: number, total: number) => `🏅 Nishonlar: <b>${earned}/${total}</b>${icons ? `\n${icons}` : ""}`,
     statsNextBadge: (name: string, desc: string) => `🔒 Keyingi nishon: <b>${name}</b>${desc ? ` — ${desc}` : ""}`,
@@ -192,13 +195,16 @@ const T = {
     settingsTime: (t: string) => `⏰ Eslatma vaqti: ${t}`,
     settingsTz: (tz: string) => `🌍 Vaqt zonasi: ${tz}`,
     settingsDisableAll: "❌ Barcha bildirishnomalarni o'chirish",
-    settingsPickHour: "Eslatma soatini tanlang:",
+    settingsPickHour: "Eslatma soatini tanlang (08:00–22:00):",
     settingsPickTz: "Vaqt zonasini tanlang:",
     settingsBellOn: "✅ Eslatmalar yoqildi",
     settingsBellOff: "🔕 Eslatmalar o'chirildi",
     settingsTimeSet: (t: string) => `⏰ Eslatma vaqti: ${t}`,
     settingsTzSet: (tz: string) => `🌍 Vaqt zonasi: ${tz}`,
     settingsAllOff: "🔕 Barcha bildirishnomalar o'chirildi",
+    settingsHourOutOfRange: "Eslatmalar faqat 08:00–22:00 oralig'ida yuboriladi — shu oraliqdan soat tanlang",
+    settingsNotOffered: "Bu variant endi mavjud emas — ro'yxatdan qayta tanlang",
+    settingsSaveFailed: "❌ Saqlanmadi — birozdan keyin qayta urinib ko'ring",
     back: "← Orqaga",
     // Admin panel
     adminKbAnalytics: "📊 Statistika",
@@ -457,8 +463,7 @@ const T = {
     kbStreakOld: "📊 Моя статистика",
     kbCertOld: "🎓 Сертификат",
     statsTitle: "📊 <b>Моя статистика</b>",
-    levelNames: ["Новичок", "Ученик", "Знаток", "Мастер", "Магистр"],
-    statsLevel: (emoji: string, name: string, score: number, barStr: string, isMax: boolean, nextEmoji: string, nextName: string) => `⭐ Уровень: ${emoji} <b>${name}</b> (${score}/100)\n${barStr}${isMax ? " — высший уровень! 🏆" : ` → ${nextEmoji} ${nextName}`}`,
+    statsLevel: (level: number, xp: number, toNext: string) => `⭐ Уровень: <b>${level}</b> · ⚡${xp} XP${toNext ? `\n${toNext}` : ""}`,
     statsLessons: (d: number, tot: number, watch: string) => `📚 Уроки: <b>${d}/${tot}</b>${watch ? ` · ${watch} всего` : ""}\n${bar(d, tot)}`,
     statsStreak: (cur: number, best: number, barStr: string, next: number | null, atMilestone: boolean) => `🔥 <b>${cur} дн. подряд</b>${atMilestone ? " 🎉 новый рубеж!" : ""} · рекорд: ${best}\n${barStr}${next ? ` → ${next} дн.` : " 🏆 максимум!"}`,
     statsStreakNone: "🔥 Стрик: ещё не начат",
@@ -468,15 +473,13 @@ const T = {
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Домашка: <b>${sub}/${totalLeaves}</b>${scored ? ` (${scored} оценено)` : ""}\n${bar(sub, totalLeaves)}`,
     statsHomeworkPoints: (earned: number, maxTotal: number) => `📈 Баллы за задания: <b>${earned}/${maxTotal}</b>`,
     statsHomeworkNone: "📝 Домашка: ещё не сдавали",
-    statsRanking: (r: number, tot: number, sc: number) => `🏆 Рейтинг: <b>${r} место</b> / ${tot} студентов`,
-    statsRankingNone: "🏆 Рейтинг: пока не учтён (нужна активность — посмотрите хотя бы 1 урок)",
     statsGroupTitle: "🏆 <b>Рейтинг группы</b>",
-    statsGroupRow: (rankLabel: string, name: string, score: number) => `${rankLabel} ${name} — ${score}`,
-    statsGroupRowMe: (rankLabel: string, score: number) => `<b>${rankLabel} 👉 Вы — ${score}</b>`,
+    statsGroupRow: (rankLabel: string, name: string, score: number) => `${rankLabel} ${name} — ⚡${score}`,
+    statsGroupRowMe: (rankLabel: string, score: number) => `<b>${rankLabel} 👉 Вы — ⚡${score}</b>`,
     statsGroupSummary: (rank: number, total: number, gap: string) => `📊 Ваше место в группе: <b>${rank}/${total}</b>${gap}`,
     statsStar: (name: string) => `⭐ Звезда недели: <b>${name}</b>`,
     statsStarMe: "⭐ <b>На этой неделе вы — звезда группы!</b> 🎉",
-    statsGroupGap: (nextRank: number, gap: number) => ` · до ${nextRank}-го места ${gap} б.`,
+    statsGroupGap: (nextRank: number, gap: number) => ` · до ${nextRank}-го места ${gap} XP`,
     statsBadges: (e: number, tot: number) => `🏅 Значки: <b>${e}/${tot}</b>`,
     statsBadgesShowcase: (icons: string, earned: number, total: number) => `🏅 Значки: <b>${earned}/${total}</b>${icons ? `\n${icons}` : ""}`,
     statsNextBadge: (name: string, desc: string) => `🔒 Следующий значок: <b>${name}</b>${desc ? ` — ${desc}` : ""}`,
@@ -494,13 +497,16 @@ const T = {
     settingsTime: (t: string) => `⏰ Время напоминания: ${t}`,
     settingsTz: (tz: string) => `🌍 Часовой пояс: ${tz}`,
     settingsDisableAll: "❌ Отключить все уведомления",
-    settingsPickHour: "Выберите час напоминания:",
+    settingsPickHour: "Выберите час напоминания (08:00–22:00):",
     settingsPickTz: "Выберите часовой пояс:",
     settingsBellOn: "✅ Напоминания включены",
     settingsBellOff: "🔕 Напоминания отключены",
     settingsTimeSet: (t: string) => `⏰ Время напоминания: ${t}`,
     settingsTzSet: (tz: string) => `🌍 Часовой пояс: ${tz}`,
     settingsAllOff: "🔕 Все уведомления отключены",
+    settingsHourOutOfRange: "Напоминания приходят только с 08:00 до 22:00 — выберите час в этом диапазоне",
+    settingsNotOffered: "Этот вариант больше недоступен — выберите из списка",
+    settingsSaveFailed: "❌ Не сохранено — попробуйте ещё раз чуть позже",
     back: "← Назад",
     adminKbAnalytics: "📊 Статистика",
     adminKbBroadcast: "📣 Массовое сообщение",
@@ -747,8 +753,7 @@ const T = {
     kbStreakOld: "📊 My stats",
     kbCertOld: "🎓 Certificate",
     statsTitle: "📊 <b>My stats</b>",
-    levelNames: ["Beginner", "Learner", "Scholar", "Expert", "Master"],
-    statsLevel: (emoji: string, name: string, score: number, barStr: string, isMax: boolean, nextEmoji: string, nextName: string) => `⭐ Level: ${emoji} <b>${name}</b> (${score}/100)\n${barStr}${isMax ? " — top level! 🏆" : ` → ${nextEmoji} ${nextName}`}`,
+    statsLevel: (level: number, xp: number, toNext: string) => `⭐ Level: <b>${level}</b> · ⚡${xp} XP${toNext ? `\n${toNext}` : ""}`,
     statsLessons: (d: number, tot: number, watch: string) => `📚 Lessons: <b>${d}/${tot}</b>${watch ? ` · ${watch} total` : ""}\n${bar(d, tot)}`,
     statsStreak: (cur: number, best: number, barStr: string, next: number | null, atMilestone: boolean) => `🔥 <b>${cur}-day streak</b>${atMilestone ? " 🎉 milestone!" : ""} · best: ${best}\n${barStr}${next ? ` → ${next} days` : " 🏆 maxed!"}`,
     statsStreakNone: "🔥 Streak: not started yet",
@@ -758,15 +763,13 @@ const T = {
     statsHomework: (sub: number, totalLeaves: number, scored: number) => `📝 Homework: <b>${sub}/${totalLeaves}</b>${scored ? ` (${scored} graded)` : ""}\n${bar(sub, totalLeaves)}`,
     statsHomeworkPoints: (earned: number, maxTotal: number) => `📈 Homework points: <b>${earned}/${maxTotal}</b>`,
     statsHomeworkNone: "📝 Homework: nothing submitted yet",
-    statsRanking: (r: number, tot: number, sc: number) => `🏆 Ranking: <b>#${r}</b> of ${tot} students`,
-    statsRankingNone: "🏆 Ranking: not ranked yet (need activity — watch at least 1 lesson)",
-    statsGroupTitle: "🏆 <b>Group ranking</b>",
-    statsGroupRow: (rankLabel: string, name: string, score: number) => `${rankLabel} ${name} — ${score}`,
-    statsGroupRowMe: (rankLabel: string, score: number) => `<b>${rankLabel} 👉 You — ${score}</b>`,
+    statsGroupTitle: "🏆 <b>Group rating</b>",
+    statsGroupRow: (rankLabel: string, name: string, score: number) => `${rankLabel} ${name} — ⚡${score}`,
+    statsGroupRowMe: (rankLabel: string, score: number) => `<b>${rankLabel} 👉 You — ⚡${score}</b>`,
     statsGroupSummary: (rank: number, total: number, gap: string) => `📊 Your group rank: <b>${rank}/${total}</b>${gap}`,
     statsStar: (name: string) => `⭐ Star of the week: <b>${name}</b>`,
     statsStarMe: "⭐ <b>You're this week's group star!</b> 🎉",
-    statsGroupGap: (nextRank: number, gap: number) => ` · ${gap} pts to #${nextRank}`,
+    statsGroupGap: (nextRank: number, gap: number) => ` · ${gap} XP to #${nextRank}`,
     statsBadges: (e: number, tot: number) => `🏅 Badges: <b>${e}/${tot}</b>`,
     statsBadgesShowcase: (icons: string, earned: number, total: number) => `🏅 Badges: <b>${earned}/${total}</b>${icons ? `\n${icons}` : ""}`,
     statsNextBadge: (name: string, desc: string) => `🔒 Next badge: <b>${name}</b>${desc ? ` — ${desc}` : ""}`,
@@ -784,13 +787,16 @@ const T = {
     settingsTime: (t: string) => `⏰ Reminder time: ${t}`,
     settingsTz: (tz: string) => `🌍 Timezone: ${tz}`,
     settingsDisableAll: "❌ Disable all notifications",
-    settingsPickHour: "Pick the reminder hour:",
+    settingsPickHour: "Pick the reminder hour (08:00–22:00):",
     settingsPickTz: "Pick a timezone:",
     settingsBellOn: "✅ Reminders enabled",
     settingsBellOff: "🔕 Reminders disabled",
     settingsTimeSet: (t: string) => `⏰ Reminder time: ${t}`,
     settingsTzSet: (tz: string) => `🌍 Timezone: ${tz}`,
     settingsAllOff: "🔕 All notifications disabled",
+    settingsHourOutOfRange: "Reminders are sent only between 08:00 and 22:00 — pick an hour in that range",
+    settingsNotOffered: "That option is no longer available — pick one from the list",
+    settingsSaveFailed: "❌ Not saved — please try again in a moment",
     back: "← Back",
     adminKbAnalytics: "📊 Statistics",
     adminKbBroadcast: "📣 Broadcast",
@@ -995,18 +1001,6 @@ const T = {
   },
 };
 
-const TIMEZONES = [
-  "Asia/Tashkent",
-  "Asia/Almaty",
-  "Asia/Bishkek",
-  "Asia/Dushanbe",
-  "Asia/Ashgabat",
-  "Europe/Moscow",
-  "Europe/Kiev",
-  "Europe/Istanbul",
-  "UTC",
-];
-
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 const WEBHOOK_SECRET = Deno.env.get("BOT_WEBHOOK_SECRET") || "";
 const SITE_URL = (Deno.env.get("SITE_URL") || "").replace(/\/$/, "");
@@ -1080,11 +1074,14 @@ const PROF_T = {
     profNextLevel: (need: number, lvl: number) => `${lvl}-darajagacha ${need} XP qoldi`,
     btnProfStats: "📊 Statistika", btnProfBadges: "🏆 Yutuqlarim",
     btnProfGroup: "👥 Guruh reytingi", btnProfOpen: "👤 Profilni ochish",
-    btnEditName: "✏️ Ismni o'zgartirish",
+    btnEditName: "✏️ Ismni o'zgartirish", btnProfSettings: "⚙️ Sozlamalar",
     profOpenHint: "Statistika, yutuqlar, guruh reytingi va vazifalaringiz — barchasi profilingizda 👇",
     profGroupTitle: (g: string) => `👥 <b>${g} reytingi</b>`,
     profYou: "Siz", profToFirst: (xp: number) => `Birinchi o'ringa ${xp} XP qoldi ↑`,
     profNoGroup: "Siz hali guruhga qo'shilmagansiz.",
+    profNoPointsYet: "Guruhda hali hech kimda ball yo'q — birinchi bo'ling! 🚀",
+    profMeNoPoints: "Sizda hali ball yo'q — birinchi ballingiz bilan reytingda o'rin olasiz.",
+    profRankUnavailable: "Reytingni hozir yuklab bo'lmadi — birozdan keyin qayta urinib ko'ring.",
     badgesTitle: "🏆 <b>Yutuqlarim</b>", badgesNone: "Hali nishonlar yo'q — birinchi darsni tugatib boshlang! 🚀",
     badgesLocked: (n: number) => `🔒 Yana ${n} ta nishon sizni kutmoqda`,
     tProfTitle: "🧑‍🏫 <b>Ustoz profili</b>",
@@ -1105,11 +1102,14 @@ const PROF_T = {
     profNextLevel: (need: number, lvl: number) => `До уровня ${lvl}: ${need} XP`,
     btnProfStats: "📊 Статистика", btnProfBadges: "🏆 Достижения",
     btnProfGroup: "👥 Рейтинг группы", btnProfOpen: "👤 Открыть профиль",
-    btnEditName: "✏️ Изменить имя",
+    btnEditName: "✏️ Изменить имя", btnProfSettings: "⚙️ Настройки",
     profOpenHint: "Статистика, достижения, рейтинг группы и задания — всё в вашем профиле 👇",
     profGroupTitle: (g: string) => `👥 <b>Рейтинг ${g}</b>`,
     profYou: "Вы", profToFirst: (xp: number) => `До 1-го места ${xp} XP ↑`,
     profNoGroup: "Вы ещё не добавлены в группу.",
+    profNoPointsYet: "В группе пока ни у кого нет баллов — будьте первым! 🚀",
+    profMeNoPoints: "У вас пока нет баллов — с первым баллом вы займёте место в рейтинге.",
+    profRankUnavailable: "Не удалось загрузить рейтинг — попробуйте ещё раз чуть позже.",
     badgesTitle: "🏆 <b>Достижения</b>", badgesNone: "Пока нет значков — завершите первый урок! 🚀",
     badgesLocked: (n: number) => `🔒 Ещё ${n} значков ждут вас`,
     tProfTitle: "🧑‍🏫 <b>Профиль устоза</b>",
@@ -1130,11 +1130,14 @@ const PROF_T = {
     profNextLevel: (need: number, lvl: number) => `${need} XP to level ${lvl}`,
     btnProfStats: "📊 Statistics", btnProfBadges: "🏆 Achievements",
     btnProfGroup: "👥 Group rating", btnProfOpen: "👤 Open my profile",
-    btnEditName: "✏️ Edit my name",
+    btnEditName: "✏️ Edit my name", btnProfSettings: "⚙️ Settings",
     profOpenHint: "Statistics, achievements, group rating and homework — all in your profile 👇",
     profGroupTitle: (g: string) => `👥 <b>${g} rating</b>`,
     profYou: "You", profToFirst: (xp: number) => `${xp} XP to reach #1 ↑`,
     profNoGroup: "You haven't been added to a group yet.",
+    profNoPointsYet: "Nobody in the group has points yet — be the first! 🚀",
+    profMeNoPoints: "You have no points yet — your first point puts you on the board.",
+    profRankUnavailable: "Couldn't load the rating right now — please try again in a moment.",
     badgesTitle: "🏆 <b>Achievements</b>", badgesNone: "No badges yet — finish your first lesson! 🚀",
     badgesLocked: (n: number) => `🔒 ${n} more badges are waiting for you`,
     tProfTitle: "🧑‍🏫 <b>Teacher profile</b>",
@@ -1157,26 +1160,31 @@ function escHtml(s: string): string {
  *  directly (all stats/badges/ratings live there — no in-chat button maze). */
 async function buildProfileCard(admin: any, userId: string, locale: Locale): Promise<{ text: string; keyboard: any }> {
   const p = PROF_T[locale];
-  const [{ data: prof }, statsRes] = await Promise.all([
+  const [{ data: prof }, statsRes, { ranking }] = await Promise.all([
     admin.from("profiles").select("name, last_name").eq("id", userId).maybeSingle(),
     admin.rpc("profile_stats", { uid: userId }),
+    loadGroupRanking(admin, userId, "telegram-bot-webhook"),
   ]);
   const s: any = Array.isArray(statsRes.data) ? statsRes.data[0] : statsRes.data;
   const name = escHtml(`${prof?.name || ""}`.trim() || "Talaba");
 
   const bits: string[] = [`L${s?.level ?? 1} ⚡${s?.total_xp ?? 0} XP`];
   if ((s?.current_streak ?? 0) > 0) bits.push(`${s.current_streak}🔥`);
-  if (s?.group_rank && s?.group_size) bits.push(`🏆 #${s.group_rank}/${s.group_size}`);
+  // The rank comes from the same GroupRanking as 📊 Statistika and 👥 Guruh reytingi (group_leaderboard), and
+  // only for a student with ≥ 1 point: at 0 points the order is streak-then-uuid, i.e. meaningless.
+  const rankBit = cardRankBit(ranking);
+  if (rankBit) bits.push(rankBit);
 
   const text = `👤 <b>${name}</b> · ${bits.join(" · ")}\n\n${p.profOpenHint}`;
   const url = await createMagicLink(admin, userId, "login", "/profile");
   // ✏️ Edit name → reuses the confirm-your-name flow (name:edit → awaiting_name → preview →
   // name:yes writes profiles.name/last_name). Lets any student fix their own display name so
-  // the rating/leaderboard shows it correctly.
+  // the rating/leaderboard shows it correctly. ⚙️ opens /sozlamalar (reminders), which had no button.
   const keyboard = { inline_keyboard: [
     [{ text: p.btnProfStats, callback_data: "prof:stats" },
      { text: p.btnProfBadges, callback_data: "prof:badges" }],
-    [{ text: p.btnProfGroup, callback_data: "prof:group" }],
+    [{ text: p.btnProfGroup, callback_data: "prof:group" },
+     { text: p.btnProfSettings, callback_data: "prof:settings" }],
     [{ text: p.btnProfOpen, url }],
     [{ text: p.btnEditName, callback_data: "name:edit" }],
   ] };
@@ -1205,27 +1213,22 @@ async function buildBadgesMessage(admin: any, userId: string, locale: Locale): P
   return lines.join("\n");
 }
 
-/** Group XP leaderboard for the bot. */
+/** 👥 Guruh reytingi: the group's points leaderboard (same GroupRanking as the card and 📊 Statistika). */
 async function buildGroupBoardMessage(admin: any, userId: string, locale: Locale): Promise<string> {
   const p = PROF_T[locale];
   const { data: prof } = await admin.from("profiles").select("group_id").eq("id", userId).maybeSingle();
   if (!prof?.group_id) return p.profNoGroup;
-  const [{ data: g }, boardRes] = await Promise.all([
+  const [{ data: g }, { ranking, failed }] = await Promise.all([
     admin.from("groups").select("name").eq("id", prof.group_id).maybeSingle(),
-    admin.rpc("group_leaderboard", { uid: userId, _limit: 10 }),
+    loadGroupRanking(admin, userId, "telegram-bot-webhook"),
   ]);
-  const rows = ((boardRes.data || []) as any[]);
-  if (!rows.length) return p.profNoGroup;
-  const lines = [p.profGroupTitle(escHtml(g?.name || "")), ""];
-  const medal = (r: number) => (r === 1 ? "🥇" : r === 2 ? "🥈" : r === 3 ? "🥉" : ` ${r}.`);
-  for (const r of rows) {
-    const nm = r.is_me ? `<b>${escHtml(r.first_name)} (${p.profYou})</b>` : escHtml(`${r.first_name} ${r.last_initial ? r.last_initial + "." : ""}`.trim());
-    lines.push(`${medal(r.rank)} ${nm} — ⚡${r.total_xp}${r.current_streak > 0 ? ` · ${r.current_streak}🔥` : ""}`);
-  }
-  const me = rows.find((r) => r.is_me);
-  const top = rows[0];
-  if (me && top && !top.is_me) lines.push("", p.profToFirst(Math.max(top.total_xp - me.total_xp, 0)));
-  return lines.join("\n");
+  const title = p.profGroupTitle(escHtml(g?.name || ""));
+  // A failed read is "try again", never "you are not in a group" (it used to fall through to profNoGroup).
+  if (failed) return [title, "", p.profRankUnavailable].join("\n");
+  if (!ranking.rows.length) return p.profNoGroup;
+  return [title, "", ...boardLines(ranking, {
+    you: p.profYou, toFirst: p.profToFirst, noPointsYet: p.profNoPointsYet, meNoPoints: p.profMeNoPoints,
+  })].join("\n");
 }
 
 /** Teacher profile card with per-group stats and one-tap group switching. */
@@ -2437,26 +2440,6 @@ function normalizeNameInput(raw: string): { first: string; last: string } | null
 
 
 
-// Named levels mapped from the 0–100 activity score. Early bands are short so
-// beginners level up fast (competence for the bottom 80%); the number always goes up.
-const LEVELS = [
-  { min: 0, emoji: "🌱" },
-  { min: 10, emoji: "📗" },
-  { min: 25, emoji: "📘" },
-  { min: 45, emoji: "🎓" },
-  { min: 70, emoji: "🏆" },
-];
-
-function levelInfo(score: number) {
-  const s = Math.max(0, Math.min(100, Math.round(score || 0)));
-  let i = 0;
-  for (let k = 0; k < LEVELS.length; k++) if (s >= LEVELS[k].min) i = k;
-  const isMax = i === LEVELS.length - 1;
-  const floor = LEVELS[i].min;
-  const ceil = isMax ? 100 : LEVELS[i + 1].min;
-  return { i, isMax, emoji: LEVELS[i].emoji, score: s, into: s - floor, span: Math.max(1, ceil - floor), nextEmoji: isMax ? "" : LEVELS[i + 1].emoji };
-}
-
 // Streak milestones. Shows progress toward the next badge-worthy milestone and
 // celebrates when the user is exactly on one (loss-aversion + accomplishment).
 const STREAK_MILES = [3, 7, 14, 30, 60, 100];
@@ -2472,14 +2455,19 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
   const t = T[locale] as any;
   const lines: string[] = [t.statsTitle, ""];
   try {
-    const courseIds = await getCourseIdsForUser(admin, userId);
+    const [courseIds, blockedModules] = await Promise.all([
+      getCourseIdsForUser(admin, userId),
+      getBlockedModuleIds(admin, userId),
+    ]);
 
-    // Lessons total + completed (scoped to the student's course[s])
+    // Lessons total + completed, scoped to the student's course[s] AND their plan: modules beyond the tier's
+    // module_limit are left out (same cap as profile_stats, the web Profile and 📝 Mening vazifalarim), so a
+    // Premium 5.0 student sees N/45, not N/65. The homework block below reuses the same module list.
     let lessonIds: string[] = [];
     let moduleIds: string[] = [];
     if (courseIds.length) {
       const { data: ms } = await admin.from("modules").select("id").in("course_id", courseIds);
-      moduleIds = (ms || []).map((m: any) => m.id);
+      moduleIds = (ms || []).map((m: any) => m.id).filter((id: string) => !blockedModules.has(id));
       if (moduleIds.length) {
         const { data: ls } = await admin
           .from("lessons").select("id").in("module_id", moduleIds).eq("published", true);
@@ -2488,19 +2476,12 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     }
     const totalLessons = lessonIds.length;
 
-    // Refresh leaderboard cache if older than 1 hour, so ranking line is current.
-    try {
-      const { data: lbAge } = await admin
-        .from("leaderboard_cache").select("computed_at").order("computed_at", { ascending: false }).limit(1).maybeSingle();
-      const ageMs = lbAge?.computed_at ? Date.now() - new Date(lbAge.computed_at).getTime() : Infinity;
-      if (ageMs > 60 * 60 * 1000) {
-        await admin.rpc("recalc_leaderboard");
-      }
-    } catch (_e) { /* best-effort */ }
-
+    // Level/XP from profile_stats (the card's own numbers) and the rank from the ONE GroupRanking shared with the
+    // card and 👥 Guruh reytingi. The old 30-day activity index (leaderboard_cache: "Daraja 64/100" and a second
+    // "Guruh reytingi") is gone from this screen: it disagreed with every other rank and ignored challenge points.
     const [
       progressRes, streakRes, todayRes, hwAssignsRes, hwSubsRes,
-      lbRes, totalStudentsRes, userBadgesRes, badgesAllRes, prefRes, watchRes,
+      statsRes, rankRes, userBadgesRes, badgesAllRes, prefRes, watchRes,
     ] = await Promise.all([
       lessonIds.length
         ? admin.from("lesson_progress").select("lesson_id, completed_at").eq("user_id", userId).in("lesson_id", lessonIds).not("completed_at", "is", null)
@@ -2511,19 +2492,19 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
         ? admin.from("homework_assignments").select("id, max_score, parent_id, is_active").eq("is_active", true).in("module_id", moduleIds)
         : Promise.resolve({ data: [] as any[] }),
       admin.from("homework_submissions").select("assignment_id, score, score_feedback, scored_at, previous_attempts").eq("user_id", userId),
-      admin.from("leaderboard_cache").select("rank, score").eq("user_id", userId).maybeSingle(),
-      admin.from("leaderboard_cache").select("user_id", { count: "exact", head: true }),
+      admin.rpc("profile_stats", { uid: userId }),
+      loadGroupRanking(admin, userId, "telegram-bot-webhook"),
       admin.from("user_badges").select("badge_id").eq("user_id", userId),
       admin.from("badges").select("id, icon, name_uz, name_ru, name_en, description_uz, description_ru, description_en, position").order("position", { ascending: true }),
-      admin.from("profiles").select("weekly_goal_lessons").eq("id", userId).maybeSingle(),
+      admin.from("profiles").select("weekly_goal_lessons, group_id").eq("id", userId).maybeSingle(),
       admin.from("daily_watch_summary").select("total_seconds").eq("user_id", userId),
     ]);
 
-    const lbForLevel = lbRes.data;
-    if (lbForLevel && typeof lbForLevel.score === "number") {
-      const lv = levelInfo(lbForLevel.score);
-      const names = (t.levelNames || []) as string[];
-      lines.push(t.statsLevel(lv.emoji, names[lv.i] || "", lv.score, bar(lv.into, lv.span), lv.isMax, lv.nextEmoji, lv.isMax ? "" : (names[lv.i + 1] || "")));
+    const ps: any = Array.isArray(statsRes.data) ? statsRes.data[0] : statsRes.data;
+    if (ps && typeof ps.level === "number") {
+      const need = Math.max(0, Number(ps.xp_next_level || 0) - Number(ps.total_xp || 0));
+      const toNext = need > 0 ? PROF_T[locale].profNextLevel(need, ps.level + 1) : "";
+      lines.push(t.statsLevel(ps.level, Number(ps.total_xp || 0), toNext));
       lines.push("");
     }
 
@@ -2570,40 +2551,21 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
     }
     lines.push("");
 
-    let groupRows: any[] = [];
-    try {
-      const { data: gw } = await admin.rpc("leaderboard_group_window", { uid: userId, _around: 2 });
-      groupRows = (gw || []) as any[];
-    } catch (_e) { groupRows = []; }
-    if (groupRows.length > 0) {
-      const meRow = groupRows.find((r: any) => r.is_me);
-      const total = meRow?.group_total || groupRows[0]?.group_total || groupRows.length;
-      lines.push(t.statsGroupTitle);
-      for (const r of groupRows) {
-        const medal = r.group_rank === 1 ? "🥇" : r.group_rank === 2 ? "🥈" : r.group_rank === 3 ? "🥉" : `${r.group_rank}.`;
-        const nm = csvEscapeHtml(`${r.first_name}${r.last_initial ? " " + r.last_initial + "." : ""}`);
-        if (r.is_me) lines.push(t.statsGroupRowMe(medal, r.score));
-        else lines.push(t.statsGroupRow(medal, nm, r.score));
-      }
-      let gapTxt = "";
-      if (meRow) {
-        const above = groupRows.find((r: any) => r.group_rank === meRow.group_rank - 1);
-        if (above) gapTxt = t.statsGroupGap(above.group_rank, Math.max(0, above.score - meRow.score));
-      }
-      lines.push("");
-      lines.push(t.statsGroupSummary(meRow?.group_rank || 0, total, gapTxt));
-      try {
-        const { data: starRows } = await admin.rpc("current_group_star", { uid: userId });
-        const star = ((starRows || []) as any[])[0];
-        if (star) {
-          const sname = csvEscapeHtml(`${star.first_name}${star.last_initial ? " " + star.last_initial + "." : ""}`);
-          lines.push(star.is_me ? t.statsStarMe : t.statsStar(sname));
-        }
-      } catch (_e) { /* best-effort */ }
+    // Group block: the SAME rank as the card's 🏆 and 👥 Guruh reytingi (rank-views.ts; rank-views.test.ts pins it).
+    const pt = PROF_T[locale];
+    const groupId: string | null = prefRes.data?.group_id ?? null;
+    const { ranking, failed: rankFailed } = rankRes;
+    if (!groupId) {
+      lines.push(t.statsGroupTitle, pt.profNoGroup);
+    } else if (rankFailed) {
+      lines.push(t.statsGroupTitle, pt.profRankUnavailable);
     } else {
-      const lb = lbRes.data;
-      if (lb && lb.rank) lines.push(t.statsRanking(lb.rank, totalStudentsRes.count || 0, lb.score || 0));
-      else lines.push(t.statsRankingNone);
+      const star = ranking.topPoints > 0 ? await loadWeeklyStar(admin, groupId, userId, "telegram-bot-webhook") : null;
+      lines.push(...statsRankLines(ranking, {
+        title: t.statsGroupTitle, row: t.statsGroupRow, rowMe: t.statsGroupRowMe, summary: t.statsGroupSummary,
+        gap: t.statsGroupGap, star: t.statsStar, starMe: t.statsStarMe,
+        noPointsYet: pt.profNoPointsYet, meNoPoints: pt.profMeNoPoints,
+      }, star));
     }
     lines.push("");
 
@@ -2839,16 +2801,14 @@ async function handleStartLogin(admin: any, msg: any, token: string, locale: Loc
     if (courseId) {
       const firstLessonId = await getFirstLesson(admin, courseId);
       if (firstLessonId) {
-        const url = await createMagicLink(admin, profile.id, "deeplink_lesson", `/lesson/${courseId}/${firstLessonId}`);
-        buttons.push([{ text: t.btnFirstLesson, url }]);
+        buttons.push([await studentWatchButton(admin, { chatId, text: t.btnFirstLesson, miniPath: lessonPath(courseId, firstLessonId), legacyPath: `/lesson/${courseId}/${firstLessonId}`, src: "bot_welcome", webhookOn: __studentMiniAppEnabled?.on === true, magicLink: (p) => createMagicLink(admin, profile.id, "deeplink_lesson", p) })]);
       }
-      const courseUrl = await createMagicLink(admin, profile.id, "deeplink_course", `/course/${courseId}`);
-      buttons.push([{ text: t.btnCourse, url: courseUrl }]);
+      buttons.push([await studentWatchButton(admin, { chatId, text: t.btnCourse, miniPath: coursePath(courseId), legacyPath: `/course/${courseId}`, src: "bot_welcome", webhookOn: __studentMiniAppEnabled?.on === true, magicLink: (p) => createMagicLink(admin, profile.id, "deeplink_course", p) })]);
     }
     if (SUPPORT_HANDLE) {
       buttons.push([{ text: t.btnHelp, url: `https://t.me/${SUPPORT_HANDLE}` }]);
     }
-    await sendMessage(chatId, t.welcome(firstName), { inline_keyboard: buttons });
+    await sendStudentWatchMessage(admin, chatId, t.welcome(firstName), buttons);
     await admin.from("profiles").update({ telegram_onboarded_at: new Date().toISOString() }).eq("id", profile.id);
   }
 
@@ -5040,8 +5000,8 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
       await sendWithKeyboard(chatId, t.noNextLesson, locale);
       return;
     }
-    const url = await createMagicLink(admin, profile.id, "deeplink_lesson", `/lesson/${courseId}/${next.id}`);
-    await sendMessage(chatId, t.nextLesson, { inline_keyboard: [[{ text: t.btnFirstLesson, url }]] });
+    const w = await studentWatchButton(admin, { chatId, text: t.btnFirstLesson, miniPath: continuePath(courseId), legacyPath: `/lesson/${courseId}/${next.id}`, src: "bot_davom", webhookOn: __studentMiniAppEnabled?.on === true, magicLink: (p) => createMagicLink(admin, profile.id, "deeplink_lesson", p) });
+    await sendStudentWatchMessage(admin, chatId, t.nextLesson, [[w]]);
     return;
   }
 
@@ -5053,8 +5013,8 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
       return;
     }
     if (courseIds.length === 1) {
-      const url = await createMagicLink(admin, profile.id, "deeplink_course", `/course/${courseIds[0]}`);
-      await sendMessage(chatId, t.coursePage, { inline_keyboard: [[{ text: t.btnCourse, url }]] });
+      const w = await studentWatchButton(admin, { chatId, text: t.btnCourse, miniPath: coursePath(courseIds[0]), legacyPath: `/course/${courseIds[0]}`, src: "bot_dars", webhookOn: __studentMiniAppEnabled?.on === true, magicLink: (p) => createMagicLink(admin, profile.id, "deeplink_course", p) });
+      await sendStudentWatchMessage(admin, chatId, t.coursePage, [[w]]);
       return;
     }
     // Rare: student enrolled in more than one course → one button per course (by title).
@@ -5062,10 +5022,9 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
     const titleById = new Map((crows || []).map((c: any) => [c.id, c.title]));
     const buttons: any[][] = [];
     for (const cid of courseIds) {
-      const url = await createMagicLink(admin, profile.id, "deeplink_course", `/course/${cid}`);
-      buttons.push([{ text: titleById.get(cid) || t.btnCourse, url }]);
+      buttons.push([await studentWatchButton(admin, { chatId, text: String(titleById.get(cid) || t.btnCourse), miniPath: coursePath(cid), legacyPath: `/course/${cid}`, src: "bot_dars", webhookOn: __studentMiniAppEnabled?.on === true, magicLink: (p) => createMagicLink(admin, profile.id, "deeplink_course", p) })]);
     }
-    await sendMessage(chatId, t.coursePage, { inline_keyboard: buttons });
+    await sendStudentWatchMessage(admin, chatId, t.coursePage, buttons);
     return;
   }
 
@@ -5178,7 +5137,8 @@ function settingsKeyboard(locale: Locale, prefs: { notifications_enabled: boolea
   const tz = prefs.timezone || "Asia/Tashkent";
   return {
     inline_keyboard: [
-      [{ text: t.settingsBell(prefs.notifications_enabled), callback_data: "settings:toggle_bell" }],
+      // The button carries the state it sets (bot-settings.ts bellCallback / parseBellTarget), not "toggle".
+      [{ text: t.settingsBell(prefs.notifications_enabled), callback_data: bellCallback(prefs.notifications_enabled) }],
       [{ text: t.settingsTime(time), callback_data: "settings:pick_time" }],
       [{ text: t.settingsTz(tz), callback_data: "settings:pick_tz" }],
       [{ text: t.settingsDisableAll, callback_data: "settings:disable_all" }],
@@ -7230,6 +7190,10 @@ async function handleCallback(admin: any, cq: any) {
       await sendMessage(chatId, await buildBadgesMessage(admin, _effId, locale));
     } else if (action === "group") {
       await sendMessage(chatId, await buildGroupBoardMessage(admin, _effId, locale));
+    } else if (action === "settings") {
+      // Same panel as /sozlamalar. Under admin impersonation it shows the student's settings read-only: every
+      // settings:* tap is already refused for an impersonating admin (the _isImp guard above).
+      await renderSettings(admin, chatId, _effId, locale);
     }
     return;
   }
@@ -7984,64 +7948,72 @@ async function handleCallback(admin: any, cq: any) {
     const t = T[locale];
     const action = data.slice("settings:".length);
 
-    if (action === "toggle_bell") {
-      const { data: cur } = await admin
-        .from("profiles")
-        .select("notifications_enabled")
-        .eq("id", profile.id)
-        .maybeSingle();
-      const newVal = !(cur?.notifications_enabled ?? true);
-      await admin.from("profiles").update({ notifications_enabled: newVal }).eq("id", profile.id);
-      await answerCallback(cq.id, newVal ? t.settingsBellOn : t.settingsBellOff);
+    // Every save is checked (saveBotSetting: error AND row count). A failed one answers an honest "not saved"
+    // toast and leaves a bot_settings_save_failed row; the re-rendered panel shows what is really stored.
+    const hourPicker = () => hourPickerKeyboard(t.back);
+    const tzPicker = () => tzPickerKeyboard(t.back);
+
+    const bellTarget = parseBellTarget(action);
+    if (bellTarget !== null || action === "toggle_bell") {
+      let newVal = bellTarget;
+      if (newVal === null) {
+        // Legacy keyboards (sent before the button carried its target state) still say "toggle_bell".
+        const { data: cur } = await admin
+          .from("profiles")
+          .select("notifications_enabled")
+          .eq("id", profile.id)
+          .maybeSingle();
+        newVal = !(cur?.notifications_enabled ?? true);
+      }
+      const ok = await saveBotSetting(admin, profile.id, { notifications_enabled: newVal });
+      await answerCallback(cq.id, ok ? (newVal ? t.settingsBellOn : t.settingsBellOff) : t.settingsSaveFailed);
       await renderSettings(admin, chatId, profile.id, locale);
       return;
     }
 
     if (action === "disable_all") {
-      await admin.from("profiles").update({ notifications_enabled: false }).eq("id", profile.id);
-      await answerCallback(cq.id, t.settingsAllOff);
+      const ok = await saveBotSetting(admin, profile.id, { notifications_enabled: false });
+      await answerCallback(cq.id, ok ? t.settingsAllOff : t.settingsSaveFailed);
       await renderSettings(admin, chatId, profile.id, locale);
       return;
     }
 
     if (action === "pick_time") {
-      // Render hour picker 00-23 in 4 rows of 6
-      const rows: any[][] = [];
-      for (let r = 0; r < 4; r++) {
-        const row: any[] = [];
-        for (let c = 0; c < 6; c++) {
-          const hh = (r * 6 + c).toString().padStart(2, "0");
-          row.push({ text: `${hh}:00`, callback_data: `settings:set_time:${hh}` });
-        }
-        rows.push(row);
-      }
-      rows.push([{ text: t.back, callback_data: "settings:back" }]);
+      // 08:00-22:00 only: cron-engagement never sends a daily reminder before 08:00 (bot-settings.ts).
       await answerCallback(cq.id);
-      await sendMessage(chatId, t.settingsPickHour, { inline_keyboard: rows });
+      await sendMessage(chatId, t.settingsPickHour, hourPicker());
       return;
     }
 
     if (action.startsWith("set_time:")) {
-      const hh = action.slice("set_time:".length);
-      const time = `${hh}:00:00`;
-      await admin.from("profiles").update({ reminder_time: time }).eq("id", profile.id);
-      await answerCallback(cq.id, t.settingsTimeSet(`${hh}:00`));
+      const hh = parseReminderHour(action.slice("set_time:".length));
+      if (!hh) {
+        // An old keyboard's 00:00-07:00 / 23:00 (or a forged value): say why, offer the valid hours, save nothing.
+        await answerCallback(cq.id, t.settingsHourOutOfRange);
+        await sendMessage(chatId, t.settingsPickHour, hourPicker());
+        return;
+      }
+      const ok = await saveBotSetting(admin, profile.id, { reminder_time: `${hh}:00:00` });
+      await answerCallback(cq.id, ok ? t.settingsTimeSet(`${hh}:00`) : t.settingsSaveFailed);
       await renderSettings(admin, chatId, profile.id, locale);
       return;
     }
 
     if (action === "pick_tz") {
-      const rows = TIMEZONES.map((tz) => [{ text: tz, callback_data: `settings:set_tz:${tz}` }]);
-      rows.push([{ text: t.back, callback_data: "settings:back" }]);
       await answerCallback(cq.id);
-      await sendMessage(chatId, t.settingsPickTz, { inline_keyboard: rows });
+      await sendMessage(chatId, t.settingsPickTz, tzPicker());
       return;
     }
 
     if (action.startsWith("set_tz:")) {
-      const tz = action.slice("set_tz:".length);
-      await admin.from("profiles").update({ timezone: tz }).eq("id", profile.id);
-      await answerCallback(cq.id, t.settingsTzSet(tz));
+      const tz = parseTimezone(action.slice("set_tz:".length));
+      if (!tz) {
+        await answerCallback(cq.id, t.settingsNotOffered);
+        await sendMessage(chatId, t.settingsPickTz, tzPicker());
+        return;
+      }
+      const ok = await saveBotSetting(admin, profile.id, { timezone: tz });
+      await answerCallback(cq.id, ok ? t.settingsTzSet(tz) : t.settingsSaveFailed);
       await renderSettings(admin, chatId, profile.id, locale);
       return;
     }

@@ -6,6 +6,7 @@ import { PageShell } from "@/components/Layout";
 import { cn } from "@/lib/utils";
 import { formatXp } from "@/lib/xp";
 import { reportClientError } from "@/lib/beacon";
+import { displayRank, podiumRows } from "@/lib/studentStats";
 import {
   Card,
   SectionHeader,
@@ -116,7 +117,8 @@ function LeaderboardRow({
       )}
     >
       <span className="w-6 flex-none text-center text-sm font-bold text-muted-foreground tabular-nums">
-        {formatXp(row.rank, locale)}
+        {/* No rank for 0 points: the order among zeros is only streak + uuid, i.e. arbitrary. */}
+        {displayRank(row.rank, row.total_xp) != null ? formatXp(row.rank, locale) : "—"}
       </span>
       <div className="grid size-9 flex-none place-items-center rounded-md bg-tint text-[13px] font-extrabold text-primary">
         {initialOf(row.first_name)}
@@ -223,9 +225,11 @@ export default function Leaderboard() {
   const offline = typeof navigator !== "undefined" && !navigator.onLine;
   const displayed = board === "weekly" ? weekly : allTime;
   const me = displayed.find((r) => r.is_me);
-  const podiumCount = Math.min(3, displayed.length);
-  const podium = displayed.slice(0, podiumCount);
-  const listRows = displayed.slice(podiumCount, VISIBLE_LIMIT);
+  // Medals only for members with points: a 🥈/🥉 next to 0 (e.g. only one student has scored yet)
+  // would crown someone for nothing. Zero-score members stay in the list, unranked ("—").
+  const podium = podiumRows(displayed);
+  const listRows = displayed.slice(podium.length, VISIBLE_LIMIT);
+  const myRank = me ? displayRank(me.rank, me.total_xp) : null;
   const stickyMe = me && me.rank > VISIBLE_LIMIT ? me : null;
   const noActivity = displayed.length > 0 && displayed[0].total_xp <= 0;
   const rank3 = displayed[2];
@@ -275,7 +279,7 @@ export default function Leaderboard() {
                 </p>
               </div>
               <div className="flex flex-none flex-col items-end gap-1.5">
-                {me && <RewardChip>#{formatXp(me.rank, locale)}</RewardChip>}
+                {myRank != null && <RewardChip>#{formatXp(myRank, locale)}</RewardChip>}
               </div>
             </div>
 
