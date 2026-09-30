@@ -162,20 +162,24 @@ function minuteStartIso(now: Date = new Date()): string {
   return new Date(Math.floor(now.getTime() / 60_000) * 60_000).toISOString();
 }
 
+export type SendResultOpts = {
+  admin?: any;
+  purpose?: string;
+  recipientId?: string | number | null;
+  record?: boolean;
+  topicMissingAction?: string;
+};
+
+type BotApiJson = { ok?: boolean; description?: string; result?: unknown; parameters?: { retry_after?: unknown } } | null;
+
 export async function sendTelegramWithResult(
   botToken: string,
   method: string,
   payload: Record<string, unknown>,
-  opts?: {
-    admin?: any;
-    purpose?: string;
-    recipientId?: string | number | null;
-    record?: boolean;
-    topicMissingAction?: string;
-  },
+  opts?: SendResultOpts,
 ): Promise<{ outcome: SendResultOutcome; result: any }> {
   let status = 0;
-  let j: { ok?: boolean; description?: string; result?: unknown; parameters?: { retry_after?: unknown } } | null = null;
+  let j: BotApiJson = null;
   try {
     const resp = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
       method: "POST",
@@ -187,7 +191,17 @@ export async function sendTelegramWithResult(
   } catch {
     j = { ok: false, description: "transport_error" }; // no token in the recorded description
   }
+  return await resolveWithResult(j, status, method, payload, opts);
+}
 
+/** The classification + recording half of sendTelegramWithResult, shared with the multipart siblings below. */
+async function resolveWithResult(
+  j: BotApiJson,
+  status: number,
+  method: string,
+  payload: Record<string, unknown>,
+  opts?: SendResultOpts,
+): Promise<{ outcome: SendResultOutcome; result: any }> {
   const c = classifySend(j, status);
   const ok = c.klass === "ok" || c.klass === "not_modified";
   const outcome: SendResultOutcome = {
@@ -234,4 +248,89 @@ export async function sendTelegramWithResult(
   }
   await recordNonDelivery(outcome, method, opts);
   return { outcome, result };
+}
+
+// ── Multipart siblings with the finer classes (Daily Tasks PR-7: the Mini App repost, spec §12 / G28) ──────────
+// sendTelegramMultipart (above) takes ONE file and the coarse classification (a 429 there is a telegram_send_failed
+// row). The Mini App reposts a student's files into a busy group topic, where 429 is flow control, so these two use
+// sendTelegramWithResult's classes and recording: rate_limited → one 'telegram_rate_limited' row per minute with
+// retry_after (never telegram_send_failed), topic_missing → opts.topicMissingAction, the rest → recordNonDelivery.
+// Same token containment: the token lives only in the request URL and never reaches a result or a recorded row.
+
+export type MultipartFile = { field: string; blob: Blob; filename: string };
+
+async function postMultipart(botToken: string, method: string, form: FormData): Promise<{ j: BotApiJson; status: number }> {
+  try {
+    // No explicit Content-Type: fetch sets multipart/form-data + the boundary from the FormData body.
+    const resp = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, { method: "POST", body: form });
+    return { j: await resp.json().catch(() => null), status: resp.status };
+  } catch {
+    return { j: { ok: false, description: "transport_error" }, status: 0 };
+  }
+}
+
+/** One Bot API method with real file uploads (sendPhoto / sendVideo / sendDocument …), classified like sendTelegramWithResult. */
+export async function sendTelegramMultipartWithResult(
+  botToken: string,
+  method: string,
+  fields: Record<string, string | number>,
+  files: MultipartFile[],
+  opts?: SendResultOpts,
+): Promise<{ outcome: SendResultOutcome; result: any }> {
+  const form = new FormData();
+  for (const [k, v] of Object.entries(fields)) form.append(k, String(v));
+  for (const f of files) form.append(f.field, f.blob, f.filename);
+  const { j, status } = await postMultipart(botToken, method, form);
+  return await resolveWithResult(j, status, method, fields, opts);
+}
+
+/** One item of an uploaded album. Telegram groups photo+video together, or documents only (never mixed). */
+export type MediaGroupItem = {
+  type: "photo" | "video" | "document";
+  blob: Blob;
+  filename: string;
+  caption?: string; // plain text (no parse_mode); Telegram shows the album's caption from its first captioned item
+};
+
+export const MEDIA_GROUP_MAX = 10;
+
+/** Why an album cannot be sent as one sendMediaGroup (null = it can). Checked before any network call. */
+export function mediaGroupProblem(items: MediaGroupItem[]): string | null {
+  if (items.length < 2 || items.length > MEDIA_GROUP_MAX) return "media_group_size";
+  if (items.some((i) => !["photo", "video", "document"].includes(i.type))) return "media_group_bad_type";
+  const docs = items.filter((i) => i.type === "document").length;
+  if (docs > 0 && docs < items.length) return "media_group_mixed_types";
+  return null;
+}
+
+/**
+ * sendMediaGroup with the FILES uploaded in one multipart request (attach://fileN), 2..10 items. `fields` carries
+ * chat_id / message_thread_id (and anything else sendMediaGroup takes). On success `result` is Telegram's array of
+ * sent Messages, in order. A malformed album (see mediaGroupProblem) is refused without a network call as a
+ * terminal content outcome — recorded, because it is a caller bug, never a Telegram one.
+ */
+export async function sendMediaGroupMultipart(
+  botToken: string,
+  fields: Record<string, string | number>,
+  items: MediaGroupItem[],
+  opts?: SendResultOpts,
+): Promise<{ outcome: SendResultOutcome; result: any[] | null }> {
+  const problem = mediaGroupProblem(items);
+  if (problem) {
+    const r = await resolveWithResult({ ok: false, description: `Bad Request: ${problem}: wrong type` }, 400, "sendMediaGroup", fields, opts);
+    return { outcome: r.outcome, result: null };
+  }
+  const form = new FormData();
+  for (const [k, v] of Object.entries(fields)) form.append(k, String(v));
+  const media = items.map((it, i) => ({
+    type: it.type,
+    media: `attach://file${i}`,
+    ...(it.caption ? { caption: it.caption } : {}),
+    ...(it.type === "video" ? { supports_streaming: true } : {}),
+  }));
+  form.append("media", JSON.stringify(media));
+  items.forEach((it, i) => form.append(`file${i}`, it.blob, it.filename));
+  const { j, status } = await postMultipart(botToken, "sendMediaGroup", form);
+  const r = await resolveWithResult(j, status, "sendMediaGroup", fields, opts);
+  return { outcome: r.outcome, result: r.outcome.ok ? (Array.isArray(r.result) ? r.result : []) : null };
 }

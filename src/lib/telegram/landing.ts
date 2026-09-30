@@ -44,6 +44,7 @@ export function parentOf(pathname: string): string | null {
   const lesson = pathname.match(/^\/lesson\/([^/]+)\/[^/]+\/?$/);
   if (lesson) return `/course/${lesson[1]}`;
   if (/^\/course\/[^/]+\/?$/.test(pathname)) return "/dashboard";
+  if (/^\/challenge\/tasks\/[^/]+\/?$/.test(pathname)) return "/challenge/tasks";
   if (/^\/tg\/teacher\/groups\/student\/[^/]+\/?$/.test(pathname)) return "/tg/teacher/groups";
   if (pathname.startsWith("/tg/teacher/")) return "/tg/teacher";
   // Staff-only standalone screens and the admin panel: leave the old behaviour alone.
