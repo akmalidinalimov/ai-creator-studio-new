@@ -47,6 +47,9 @@ const Homework = lazy(() => import("./pages/Homework"));
 const ModuleHomework = lazy(() => import("./pages/ModuleHomework"));
 // /continue[/:courseId] — the landing of every Mini App watch button: resolves the next unfinished lesson.
 const Continue = lazy(() => import("./pages/Continue"));
+// /challenge/tasks[/:taskId] — Kunlik vazifalar (Challenge daily tasks, PR-7). Hidden until challenge_tasks.miniapp.
+const ChallengeTasks = lazy(() => import("./pages/challenge/ChallengeTasks"));
+const ChallengeTask = lazy(() => import("./pages/challenge/ChallengeTask"));
 
 
 // Lazy-load admin pages (code-split)
@@ -144,6 +147,8 @@ const App = () => (
             <Route path="/lesson/:courseId/:lessonId" element={<RequireAuth><LessonPage /></RequireAuth>} />
             <Route path="/continue" element={<RequireAuth><Continue /></RequireAuth>} />
             <Route path="/continue/:courseId" element={<RequireAuth><Continue /></RequireAuth>} />
+            <Route path="/challenge/tasks" element={<RequireAuth><ChallengeTasks /></RequireAuth>} />
+            <Route path="/challenge/tasks/:taskId" element={<RequireAuth><ChallengeTask /></RequireAuth>} />
             <Route path="/quiz/:moduleId" element={<RequireAuth><QuizPage /></RequireAuth>} />
             <Route path="/settings" element={<RequireAuth><Settings /></RequireAuth>} />
             <Route path="/leaderboard" element={<RequireAuth><Leaderboard /></RequireAuth>} />
