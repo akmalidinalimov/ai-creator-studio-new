@@ -67,28 +67,24 @@ const ADMIN_DIGEST: Record<Locale, {
   head: (n: number) => string;
   reason: Record<AdminReason, string>;
   h: string;
-  noGroup: string;
   more: (m: number) => string;
 }> = {
   uz: {
     head: (n) => `⚠️ <b>${n} ta</b> vazifa 24 soatdan ortiq baholanmagan va xabar oladigan o'qituvchisi yo'q. Iltimos, ko'rib chiqing yoki guruhga o'qituvchi biriktiring.`,
     reason: { no_group: "guruhi yo'q", no_teacher: "o'qituvchi biriktirilmagan", unreachable_teacher: "o'qituvchiga Telegramda yetib bo'lmaydi" },
     h: "soat",
-    noGroup: "guruhsiz",
     more: (m) => `… yana ${m} ta`,
   },
   ru: {
     head: (n) => `⚠️ Не оценены больше 24 ч, и напомнить некому (нет доступного преподавателя): <b>${n}</b>. Пожалуйста, проверьте или назначьте группе преподавателя.`,
     reason: { no_group: "нет группы", no_teacher: "нет преподавателя", unreachable_teacher: "преподаватель недоступен в Telegram" },
     h: "ч",
-    noGroup: "без группы",
     more: (m) => `… и ещё ${m}`,
   },
   en: {
     head: (n) => `⚠️ Ungraded for 24h+ with no teacher who can be notified: <b>${n}</b>. Please review, or assign the group a teacher.`,
     reason: { no_group: "no group", no_teacher: "no teacher", unreachable_teacher: "teacher unreachable on Telegram" },
     h: "h",
-    noGroup: "no group",
     more: (m) => `… and ${m} more`,
   },
 };
@@ -105,9 +101,10 @@ export function adminDigestText(items: readonly AdminItem[], loc: Locale): strin
   let shown = 0;
   for (const it of items) {
     if (shown >= ADMIN_DIGEST_MAX_LINES) break;
-    const group = it.groupName ? escHtml(clip(it.groupName, 40)) : c.noGroup;
+    // No group: the reason already says so, so the group segment is left out.
+    const group = it.groupName ? `${escHtml(clip(it.groupName, 40))} · ` : "";
     const line = `• <b>${escHtml(clip(it.studentName || "—", 40))}</b> — «${escHtml(clip(it.taskTitle || "—", 60))}» · ` +
-      `${group} · ${c.reason[it.reason]} · ${it.hours} ${c.h} (${it.n}/3)`;
+      `${group}${c.reason[it.reason]} · ${it.hours} ${c.h} (${it.n}/3)`;
     // Reserve room for the "… and N more" line.
     if (len + line.length + 1 + 40 > ADMIN_DIGEST_MAX_CHARS) break;
     out.push(line);
