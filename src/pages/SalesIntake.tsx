@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,6 +10,7 @@ import { toast } from "sonner";
 import { UserPlus, CheckCircle2, Loader2, AlertTriangle, Info, X, Lock, ShieldAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { describeIntakeRefusal, REFUSED_STATUS, sameCourseMoveNote } from "@/lib/courseMove";
+import { parseInstagramHandle } from "@/lib/instagramHandle";
 
 type TierOpt = { id: string; name: string };
 type CourseOpt = { id: string; title: string; published: boolean; tiers: TierOpt[]; groups: string[] };
@@ -45,6 +47,8 @@ export default function SalesIntake() {
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [instagram, setInstagram] = useState("");
+  const [igError, setIgError] = useState<string | null>(null);
+  const { t } = useTranslation();
   const [accountType, setAccountType] = useState<"paid" | "provisional">("paid");
   const [submitting, setSubmitting] = useState(false);
   const [recent, setRecent] = useState<Recent[]>([]);
@@ -101,12 +105,16 @@ export default function SalesIntake() {
     const courseTitle = selCourse.title;
     const groupName = opts.groupName.trim();
     const acctSuffix = accountType === "provisional" ? " 🔒 Sinov hisob (qisman to'lov — darsliksiz)." : "";
-    const clearStudentFields = () => { setFirst(""); setLast(""); setUsername(""); setPhone(""); setEmail(""); };
+    // The Instagram field is per student too: left filled, the NEXT student was submitted with the previous one's handle.
+    const clearStudentFields = () => { setFirst(""); setLast(""); setUsername(""); setPhone(""); setEmail(""); setInstagram(""); setIgError(null); };
+    // Checked in submit(); the NORMALIZED handle is sent ("@Ali.Uz" / a profile link -> "ali.uz").
+    const ig = parseInstagramHandle(instagram);
+    const igHandle = ig.ok ? (ig.handle ?? "") : "";
     try {
       const payload = {
         name: first.trim(), last_name: last.trim(), telegram_username: username.trim(),
         course_id: selCourse.id, tier_id, group_name: groupName,
-        phone: phone.trim(), email: email.trim(), instagram_username: instagram.trim(),
+        phone: phone.trim(), email: email.trim(), instagram_username: igHandle,
         confirm_move: opts.confirmMove,
         // Honoured only for a verified admin session with 0 waiting old-course homework (checked server-side).
         admin_override: opts.adminOverride === true,
@@ -156,8 +164,17 @@ export default function SalesIntake() {
       }
       setOverridePrompt(null);
 
+      // The enrolment succeeded but the handle did not stick: say so, or the student silently earns no Instagram points.
+      const igOutcome = (data as any)?.instagram as string | undefined;
+      const igSuffix = igOutcome === "taken"
+        ? ` ⚠️ Instagram saqlanmadi: @${igHandle} boshqa hisobda band.`
+        : igOutcome === "refused" || igOutcome === "error"
+          ? " ⚠️ Instagram saqlanmadi — talaba uni ilovada (Sozlamalar) kiritsin."
+          : "";
+      if (igSuffix) toast.warning(igSuffix.trim());
+
       if (st === "created") {
-        setResult({ kind: "success", title: "✅ Muvaffaqiyatli qo'shildi!", detail: `${who} (@${uname}) — ${courseTitle}, "${groupName}" guruhiga qo'shildi.${acctSuffix}` });
+        setResult({ kind: "success", title: "✅ Muvaffaqiyatli qo'shildi!", detail: `${who} (@${uname}) — ${courseTitle}, "${groupName}" guruhiga qo'shildi.${acctSuffix}${igSuffix}` });
         toast.success(`✅ ${who || uname} qo'shildi`);
         setRecent((p) => [{ name: who, status: "✅ Qo'shildi", cls: "text-emerald-600" }, ...p].slice(0, 20));
         clearStudentFields();
@@ -168,11 +185,11 @@ export default function SalesIntake() {
       } else if (st === "updated" || st === "matched") {
         if (opts.confirmMove) {
           const overridden = (data as any)?.cross_course_override === true ? " (admin: kurs o'zgartirildi)" : "";
-          setResult({ kind: "success", title: "✅ Guruh o'zgartirildi!", detail: `${who || uname} (@${uname}) endi "${groupName}" guruhida.${overridden}${acctSuffix}` });
+          setResult({ kind: "success", title: "✅ Guruh o'zgartirildi!", detail: `${who || uname} (@${uname}) endi "${groupName}" guruhida.${overridden}${acctSuffix}${igSuffix}` });
           toast.success(`✅ Guruh o'zgartirildi: @${uname} → ${groupName}`);
           setRecent((p) => [{ name: who, status: "✅ Guruh o'zgartirildi", cls: "text-emerald-600" }, ...p].slice(0, 20));
         } else {
-          setResult({ kind: "exists", title: "ℹ️ Talaba allaqachon platformada bor edi", detail: `${who || uname} (@${uname}) tizimda mavjud edi va "${courseTitle}" kursiga biriktirildi.${acctSuffix}` });
+          setResult({ kind: "exists", title: "ℹ️ Talaba allaqachon platformada bor edi", detail: `${who || uname} (@${uname}) tizimda mavjud edi va "${courseTitle}" kursiga biriktirildi.${acctSuffix}${igSuffix}` });
           toast.message(`ℹ️ @${uname} allaqachon bor edi — kursga qo'shildi`);
           setRecent((p) => [{ name: who, status: "ℹ️ Allaqachon bor", cls: "text-amber-600" }, ...p].slice(0, 20));
         }
@@ -200,6 +217,15 @@ export default function SalesIntake() {
       toast.error(hasTiers
         ? "Majburiy maydonlarni to'ldiring: ism, @username, kurs, tarif, guruh"
         : "Majburiy maydonlarni to'ldiring: ism, @username, kurs, guruh");
+      return;
+    }
+    // Same rule as the DB (instagram_handle_parse): a post/reel link or a malformed handle is caught HERE,
+    // with a reason, instead of being dropped by the server after the student is already added.
+    const ig = parseInstagramHandle(instagram);
+    if (!ig.ok) {
+      const msg = t(`settings.instagramErrors.${ig.reason}`, { lng: "uz" });
+      setIgError(msg);
+      toast.error(msg);
       return;
     }
     setMovePrompt(null);
@@ -409,8 +435,18 @@ export default function SalesIntake() {
           </div>
           {/* Challenge 6.0: without a handle the student simply can't earn Instagram points. */}
           <div className="space-y-1.5">
-            <Label>Instagram</Label>
-            <Input value={instagram} onChange={(e) => setInstagram(e.target.value)} placeholder="@username (challenge uchun)" />
+            <Label htmlFor="intake-instagram">Instagram</Label>
+            <Input
+              id="intake-instagram"
+              value={instagram}
+              onChange={(e) => { setInstagram(e.target.value); if (igError) setIgError(null); }}
+              placeholder="@username (challenge uchun)"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              aria-invalid={igError ? true : undefined}
+            />
+            {igError && <p role="alert" className="text-xs font-medium text-destructive">{igError}</p>}
           </div>
 
           <Button className="w-full" onClick={submit} disabled={submitting}>

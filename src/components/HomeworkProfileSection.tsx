@@ -10,6 +10,7 @@ import {
   leavesFromAssignments,
   type LeafEffective,
 } from "@/lib/homeworkStats";
+import { resolveHomeworkCourseIds } from "@/lib/homeworkScope";
 import { FeedbackVoicePlayer } from "@/components/homework/FeedbackVoicePlayer";
 
 interface ModuleAgg {
@@ -47,17 +48,16 @@ export function HomeworkProfileSection() {
 
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
     (async () => {
-      // Resolve student's course scope (group → course, else enrollments).
-      let courseIds: string[] = [];
-      const { data: prof } = await supabase.from("profiles").select("group_id").eq("id", user.id).maybeSingle();
-      if (prof?.group_id) {
-        const { data: g } = await supabase.from("groups").select("course_id").eq("id", prof.group_id).maybeSingle();
-        if (g?.course_id) courseIds = [g.course_id];
-      }
+      // Scope: the student's GROUP course (resolved server-side — `groups` is admin-only under RLS),
+      // else their own enrollments, else nothing. Never "every published course" (lib/homeworkScope).
+      const { courseIds } = await resolveHomeworkCourseIds(supabase, user.id);
+      if (cancelled) return;
       if (!courseIds.length) {
-        const { data: enr } = await supabase.from("enrollments").select("course_id").eq("user_id", user.id);
-        courseIds = Array.from(new Set((enr || []).map((r: any) => r.course_id).filter(Boolean)));
+        setMods([]);
+        setOverall(null);
+        return;
       }
 
       const { data: subs } = await supabase
@@ -67,13 +67,13 @@ export function HomeworkProfileSection() {
         )
         .eq("user_id", user.id);
 
-      let assignsQuery = supabase
+      const { data: assigns } = await supabase
         .from("homework_assignments")
         .select("id, title, max_score, task_number, sap_number, parent_id, is_active, module_id, modules!inner(id, title, course_id, courses(title))")
         .eq("is_active", true)
+        .in("modules.course_id", courseIds)
         .order("task_number");
-      if (courseIds.length) assignsQuery = assignsQuery.in("modules.course_id", courseIds);
-      const { data: assigns } = await assignsQuery;
+      if (cancelled) return;
 
       const all = (assigns as any[]) || [];
       const leafIds = new Set(leavesFromAssignments(all).map((a) => a.id));
@@ -137,6 +137,7 @@ export function HomeworkProfileSection() {
         maxTotal: summary.maxTotal,
       });
     })();
+    return () => { cancelled = true; };
   }, [user]);
 
   return (

@@ -28,6 +28,7 @@ import { useEffect, useState } from "react";
 import { Users, TrendingUp, Star, Clock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
+import { displayRank } from "@/lib/studentStats";
 import { useSelectedGroup } from "@/hooks/useSelectedGroup";
 import { Card, StatTile, EmptyState, Skeleton, Button } from "@/components/ui-kit";
 
@@ -55,7 +56,12 @@ type Board = "weekly" | "alltime";
 
 const offlineNow = () => typeof navigator !== "undefined" && !navigator.onLine;
 
-const medal = (r: number) => (r === 1 ? "🥇" : r === 2 ? "🥈" : r === 3 ? "🥉" : `${r}`);
+// No medal and no rank for 0 XP (the order among zeros is only streak + id) — same rule as the student
+// Reyting and the Mini App group board (lib/studentStats displayRank).
+const medal = (r: number, xp: number) => {
+  const shown = displayRank(r, xp);
+  return shown == null ? "—" : shown === 1 ? "🥇" : shown === 2 ? "🥈" : shown === 3 ? "🥉" : `${shown}`;
+};
 const fullName = (r: BoardRow) =>
   `${r.first_name}${r.last_initial ? " " + r.last_initial + "." : ""}`;
 
@@ -315,10 +321,10 @@ export default function TeacherStats() {
                     <span
                       className={cn(
                         "w-7 shrink-0 text-center",
-                        r.rank <= 3 ? "text-base" : "text-sm font-semibold text-muted-foreground tabular-nums",
+                        r.rank <= 3 && r.xp > 0 ? "text-base" : "text-sm font-semibold text-muted-foreground tabular-nums",
                       )}
                     >
-                      {medal(r.rank)}
+                      {medal(r.rank, r.xp)}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-foreground">
                       {fullName(r)}
