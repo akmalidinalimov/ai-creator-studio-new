@@ -114,10 +114,10 @@ export default function TeacherBroadcast() {
       approxStudents: selected.totalStudents,
     });
     try {
-      const { data, error: rpcErr } = await supabase.rpc("staff_group_members" as any, { _group_id: groupId });
+      const { data, error: rpcErr } = await supabase.rpc("staff_group_members", { _group_id: groupId });
       if (rpcErr) throw rpcErr;
       if (req !== countReq.current) return;
-      const rows = ((data as { telegram_id: number | null }[] | null) ?? []);
+      const rows = data ?? [];
       const recipients = rows.filter((r) => r.telegram_id).length;
       setConfirm((c) => (c && c.groupId === groupId ? { ...c, recipients, noTelegram: rows.length - recipients, counting: false } : c));
     } catch (e) {

@@ -10,7 +10,7 @@
 //   TUI-8 — three unguarded async effects could land the PREVIOUS group's data under a newly selected group. One
 //          loader now clears the lists at once and commits a response only if it still belongs to the current
 //          selection (reqRef); the select names "<group> · <course>".
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
@@ -110,7 +110,7 @@ export default function TeacherHomework() {
       let gs: Group[] = [];
       if (isAdmin) {
         const { data } = await supabase.from("groups").select("id, name, course_id").order("name");
-        gs = ((data || []) as any[]).map((g) => ({ id: g.id, name: g.name, course_id: g.course_id ?? null, course_title: null }));
+        gs = (data || []).map((g) => ({ id: g.id, name: g.name, course_id: g.course_id ?? null, course_title: null }));
       } else {
         const { data: tgRows } = await supabase.rpc("teacher_groups" as any, { uid: user.id });
         gs = (((tgRows as any[]) || []).map((r: any) => ({
@@ -139,7 +139,7 @@ export default function TeacherHomework() {
 
   // Submissions of the scope's students, limited to the scope's course. Throws on a read error (the caller decides
   // how to surface it); commits nothing once `req` is no longer the current selection.
-  const loadSubmissions = async (sc: Scope, req: number) => {
+  const loadSubmissions = useCallback(async (sc: Scope, req: number) => {
     const stale = () => req !== reqRef.current;
     const ids = sc.students.map((s) => s.id);
     if (!ids.length) {
@@ -164,36 +164,37 @@ export default function TeacherHomework() {
       all = all.concat(rows);
       if (rows.length < pageSize) break;
     }
-    let aMap = new Map<string, any>();
-    let parentMap = new Map<string, any>();
-    const aIds = Array.from(new Set(all.map((s) => s.assignment_id)));
+    type AsgMeta = { title: string | null; max_score: number | null; task_number: number | null; sap_number: number | null; parent_id: string | null; module_id: string | null };
+    let aMap = new Map<string, AsgMeta>();
+    let parentMap = new Map<string, { task_number: number | null }>();
+    const aIds = Array.from(new Set(all.map((s) => s.assignment_id as string)));
     if (aIds.length) {
       const { data: assigns, error } = await supabase
         .from("homework_assignments").select("id, title, max_score, task_number, sap_number, parent_id, module_id").in("id", aIds);
       if (error) throw error;
-      aMap = new Map((assigns || []).map((a: any) => [a.id, a]));
-      const parentIds = Array.from(new Set((assigns || []).map((a: any) => a.parent_id).filter(Boolean)));
+      aMap = new Map((assigns || []).map((a) => [a.id, a]));
+      const parentIds = Array.from(new Set((assigns || []).map((a) => a.parent_id).filter((x): x is string => !!x)));
       if (parentIds.length) {
         const { data: parents } = await supabase.from("homework_assignments").select("id, title, task_number").in("id", parentIds);
-        parentMap = new Map((parents || []).map((p: any) => [p.id, p]));
+        parentMap = new Map((parents || []).map((p) => [p.id, p]));
       }
     }
     if (stale()) return;
     // Only work whose TASK belongs to the selection's course (task → module → course). A student moved from 5.0 to
     // Challenge 6.0 keeps their 5.0 submissions; they must not appear — or be graded — under the 6.0 group.
     const kept = sc.courseModuleIds
-      ? all.filter((s) => sc.courseModuleIds!.has(aMap.get(s.assignment_id)?.module_id))
+      ? all.filter((s) => sc.courseModuleIds!.has(aMap.get(s.assignment_id)?.module_id ?? ""))
       : all;
     // Names come from the scope's own student list: a teacher cannot read other users' profiles rows (RLS), so the
     // old direct profiles lookup here rendered every name as "—" for teachers.
     const sMap = new Map(sc.students.map((s) => [s.id, s]));
-    const enriched: Row[] = kept.map((s: any) => {
-      const a: any = aMap.get(s.assignment_id) || {};
+    const enriched: Row[] = kept.map((s) => {
+      const a: Partial<AsgMeta> = aMap.get(s.assignment_id) || {};
       const st = sMap.get(s.user_id);
       let label = a.title || "";
       if (a.parent_id) {
-        const par: any = parentMap.get(a.parent_id) || {};
-        label = `V${par.task_number ?? "?"}.S${a.sap_number ?? "?"} — ${a.title || ""}`;
+        const par = parentMap.get(a.parent_id);
+        label = `V${par?.task_number ?? "?"}.S${a.sap_number ?? "?"} — ${a.title || ""}`;
       } else if (a.task_number) {
         label = `V${a.task_number} — ${a.title || ""}`;
       }
@@ -212,7 +213,7 @@ export default function TeacherHomework() {
     // in "Baholangan" looking done.
     setPending(enriched.filter((r) => r.score == null || (r as any).score_is_stale === true));
     setScored(enriched.filter((r) => r.score != null && (r as any).score_is_stale !== true));
-  };
+  }, [groupNameMap]);
 
   // ONE loader per selection: course → students → modules/tasks → submissions. The previous selection's lists are
   // cleared at once, and every step bails out if the teacher has picked another group meanwhile (TUI-8).
@@ -236,9 +237,9 @@ export default function TeacherHomework() {
           if (!courseId && !isAdmin) {
             // Teacher groups carry no course_id and a direct groups read is RLS-blocked for teachers — the
             // junction-gated staff_group_overview RPC knows the selected group's course.
-            const { data: ov, error } = await supabase.rpc("staff_group_overview" as any, { _group_id: selectedGroup });
+            const { data: ov, error } = await supabase.rpc("staff_group_overview", { _group_id: selectedGroup });
             if (error) throw error;
-            courseId = ((ov as any[]) || [])[0]?.course_id ?? null;
+            courseId = (ov ?? [])[0]?.course_id ?? null;
           }
         }
         if (stale()) return;
@@ -260,9 +261,9 @@ export default function TeacherHomework() {
         } else {
           // Teachers: profiles RLS is own-row-or-admin, so a direct read returned NOBODY (audit F8). This RPC is
           // gated by can_see_group (primary ∪ co-teacher) and lists exactly profiles.group_id = the group.
-          const { data, error } = await supabase.rpc("staff_group_members" as any, { _group_id: selectedGroup });
+          const { data, error } = await supabase.rpc("staff_group_members", { _group_id: selectedGroup });
           if (error) throw error;
-          sts = ((data as any[]) || []).map((m: any) => ({
+          sts = (data ?? []).map((m) => ({
             id: m.id, name: m.name ?? null, last_name: m.last_name ?? null, group_id: selectedGroup,
             telegram_username: m.telegram_username ?? null,
           }));
@@ -310,8 +311,7 @@ export default function TeacherHomework() {
         if (!stale()) setScopeLoading(false);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedGroup, user, isAdmin, groups, selectedCourse, coursesReady, retryKey]);
+  }, [selectedGroup, user, isAdmin, groups, selectedCourse, coursesReady, retryKey, loadSubmissions]);
 
   // Re-read the submissions after a grade / return, for the SAME selection (a newer selection wins).
   const reloadSubmissions = () => {

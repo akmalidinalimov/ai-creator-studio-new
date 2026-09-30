@@ -114,9 +114,9 @@ export default function AdminDashboard() {
     if (!isTeacher || !groupParam) return;
     let cancelled = false;
     (async () => {
-      const { data, error } = await supabase.rpc("staff_group_overview" as any, { _group_id: groupParam });
+      const { data, error } = await supabase.rpc("staff_group_overview", { _group_id: groupParam });
       if (cancelled) return;
-      const row = error ? null : ((data as any[]) || [])[0];
+      const row = error ? null : (data ?? [])[0];
       // A failed lookup falls back to the Kurs select (unlocked) rather than blocking the page.
       setGroupCourse({ groupId: groupParam, courseId: row?.course_id ?? null, courseTitle: row?.course_name ?? null });
     })();
@@ -233,10 +233,10 @@ export default function AdminDashboard() {
       const totalUsers = isTeacher ? visibleIds.length : (await supabase.from("profiles").select("id", { count: "exact", head: true }).eq("status", "active")).count || 0;
 
       const events30 = isTeacher
-        ? scopeRows(((await supabase.rpc("staff_recent_auth_events", { _since: since30 })).data || []) as any[])
+        ? scopeRows((await supabase.rpc("staff_recent_auth_events", { _since: since30 })).data || [])
         : ((await supabase.from("auth_events").select("user_id, created_at").gte("created_at", since30).limit(50000)).data || []);
       const prog7 = isTeacher
-        ? scopeRows(((await supabase.rpc("staff_recent_lesson_progress", { _since: since7 })).data || []) as any[]).map((p: any) => ({ user_id: p.user_id, updated_at: p.updated_at }))
+        ? scopeRows((await supabase.rpc("staff_recent_lesson_progress", { _since: since7 })).data || []).map((p: any) => ({ user_id: p.user_id, updated_at: p.updated_at }))
         : ((await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", since7).limit(50000)).data || []);
       const active7 = new Set((prog7 || []).map((p: any) => p.user_id)).size;
 
@@ -274,7 +274,7 @@ export default function AdminDashboard() {
       });
       const since30Iso = new Date(Date.now() - 30 * 86400_000).toISOString();
       const prog30Activity = isTeacher
-        ? scopeRows(((await supabase.rpc("staff_recent_lesson_progress", { _since: since30Iso })).data || []) as any[]).map((p: any) => ({ user_id: p.user_id, updated_at: p.updated_at }))
+        ? scopeRows((await supabase.rpc("staff_recent_lesson_progress", { _since: since30Iso })).data || []).map((p: any) => ({ user_id: p.user_id, updated_at: p.updated_at }))
         : ((await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", since30Iso).limit(100000)).data || []);
       if (stale()) return;
       const lastLessonByUser = new Map<string, number>();
@@ -333,7 +333,7 @@ export default function AdminDashboard() {
       if (allLessonIds.length) {
         if (isTeacher) {
           const { data } = await supabase.rpc("staff_recent_lesson_progress", { _since: "1970-01-01T00:00:00Z" });
-          completedRows = scopeRows((data || []) as any[]).filter((r: any) => r.completed_at && allLessonIds.includes(r.lesson_id));
+          completedRows = scopeRows(data || []).filter((r: any) => r.completed_at && allLessonIds.includes(r.lesson_id));
         } else {
           const { data } = await supabase.from("lesson_progress").select("user_id, lesson_id, updated_at").in("lesson_id", allLessonIds).not("completed_at", "is", null).limit(50000);
           completedRows = data || [];
