@@ -7,6 +7,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 import { type GroupPrimaryRow, type GroupTeacherRow, mergeGroupTeachers } from "../_shared/group-teachers.ts";
+import { courseShort, scopeTag } from "../_shared/hw-label.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -146,14 +147,26 @@ Deno.serve(async (req) => {
       // only groups.teacher_id left a co-taught group off its co-teacher's digest and dropped a group
       // whose teachers are all co-teachers from the board entirely. Who GETS a digest is still
       // teacher_daily_report() (primary-attributed stats), unchanged here.
+      // courses(title) → each card is headed "<course> · <group>" (shared hw-label scopeTag), e.g.
+      // "5.0 · 1-GURUH VIP" / "CH6 · 3-GURUH", so a teacher of both courses can tell the cards apart.
       const [{ data: grpRows, error: grpErr }, { data: gtRows, error: gtErr }] = await Promise.all([
-        admin.from("groups").select("id, name, course_id, teacher_id"),
+        admin.from("groups").select("id, name, course_id, teacher_id, courses(title)"),
         admin.from("group_teachers").select("group_id, teacher_id"),
       ]);
       if (grpErr) throw new Error(`groups read failed: ${grpErr.message}`);
       if (gtErr) throw new Error(`group_teachers read failed: ${gtErr.message}`);
       const teachersOf = mergeGroupTeachers((grpRows || []) as GroupPrimaryRow[], (gtRows || []) as GroupTeacherRow[]);
-      const groups = ((grpRows || []) as any[]).filter((g) => (teachersOf.get(g.id) || []).length > 0);
+      const courseTitleOf = (g: any): string | null => {
+        const c = Array.isArray(g?.courses) ? g.courses[0] : g?.courses;
+        return typeof c?.title === "string" ? c.title : null;
+      };
+      // Sorted by course, then group name: the teacher's message shows at most 3 cards, and the unordered
+      // read made WHICH groups were cut to the app random. Now it is the same, predictable order every day.
+      const groups = ((grpRows || []) as any[])
+        .filter((g) => (teachersOf.get(g.id) || []).length > 0)
+        .sort((a, b) =>
+          courseShort(courseTitleOf(a)).localeCompare(courseShort(courseTitleOf(b))) ||
+          String(a.name || "").localeCompare(String(b.name || "")));
       const courseIds = [...new Set(groups.map((g) => g.course_id).filter(Boolean))];
       const statsById: Record<string, any> = {};
       for (const cid of courseIds) {
@@ -166,7 +179,7 @@ Deno.serve(async (req) => {
         const { data: bd } = await admin.rpc("group_student_leaderboard", { _group_id: g.id, _limit: 10 });
         const brows = ((bd || []) as BoardRow[]);
         const card = {
-          name: g.name, stats: st,
+          name: scopeTag(courseTitleOf(g), g.name) || g.name, stats: st,
           weekly: brows.filter((r) => r.board === "weekly").sort((a, b) => a.rank - b.rank),
           alltime: brows.filter((r) => r.board === "alltime").sort((a, b) => a.rank - b.rank),
         };
