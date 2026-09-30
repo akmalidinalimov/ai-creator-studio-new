@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { DAILY_TOPIC_MSG, dailyTopicError, dailyTopicSaveMessage, parseTopicUrl } from "./dailyTaskTopic";
 
 // The SQL side (challenge_task_parse_topic_url + trg_groups_extract_daily_task_topic) is checked against this
-// module fixture-by-fixture in supabase/functions/_challenge/testing/daily_topic_check_test.ts.
+// module fixture-by-fixture in supabase/functions/_challenge/testing/daily-topic-check.ts.
 describe("parseTopicUrl (mirror of challenge_task_parse_topic_url)", () => {
   it("topic link, trailing slash, surrounding whitespace", () => {
     expect(parseTopicUrl("https://t.me/c/4440955972/144")).toEqual({ chat: "4440955972", chatId: -1004440955972, topic: 144 });

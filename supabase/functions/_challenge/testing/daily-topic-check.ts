@@ -1,6 +1,6 @@
 // PGlite harness for 20260930121000_challenge_daily_task_topic.sql (Daily Tasks PR-1).
 //
-//   deno test -A --node-modules-dir=none --no-lock supabase/functions/_challenge/testing/daily_topic_check_test.ts
+//   deno test -A --node-modules-dir=none --no-lock supabase/functions/_challenge/testing/daily-topic-check.ts
 //
 // Applies the LIVE bodies (md5-verified against production) plus 20260930100010 (#218) to a real PostgreSQL,
 // then THIS migration, and checks: media, chat and answer points are 0 for daily-topic messages with exact
