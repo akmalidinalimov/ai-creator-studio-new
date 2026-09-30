@@ -24,6 +24,8 @@ export type CaptureSkipReason =
   | "anonymous_sender"           // posted as the group/channel, not as a reply; cannot be attributed (details.sender_kind)
   | "sender_has_no_group"        // registered profile with no group_id
   | "assignment_unresolved"      // registered profile, no assignment resolvable for this topic
+  | "other_group_topic"          // registered profile posted in ANOTHER group's homework topic (capture-guard.ts); redirect hint sent
+  | "pending_other_course"       // picker: the held post's task is outside the student's current course (moved meanwhile)
   | "tier_locked"                // module beyond the student's tier
   | "already_graded"             // auto path: the task is graded (✅ + "already scored" DM, post not filed)
   | "media_cap_reached"          // 11th+ file of one submission/pending post (🙈 reaction); step=finalize_append: the picker's merge

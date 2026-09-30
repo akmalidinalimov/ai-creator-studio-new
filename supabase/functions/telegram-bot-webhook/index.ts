@@ -13,6 +13,10 @@ import {
   type AutoRegisterSource, isRealReply, isRegisteredHomeworkTopic, mergeCappedMedia, recordAutoRegisterFailed,
   recordCaptureFailed, recordCaptureSkipped, recordPendingAppendDrop,
 } from "./capture-signals.ts";
+import {
+  courseToken, findOwnHomeworkTopic, homeworkTopicGroupIds, type OtherCoursePath, otherCourseTask,
+  type OwnHomeworkTopic, pickSubmissionModule, recordOtherCourseRefused,
+} from "./capture-guard.ts";
 import { redactJson, redactSecrets } from "../_shared/redact.ts";
 import {
   checksAllGreen, ghAddLabel, ghClosePr, ghFetchChecks, ghFetchPr, ghMergePr,
@@ -249,6 +253,7 @@ const T = {
     scorePending: "⏳",
     thmTitle: "📝 <b>Modullar bo'yicha vazifalar</b>\nModulni tanlang:",
     thmEmpty: "Sizga hali kurs va guruh biriktirilmagan.",
+    thmOtherCourse: "ℹ️ Bu modul tanlangan guruh kursiga tegishli emas. /modulvazifalar ni qayta oching.",
     thmModuleRow: (pos: number, title: string, sub: number, total: number) =>
       `📦 ${pos}-modul · ${title} — ✅ ${sub}/${total}`.slice(0, 60),
     thmSubmittedTitle: (pos: number, title: string) =>
@@ -370,6 +375,7 @@ const T = {
       `📤 <b>Modul ${mn} · Vazifa ${tn}</b>\n\nQuyidagi tugmani bosib topikga o'ting va rasm yoki video yuboring. Bot avtomatik qabul qiladi (10 daqiqa ichida).`,
     hwIntentNoTopic: "Bu modul uchun topik sozlanmagan. Iltimos, ustozingizga murojaat qiling.",
     hwIntentNoGroup: "Sizga guruh biriktirilmagan. Ustozingiz bilan bog'laning.",
+    hwOtherCourseTask: "ℹ️ Bu vazifa oldingi kursingizga tegishli. Hozirgi kursingiz vazifalari uchun /vazifalar ni bosing.",
     hwIntentBtnGoTopic: "📌 Topikga o'tish",
     hwIntentAlreadyScored: "Bu vazifa allaqachon baholangan ✅",
     hwRequireIntentHint: "📤 Vazifani topshirish uchun avval botda /vazifalar bo'limiga kiring va kerakli vazifa uchun \"📤 Topshirish\" tugmasini bosing — so'ngra rasm/video/hujjatingizni shu topikka yuboring. Aks holda ish avtomatik qabul qilinmaydi.",
@@ -547,6 +553,7 @@ const T = {
     scorePending: "⏳",
     thmTitle: "📝 <b>Задания по модулям</b>\nВыберите модуль:",
     thmEmpty: "К вам пока не прикреплён курс или группа.",
+    thmOtherCourse: "ℹ️ Этот модуль не относится к курсу выбранной группы. Откройте /modulvazifalar заново.",
     thmModuleRow: (pos: number, title: string, sub: number, total: number) =>
       `📦 Модуль ${pos} · ${title} — ✅ ${sub}/${total}`.slice(0, 60),
     thmSubmittedTitle: (pos: number, title: string) =>
@@ -658,6 +665,7 @@ const T = {
       `📤 <b>Модуль ${mn} · Задание ${tn}</b>\n\nНажмите кнопку ниже, перейдите в топик и отправьте фото или видео. Бот примет автоматически (в течение 10 минут).`,
     hwIntentNoTopic: "Топик для этого модуля не настроен. Свяжитесь с преподавателем.",
     hwIntentNoGroup: "Вам не назначена группа. Свяжитесь с преподавателем.",
+    hwOtherCourseTask: "ℹ️ Это задание из вашего предыдущего курса. Задания текущего курса — в /vazifalar.",
     hwIntentBtnGoTopic: "📌 Перейти в топик",
     hwIntentAlreadyScored: "Это задание уже оценено ✅",
     hwRequireIntentHint: "📤 Чтобы сдать работу, сначала откройте в боте /vazifalar и нажмите \"📤 Сдать\" для нужного задания — затем отправьте фото/видео/документ в этот топик. Иначе работа не будет принята автоматически.",
@@ -835,6 +843,7 @@ const T = {
     scorePending: "⏳",
     thmTitle: "📝 <b>Homework by module</b>\nPick a module:",
     thmEmpty: "No course or group is assigned to you yet.",
+    thmOtherCourse: "ℹ️ This module is not part of the selected group's course. Open /modulvazifalar again.",
     thmModuleRow: (pos: number, title: string, sub: number, total: number) =>
       `📦 Module ${pos} · ${title} — ✅ ${sub}/${total}`.slice(0, 60),
     thmSubmittedTitle: (pos: number, title: string) =>
@@ -946,6 +955,7 @@ const T = {
       `📤 <b>Module ${mn} · Task ${tn}</b>\n\nTap the button below to open the topic and post your photo or video. The bot will accept it automatically (within 10 minutes).`,
     hwIntentNoTopic: "Topic not configured for this module. Please contact your teacher.",
     hwIntentNoGroup: "You are not assigned to a group. Please contact your teacher.",
+    hwOtherCourseTask: "ℹ️ This task belongs to your previous course. Tap /vazifalar for your current course's tasks.",
     hwIntentBtnGoTopic: "📌 Open topic",
     hwIntentAlreadyScored: "This task has already been graded ✅",
     hwRequireIntentHint: "📤 To submit, first open /vazifalar in the bot and tap \"📤 Submit\" for the task — then post your photo/video/document in this topic. Otherwise it won't be captured automatically.",
@@ -3908,16 +3918,16 @@ async function renderStudentModules(
   const aIds = Array.from(new Set(list.map((s) => s.assignment_id)));
   const { data: assigns } = await admin
     .from("homework_assignments")
-    .select("id, max_score, module_id, modules(position)")
+    .select("id, max_score, module_id, modules(position, course_id)")
     .in("id", aIds);
   const aMap = new Map(((assigns || []) as any[]).map((a: any) => [a.id, a]));
 
-  const byModule = new Map<string, { mPos: number; mid: string; latest: number; items: { score: number | null; max: number }[] }>();
+  const byModule = new Map<string, { mPos: number; mid: string; courseId: string | null; latest: number; items: { score: number | null; max: number }[] }>();
   for (const s of list) {
     const a: any = aMap.get(s.assignment_id);
     if (!a) continue;
     const key = a.module_id;
-    if (!byModule.has(key)) byModule.set(key, { mPos: a.modules?.position ?? 0, mid: key, latest: 0, items: [] });
+    if (!byModule.has(key)) byModule.set(key, { mPos: a.modules?.position ?? 0, mid: key, courseId: a.modules?.course_id ?? null, latest: 0, items: [] });
     const bucket = byModule.get(key)!;
     bucket.items.push({ score: s.score, max: a.max_score || 10 });
     const ts = s.submitted_at ? new Date(s.submitted_at).getTime() : 0;
@@ -3936,8 +3946,10 @@ async function renderStudentModules(
     return [{
       text: `${m.mPos + 1}-MODUL · ${m.items.length} ta · ${scoresStr}${dateStr ? ` · ${dateStr}` : ""}`.slice(0, 60),
       // Module POSITION, not uuid: two uuids = 80 bytes > Telegram's 64-byte callback cap, which
-      // made Telegram reject this whole message (BUTTON_DATA_INVALID) — audit BUG-2. ~46 bytes now.
-      callback_data: `tr:mod:${studentId}:${m.mPos}`,
+      // made Telegram reject this whole message (BUTTON_DATA_INVALID) — audit BUG-2. PR-1: plus an 8-char
+      // course token, because a student moved between courses has submissions at the SAME position in two
+      // courses and the position alone opened the current course's module (≤55 bytes).
+      callback_data: `tr:mod:${studentId}:${m.mPos}:${courseToken(m.courseId)}`,
     }];
   });
   buttons.push([{ text: t.backToRoster, callback_data: "tr:list:0" }]);
@@ -4113,23 +4125,37 @@ async function renderTeacherModuleDetail(
   if (!mod) { await sendMessage(chatId, t.gradeNotFound || "Not found"); return; }
   const mPos = (mod.position || 0) + 1;
 
+  // PR-1 (d): the MODULE's course decides whose students are listed; only groups of that course count, for
+  // teachers and admins alike. A stale thm:mod button tapped after /guruh switched to a group of the other
+  // course is refused, instead of listing that group's students as "Topshirmagan" under a module title that
+  // is identical in both courses. With no active group (all of the teacher's groups) only the teacher's
+  // students in the module's course are listed.
+  const { data: gs } = mod.course_id
+    ? await admin.from("groups").select("id").eq("course_id", mod.course_id)
+    : { data: [] as any[] };
+  const courseGroupIds = ((gs || []) as any[]).map((g) => g.id);
+  if (groupId && mod.course_id && !courseGroupIds.includes(groupId)) {
+    const { data: g0 } = await admin.from("groups").select("course_id").eq("id", groupId).maybeSingle();
+    await recordOtherCourseRefused(admin, "thm:mod", graderId, {
+      taskCourseId: mod.course_id, currentCourseIds: g0?.course_id ? [g0.course_id] : [],
+    }, { group_id: groupId, module_id: mod.id, role: isAdmin ? "admin" : "teacher" });
+    await sendMessage(chatId, t.thmOtherCourse);
+    return;
+  }
+  if (!courseGroupIds.length) {
+    await sendMessage(chatId, t.thmEmpty);
+    return;
+  }
+
   // Load profiles in scope
-  let pq = admin.from("profiles").select("id, name, last_name, telegram_username, telegram_id").is("archived_at", null);
+  let pq = admin.from("profiles").select("id, name, last_name, telegram_username, telegram_id").is("archived_at", null)
+    .in("group_id", courseGroupIds);
   if (studentIds) {
     if (!studentIds.length) {
       await sendMessage(chatId, t.thmEmpty);
       return;
     }
     pq = pq.in("id", studentIds);
-  } else {
-    // Admin: bound to students in groups attached to this module's course
-    const { data: gs } = await admin.from("groups").select("id").eq("course_id", mod.course_id);
-    const gids = ((gs || []) as any[]).map((g) => g.id);
-    if (!gids.length) {
-      await sendMessage(chatId, t.thmEmpty);
-      return;
-    }
-    pq = pq.in("group_id", gids);
   }
   const { data: profs } = await pq;
   const profMap = new Map(((profs || []) as any[]).map((p) => [p.id, p]));
@@ -5205,9 +5231,46 @@ async function setMessageReaction(chatId: number, messageId: number, emoji = "�
   } catch (_e) { /* best-effort */ }
 }
 
+// PR-1: the course a student's homework must belong to = the course of their CURRENT GROUP, published or not:
+// the group decides which topic the work goes to and which teachers get it. (getCourseIdsForUser drops an
+// unpublished group course, which would refuse every task of a finished course whose students still post
+// late work.) Only a student with no group, or a course-less group, falls back to the /vazifalar scope.
+async function currentCourseScope(admin: any, userId: string): Promise<string[]> {
+  try {
+    const { data: p } = await admin.from("profiles").select("group_id, groups:group_id(course_id)").eq("id", userId).maybeSingle();
+    const c = (p as any)?.groups?.course_id;
+    if (c) return [c];
+  } catch (_e) { /* fall back */ }
+  return await getCourseIdsForUser(admin, userId);
+}
+
+// PR-1: the one previous-course check behind every student homework button (hw:mod, hw:start, hw:resub_ask,
+// hw:resub_yes) and the intent they open. Refuses only a PROVEN mismatch with currentCourseScope: a friendly
+// sentence in the student's language, never an error, and one DB-visible admin_actions row
+// ('stale_course_button_refused'). true = refused, stop.
+async function refuseOtherCourseTask(
+  admin: any, chatId: number | null, userId: string, locale: Locale, path: OtherCoursePath,
+  ref: { moduleId?: string | null; assignmentId?: string | null },
+  record = true, // false under admin impersonation (read-only view): an expected result, not a student's tap
+): Promise<boolean> {
+  const mismatch = await otherCourseTask(admin, userId, ref, (uid) => currentCourseScope(admin, uid));
+  if (!mismatch) return false;
+  if (record) {
+    await recordOtherCourseRefused(admin, path, userId, mismatch, {
+      module_id: ref.moduleId ?? null, assignment_id: ref.assignmentId ?? null,
+    });
+  }
+  if (chatId) {
+    try { await sendMessage(chatId, (T[locale] as any).hwOtherCourseTask); } catch (_e) { /* best-effort */ }
+  }
+  console.log("hw:other-course-refused", JSON.stringify({ path, user_id: userId, ...ref, task_course_id: mismatch.taskCourseId }));
+  return true;
+}
+
 // Student tapped "📤 Topshirish" in /vazifalar — open intent and point to topic.
 async function startHomeworkIntent(
   admin: any, chatId: number, profile: any, locale: Locale, assignmentId: string,
+  path: OtherCoursePath = "hw:start",
 ) {
   const t = T[locale] as any;
 
@@ -5218,6 +5281,11 @@ async function startHomeworkIntent(
     .eq("id", assignmentId)
     .maybeSingle();
   if (!a) { await sendMessage(chatId, t.gradeNotFound); return; }
+
+  // 1a. Course guard (PR-1): an old /vazifalar list or grade card can name a task of the student's PREVIOUS
+  // course. Its intent would point at the CURRENT group's topic (resolveModuleTopicUrl falls back to it), so
+  // the next post there would be filed onto the old course's task and sent to the new group's teachers.
+  if (await refuseOtherCourseTask(admin, chatId, profile.id, locale, path, { moduleId: a.module_id, assignmentId })) return;
 
   // 1b. Tier gate (Phase 2): block opening an intent for a module beyond the student's tier.
   if (await isModuleBlocked(admin, profile.id, a.module_id)) { await sendMessage(chatId, tierLockedMsg(locale)); return; }
@@ -5483,14 +5551,24 @@ async function recordGroupMessageEvent(admin: any, msg: any) {
 // v3.14.40: Resolve an active leaf assignment for a sender posting in a homework topic.
 // Used when a student posts without an explicit /vazifalar → 📤 Topshirish intent.
 // Strict per-sender: each call resolves the next un-graded leaf for THIS profile only.
+// PR-1: the post's CHAT is part of the match (capture-guard.ts findOwnHomeworkTopic): a thread number that
+// equals this group's topic number in another chat resolves to nothing. `own` lets a caller that already
+// matched the topic skip the second read.
 async function resolveAssignmentForTopic(
   admin: any,
-  group: { id: string; course_id: string | null; homework_topic_id: number | bigint | null },
+  group: {
+    id: string; course_id: string | null; homework_topic_id: number | null;
+    homework_topic_url: string | null; telegram_group_url?: string | null;
+  },
+  chatId: number,
   threadId: number,
   profileId: string,
+  own?: OwnHomeworkTopic | null,
 ): Promise<{ moduleId: string; assignment: any; resolvedVia: "shared_topic" | "group_module_topic" } | null> {
-  // Path A: shared-topic mode (groups.homework_topic_id matches the thread).
-  if (group.homework_topic_id != null && Number(group.homework_topic_id) === Number(threadId)) {
+  const topic = own ?? await findOwnHomeworkTopic(admin, group, chatId, threadId);
+  if (!topic) return null;
+  // Path A: shared-topic mode (groups.homework_topic_id matches the thread, in the group's chat).
+  if (topic.via === "shared") {
     if (!group.course_id) return null;
     const { data: mods } = await admin.from("modules").select("id, position").eq("course_id", group.course_id).order("position");
     const modIds = ((mods as any[]) || []).map((m: any) => m.id);
@@ -5558,15 +5636,8 @@ async function resolveAssignmentForTopic(
     if (!asg) return null;
     return { moduleId: asg.module_id, assignment: asg, resolvedVia: "shared_topic" };
   }
-  // Path B: legacy per-module topic mapping.
-  const { data: topicRow } = await admin
-    .from("group_module_topics")
-    .select("module_id")
-    .eq("group_id", group.id)
-    .eq("telegram_topic_id", threadId)
-    .maybeSingle();
-  if (!topicRow?.module_id) return null;
-  const moduleId = topicRow.module_id as string;
+  // Path B: legacy per-module topic mapping (matched in the topic's own chat by findOwnHomeworkTopic).
+  const moduleId = topic.moduleId;
   const { data: allAssignsForModule } = await admin
     .from("homework_assignments")
     .select("id, title, task_number, sap_number, max_score, module_id, parent_id, is_active, created_at, due_days_after_module_unlock")
@@ -5609,7 +5680,7 @@ async function finalizePendingPost(
   // student explicitly confirmed. Back-to-back different-homework posts each get their own
   // picker (the old 5-min post-finalize append window is gone — it hijacked the next post).
   action: "fresh" | "append" | "replace" = "fresh",
-): Promise<"created" | "appended" | "already_graded" | "tier_locked" | "error"> {
+): Promise<"created" | "appended" | "already_graded" | "tier_locked" | "course_mismatch" | "error"> {
   // Coordinates for the capture-drop signals below (plain reads of the row, so the catch can use them too).
   const dropAt = {
     chatId: Number(pending.telegram_chat_id), threadId: Number(pending.telegram_thread_id),
@@ -5674,6 +5745,16 @@ async function finalizePendingPost(
       await deletePicker();
       await recordCaptureSkipped(admin, "guess_tier_locked", dropAt);
       return "tier_locked";
+    }
+    // PR-1 COURSE GUARD (defense in depth): the held post was stamped with the group/course of the homework
+    // topic it was posted in, which the chat guard made the student's own. If they moved to another course
+    // before this pick/sweep (a stale picker), filing now would put a previous-course task in front of the
+    // new group's teachers. Consume it instead (the file stays in the Telegram thread) and count it.
+    if (await otherCourseTask(admin, pending.user_id, { moduleId }, (uid) => currentCourseScope(admin, uid))) {
+      await admin.from("hw_pending_posts").update({ state: "expired" }).eq("id", pending.id).eq("state", "pending");
+      await deletePicker();
+      await recordCaptureSkipped(admin, "pending_other_course", { ...dropAt, module_id: moduleId });
+      return "course_mismatch";
     }
 
     // ATOMIC CLAIM (adversarial-review MED-1): the sweep and a late tap both read state='pending'
@@ -5893,8 +5974,10 @@ async function sweepExpiredPendingPosts(admin: any) {
     for (const p of (rows || []) as any[]) {
       try {
         const { data: grp } = await admin.from("groups")
-          .select("id, course_id, homework_topic_id").eq("id", p.group_id).maybeSingle();
-        const resolved = grp ? await resolveAssignmentForTopic(admin, grp, Number(p.telegram_thread_id), p.user_id) : null;
+          .select("id, course_id, homework_topic_id, homework_topic_url, telegram_group_url").eq("id", p.group_id).maybeSingle();
+        const resolved = grp
+          ? await resolveAssignmentForTopic(admin, grp, Number(p.telegram_chat_id), Number(p.telegram_thread_id), p.user_id)
+          : null;
         if (!resolved) {
           await admin.from("hw_pending_posts").update({ state: "expired" }).eq("id", p.id);
           if (p.picker_message_id) { try { await tgApi("deleteMessage", { chat_id: Number(p.telegram_chat_id), message_id: Number(p.picker_message_id) }); } catch (_e) { /* ignore */ } }
@@ -6238,6 +6321,49 @@ async function handlePickerPost(
   if (erR?.waitUntil) erR.waitUntil(remindTask); else remindTask.catch(() => {});
 }
 
+// PR-1 CHAT GUARD, the refusal side: a registered student's media post that is NOT in their own group's
+// homework topic (capture-guard.ts findOwnHomeworkTopic said no). Never captured. Member-forgiving:
+//   - inside ANOTHER group's homework topic (this chat or any other): an in-thread redirect to their own
+//     topic, rate-limited 15 min per student (works for the ~70% the bot cannot DM), plus ONE DB-visible
+//     hw_capture_skipped 'other_group_topic' row per (chat, sender, day). The uncaptured_24h detector only
+//     counts posts in the sender's OWN (chat, thread), so these refusals never inflate it;
+//   - anywhere else (any chat's general topics, their own chat's other topics): silence and no row. That is
+//     their space (CLAUDE.md "Members vs non-members"); the old hint fired for a photo in ANY topic of another
+//     group's chat.
+async function handleForeignTopicPost(
+  admin: any, profile: any, grp: any,
+  at: { chatId: number; threadId: number; messageId: number; fromId: number | null },
+) {
+  const { chatId, threadId, messageId, fromId } = at;
+  const owners = (await homeworkTopicGroupIds(admin, chatId, threadId)).filter((id) => id !== grp.id);
+  if (!owners.length) {
+    console.log("hw:group:not-own-hw-topic-ignored", JSON.stringify({ profile_id: profile.id, group_id: grp.id, chatId, threadId, messageId }));
+    return;
+  }
+  await recordCaptureSkipped(admin, "other_group_topic", {
+    chatId, threadId, messageId, fromId, userId: profile.id, group_id: grp.id, topic_group_ids: owners,
+  });
+  if (!grp.homework_topic_url) return;
+  try {
+    const since = new Date(Date.now() - 15 * 60_000).toISOString();
+    const { data: recentHint } = await admin.from("notifications_log")
+      .select("id").eq("user_id", profile.id).eq("notification_type", "hw_wrong_topic_hint")
+      .gte("sent_at", since).limit(1);
+    if (!recentHint || !recentHint.length) {
+      const loc0: Locale = normLocale(profile.preferred_locale);
+      await tgApi("sendMessage", {
+        chat_id: chatId, message_thread_id: threadId, reply_to_message_id: messageId,
+        text: (T[loc0] as any).pkWrongTopic(grp.homework_topic_url),
+        disable_web_page_preview: true,
+      });
+      await admin.from("notifications_log").insert({
+        user_id: profile.id, notification_type: "hw_wrong_topic_hint", sent_at: new Date().toISOString(),
+      });
+    }
+  } catch (_e) { /* hint is best-effort; the skip row above is the signal */ }
+  console.log("hw:group:other-group-topic-redirected", JSON.stringify({ profile_id: profile.id, group_id: grp.id, topic_group_ids: owners, chatId, threadId, messageId }));
+}
+
 async function handleGroupTopicMessage(admin: any, msg: any) {
   try {
     // Opportunistic fallback sweep: unanswered pickers auto-tag after expiry (throttled, cheap).
@@ -6368,6 +6494,23 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     if (intentErr) console.error("hw:group:intent-query-err", intentErr);
     let intent = (intents && intents[0]) as any;
 
+    // PR-1 COURSE GUARD on the explicit-intent path: an intent opened by a button tapped before a course move
+    // (or racing one) names a task of the student's PREVIOUS course. Filing onto it would put this post on the
+    // old course's task and DM the new group's teachers. Drop the intent and treat the post like any direct
+    // post in this topic (chat guard + picker below), so the work lands in the current course, never lost.
+    if (intent) {
+      const mm = await otherCourseTask(admin, profile.id, { moduleId: intent.module_id, assignmentId: intent.assignment_id },
+        (uid) => currentCourseScope(admin, uid));
+      if (mm) {
+        if (intent.id) await admin.from("bot_homework_intents").delete().eq("id", intent.id);
+        await recordOtherCourseRefused(admin, "intent", profile.id, mm, {
+          assignment_id: intent.assignment_id, module_id: intent.module_id, chat_id: chatId, thread_id: threadId, message_id: messageId,
+        });
+        console.log("hw:group:intent-other-course-dropped", JSON.stringify({ profile_id: profile.id, assignment_id: intent.assignment_id, chatId, threadId, messageId }));
+        intent = null;
+      }
+    }
+
     // v3.14.40 AUTO-SYNTHESIS (restored 2026-07-07): students post their work
     // DIRECTLY in the homework topic — almost nobody presses 📤 Topshirish first
     // (of ~280 intents ever, ~all submissions came from direct posts). A prior
@@ -6380,8 +6523,20 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       const { data: prof2 } = await admin.from("profiles").select("group_id").eq("id", profile.id).maybeSingle();
       const groupId = prof2?.group_id ?? null;
       const grp = groupId
-        ? (await admin.from("groups").select("id, course_id, homework_topic_id, homework_topic_url").eq("id", groupId).maybeSingle()).data
+        ? (await admin.from("groups").select("id, course_id, homework_topic_id, homework_topic_url, telegram_group_url").eq("id", groupId).maybeSingle()).data
         : null;
+
+      // CHAT GUARD (PR-1), for every capture mode below: a homework topic is (chat, thread), never the thread
+      // number alone. Topic numbers repeat across chats (live: 7 = 1-GURUH PRE 5.0, 2-GURUH VIP 5.0 and AC
+      // CHALLENGE | 4-GURUH), and the old number-only check filed a post from ANY chat's topic 7 as this
+      // student's homework (4 real misfiles in August; across 5.0 ↔ Challenge it would cross courses). A post
+      // outside the student's own homework topic is never captured: inside another group's homework topic it
+      // gets the redirect hint + a DB-visible skip; anywhere else (general chat) it stays silent.
+      const ownTopic = grp ? await findOwnHomeworkTopic(admin, grp, chatId, threadId) : null;
+      if (grp && !ownTopic) {
+        await handleForeignTopicPost(admin, profile, grp, { chatId, threadId, messageId, fromId });
+        return;
+      }
 
       // ENFORCE-BOT-FLOW gate (course-scoped): if this student's course is configured for
       // "require_intent", a post NOT initiated via /vazifalar → 📤 Topshirish is not homework.
@@ -6414,47 +6569,14 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       const pickerOn = cfg.mode === "picker" && !!grp?.course_id
         && (cfg.courseIds.length === 0 || cfg.courseIds.includes(grp.course_id));
       if (pickerOn) {
-        // Is THIS thread a homework topic of the student's own group (shared or per-module)?
-        let isHwTopic = grp.homework_topic_id != null && Number(grp.homework_topic_id) === Number(threadId);
-        if (!isHwTopic) {
-          const { data: gmt } = await admin.from("group_module_topics")
-            .select("module_id").eq("group_id", grp.id).eq("telegram_topic_id", threadId).maybeSingle();
-          isHwTopic = !!gmt?.module_id;
-        }
-        if (!isHwTopic) {
-          // Wrong-group posts used to vanish silently (the Test-1 hole). If this chat belongs to a
-          // DIFFERENT group's homework setup, point the student to their own topic — in-thread,
-          // rate-limited, so it works even for the ~70% the bot cannot DM.
-          try {
-            const { groupId: chatGroupId } = await resolveGroupFromChatId(admin, chatId);
-            if (chatGroupId && chatGroupId !== grp.id && grp.homework_topic_url) {
-              const since = new Date(Date.now() - 15 * 60_000).toISOString();
-              const { data: recentHint } = await admin.from("notifications_log")
-                .select("id").eq("user_id", profile.id).eq("notification_type", "hw_wrong_topic_hint")
-                .gte("sent_at", since).limit(1);
-              if (!recentHint || !recentHint.length) {
-                const loc0: Locale = normLocale(profile.preferred_locale);
-                await tgApi("sendMessage", {
-                  chat_id: chatId, message_thread_id: threadId, reply_to_message_id: messageId,
-                  text: (T[loc0] as any).pkWrongTopic(grp.homework_topic_url),
-                  disable_web_page_preview: true,
-                });
-                await admin.from("notifications_log").insert({
-                  user_id: profile.id, notification_type: "hw_wrong_topic_hint", sent_at: new Date().toISOString(),
-                });
-              }
-            }
-          } catch (_e) { /* hint is best-effort */ }
-          console.log("hw:group:picker-not-hw-topic-ignored", JSON.stringify({ profile_id: profile.id, group_id: grp.id, chatId, threadId, messageId }));
-          return;
-        }
+        // The chat guard above already established this is the student's own group's homework topic.
         const messageUrl0 = buildMessageLink(chatId, threadId, messageId);
         const item0 = { kind, ...(linkUrl ? { url: linkUrl } : { file_id: fileId }), msg_url: messageUrl0, ...(msg.media_group_id ? { mgid: String(msg.media_group_id) } : {}) };
         await handlePickerPost(admin, profile, grp, chatId, threadId, messageId, item0, (msg.caption || msg.text || "").slice(0, 4000));
         return;
       }
 
-      const resolved = grp ? await resolveAssignmentForTopic(admin, grp, threadId, profile.id) : null;
+      const resolved = grp ? await resolveAssignmentForTopic(admin, grp, chatId, threadId, profile.id, ownTopic) : null;
       if (!resolved) {
         console.log("hw:group:no-intent-unresolved-ignored", JSON.stringify({ profile_id: profile.id, groupId, chatId, threadId, messageId }));
         // Reached by a profile with no group, or one outside picker scope (auto mode, e.g. a finished
@@ -7180,6 +7302,9 @@ async function handleCallback(admin: any, cq: any) {
     const moduleId = data.slice("hw:mod:".length);
     if (!_clicker) { await answerCallback(cq.id); return; }
     await answerCallback(cq.id);
+    // PR-1: an old /vazifalar message can list a module of the student's PREVIOUS course; its task buttons
+    // would reopen and file work onto that course. Refuse before listing anything.
+    if (_effId && await refuseOtherCourseTask(admin, chatId, _effId, normLocale(_clicker.preferred_locale), "hw:mod", { moduleId }, !_isImp)) return;
     const { data: allList } = await admin
       .from("homework_assignments")
       .select("id, title, max_score, task_number, sap_number, parent_id, module_id, is_active, modules(id, title, position)")
@@ -7234,6 +7359,8 @@ async function handleCallback(admin: any, cq: any) {
     const locale: Locale = normLocale(_clicker.preferred_locale);
     const t = T[locale] as any;
     await answerCallback(cq.id);
+    // PR-1: never offer to reopen a previous course's grade (the Yes button would reopen it).
+    if (_effId && await refuseOtherCourseTask(admin, chatId, _effId, locale, "hw:resub_ask", { assignmentId }, !_isImp)) return;
     const { data: a } = await admin
       .from("homework_assignments")
       .select("id, max_score")
@@ -7280,6 +7407,11 @@ async function handleCallback(admin: any, cq: any) {
       await sendMessage(chatId, t.gradeNotFound);
       return;
     }
+    // PR-1: the course check runs BEFORE start_homework_resubmission. That RPC flags the old grade stale
+    // first, so a refusal only inside startHomeworkIntent would still leave a previous-course grade
+    // reopened with no new attempt coming (every grade card below 70% carries this one-tap button, and it
+    // never expires: 91 such 5.0 grades on 2026-09-30).
+    if (await refuseOtherCourseTask(admin, chatId, profile.id, locale, "hw:resub_yes", { assignmentId })) return;
     const { error: rpcErr } = await admin.rpc("start_homework_resubmission", { p_submission_id: sub.id });
     if (rpcErr) {
       console.error("start_homework_resubmission failed", rpcErr);
@@ -7287,7 +7419,7 @@ async function handleCallback(admin: any, cq: any) {
       return;
     }
     cacheInvalidateUser(profile.id);
-    await startHomeworkIntent(admin, chatId, profile, locale, assignmentId);
+    await startHomeworkIntent(admin, chatId, profile, locale, assignmentId, "hw:resub_yes");
     return;
   }
 
@@ -7560,6 +7692,8 @@ async function handleCallback(admin: any, cq: any) {
         await answerCallback(cq.id, t.pkGradedAlready); // race: graded between screen and confirm
       } else if (result === "tier_locked") {
         await answerCallback(cq.id, t.pkTierLocked);
+      } else if (result === "course_mismatch") {
+        await answerCallback(cq.id, t.hwOtherCourseTask); // PR-1: stale picker after a course move
       } else {
         await answerCallback(cq.id, "⚠️");
       }
@@ -7752,19 +7886,26 @@ async function handleCallback(admin: any, cq: any) {
       await renderStudentModules(admin, chatId, _effId, sid, locale, isAdmin);
     } else if (data.startsWith("tr:mod:")) {
       const rest = data.slice("tr:mod:".length);
-      const [sid, midOrPos] = rest.split(":");
+      const [sid, midOrPos, courseTok] = rest.split(":");
       if (sid && midOrPos) {
         // Payload carries the module POSITION (uuid pairs blow the 64-byte cap — audit BUG-2).
-        // Resolve via the student's group course; accept a 36-char uuid defensively.
+        // PR-1: resolve it among the modules the student has SUBMISSIONS in (the list this button came
+        // from), by the submission's own course: the button's course token, else the only candidate, else
+        // the current group's course. Accept a 36-char uuid defensively.
         let mid: string | null = midOrPos.length === 36 ? midOrPos : null;
+        const { data: sp } = await admin.from("profiles").select("group_id, groups:group_id(course_id)").eq("id", sid).maybeSingle();
+        const courseId = (sp as any)?.groups?.course_id ?? null;
         if (!mid) {
-          const { data: sp } = await admin.from("profiles").select("group_id, groups:group_id(course_id)").eq("id", sid).maybeSingle();
-          const courseId = (sp as any)?.groups?.course_id;
-          if (courseId) {
-            const { data: m } = await admin.from("modules").select("id")
-              .eq("course_id", courseId).eq("position", parseInt(midOrPos, 10) || 0).maybeSingle();
-            mid = m?.id ?? null;
-          }
+          const { data: sm } = await admin.from("homework_submissions")
+            .select("homework_assignments!inner(modules!inner(id, position, course_id))").eq("user_id", sid);
+          const submitted = ((sm || []) as any[]).map((r) => r?.homework_assignments?.modules).filter(Boolean);
+          mid = pickSubmissionModule(submitted, parseInt(midOrPos, 10) || 0, { coursePrefix: courseTok ?? null, currentCourseId: courseId });
+        }
+        if (!mid && courseId) {
+          // No submitted module at that position: the old rule (the current group's course), which shows "empty".
+          const { data: m } = await admin.from("modules").select("id")
+            .eq("course_id", courseId).eq("position", parseInt(midOrPos, 10) || 0).maybeSingle();
+          mid = m?.id ?? null;
         }
         if (mid) await renderStudentModuleDetail(admin, chatId, _effId, sid, mid, locale, isAdmin);
       }
