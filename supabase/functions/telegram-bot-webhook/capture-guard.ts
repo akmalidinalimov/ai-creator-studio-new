@@ -19,9 +19,9 @@
 //    list, an old grade card's 🔁 button or a still-open intent can point at a task of the student's
 //    PREVIOUS course after a move. The bot used to reopen that task (start_homework_resubmission first) and
 //    file the student's next post onto it, routed to the new group's teachers. Every such entry point now
-//    checks the task's course against the student's current course scope first. The scope is the same one
-//    /vazifalar and student_assignable_homework use (the current group's published course; enrollments or
-//    the default only without a group), supplied by the caller as `courseIdsFor`.
+//    checks the task's course against the student's current course scope first. The caller supplies the
+//    scope as `courseIdsFor`: the bot uses the course of the student's CURRENT GROUP (published or not, since
+//    the group decides the topic and the teachers), and the /vazifalar scope only for a student without one.
 //
 // Both refusals are DB-visible (graceful is not silent) and member-forgiving: a friendly sentence, never an
 // error, and nothing is recorded for a post in a topic that is not a homework topic (general chat).

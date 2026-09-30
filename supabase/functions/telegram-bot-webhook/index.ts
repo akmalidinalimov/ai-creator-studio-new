@@ -5231,16 +5231,29 @@ async function setMessageReaction(chatId: number, messageId: number, emoji = "âœ
   } catch (_e) { /* best-effort */ }
 }
 
+// PR-1: the course a student's homework must belong to = the course of their CURRENT GROUP, published or not:
+// the group decides which topic the work goes to and which teachers get it. (getCourseIdsForUser drops an
+// unpublished group course, which would refuse every task of a finished course whose students still post
+// late work.) Only a student with no group, or a course-less group, falls back to the /vazifalar scope.
+async function currentCourseScope(admin: any, userId: string): Promise<string[]> {
+  try {
+    const { data: p } = await admin.from("profiles").select("group_id, groups:group_id(course_id)").eq("id", userId).maybeSingle();
+    const c = (p as any)?.groups?.course_id;
+    if (c) return [c];
+  } catch (_e) { /* fall back */ }
+  return await getCourseIdsForUser(admin, userId);
+}
+
 // PR-1: the one previous-course check behind every student homework button (hw:mod, hw:start, hw:resub_ask,
-// hw:resub_yes) and the intent they open. Refuses only a PROVEN mismatch with the student's current course
-// scope (getCourseIdsForUser, the same scope /vazifalar lists): a friendly sentence in their language, never
-// an error, and one DB-visible admin_actions row ('stale_course_button_refused'). true = refused, stop.
+// hw:resub_yes) and the intent they open. Refuses only a PROVEN mismatch with currentCourseScope: a friendly
+// sentence in the student's language, never an error, and one DB-visible admin_actions row
+// ('stale_course_button_refused'). true = refused, stop.
 async function refuseOtherCourseTask(
   admin: any, chatId: number | null, userId: string, locale: Locale, path: OtherCoursePath,
   ref: { moduleId?: string | null; assignmentId?: string | null },
   record = true, // false under admin impersonation (read-only view): an expected result, not a student's tap
 ): Promise<boolean> {
-  const mismatch = await otherCourseTask(admin, userId, ref, (uid) => getCourseIdsForUser(admin, uid));
+  const mismatch = await otherCourseTask(admin, userId, ref, (uid) => currentCourseScope(admin, uid));
   if (!mismatch) return false;
   if (record) {
     await recordOtherCourseRefused(admin, path, userId, mismatch, {
@@ -5737,7 +5750,7 @@ async function finalizePendingPost(
     // topic it was posted in, which the chat guard made the student's own. If they moved to another course
     // before this pick/sweep (a stale picker), filing now would put a previous-course task in front of the
     // new group's teachers. Consume it instead (the file stays in the Telegram thread) and count it.
-    if (await otherCourseTask(admin, pending.user_id, { moduleId }, (uid) => getCourseIdsForUser(admin, uid))) {
+    if (await otherCourseTask(admin, pending.user_id, { moduleId }, (uid) => currentCourseScope(admin, uid))) {
       await admin.from("hw_pending_posts").update({ state: "expired" }).eq("id", pending.id).eq("state", "pending");
       await deletePicker();
       await recordCaptureSkipped(admin, "pending_other_course", { ...dropAt, module_id: moduleId });
@@ -6487,7 +6500,7 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     // post in this topic (chat guard + picker below), so the work lands in the current course, never lost.
     if (intent) {
       const mm = await otherCourseTask(admin, profile.id, { moduleId: intent.module_id, assignmentId: intent.assignment_id },
-        (uid) => getCourseIdsForUser(admin, uid));
+        (uid) => currentCourseScope(admin, uid));
       if (mm) {
         if (intent.id) await admin.from("bot_homework_intents").delete().eq("id", intent.id);
         await recordOtherCourseRefused(admin, "intent", profile.id, mm, {
