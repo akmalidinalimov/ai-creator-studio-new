@@ -35,9 +35,7 @@ export default function Continue() {
       if (!cancelled) navigate(target, { replace: true });
     })();
     return () => { cancelled = true; };
-    // location.search is read once per course/user: a watch button opens this route exactly once.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, courseId]);
+  }, [user, courseId, location.search, navigate]);
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-background text-foreground">
