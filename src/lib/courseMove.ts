@@ -8,7 +8,6 @@
 // from the 5.0 teacher. An admin may override only when nothing waits in the old course.
 
 // The few PostgREST reads loadGroupMovePlan makes. The app's `supabase` client fits; tests pass a fake.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = { from: (table: string) => any };
 
 export const REFUSED_STATUS = "cross_course_refused";

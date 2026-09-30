@@ -23,6 +23,12 @@ const ALLOWED_ACTIONS = new Set([
   "delete_lesson",
   "revoke_2fa",
   "update_profile",
+  // PR-3a: an admin's confirmed cross-course bulk move (AdminUsers "Guruhga ko'chirish").
+  "cross_course_move_override",
+  // AdminUsers already sends these; they were rejected here (400), so those audit rows were silently lost.
+  "archived_users",
+  "unarchived_users",
+  "bulk_delete_users",
 ]);
 
 Deno.serve(async (req) => {
