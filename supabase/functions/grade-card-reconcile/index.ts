@@ -14,6 +14,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
+import { GRADE_CARD_SKIP_WINDOW_DAYS, recordGradeCardSkipped } from "../_shared/grade-card-signals.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -21,7 +22,9 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
-const LOOKBACK_DAYS = 14; // heal grades from the last 2 weeks; older cohorts have the in-app view
+// Heal grades from the last 2 weeks (14 days); older cohorts have the in-app view. Shared with the
+// grade_card_dm_skipped dedupe window, so an attempt this run keeps re-seeing is never logged twice.
+const LOOKBACK_DAYS = GRADE_CARD_SKIP_WINDOW_DAYS;
 const BATCH = 60;         // bounded work per run; oldest-pending-first so a backlog drains steadily
 
 const escHtml = (s = "") => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -173,9 +176,15 @@ Deno.serve(async (req) => {
     const { data: student } = await admin.from("profiles").select("telegram_id, preferred_locale").eq("id", sub.user_id).maybeSingle();
     const tgId = student?.telegram_id ?? null;
     if (!tgId) {
-      // No telegram_id (~70%) — un-claim (restore prior marker) so a future run reaches them if they
-      // start the bot. prior is NULL for a never-delivered row, or the old attempt for a stale-marker row.
+      // No telegram_id — un-claim (restore prior marker) so a future run reaches them if they link
+      // Telegram. prior is NULL for a never-delivered row, or the old attempt for a stale-marker row.
       await admin.from("homework_submissions").update({ grade_card_notified_attempt: prior }).eq("id", sub.id).eq("grade_card_notified_attempt", attempt);
+      // Counted once per attempt across all three senders (shared key + 14-day window = LOOKBACK_DAYS),
+      // so re-seeing it every 30 min adds nothing. Covers grades from any path that recorded nothing.
+      await recordGradeCardSkipped(admin, {
+        submissionId: sub.id, studentId: sub.user_id, attempt, source: "grade-card-reconcile",
+        details: { score: claimed.score, reconciled: true },
+      });
       skipped++;
       continue;
     }

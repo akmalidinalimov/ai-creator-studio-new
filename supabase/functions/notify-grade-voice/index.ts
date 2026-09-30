@@ -20,12 +20,16 @@
 // Auth: the caller's Supabase session JWT (verify_jwt = true in supabase/config.toml).
 // RBAC: caller must be a teacher of the submission's student's group (is_group_teacher, junction-aware)
 //   OR a platform admin/superadmin. A student can never trigger their own grade DM. Anyone else → 403.
-// Member-forgiveness (CLAUDE.md): a student with no telegram_id (~70% never pressed Start) is a graceful
-//   no-send, HTTP 200, NOT a failure — and NOT marked notified (a later reconciler can still reach them).
+// Member-forgiveness (CLAUDE.md): a student with no telegram_id (123 of 690 student profiles on 2026-09-29)
+//   is a graceful no-send, HTTP 200, NOT a failure — and NOT marked notified (a later reconciler can still
+//   reach them). It is counted, once per graded attempt, as a grade_card_dm_skipped row
+//   (_shared/grade-card-signals.ts), never alarmed.
 // SECURITY: the bot token is used ONLY inside this function; never returned, embedded in the signed audio
-//   URL, or logged. Only REAL non-deliveries (blocked/errored, recipient_error flagged) are DB-visible.
+//   URL, or logged. Real non-deliveries (blocked/errored, recipient_error flagged) are DB-visible, and so
+//   is the no_telegram skip above.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
+import { gradeCardOwed, recordGradeCardSkipped } from "../_shared/grade-card-signals.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -145,12 +149,26 @@ Deno.serve(async (req) => {
       return json({ ok: true, card_sent: false, voice_sent: false, reason: "bot_token_missing" });
     }
 
-    // --- 4. The recipient. A student with no telegram_id (~70% never Started) is a graceful no-send. ---
+    // --- 4. The recipient. A student with no telegram_id is a graceful no-send. ---
     const { data: student, error: stuErr } = await admin
       .from("profiles").select("telegram_id, preferred_locale").eq("id", sub.user_id).maybeSingle();
     if (stuErr) throw stuErr;
     const telegramId = student?.telegram_id ?? null;
-    if (!telegramId) return json({ ok: true, card_sent: false, voice_sent: false, reason: "no_telegram" });
+    if (!telegramId) {
+      // Graceful for the teacher (HTTP 200), but no longer silent: the grade_delivery watchdogs count only
+      // SEND failures, and a card that is never attempted produced no row at all. Recorded only when a
+      // card was actually owed (gradeCardOwed = the score / not-stale / not-yet-notified rule of step 6
+      // below), so a plain feedback re-save adds nothing. The marker is left alone, so grade-card-reconcile
+      // can still deliver it if the student links Telegram within its 14-day lookback.
+      if (gradeCardOwed(sub as any)) {
+        await recordGradeCardSkipped(admin, {
+          submissionId, studentId: sub.user_id, attempt: ((sub as any).attempt_number as number) ?? 1,
+          source: "notify-grade-voice", actorUserId: uid,
+          details: { score: (sub as any).score, voice_dropped: !!(voiceFresh && sub.score_feedback_voice_path) },
+        });
+      }
+      return json({ ok: true, card_sent: false, voice_sent: false, reason: "no_telegram" });
+    }
     const locale = normLocale(student?.preferred_locale);
 
     // --- 5. Assignment (title + max_score). ---
