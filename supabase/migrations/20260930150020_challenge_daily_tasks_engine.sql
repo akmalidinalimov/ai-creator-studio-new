@@ -1,7 +1,8 @@
 -- Challenge 6.0 daily tasks, PR-3: the SQL ENGINE (build spec v2 §6, §8, §9.2/9.6, §13). INERT at merge:
--- (This file re-issues 20260930150000 in slot 20260930150010: welcome receipts are queued -- never degraded -- over
--- the per-chat budget, the 20:00 summary counts ride on post_claim, and a checked result is queued as a DM.
--- 20260930150000 was never merged or applied.)
+-- (This file re-issues 20260930150010 in slot 20260930150020 with the four review fixes R1-R4 below. 150010 had
+-- re-issued 20260930150000: welcome receipts are queued -- never degraded -- over the per-chat budget, the 20:00
+-- summary counts ride on post_claim, and a checked result is queued as a DM. Neither earlier slot was ever merged or
+-- applied: 0 challenge_task_* objects exist live, re-checked 2026-09-30.)
 -- platform_settings.challenge_tasks stays enabled=false / ai=false / miniapp=false (PR-1's seed; this file never
 -- writes that row). While paused, nothing captures, awards, posts, sends or calls an AI; the two new cron jobs write a
 -- heartbeat / a watchdog state stamp ONLY. Go-live is PR-8.
@@ -31,7 +32,8 @@
 --    general 5 / instagram 8 (config), late 1..2 days = ceil(half) (3 / 4), closed after 2 days; freeze-aware
 --    created_at (C11: a frozen week -> now()); per-student locks ctask:<u> THEN user_xp:<u>, rebuilding only that
 --    student (G31). Streak: +10 per 5 consecutive ON-TIME task days (rest days skipped, late work breaks the run,
---    sticky), 'ch_task_streak:<date>' (reason challenge_task_streak).
+--    sticky), 'ch_task_streak:<date>' (reason challenge_task_streak); every award CLAIMS the 5 days that paid it, so
+--    a day pays toward one award at most, however the run is later split or re-joined (R2).
 -- 4. Workers' claim / record RPCs (inert while paused): AI check claim / record (SQL decides from LABELS, I3;
 --    general default-pay, instagram handle / tag / recency / 404 / dHash near-duplicate, never fail-open), receipt
 --    claim / record, post claim / record (+ the anonymous 20:00 summary counts and the dt_<id> start parameter),
@@ -48,7 +50,7 @@
 --    against is frozen once posted or submitted) and trg_profiles_zz_ig_handle_lock (G2: the Instagram handle is
 --    locked after the first accepted instagram task; admins / definers pass).
 -- 8. ONE pinned rewrite: xp_award_integrity_watchdog gains challenge_chat, challenge_answer, challenge_task,
---    challenge_task_streak in unverifiable_by_design (G31; §6.14d). Live md5 0a7c5bae..., new 994cbcee...
+--    challenge_task_streak in unverifiable_by_design (G31; §6.14d). Live md5 0a7c5bae..., new 71500fc1...
 --
 -- ═══ VERIFIED LIVE, 2026-09-30 (read-only) ═══
 -- * PR-0 (20260930120020), PR-1 (20260930121000), #221 (20260930130549) and PR-2 (20260930122010) are applied: all
@@ -59,8 +61,12 @@
 -- * xp_award_integrity_watchdog md5(prosrc) 0a7c5bae4e1ff1d6e8eb667c39af0335 (fixture
 --   supabase/functions/_challenge/testing/xp_award_integrity_watchdog.live-2026-09-30.sql, md5-identical);
 --   ACL postgres + service_role, SECURITY DEFINER.
--- * freeze_challenge_week writes challenge_weekly_results.week_start (the Tashkent Monday) + admin_actions
---   'challenge_week_frozen' {week}; admin_void_challenge_points writes 'challenge_points_voided' (target_user_id).
+-- * freeze_challenge_week (md5 e676d00e2c1fdac5436a479c5957f1c6) writes challenge_weekly_results.week_start + the
+--   audit row 'challenge_week_frozen' {week} under TWO keys: a manual run stores the Monday; the weekly cron (job
+--   'challenge-weekly', 10 4 * * 1 -> challenge_weekly_job() -> freeze_challenge_week()) stores `_prev_mon::date`, a
+--   timestamptz (Monday 00:00 +05) cast in the server's UTC session (TimeZone = UTC from the configuration file, no
+--   role / database override) = the SUNDAY before (at 2026-10-12 04:10 UTC it evaluates to 2026-10-04). R4 reads
+--   both. admin_void_challenge_points writes 'challenge_points_voided' (target_user_id).
 -- * xp_events: UNIQUE (user_id, ref_key), amount > 0, FK auth.users. profiles.telegram_username / instagram_username
 --   are citext (both globally unique). PG 17 (bit_count), citext installed, fuzzystrmatch NOT installed (own
 --   Levenshtein). webhook_inbox carries message_thread_id / from_user_id (always filled for messages).
@@ -74,9 +80,8 @@
 --     cancelled task pays 0: the next reconcile removes its points; re-approving restores them.
 -- d2  profiles_column_guard "v2" is a SEPARATE invoker trigger (trg_profiles_zz_ig_handle_lock) + a definer helper
 --     that answers only about the caller: PR-0's security guard is not rewritten at all.
--- d3  R4 BURST never appends new MEDIA to an already-ACCEPTED submission: a missed day's screenshot sent 2 minutes
---     after today's would otherwise be swallowed silently (option 1: "the next fills the missed task"). Text still
---     bursts; albums are R1.
+-- d3  [WITHDRAWN in 150020, R1] 150010 kept new MEDIA out of an ACCEPTED submission's burst; with ai=false that paid
+--     a missed day's late points for the second screenshot of TODAY's work. R4 now follows the spec (see R1).
 -- d4  is_task_day: an approved task date, or a configured weekday ON OR AFTER the first approved task date, inside
 --     the window dates. The owner's first task day is Monday 2026-10-05: Thu 10-01 / Fri 10-02 never alarm.
 -- d5  challenge_task_retry is added (the spec's I4 "DB-visible retry state"); written only by the reconciler /
@@ -104,6 +109,31 @@
 -- d17 my_telegram_write_access_granted() is created here (G12 lists it for PR-7's impersonation guard; the column
 --     exists since PR-0).
 --
+-- ═══ REVIEW FIXES (150020; each reproduced on PGlite against 150010 first -- harness section RV) ═══
+-- R1  BURST (spec §6.5 R4): media inside merge_window_min joins the newest live submission INCLUDING an accepted one
+--     ('appended', a 👍 reaction). 150010's d3 let the 2nd screenshot of today's work -- Telegram users often send
+--     screenshots one by one -- create a MISSED day that ai=false paid on format (+3 per open missed day). A missed
+--     day is still filled by the next post after the window (option 1) or explicitly by replying to that day's post
+--     (R3). Detector: health.missed_within_burst_7d counts missed slots created inside another submission's burst
+--     window (only a kind today's task does not accept can still do that).
+-- R2  STREAK awards are sticky, and each one now CLAIMS (claimed_dates) the `every` on-time days that paid it. A new
+--     award is written only when a maximal on-time run holds `every` on-time days no award has claimed, so a run of
+--     L days is paid floor(L / every) times however it was split / re-joined (withdraw -> restore, held checks
+--     released later, reassign). 150010 recomputed positions from scratch and never counted the sticky awards: +10
+--     extra per withdraw / restore, 3 awards for 10 days after held checks were released. Detector: invariant
+--     streak_awards_excess (an award whose claimed days overlap another's) -> the watchdog's 'invariant' alarm. (A
+--     run-length check was rejected: a sticky award legitimately outlives a later split -- cancel, admin reject, void.)
+-- R3  CORRECTIONS: a STUDENT (the owner via the bot, or my_* in the app) can no longer move or withdraw a REJECTED
+--     submission ('rejected_final' -- an appeal is an admin override), restore a submission an ADMIN withdrew
+--     ('withdrawn_by_admin'), or correct anything once now() >= close_at of the source or target task ('closed').
+--     Restore returns the status (and reason) recorded at withdraw time instead of re-judging (a restored 'checking'
+--     gets a fresh check lease and fail-open clock). A withdrawn rejected attempt still counts toward
+--     max_attempts_per_task (challenge_task_rejected_count). Admins keep every override (logged).
+-- R4  FROZEN WEEK: challenge_task_week_frozen_at() reads both keys the freeze writes (the Monday and the Sunday
+--     before it, see VERIFIED LIVE); award_ts and health.awards_after_freeze_7d use it, and the detector now covers
+--     streak awards too. Fixing freeze_challenge_week's own key is left to a separately pinned migration (it feeds
+--     the weekly boards; not this PR's slice) -- the engine accepts both keys either way.
+--
 -- ═══ CONTRACTS the later PRs must honour (health reads them) ═══
 -- PR-4 (bot): call challenge_task_capture(msg, 'topic', {welcome}) first in the daily topic (fail CLOSED to today's
 -- behaviour if the RPC is missing); record receipts with challenge_task_receipt_record; write admin_actions
@@ -112,6 +142,10 @@
 -- a challenge-scope homework topic -- not DB-visible today), 'challenge_task_capture_failed'. PR-5: the tick queues
 -- challenge_task_posts / outbox; the worker uses the claim RPCs and writes 'challenge_task_identity_sweep'
 -- {linked, registered, unresolved}. PR-6: challenge_task_check_claim / _record with the d11 schemas.
+-- PR-4 / PR-7 (corrections, R3): move / withdraw / restore answer {ok:false, reason} with 'rejected_final',
+-- 'withdrawn_by_admin' or 'closed' (besides not_found / not_owner / future_task / same_task / bad_target /
+-- too_many_moves / attempts_exhausted / slot_taken / not_movable / not_withdrawable / not_withdrawn): each is a
+-- friendly Uzbek line for the student (member forgiveness), never an error.
 --
 -- ═══ KILL-SWITCHES ═══
 -- platform_settings.challenge_tasks.enabled = false is a PAUSE (no row; the rolling scan re-derives the last 26 h on
@@ -122,8 +156,9 @@
 -- ═══ DETECTION ═══
 -- challenge_tasks_health(): retry / held / unknown / username_match_unlinked / paused / bot status / liveness /
 -- posts / held checks / checks / AI / receipts / outbox / Mini App / legacy swaps / handle changes / IG unverified /
--- fingerprint unavailable / misplaced homework, and invariants (ledger_drift, streak_awards_without_xp,
--- topic_points_leak_24h incl. community help/question, awards_after_freeze_7d, live_duplicates).
+-- fingerprint unavailable / misplaced homework / missed slots created inside a burst, and invariants (ledger_drift,
+-- streak_awards_without_xp, streak_awards_excess, topic_points_leak_24h incl. community help/question,
+-- awards_after_freeze_7d incl. streak awards, live_duplicates).
 -- challenge_tasks_watchdog() alarms on them hourly; every run leaves 'challenge_tasks_watchdog_run'.
 --
 -- SELF-TEST: non-mutating only -- pure / IMMUTABLE fixtures (classify incl. the forum-topic reply farm, requires
@@ -131,8 +166,9 @@
 -- requires validator), catalog / ACL / RLS / FK / trigger / cron presence, the rewritten md5, the live config parse.
 -- It never calls capture, settle, reconcile, the watchdog, backfill, a claim or reassign.
 -- PGlite harness: supabase/functions/_challenge/testing/daily-tasks-engine-check.ts (#218 + PR-1 + PR-2 + THIS file
--- on the live fixtures): attribution, late, streak, freeze, corrections, pause/resume, held, race safety, edits,
--- legacy swap, Mini App, reassign, AI record, fail-open, expire, health, watchdog, guards, backfill, replay.
+-- on the live fixtures, incl. the LIVE freeze_challenge_week, under a pinned clock): attribution, late, streak,
+-- freeze, corrections, pause/resume, held, race safety, edits, legacy swap, Mini App, reassign, AI record, fail-open,
+-- expire, health, watchdog, guards, backfill, replay, and the RV review regressions.
 -- Merge: after PR-2 (20260930122010, ledgered). Label migration-approved, NEVER ops-agent. One at a time.
 
 -- ═══════════════════════════════ 0. Prerequisites: PR-0 (profiles columns) and PR-2 (the calendar) ═══════════════════════════════
@@ -204,6 +240,10 @@ create table if not exists public.challenge_task_submissions (
   moved_count integer not null default 0 check (moved_count >= 0),
   merged_into bigint references public.challenge_task_submissions(id) on delete set null,
   request_id text,
+  -- R3: what a withdraw recorded, so restore returns it (never a re-judge) and knows who withdrew
+  withdrawn_from text check (withdrawn_from is null or withdrawn_from in ('needs_more', 'checking', 'accepted', 'rejected')),
+  withdrawn_reason text,
+  withdrawn_by uuid,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -269,6 +309,7 @@ create table if not exists public.challenge_task_streak_awards (
   streak_len integer not null check (streak_len > 0),
   bonus integer not null check (bonus > 0),
   xp_ref_key text not null,
+  claimed_dates date[] not null check (cardinality(claimed_dates) > 0),   -- R2: the on-time days that paid this award
   created_at timestamptz not null default now(),
   constraint uq_ctask_streak unique (user_id, course_id, task_date)
 );
@@ -1087,6 +1128,26 @@ as $fn$
    where a.action = 'challenge_points_voided' and a.target_user_id = _user
 $fn$;
 
+create or replace function public.challenge_task_week_frozen_at(_ts timestamptz)
+returns timestamptz
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  -- R4: when the Tashkent week (Mon..Sun) containing _ts was frozen by freeze_challenge_week, else NULL. The freeze
+  -- keys a week TWO ways (verified live): a manual run stores the Monday; the weekly cron stores `_prev_mon::date` in
+  -- the server's UTC session = the SUNDAY before. Both are read: a Sunday key can only mean the week that starts the
+  -- next day (a manual key is always a Monday). Sources: challenge_weekly_results.week_start and the
+  -- 'challenge_week_frozen' audit row (written even when nobody scored).
+  with k as (select date_trunc('week', _ts at time zone 'Asia/Tashkent')::date as mon)
+  select least(
+    (select min(r.created_at) from public.challenge_weekly_results r, k where r.week_start in (k.mon, k.mon - 1)),
+    (select min(a.created_at) from public.admin_actions a, k
+      where a.action = 'challenge_week_frozen'
+        and a.details->>'week' in (to_char(k.mon, 'YYYY-MM-DD'), to_char(k.mon - 1, 'YYYY-MM-DD'))))
+$fn$;
+
 create or replace function public.challenge_task_award_ts(_ts timestamptz)
 returns timestamptz
 language sql
@@ -1094,16 +1155,10 @@ stable
 security definer
 set search_path = public
 as $fn$
-  -- C11 / G11: an award normally takes created_at = submitted_at. If the Tashkent week (Monday) containing it was
-  -- already frozen by freeze_challenge_week (challenge_weekly_results.week_start, or its 'challenge_week_frozen'
-  -- audit row), created_at = now(): the points land on the CURRENT week's board instead of vanishing from prizes.
-  select case
-    when exists (select 1 from public.challenge_weekly_results r
-                  where r.week_start = date_trunc('week', _ts at time zone 'Asia/Tashkent')::date)
-      or exists (select 1 from public.admin_actions a
-                  where a.action = 'challenge_week_frozen'
-                    and a.details->>'week' = (date_trunc('week', _ts at time zone 'Asia/Tashkent')::date)::text)
-    then now() else _ts end
+  -- C11 / G11: an award normally takes created_at = submitted_at. If the Tashkent week containing it was already
+  -- frozen (challenge_task_week_frozen_at, R4), created_at = now(): the points land on the CURRENT week's board
+  -- instead of vanishing from prizes.
+  select case when public.challenge_task_week_frozen_at(_ts) is not null then now() else _ts end
 $fn$;
 
 create or replace function public.challenge_task_is_task_day(_course uuid, _d date, _cfg jsonb)
@@ -1171,6 +1226,20 @@ as $fn$
     when _late_days <= coalesce((_cfg->>'late_days')::int, 2) then greatest(1, ceil(b.base * coalesce((_cfg->>'late_factor')::numeric, 0.5)))::int
     else 0 end
   from b
+$fn$;
+
+create or replace function public.challenge_task_rejected_count(_user uuid, _task_id bigint)
+returns integer
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  -- The attempts used against max_attempts_per_task: rejected submissions, INCLUDING a rejected one that was later
+  -- withdrawn (R3: withdrawing never gives an attempt back). The ONE count every attempts rule reads.
+  select count(*)::int from public.challenge_task_submissions x
+   where x.user_id = _user and x.task_id = _task_id
+     and (x.status = 'rejected' or (x.status = 'withdrawn' and x.withdrawn_from = 'rejected'))
 $fn$;
 
 -- ═══════════════════════════════ 4. Evaluate, settle (the ONLY writer of task points), streak, legacy swap ═══════════════════════════════
@@ -1352,15 +1421,25 @@ volatile
 security definer
 set search_path = public
 as $fn$
--- §8.3: walks the course's approved task dates in order; every multiple of streak.every consecutive ON-TIME days
--- inserts ONE award for that date (sticky: never removed except by a void) plus its ledger row
--- 'ch_task_streak:<date>' (reason challenge_task_streak), freeze-aware like every award.
+-- §8.3 + R2: walks the course's approved task dates in order. A run is a maximal sequence of task dates with an
+-- ON-TIME accepted submission (rest days are not task dates, so they are skipped; a missed / late / held day ends
+-- it). Every award is sticky (only a void removes it) and CLAIMS the `every` on-time days that paid it
+-- (claimed_dates). Inside a run, days an earlier award already claimed are skipped; the run's UNCLAIMED on-time days
+-- are counted and every `every` of them write ONE award (dated on the day that completed the count) plus its ledger
+-- row 'ch_task_streak:<date>' (reason challenge_task_streak), freeze-aware like every award. So however a run is
+-- split and re-joined (withdraw -> restore, a held check accepted later, a reassign), a day pays toward one award at
+-- most and a run of L days is paid floor(L / every) times. Awards older than the student's newest void tombstone
+-- claim nothing (their days were voided). Returns the length of the latest run.
 declare
   _every int := coalesce((_cfg->'streak'->>'every')::int, 5);
   _bonus int := coalesce((_cfg->'streak'->>'bonus')::int, 10);
+  _void timestamptz := public.challenge_task_void_at(_user);
+  _claimed date[];
   _r record;
   _run int := 0;
-  _run_ts timestamptz;
+  _last_run int := 0;
+  _buf date[] := '{}';
+  _buf_ts timestamptz;
   _ref text;
   _ins int;
   _any boolean := false;
@@ -1368,6 +1447,9 @@ begin
   if _user is null or _course is null or _every <= 0 or _bonus <= 0 then
     return 0;
   end if;
+  select coalesce(array_agg(distinct d.d), '{}') into _claimed
+    from public.challenge_task_streak_awards a, unnest(a.claimed_dates) d(d)
+   where a.user_id = _user and a.course_id = _course and a.created_at > coalesce(_void, '-infinity'::timestamptz);
   for _r in
     select x.id, x.task_date,
            (select s.submitted_at from public.challenge_task_submissions s
@@ -1382,35 +1464,45 @@ begin
      order by x.task_date
   loop
     if _r.on_time_at is null then
-      _run := 0;
-      _run_ts := null;
+      _run := 0;                                -- the run ends: unclaimed days never carry over a gap
+      _buf := '{}';
+      _buf_ts := null;
       continue;
     end if;
     _run := _run + 1;
-    _run_ts := greatest(coalesce(_run_ts, _r.on_time_at), _r.on_time_at);
-    if _run % _every = 0 then
+    _last_run := _run;
+    if _r.task_date = any(_claimed) then
+      continue;                                 -- this day already paid a (sticky) award
+    end if;
+    _buf := _buf || _r.task_date;
+    _buf_ts := greatest(coalesce(_buf_ts, _r.on_time_at), _r.on_time_at);
+    if cardinality(_buf) >= _every then
       _ref := 'ch_task_streak:' || _r.task_date::text;
-      insert into public.challenge_task_streak_awards (user_id, course_id, task_date, streak_len, bonus, xp_ref_key)
-      values (_user, _course, _r.task_date, _run, _bonus, _ref)
+      insert into public.challenge_task_streak_awards (user_id, course_id, task_date, streak_len, bonus, xp_ref_key, claimed_dates)
+      values (_user, _course, _r.task_date, _run, _bonus, _ref, _buf)
       on conflict (user_id, course_id, task_date) do nothing;
       get diagnostics _ins = row_count;
       if _ins > 0 then
         perform pg_advisory_xact_lock(hashtext('ctask:' || _user::text));
         perform pg_advisory_xact_lock(hashtext('user_xp:' || _user::text));
         insert into public.xp_events (user_id, amount, reason, ref_key, created_at)
-        values (_user, _bonus, 'challenge_task_streak', _ref, public.challenge_task_award_ts(_run_ts))
+        values (_user, _bonus, 'challenge_task_streak', _ref, public.challenge_task_award_ts(_buf_ts))
         on conflict (user_id, ref_key) do nothing;
         _any := true;
+        _claimed := _claimed || _buf;
         insert into public.admin_actions (actor_user_id, action, target_user_id, details)
         values (null, 'challenge_task_streak_awarded', _user, jsonb_build_object(
-          'course_id', _course, 'task_date', _r.task_date, 'streak_len', _run, 'bonus', _bonus, 'at', now()));
+          'course_id', _course, 'task_date', _r.task_date, 'streak_len', _run, 'bonus', _bonus,
+          'claimed_dates', to_jsonb(_buf), 'at', now()));
       end if;
+      _buf := '{}';
+      _buf_ts := null;
     end if;
   end loop;
   if _any then
     perform public.challenge_task_rebuild_user_xp(_user);
   end if;
-  return _run;
+  return _last_run;
 end
 $fn$;
 
@@ -1647,8 +1739,7 @@ begin
   end if;
   select * into _t from public.challenge_tasks where id = _s.task_id;
   _d0 := public.challenge_task_local_date(_s.submitted_at);
-  select count(*)::int into _rej from public.challenge_task_submissions x
-   where x.user_id = _s.user_id and x.task_id = _s.task_id and x.status = 'rejected';
+  _rej := public.challenge_task_rejected_count(_s.user_id, _s.task_id);
   _streak := public.challenge_task_streak_current(_s.user_id, _t.course_id);
   select a.bonus into _bonus from public.challenge_task_streak_awards a
    where a.user_id = _s.user_id and a.course_id = _t.course_id and a.task_date = _t.task_date;
@@ -1976,8 +2067,7 @@ begin
       elsif _ts >= public.challenge_task_close_at(_t, _cfg) or _d < _t.task_date then
         _outcome := 'no_slot';
         _reason := 'target_closed';
-      elsif (select count(*) from public.challenge_task_submissions x
-              where x.user_id = _p.id and x.task_id = _t.id and x.status = 'rejected') >= _max_att then
+      elsif public.challenge_task_rejected_count(_p.id, _t.id) >= _max_att then
         _outcome := 'attempts_exhausted';
       else
         _create_task := _t;
@@ -1987,14 +2077,14 @@ begin
   end if;
 
   if _outcome is null and _create_task.id is null then
-    -- R4 BURST: the newest live submission, still open, touched within merge_window_min. d3: new MEDIA never
-    -- bursts into an ALREADY-ACCEPTED submission (that would silently swallow a missed day's work sent right after
-    -- today's); it goes on to R5/R6 (fills the missed task) or R7. Text still joins (it never fills a missed task).
+    -- R4 BURST (spec §6.5; review R1): the newest LIVE submission -- an accepted one included -- still open, touched
+    -- within merge_window_min, whose accepts the message's kinds intersect (or it is text): append. The 2nd, 3rd ...
+    -- screenshot of one piece of work (Telegram users often send them one by one) is the SAME submission, never a paid
+    -- missed day; a missed day is filled by the next post after the window (R6 c) or by replying to its post (R3).
     select s.* into _s
       from public.challenge_task_submissions s
       join public.challenge_tasks t on t.id = s.task_id
      where s.user_id = _p.id and s.status in ('needs_more', 'checking', 'accepted')
-       and (s.status <> 'accepted' or not _media)
        and s.last_item_at >= _ts - _mw and s.last_item_at <= _ts + interval '1 minute'
        and _ts < public.challenge_task_close_at(t, _cfg)
        and ('text' = any(_kinds)
@@ -2032,8 +2122,7 @@ begin
       select t.*, (t.task_date = _d) as is_today,
              exists (select 1 from public.challenge_task_submissions x
                       where x.user_id = _p.id and x.task_id = t.id and x.status in ('needs_more', 'checking', 'accepted')) as has_live,
-             (select count(*) from public.challenge_task_submissions x
-               where x.user_id = _p.id and x.task_id = t.id and x.status = 'rejected') as rejected
+             public.challenge_task_rejected_count(_p.id, t.id) as rejected
         from public.challenge_tasks t
        where t.course_id = _topic.course_id and t.status = 'approved'
          and t.task_date between _d - coalesce((_cfg->>'late_days')::int, 2) and _d
@@ -2104,8 +2193,7 @@ begin
       insert into public.challenge_task_submissions (task_id, user_id, group_id, source, attributed_via, status,
                                                      submitted_at, last_item_at, late_days, attempt_no)
       values (_create_task.id, _p.id, _topic.group_id, _src, _create_via, 'needs_more', _ts, _ts, _d - _create_task.task_date,
-              1 + (select count(*)::int from public.challenge_task_submissions x
-                    where x.user_id = _p.id and x.task_id = _create_task.id and x.status = 'rejected'))
+              1 + public.challenge_task_rejected_count(_p.id, _create_task.id))
       returning id into _sub_id;
       _outcome := 'created';
     exception when unique_violation then
@@ -2354,8 +2442,7 @@ begin
   if found and _s.status = 'accepted' then
     return jsonb_build_object('ok', false, 'reason', 'done', 'topic', _topic, 'submission_id', _s.id);
   end if;
-  select count(*)::int into _rej from public.challenge_task_submissions x
-   where x.user_id = _user and x.task_id = _t.id and x.status = 'rejected';
+  _rej := public.challenge_task_rejected_count(_user, _t.id);
   if _s.id is null and _rej >= coalesce((_cfg->>'max_attempts_per_task')::int, 3) then
     return jsonb_build_object('ok', false, 'reason', 'attempts_exhausted', 'topic', _topic);
   end if;
@@ -2489,8 +2576,7 @@ begin
       _sub_id := _s.id;
       _outcome := 'appended';
     else
-      select count(*)::int into _rej from public.challenge_task_submissions x
-       where x.user_id = _user and x.task_id = _t.id and x.status = 'rejected';
+      _rej := public.challenge_task_rejected_count(_user, _t.id);
       if _rej >= coalesce((_cfg->>'max_attempts_per_task')::int, 3) then
         _outcome := 'attempts_exhausted';
       else
@@ -2551,6 +2637,9 @@ as $fn$
 -- I5: lateness is re-derived from the Tashkent date of submitted_at -- a move can never make work pay on time for a
 -- date it was not posted on; a future task, or one closed relative to that date, is refused. At most
 -- max_moves_per_submission moves. Both tasks are re-settled. Audited 'challenge_task_moved'.
+-- R3: the STUDENT (actor = owner, not the admin path) can never move a REJECTED submission ('rejected_final': a
+-- move re-judged it from scratch -- an appeal is an admin override), nor move once now() >= close_at of the source
+-- OR the target task ('closed'). Admins (the logged tap override, admin_challenge_task_override) keep both.
 declare
   _cfg jsonb := public.challenge_tasks_config();
   _s public.challenge_task_submissions;
@@ -2561,6 +2650,7 @@ declare
   _late int;
   _rej int;
   _target_id bigint;
+  _student boolean;
 begin
   select * into _s from public.challenge_task_submissions where id = _sub;
   if not found then
@@ -2568,8 +2658,12 @@ begin
   end if;
   perform pg_advisory_xact_lock(hashtext('ctask:' || _s.user_id::text));
   select * into _s from public.challenge_task_submissions where id = _sub for update;
+  _student := _via is distinct from 'admin' and _actor is not distinct from _s.user_id;
   if _s.status not in ('needs_more', 'checking', 'accepted', 'rejected') then
     return jsonb_build_object('ok', false, 'reason', 'not_movable', 'status', _s.status);
+  end if;
+  if _student and _s.status = 'rejected' then
+    return jsonb_build_object('ok', false, 'reason', 'rejected_final', 'status', _s.status);
   end if;
   select * into _from from public.challenge_tasks where id = _s.task_id;
   select * into _to from public.challenge_tasks where id = _target_task;
@@ -2584,7 +2678,8 @@ begin
   if _late < 0 then
     return jsonb_build_object('ok', false, 'reason', 'future_task');
   end if;
-  if _late > coalesce((_cfg->>'late_days')::int, 2) then
+  if _late > coalesce((_cfg->>'late_days')::int, 2)
+     or (_student and (now() >= public.challenge_task_close_at(_from, _cfg) or now() >= public.challenge_task_close_at(_to, _cfg))) then
     return jsonb_build_object('ok', false, 'reason', 'closed');
   end if;
   if _s.moved_count >= coalesce((_cfg->>'max_moves_per_submission')::int, 5) then
@@ -2609,8 +2704,7 @@ begin
     perform public.challenge_task_evaluate(_l.id, _cfg, true);
     _target_id := _l.id;
   else
-    select count(*)::int into _rej from public.challenge_task_submissions x
-     where x.user_id = _s.user_id and x.task_id = _to.id and x.status = 'rejected';
+    _rej := public.challenge_task_rejected_count(_s.user_id, _to.id);
     if _rej >= coalesce((_cfg->>'max_attempts_per_task')::int, 3) then
       return jsonb_build_object('ok', false, 'reason', 'attempts_exhausted');
     end if;
@@ -2644,20 +2738,34 @@ security definer
 set search_path = public
 as $fn$
 -- "❌ Bu topshiriq emas": the submission stops counting (points removed); its items stay linked so restore can
--- bring it back (one tap, with undo).
+-- bring it back (one tap, with undo). R3: the status, reason and actor are RECORDED (withdrawn_from /
+-- withdrawn_reason / withdrawn_by) so restore returns exactly that; reason keeps the previous status for readers.
+-- The STUDENT can never withdraw a REJECTED submission ('rejected_final': withdraw + restore re-judged it -- an admin
+-- or AI verdict undone, max_attempts_per_task bypassed) nor withdraw once the task has closed ('closed').
 declare
   _cfg jsonb := public.challenge_tasks_config();
   _s public.challenge_task_submissions;
+  _t public.challenge_tasks;
+  _student boolean;
 begin
   select * into _s from public.challenge_task_submissions where id = _sub;
   if not found then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
   perform pg_advisory_xact_lock(hashtext('ctask:' || _s.user_id::text));
   select * into _s from public.challenge_task_submissions where id = _sub for update;
+  _student := _via is distinct from 'admin' and _actor is not distinct from _s.user_id;
   if _s.status not in ('needs_more', 'checking', 'accepted', 'rejected') then
     return jsonb_build_object('ok', false, 'reason', 'not_withdrawable', 'status', _s.status);
   end if;
+  if _student and _s.status = 'rejected' then
+    return jsonb_build_object('ok', false, 'reason', 'rejected_final', 'status', _s.status);
+  end if;
+  select * into _t from public.challenge_tasks where id = _s.task_id;
+  if _student and now() >= public.challenge_task_close_at(_t, _cfg) then
+    return jsonb_build_object('ok', false, 'reason', 'closed', 'status', _s.status);
+  end if;
   update public.challenge_task_submissions
-     set status = 'withdrawn', reason = _s.status, receipt_version = receipt_version + 1,
+     set status = 'withdrawn', reason = _s.status, withdrawn_from = _s.status, withdrawn_reason = _s.reason,
+         withdrawn_by = _actor, receipt_version = receipt_version + 1,
          receipt_state = case when receipt_message_id is not null then 'pending' else receipt_state end, updated_at = now()
    where id = _sub;
   perform public.challenge_task_settle_ut(_s.user_id, _s.task_id, _cfg);
@@ -2675,26 +2783,55 @@ volatile
 security definer
 set search_path = public
 as $fn$
--- Undo of withdraw: re-judged from its items (never simply "accepted" again); refused when a newer live
--- submission already holds that task's slot.
+-- Undo of withdraw. R3: returns the status and reason RECORDED at withdraw time -- never a re-judge (which turned an
+-- admin / AI rejection, or a format acceptance under ai=false, into a fresh verdict to reroll). A restored 'checking'
+-- gets a fresh check lease and fail-open clock (never an instant fail-open after a long withdrawal). A row withdrawn
+-- before the recording existed (none live) is re-judged as before. Refused when a newer live submission already
+-- holds that task's slot; the STUDENT cannot restore what an ADMIN withdrew ('withdrawn_by_admin') nor restore
+-- once the task has closed ('closed').
 declare
   _cfg jsonb := public.challenge_tasks_config();
   _s public.challenge_task_submissions;
+  _t public.challenge_tasks;
   _st text;
+  _student boolean;
 begin
   select * into _s from public.challenge_task_submissions where id = _sub;
   if not found then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
   perform pg_advisory_xact_lock(hashtext('ctask:' || _s.user_id::text));
   select * into _s from public.challenge_task_submissions where id = _sub for update;
+  _student := _via is distinct from 'admin' and _actor is not distinct from _s.user_id;
   if _s.status <> 'withdrawn' then
     return jsonb_build_object('ok', false, 'reason', 'not_withdrawn', 'status', _s.status);
   end if;
-  if exists (select 1 from public.challenge_task_submissions x
-              where x.user_id = _s.user_id and x.task_id = _s.task_id and x.status in ('needs_more', 'checking', 'accepted')) then
+  if _student and _s.withdrawn_by is distinct from _s.user_id then
+    return jsonb_build_object('ok', false, 'reason', 'withdrawn_by_admin', 'status', _s.status);
+  end if;
+  select * into _t from public.challenge_tasks where id = _s.task_id;
+  if _student and now() >= public.challenge_task_close_at(_t, _cfg) then
+    return jsonb_build_object('ok', false, 'reason', 'closed', 'status', _s.status);
+  end if;
+  _st := coalesce(_s.withdrawn_from, case when _s.reason in ('needs_more', 'checking', 'accepted', 'rejected') then _s.reason end);
+  if _st is distinct from 'rejected'
+     and exists (select 1 from public.challenge_task_submissions x
+                  where x.user_id = _s.user_id and x.task_id = _s.task_id and x.status in ('needs_more', 'checking', 'accepted')) then
     return jsonb_build_object('ok', false, 'reason', 'slot_taken');
   end if;
-  update public.challenge_task_submissions set status = 'needs_more', reason = null, updated_at = now() where id = _sub;
-  _st := public.challenge_task_evaluate(_sub, _cfg, true);
+  if _st is null then
+    update public.challenge_task_submissions set status = 'needs_more', reason = null, updated_at = now() where id = _sub;
+    _st := public.challenge_task_evaluate(_sub, _cfg, true);
+  else
+    update public.challenge_task_submissions
+       set status = _st,
+           reason = _s.withdrawn_reason,
+           check_version = check_version + case when _st = 'checking' then 1 else 0 end,
+           check_token = case when _st = 'checking' then null else check_token end,
+           check_claimed_at = case when _st = 'checking' then null else check_claimed_at end,
+           checking_since = case when _st = 'checking' then now() else checking_since end,
+           withdrawn_from = null, withdrawn_reason = null, withdrawn_by = null,
+           receipt_version = receipt_version + 1, updated_at = now()
+     where id = _sub;
+  end if;
   update public.challenge_task_submissions
      set receipt_state = case when receipt_message_id is not null then 'pending' else receipt_state end
    where id = _sub and receipt_version > receipt_sent_version;
@@ -3508,8 +3645,11 @@ begin
   get diagnostics _moved = row_count;
   update public.challenge_task_messages set user_id = _to where user_id = _from;
   update public.challenge_ig_posts set user_id = _to where user_id = _from;
+  -- R2: a duplicate's award that pays a date, or any DAY, the canonical student's awards already pay is dropped
+  -- (its ledger row goes with _from's below) -- a merge never pays one day twice
   delete from public.challenge_task_streak_awards a where a.user_id = _from
-     and exists (select 1 from public.challenge_task_streak_awards b where b.user_id = _to and b.course_id = a.course_id and b.task_date = a.task_date);
+     and exists (select 1 from public.challenge_task_streak_awards b where b.user_id = _to and b.course_id = a.course_id
+                    and (b.task_date = a.task_date or b.claimed_dates && a.claimed_dates));
   update public.challenge_task_streak_awards set user_id = _to where user_id = _from;
   delete from public.challenge_task_outbox o where o.user_id = _from
      and exists (select 1 from public.challenge_task_outbox x where x.user_id = _to and x.kind = o.kind and x.task_id is not distinct from o.task_id);
@@ -4060,6 +4200,7 @@ declare
   _drift int := 0;
   _orph int := 0;
   _streak_noxp int := 0;
+  _streak_excess int := 0;
   _after_freeze int := 0;
 begin
   select a.created_at, a.details into _hb from public.admin_actions a
@@ -4143,16 +4284,27 @@ begin
    where not exists (select 1 from public.xp_events e where e.user_id = a.user_id and e.ref_key = a.xp_ref_key)
      and a.created_at > coalesce((select max(v.created_at) from public.admin_actions v
                                    where v.action = 'challenge_points_voided' and v.target_user_id = a.user_id), '-infinity'::timestamptz);
+  -- R2: an award whose claimed days overlap an earlier award's (a day paid twice). Awards at or before the student's
+  -- newest void tombstone are out (the void removed their points).
+  select count(*)::int into _streak_excess
+    from public.challenge_task_streak_awards a
+   where a.created_at > coalesce(public.challenge_task_void_at(a.user_id), '-infinity'::timestamptz)
+     and exists (select 1 from public.challenge_task_streak_awards b
+                  where b.user_id = a.user_id and b.course_id = a.course_id and b.id < a.id
+                    and b.created_at > coalesce(public.challenge_task_void_at(b.user_id), '-infinity'::timestamptz)
+                    and b.claimed_dates && a.claimed_dates);
+  -- C11 / R4: a task or streak award whose ledger created_at sits in a week that was ALREADY frozen when it was
+  -- written (either freeze key) -- 0 by construction, so any row is a bug
   select count(*)::int into _after_freeze
-    from public.challenge_task_submissions s
-   where s.awarded_at >= _at - interval '7 days' and s.xp_created_at is not null and s.points_awarded > 0
-     and (exists (select 1 from public.challenge_weekly_results r
-                   where r.week_start = date_trunc('week', s.xp_created_at at time zone 'Asia/Tashkent')::date
-                     and r.created_at < s.awarded_at)
-          or exists (select 1 from public.admin_actions f
-                      where f.action = 'challenge_week_frozen'
-                        and f.details->>'week' = (date_trunc('week', s.xp_created_at at time zone 'Asia/Tashkent')::date)::text
-                        and f.created_at < s.awarded_at));
+    from (select s.xp_created_at as xp_at, s.awarded_at as written_at
+            from public.challenge_task_submissions s
+           where s.awarded_at >= _at - interval '7 days' and s.xp_created_at is not null and s.points_awarded > 0
+          union all
+          select e.created_at, a.created_at
+            from public.challenge_task_streak_awards a
+            join public.xp_events e on e.user_id = a.user_id and e.ref_key = a.xp_ref_key
+           where a.created_at >= _at - interval '7 days') w
+   where public.challenge_task_week_frozen_at(w.xp_at) < w.written_at;
 
   return jsonb_build_object(
     'state', jsonb_build_object(
@@ -4206,6 +4358,15 @@ begin
                                     where s.checked_at >= _at - interval '7 days' and s.check_result->>'fingerprint' = 'unavailable'),
     'misplaced_homework_autotag_24h', (select count(*) from public.admin_actions a
                                         where a.action = 'challenge_task_misplaced_homework' and a.created_at >= _at - interval '24 hours'),
+    -- R1: a MISSED-day slot created while the same student's other work was inside merge_window_min (only a kind
+    -- today's task does not accept can still do that). Informational: nonzero = look at those students' receipts.
+    'missed_within_burst_7d', (select count(*) from public.challenge_task_submissions s
+                                where s.attributed_via = 'missed' and s.created_at >= _at - interval '7 days'
+                                  and exists (select 1 from public.challenge_task_messages m
+                                               where m.user_id = s.user_id and m.submission_id is not null and m.submission_id <> s.id
+                                                 and m.outcome in ('created', 'appended', 'appended_album', 'adopted')
+                                                 and m.sent_at <= s.submitted_at
+                                                 and m.sent_at >= s.submitted_at - make_interval(mins => coalesce((_cfg->>'merge_window_min')::int, 5)))),
     'held_checks', (select jsonb_build_object(
                       'ai_off', count(*) filter (where s.hold_reason = 'ai_off'),
                       'ig_waiting_ai', count(*) filter (where s.hold_reason = 'ig_waiting_ai'),
@@ -4232,6 +4393,7 @@ begin
     'invariants', jsonb_build_object(
       'ledger_drift', _drift + _orph,
       'streak_awards_without_xp', _streak_noxp,
+      'streak_awards_excess', _streak_excess,
       'topic_points_leak_24h', _leak,
       'awards_after_freeze_7d', _after_freeze,
       'live_duplicates', (select count(*) from (select 1 from public.challenge_task_submissions s
@@ -4370,6 +4532,7 @@ begin
       _msgs := _msgs || ((_h->>'misplaced_homework_autotag_24h') || ' ta kunlik ish uy vazifasi topigiga yuborilgan.');
     end if;
     if coalesce((_h#>>'{invariants,ledger_drift}')::int, 0) > 0 or coalesce((_h#>>'{invariants,streak_awards_without_xp}')::int, 0) > 0
+       or coalesce((_h#>>'{invariants,streak_awards_excess}')::int, 0) > 0
        or coalesce((_h#>>'{invariants,topic_points_leak_24h}')::int, 0) > 0 or coalesce((_h#>>'{invariants,live_duplicates}')::int, 0) > 0 then
       _alarms := _alarms || 'invariant'::text;
       _msgs := _msgs || ('Invariant buzildi: ' || left((_h->'invariants')::text, 200));
@@ -4454,11 +4617,11 @@ $fn$;
 do $$
 declare
   _pin constant text := '0a7c5bae4e1ff1d6e8eb667c39af0335';       -- live md5(prosrc), re-read 2026-09-30
-  _new_pin constant text := '994cbcee6b3a625d56a61438e02f0442';  -- the rewritten body (PGlite harness + an independent recompute)
+  _new_pin constant text := '71500fc16be28f1825746550a1d32992';  -- the rewritten body (PGlite harness + an independent recompute)
   _old1 constant text := E'      ''challenge_group_media'',''challenge_question'',''challenge_instagram''),\n';
   _new1 constant text :=
        E'      ''challenge_group_media'',''challenge_question'',''challenge_instagram'',\n'
-    || E'      -- 20260930150010 (Daily Tasks PR-3): the task reasons are verified by challenge_tasks_health() ledger_drift\n'
+    || E'      -- 20260930150020 (Daily Tasks PR-3): the task reasons are verified by challenge_tasks_health() ledger_drift\n'
     || E'      ''challenge_chat'',''challenge_answer'',''challenge_task'',''challenge_task_streak''),\n';
   _fn oid;
   _src text; _def text; _new text;
@@ -4571,8 +4734,12 @@ revoke execute on function public.challenge_task_close_at(public.challenge_tasks
 grant execute on function public.challenge_task_close_at(public.challenge_tasks, jsonb) to service_role;
 revoke execute on function public.challenge_task_void_at(uuid) from public, anon, authenticated;
 grant execute on function public.challenge_task_void_at(uuid) to service_role;
+revoke execute on function public.challenge_task_week_frozen_at(timestamptz) from public, anon, authenticated;
+grant execute on function public.challenge_task_week_frozen_at(timestamptz) to service_role;
 revoke execute on function public.challenge_task_award_ts(timestamptz) from public, anon, authenticated;
 grant execute on function public.challenge_task_award_ts(timestamptz) to service_role;
+revoke execute on function public.challenge_task_rejected_count(uuid, bigint) from public, anon, authenticated;
+grant execute on function public.challenge_task_rejected_count(uuid, bigint) to service_role;
 revoke execute on function public.challenge_task_is_task_day(uuid, date, jsonb) from public, anon, authenticated;
 grant execute on function public.challenge_task_is_task_day(uuid, date, jsonb) to service_role;
 revoke execute on function public.challenge_task_dm_eligible(uuid) from public, anon, authenticated;

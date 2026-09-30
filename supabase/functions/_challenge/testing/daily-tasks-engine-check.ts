@@ -1,4 +1,4 @@
-// PGlite harness for 20260930150000_challenge_daily_tasks_engine.sql (Daily Tasks PR-3: the SQL engine).
+// PGlite harness for 20260930150020_challenge_daily_tasks_engine.sql (Daily Tasks PR-3: the SQL engine).
 //
 //   deno test -A --node-modules-dir=none --no-lock supabase/functions/_challenge/testing/daily-tasks-engine-check.ts
 //
@@ -19,6 +19,12 @@
 //   instagram handle / recency / stale), fail-open; expire; health invariants + the watchdog (rest day silent, task-day
 //   alarm DM'd once with Content-Type, bot status); guard v2; the handle lock; backfill (retro task, no_slot re-open,
 //   receipts suppressed, summary outbox, unresolved report).
+// Section RV (a fresh world) holds the 150020 review regressions: a second photo inside the burst window never fills
+// a missed day; streak awards never multiply (withdraw / restore, held checks released later, the claim invariant);
+// students cannot undo a rejection or an admin withdrawal, restore returns the recorded status, corrections end at
+// close_at; the frozen-week check reads the key the LIVE freeze_challenge_week writes (a Sunday, from the cron).
+// The whole run sees a PINNED clock (PGlite's now() reads Date.now()), so dates in October stay "the future" and
+// the result never depends on the day the harness runs; setClock() moves it for the freeze / close_at checks.
 // Run it after ANY change to the migration and before asking for the migration-approved label.
 // MIG_PATH=<file> tests a draft before it is written into its (edit-guarded) slot.
 //
@@ -277,10 +283,23 @@ insert into public.groups (id, name, course_id, homework_topic_url, daily_task_t
   ('${G9}', 'AC CHALLENGE | 5-GURUH', '${C6}', 'https://t.me/c/4396568866/4', 'https://t.me/c/4396568866/10'),
   ('${G10}', 'AC CHALLANGE | 6-GURUH', '${C6}', 'https://t.me/c/4423411304/6', 'https://t.me/c/4423411304/10');
 `;
+// The weekly freeze, so the frozen-week rule is tested against the key production REALLY writes: the LIVE
+// freeze_challenge_week body (md5-verified fixture, run with the server's UTC session time zone, as cron runs it) on
+// production's challenge_weekly_results constraint. Its two point sources are STUBS -- only the week key and the
+// audit row are under test here, never the ranking.
+const FREEZE_WORLD = `
+alter table public.challenge_weekly_results add constraint uq_challenge_weekly unique nulls not distinct (week_start, kind, group_id, user_id);
+create function public.user_group_rating_xp_since(_user uuid, _course uuid, _since timestamptz) returns integer language sql stable
+  as $$ select coalesce(sum(e.amount), 0)::int from public.xp_events e where e.user_id = _user and e.created_at >= _since $$;
+create function public.challenge_team_board(_from timestamptz, _to timestamptz)
+  returns table (group_id uuid, group_name text, members integer, total_points bigint, avg_points numeric) language sql stable
+  as $$ select g.id, g.name, 0, 0::bigint, 0::numeric from public.groups g where g.id in (select public.challenge_scope_group_ids()) $$;
+`;
+const FREEZE_LIVE_MD5 = "e676d00e2c1fdac5436a479c5957f1c6"; // md5(replace(prosrc, E'\r', '')) read live 2026-09-30
 
 Deno.test({
   name: CAN_RUN
-    ? "daily_tasks_engine: 20260930150010 on PGlite (#218 + PR-1 + PR-2 + engine; attribution, late, streak, corrections, races)"
+    ? "daily_tasks_engine: 20260930150020 on PGlite (#218 + PR-1 + PR-2 + engine; attribution, late, streak, corrections, races)"
     : "daily_tasks_engine: SKIPPED -- needs `deno test -A --node-modules-dir=none` (PGlite reads its own files)",
   ignore: !CAN_RUN,
   sanitizeOps: false,
@@ -288,19 +307,30 @@ Deno.test({
   fn: run,
 });
 
+// ── the pinned clock: PGlite's now() reads Date.now(), so one fixed calendar for the whole run (restored at the end) ──
+const realDateNow = Date.now.bind(Date);
+let clockBase = Date.parse("2026-09-30T12:00:00Z"), clockT0 = realDateNow();
+const setClock = (iso: string) => { clockBase = Date.parse(iso); clockT0 = realDateNow(); };
+
 async function run() {
+  (Date as any).now = () => clockBase + (realDateNow() - clockT0);
+  try { await runPinned(); } finally { (Date as any).now = realDateNow; }
+}
+
+async function runPinned() {
   const spec = "npm:@electric-sql/pglite@0.5.8"; // non-literal: never resolved or type-checked unless this runs
   const { PGlite } = (await import(spec)) as any;
   const { citext } = (await import(spec + "/contrib/citext")) as any;
 
   const MIG_PATH = Deno.env.get("MIG_PATH");
-  const MIG = lf(await Deno.readTextFile(MIG_PATH ?? here("../../../migrations/20260930150010_challenge_daily_tasks_engine.sql")));
+  const MIG = lf(await Deno.readTextFile(MIG_PATH ?? here("../../../migrations/20260930150020_challenge_daily_tasks_engine.sql")));
   const PR2 = lf(await Deno.readTextFile(here("../../../migrations/20260930122010_challenge_daily_tasks_calendar.sql")));
   const PR1 = lf(await Deno.readTextFile(here("../../../migrations/20260930121000_challenge_daily_task_topic.sql")));
   const MIG218 = lf(await Deno.readTextFile(here("../../../migrations/20260930100010_challenge_social_points.sql")));
   const RCX_LIVE = lf(await Deno.readTextFile(here("./reconcile_challenge_xp.live-2026-09-30.sql")));
   const COMMUNITY_LIVE = lf(await Deno.readTextFile(here("./reconcile_community_xp.live-2026-09-30.sql")));
   const INTEGRITY_LIVE = lf(await Deno.readTextFile(here("./xp_award_integrity_watchdog.live-2026-09-30.sql")));
+  const FREEZE_LIVE = lf(await Deno.readTextFile(here("./freeze_challenge_week.live-2026-09-30.sql")));
 
   let pass = 0, fail = 0;
   const ok = (name: string, cond: boolean, detail?: unknown) => {
@@ -325,6 +355,11 @@ async function run() {
       "grant execute on function public.reconcile_challenge_xp(timestamptz) to service_role;");
     await db.exec(INTEGRITY_LIVE + ";\nrevoke execute on function public.xp_award_integrity_watchdog() from public;\n" +
       "grant execute on function public.xp_award_integrity_watchdog() to service_role;");
+    await db.exec(FREEZE_WORLD);
+    await db.exec(FREEZE_LIVE + ";\nrevoke execute on function public.freeze_challenge_week(date) from public;\n" +
+      "grant execute on function public.freeze_challenge_week(date) to service_role;");
+    const fm = (await db.query("select md5(replace(prosrc, E'\\r', '')) m from pg_proc where oid = 'public.freeze_challenge_week(date)'::regprocedure")).rows[0] as Row;
+    if (fm.m !== FREEZE_LIVE_MD5) throw new Error(`the freeze_challenge_week fixture is not the live body (md5 ${fm.m})`);
     for (const [name, sql] of [["#218", MIG218], ["PR-1", PR1], ...(opts.withPr2 === false ? [] : [["PR-2", PR2]])]) {
       const e = await tx(db, sql);
       if (e) throw new Error(`${name} did not apply: ${e}`);
@@ -440,7 +475,7 @@ async function run() {
     ok("W2 owner, ACL and SECURITY DEFINER unchanged",
       src.acl === integrityBefore.acl && src.proowner === integrityBefore.proowner && src.prosecdef === integrityBefore.prosecdef, [src.acl, integrityBefore.acl]);
     ok("W3 nothing else changed: the rewrite is the anchor alone",
-      src.prosrc.replace(/,\n {6}-- 20260930150010[^\n]*\n {6}'challenge_chat','challenge_answer','challenge_task','challenge_task_streak'\)/, ")") ===
+      src.prosrc.replace(/,\n {6}-- 20260930150020[^\n]*\n {6}'challenge_chat','challenge_answer','challenge_task','challenge_task_streak'\)/, ")") ===
         INTEGRITY_LIVE.slice(INTEGRITY_LIVE.indexOf("AS $function$") + 13, INTEGRITY_LIVE.lastIndexOf("$function$")));
     const d2 = await freshDb();
     await d2.exec("create or replace function public.xp_award_integrity_watchdog() returns jsonb language plpgsql security definer as $$ begin return '{}'; end $$;");
@@ -629,13 +664,15 @@ async function run() {
     ok("D11 ...the next one fills MONDAY (missed, late 1 day): +3 = ceil(5 x 0.5)", m11b.outcome === "created" &&
       m11b.slot?.date === "2026-10-05" && m11b.slot?.kind === "missed" && m11b.submission?.late_days === 1 && m11b.submission?.points === 3, m11b);
 
-    // D11b (d3) a missed day's screenshot sent 2 minutes after today's is NOT swallowed by the burst rule
+    // D11b (spec R4, review of 150010's d3) a second screenshot 2 minutes after today's ACCEPTED one is the same
+    // burst: appended to today's work, never a paid missed day (ai=false pays a met media group on format alone)
     const q4a = await cap(db, tgm({ from: TG(4), at: "2026-10-06T10:00:00", photo: "q4a" }));
     const q4b = await cap(db, tgm({ from: TG(4), at: "2026-10-06T10:02:00", photo: "q4b", caption: T25 }));
     const q4c = await cap(db, tgm({ from: TG(4), at: "2026-10-06T10:03:00", text: "Ikkalasini ham yubordim, rahmat ustoz!" }));
-    ok("D11b media 2 minutes after an ACCEPTED submission fills the missed task (never swallowed); text still bursts",
-      q4a.submission?.status === "accepted" && q4b.outcome === "created" && q4b.slot?.date === "2026-10-05" &&
-      q4c.outcome === "appended", [q4a.outcome, q4b.outcome, q4b.slot, q4c.outcome]);
+    ok("D11b media 2 minutes after an ACCEPTED submission joins it (R4 burst): no Monday submission, no late points; text bursts too",
+      q4a.submission?.status === "accepted" && q4b.outcome === "appended" && q4b.submission?.id === q4a.submission?.id &&
+      q4b.reaction === "👍" && q4c.outcome === "appended" && (await subOf(db, ST(4), TMON)) === undefined &&
+      (await xpOf(db, ST(4), `ch_task:${TMON}`)) === undefined, [q4a.outcome, q4b.outcome, q4b.slot, q4c.outcome]);
 
     // D12 text-only never fills a missed task
     await cap(db, tgm({ from: TG(12), at: "2026-10-06T10:00:00", photo: "m12a" }));
@@ -798,15 +835,22 @@ async function run() {
       (await one(db, "select challenge_task_streak_recompute($1, $2, challenge_tasks_config()) r", [ST(30), C6])).r >= 5 &&
       await count(db, "select count(*) n from xp_events where user_id = $1 and reason = 'challenge_task_streak'", [ST(30)]) === 1);
 
-    // freeze: the week of Mon 2026-10-05 is frozen -> a new award in it lands NOW
-    await db.query("insert into challenge_weekly_results (week_start, kind, group_id, user_id, points, rank) values ('2026-10-05', 'team', $1, null, 10, 1)", [G1]);
-    const fr = await cap(db, tgm({ from: TG(32), at: "2026-10-06T10:00:00", photo: "fr32" }));
+    // freeze: the LIVE weekly job at Mon 2026-10-12 09:10 Tashkent freezes the week of Mon 10-05 -> a new award in it
+    // lands NOW. The cron's key is `_prev_mon::date` in a UTC session: the SUNDAY 2026-10-04 (verified live).
+    setClock("2026-10-12T04:10:00Z");
+    await db.query("select * from freeze_challenge_week()");
+    const fk = await one(db, "select string_agg(distinct week_start::text, ',') k from challenge_weekly_results");
+    const fa = await one(db, "select details->>'week' w from admin_actions where action = 'challenge_week_frozen' order by created_at desc limit 1");
+    ok("L6b the real freeze keys the week of Mon 10-05 as SUNDAY 2026-10-04 (results + audit row)", fk.k === "2026-10-04" && fa.w === "2026-10-04", [fk, fa]);
+    setClock("2026-10-12T06:00:00Z");
+    const fr = await cap(db, tgm({ from: TG(32), at: "2026-10-06T10:00:00", photo: "fr32" }));   // e.g. the reconciler, late
     const fx = await xpOf(db, ST(32), `ch_task:${TTUE}`);
     ok("L7 an award whose week is already FROZEN gets created_at = now() (the current board, C11)", fr.submission?.points === 5 &&
-      Math.abs(Date.now() - new Date(fx.created_at).getTime()) < 60_000, fx);
+      Math.abs(Date.now() - new Date(fx.created_at).getTime()) < 60_000 && new Date(fx.created_at).toISOString().startsWith("2026-10-12"), fx);
     ok("L8 ...and awards_after_freeze stays 0 by construction",
       (await one(db, "select challenge_tasks_health()->'invariants'->>'awards_after_freeze_7d' n")).n === "0");
-    await db.exec("delete from challenge_weekly_results");
+    setClock("2026-09-30T12:00:00Z");
+    await db.exec("delete from challenge_weekly_results; delete from admin_actions where action = 'challenge_week_frozen'");
   }
 
   // ───────────── K. corrections ─────────────
@@ -844,7 +888,7 @@ async function run() {
     ok("K8 '❌ Bu topshiriq emas' withdraws: points removed", wd.ok === true && wd.submission?.status === "withdrawn" &&
       (await xpOf(db, ST(16), `ch_task:${TMON}`)) === undefined, wd);
     const rs = (await one(db, "select challenge_task_restore_by_tg($1, $2) r", [TG(16), s16.id])).r;
-    ok("K9 undo restores it (re-judged from its items): accepted, +5 again", rs.ok === true && rs.submission?.status === "accepted" &&
+    ok("K9 undo restores the status it had when withdrawn: accepted, +5 again", rs.ok === true && rs.submission?.status === "accepted" &&
       (await xpOf(db, ST(16), `ch_task:${TMON}`))?.amount === 5, rs);
     await one(db, "select challenge_task_withdraw_by_tg($1, $2) r", [TG(16), s16.id]);
     await cap(db, tgm({ from: TG(16), at: "2026-10-05T20:00:00", photo: "p16new", caption: T25 }));
@@ -1327,8 +1371,196 @@ async function run() {
     ok("Z20 final: user_xp equals the ledger; every invariant is zero", await userXpOk(db) &&
       Object.values((await one(db, "select challenge_tasks_health()->'invariants' i")).i).every((v) => Number(v) === 0));
   }
-
   await db.close();
+
+  // ───────────── RV. the 150020 review regressions, in a fresh world ─────────────
+  console.log("RV. review regressions: the burst window, streak awards, student corrections, the frozen-week key");
+  {
+    const rv = await freshDb();
+    { const e = await tx(rv, MIG); if (e !== null) throw new Error(`RV: the migration did not apply -- ${e}`); }
+    await cfgSet(rv, "enabled", true);
+    const RT: Record<string, number> = {};
+    const add = async (date: string, type: string, requires: unknown, accepts: string[]) => {
+      const r = await one(rv, `insert into challenge_tasks (course_id, task_date, type, title, body, accepts, requires, status, source)
+                               values ($1, $2, $3, $4, 'Vazifa matni', $5::text[], $6::jsonb, 'approved', 'manual') returning id`,
+        [C6, date, type, `Vazifa ${date}`, `{${accepts.join(",")}}`, JSON.stringify(requires)]);
+      RT[date] = Number(r.id);
+    };
+    for (const d of ["2026-10-05", "2026-10-06", "2026-10-09", "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-20"]) {
+      await add(d, "general", [SHOT], ["text", "photo", "document"]);
+    }
+    await add("2026-10-07", "instagram", [SHOT, IGL], ["text", "photo", "document", "link"]);
+    await add("2026-10-08", "general", [TEXT], ["text"]);
+    await add("2026-10-19", "general", [{ any: ["voice"], min: 1, label: "voice" }], ["voice"]);
+    const xpSum = async (u: string) => await count(rv, "select coalesce(sum(amount), 0) n from xp_events where user_id = $1", [u]);
+    const awards = async (u: string) => await count(rv, "select count(*) n from challenge_task_streak_awards where user_id = $1", [u]);
+    const statusOf = async (id: number) => (await one(rv, "select status from challenge_task_submissions where id = $1", [id])).status;
+    const gv = { reason: "ok", placeholder: false, inappropriate: false, secret: false, manipulation: false, on_task: "yes", confidence: 0.9 };
+
+    // ── finding 1: the burst window (spec R4) ──
+    const a1 = await cap(rv, tgm({ from: TG(1), at: "2026-10-13T10:00:00", photo: "rv_a1", caption: T25 }));
+    const a2 = await cap(rv, tgm({ from: TG(1), at: "2026-10-13T10:01:00", photo: "rv_a2" }));
+    ok("RV1 ai=false: a 2nd photo one minute after today's ACCEPTED one joins it -- no missed-day submission, +5 only",
+      a1.submission?.status === "accepted" && a2.outcome === "appended" && a2.submission?.id === a1.submission?.id &&
+      (await subOf(rv, ST(1), RT["2026-10-12"])) === undefined && await xpSum(ST(1)) === 5, [a1.outcome, a2.outcome, a2.slot]);
+    const b1 = await cap(rv, tgm({ from: TG(2), at: "2026-10-13T10:00:00", photo: "rv_b1" }));
+    const b2 = await cap(rv, tgm({ from: TG(2), at: "2026-10-13T10:06:00", photo: "rv_b2" }));
+    ok("RV2 ...after the burst window the next screenshot still fills the most recent missed task (option 1): late 1, +3",
+      b1.submission?.status === "accepted" && b2.outcome === "created" && b2.slot?.date === "2026-10-12" && b2.submission?.points === 3,
+      [b2.outcome, b2.slot]);
+    ok("RV2b ...and neither is counted as a missed day created inside a burst", (await one(rv, "select challenge_tasks_health()->>'missed_within_burst_7d' n")).n === "0");
+    const c1 = await cap(rv, tgm({ from: TG(3), at: "2026-10-20T10:00:00", photo: "rv_c1" }));
+    const c2 = await cap(rv, tgm({ from: TG(3), at: "2026-10-20T10:01:00", voice: { dur: 12, id: "rv_c2" } }));
+    ok("RV3 a kind today's task does not accept (voice) may still fill Monday's voice task inside the window -- COUNTED (missed_within_burst_7d)",
+      c1.submission?.status === "accepted" && c2.outcome === "created" && c2.slot?.date === "2026-10-19" &&
+      (await one(rv, "select challenge_tasks_health()->>'missed_within_burst_7d' n")).n === "1", [c2.outcome, c2.slot]);
+
+    // ── finding 2: streak awards never multiply ──
+    for (const d of ["2026-10-09", "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16"]) {
+      await cap(rv, tgm({ from: TG(10), at: `${d}T10:00:00`, photo: `rv_s10_${d}` }));
+    }
+    ok("RV4 six on-time task days: 6 x 5 + ONE +10 award = 40", await xpSum(ST(10)) === 40 && await awards(ST(10)) === 1,
+      [await xpSum(ST(10)), await awards(ST(10))]);
+    const s10 = await liveOf(rv, ST(10), RT["2026-10-09"]);
+    const w10 = (await one(rv, "select challenge_task_withdraw_by_tg($1, $2) r", [TG(10), s10.id])).r;
+    ok("RV5 withdrawing the FIRST day: -5 and NO second award (those days already paid the sticky one)", w10.ok === true &&
+      await xpSum(ST(10)) === 35 && await awards(ST(10)) === 1, [w10.reason, await xpSum(ST(10)), await awards(ST(10))]);
+    const r10 = (await one(rv, "select challenge_task_restore_by_tg($1, $2) r", [TG(10), s10.id])).r;
+    await reconcile(rv);
+    ok("RV6 ...restoring it and reconciling: exactly 40 again (one award)", r10.ok === true && await xpSum(ST(10)) === 40 &&
+      await awards(ST(10)) === 1, [r10.reason, await xpSum(ST(10)), await awards(ST(10))]);
+
+    await rv.query("update profiles set instagram_username = 'rv_eleven' where id = $1", [ST(11)]);
+    for (const d of ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16"]) {
+      await cap(rv, d === "2026-10-07" ? tgm({ from: TG(11), at: `${d}T10:00:00`, photo: "rv_ig11", caption: "https://www.instagram.com/p/RVcode0011/" })
+        : d === "2026-10-08" ? tgm({ from: TG(11), at: `${d}T10:00:00`, text: "Bugun men uchta prompt yozib, natijalarini solishtirib chiqdim" })
+        : tgm({ from: TG(11), at: `${d}T10:00:00`, photo: `rv_s11_${d}` }));
+    }
+    ok("RV7 ai=false: the instagram and text-only days are HELD, so the run breaks there: one award so far",
+      await count(rv, "select count(*) n from challenge_task_submissions where user_id = $1 and hold_reason is not null", [ST(11)]) === 2 &&
+      await awards(ST(11)) === 1 && await xpSum(ST(11)) === 50, [await awards(ST(11)), await xpSum(ST(11))]);
+    await cfgSet(rv, "ai", true);
+    await reconcile(rv);
+    const cl = (await one(rv, "select challenge_task_check_claim(10) r")).r;
+    for (const it of cl.items as Row[]) {
+      const own = await one(rv, "select user_id from challenge_task_submissions where id = $1", [it.submission_id]);
+      if (own.user_id !== ST(11)) continue;
+      const verdict = it.type === "instagram"
+        ? { reason: "r", is_instagram_screenshot: true, handle_seen: "rv_eleven", tag_seen: true, post_age_text: "1 soat", posted_recently: "yes",
+            inappropriate: false, manipulation: false, confidence: 0.9 }
+        : gv;
+      await one(rv, "select challenge_task_check_record($1, $2, $3, $4::jsonb, '[]') r",
+        [it.submission_id, it.token, it.version, JSON.stringify({ verdict, link_status: "ok" })]);
+    }
+    await reconcile(rv);
+    await cfgSet(rv, "ai", false);
+    ok("RV8 ...released and accepted later: 10 on-time days = TWO awards, 73 XP (never 3 awards / 83)",
+      await awards(ST(11)) === 2 && await xpSum(ST(11)) === 73, [await awards(ST(11)), await xpSum(ST(11))]);
+    const claimsBad = await count(rv, `
+      select count(*) n from challenge_task_streak_awards a where cardinality(a.claimed_dates) <> 5
+         or exists (select 1 from challenge_task_streak_awards b where b.user_id = a.user_id and b.id <> a.id and b.claimed_dates && a.claimed_dates)`)
+      .catch((e) => String(e));
+    ok("RV8b every award claims exactly `every` distinct on-time days, and no day is claimed twice", claimsBad === 0, claimsBad);
+    const planted = await tx(rv, `
+      insert into challenge_task_streak_awards (user_id, course_id, task_date, streak_len, bonus, xp_ref_key, claimed_dates)
+      values ('${ST(11)}', '${C6}', '2026-10-14', 5, 10, 'ch_task_streak:2026-10-14', '{2026-10-12,2026-10-13,2026-10-14}');
+      insert into xp_events (user_id, amount, reason, ref_key) values ('${ST(11)}', 10, 'challenge_task_streak', 'ch_task_streak:2026-10-14');`);
+    const inv = (await one(rv, "select challenge_tasks_health()->'invariants' i")).i;
+    const wdx = (await one(rv, "select challenge_tasks_watchdog('2026-10-14T12:00:00+05:00') r")).r;
+    ok("RV9 the detector: an award re-paying days another award paid is 'streak_awards_excess' -> the watchdog's 'invariant' alarm",
+      planted === null && inv.streak_awards_excess === 1 && inv.streak_awards_without_xp === 0 && wdx.alarms.includes("invariant"),
+      [planted, inv, wdx.alarms]);
+    await rv.query("delete from xp_events where user_id = $1 and ref_key = 'ch_task_streak:2026-10-14'", [ST(11)]);
+    await rv.query("delete from challenge_task_streak_awards where user_id = $1 and task_date = '2026-10-14'", [ST(11)]);
+
+    // ── finding 3: a student cannot undo a rejection; restore returns the recorded status; corrections end at close_at ──
+    const s12 = (await cap(rv, tgm({ from: TG(12), at: "2026-10-13T11:00:00", photo: "rv_s12", caption: T25 }))).submission;
+    const rj = await as(rv, AD, `select admin_challenge_task_override($1, 'reject', '{"reason":"plagiat"}'::jsonb) r`, [s12.id]);
+    const w12 = (await one(rv, "select challenge_task_withdraw_by_tg($1, $2) r", [TG(12), s12.id])).r;
+    const m12 = (await one(rv, "select challenge_task_move_by_tg($1, $2, $3) r", [TG(12), s12.id, RT["2026-10-12"]])).r;
+    const mw12 = await as(rv, ST(12), "select my_challenge_task_withdraw($1) r", [s12.id]);
+    const mm12 = await as(rv, ST(12), "select my_challenge_task_move($1, $2) r", [s12.id, RT["2026-10-12"]]);
+    ok("RV10 after an admin REJECT the student's withdraw / move (bot and app) are refused 'rejected_final'; still 0 points",
+      rj.err === null && w12.ok === false && w12.reason === "rejected_final" && m12.ok === false && m12.reason === "rejected_final" &&
+      (mw12.rows as Row[])?.[0]?.r?.reason === "rejected_final" && (mm12.rows as Row[])?.[0]?.r?.reason === "rejected_final" &&
+      await statusOf(s12.id) === "rejected" && await xpSum(ST(12)) === 0, { w12, m12, mw12, mm12 });
+    const am12 = (await one(rv, "select challenge_task_withdraw_by_tg(1011, $1) r", [s12.id])).r;
+    ok("RV11 ...an admin still can (logged override)", am12.ok === true && await statusOf(s12.id) === "withdrawn", am12);
+
+    await cfgSet(rv, "ai", true);
+    const s13 = (await cap(rv, tgm({ from: TG(13), at: "2026-10-14T11:00:00", photo: "rv_s13", caption: T25 }))).submission;
+    const c13 = (await one(rv, "select challenge_task_check_claim(10) r")).r.items.find((i: Row) => i.submission_id === s13.id);
+    const v13 = (await one(rv, "select challenge_task_check_record($1, $2, $3, $4::jsonb, '[]') r",
+      [c13.submission_id, c13.token, c13.version, JSON.stringify({ verdict: { ...gv, on_task: "no", confidence: 0.95 } })])).r;
+    const w13 = (await one(rv, "select challenge_task_withdraw_by_tg($1, $2) r", [TG(13), s13.id])).r;
+    ok("RV12 an AI 'off_task' rejection cannot be rerolled by withdraw + restore", v13.decision === "rejected" &&
+      w13.reason === "rejected_final" && await statusOf(s13.id) === "rejected", { v13: v13.decision, w13 });
+    await cfgSet(rv, "ai", false);
+    await cfgSet(rv, "max_attempts_per_task", 1);
+    await as(rv, AD, "select admin_challenge_task_override($1, 'withdraw') r", [s13.id]);
+    await rv.query(`insert into challenge_task_posts (task_id, group_id, kind, state, chat_id, thread_id, message_id, sent_at)
+                    values ($1, $2, 'task', 'manual', $3, $4, 6014, '2026-10-14T09:00:00+05:00')`, [RT["2026-10-14"], G1, CH1, D1]);
+    const n13 = await cap(rv, tgm({ from: TG(13), at: "2026-10-14T12:00:00", photo: "rv_s13b", caption: T25, replyTo: { id: 6014, from: 6542876935 } }));
+    ok("RV13 a WITHDRAWN rejected attempt still counts toward max_attempts_per_task (1 -> attempts_exhausted)",
+      n13.outcome === "attempts_exhausted", n13);
+    await cfgSet(rv, "max_attempts_per_task", 3);
+
+    const s14 = (await cap(rv, tgm({ from: TG(14), at: "2026-10-13T12:00:00", photo: "rv_s14", caption: T25 }))).submission;
+    await cfgSet(rv, "ai", true);
+    await one(rv, "select challenge_task_withdraw_by_tg($1, $2) r", [TG(14), s14.id]);
+    const r14 = (await one(rv, "select challenge_task_restore_by_tg($1, $2) r", [TG(14), s14.id])).r;
+    await cfgSet(rv, "ai", false);
+    ok("RV14 restore returns the RECORDED status (accepted on format, +5) -- not a fresh AI check", r14.ok === true &&
+      r14.submission?.status === "accepted" && r14.submission?.points === 5, r14.submission);
+    const s16 = (await cap(rv, tgm({ from: TG(16), at: "2026-10-08T12:00:00", text: "Bugun men uchta prompt yozib natijalarni taqqosladim" }))).submission;
+    await one(rv, "select challenge_task_withdraw_by_tg($1, $2) r", [TG(16), s16.id]);
+    const r16 = (await one(rv, "select challenge_task_restore_by_tg($1, $2) r", [TG(16), s16.id])).r;
+    ok("RV14b ...a HELD text submission comes back held (checking / ai_off, 0 points)", r16.submission?.status === "checking" &&
+      r16.submission?.hold_reason === "ai_off" && r16.submission?.points === 0, r16.submission);
+    const s15 = (await cap(rv, tgm({ from: TG(15), at: "2026-10-13T12:00:00", photo: "rv_s15", caption: T25 }))).submission;
+    const aw15 = (await one(rv, "select challenge_task_withdraw_by_tg(1011, $1) r", [s15.id])).r;
+    const r15 = (await one(rv, "select challenge_task_restore_by_tg($1, $2) r", [TG(15), s15.id])).r;
+    const mr15 = await as(rv, ST(15), "select my_challenge_task_restore($1) r", [s15.id]);
+    ok("RV15 an ADMIN's withdrawal cannot be undone by the student (bot or app): 'withdrawn_by_admin'", aw15.ok === true &&
+      r15.reason === "withdrawn_by_admin" && (mr15.rows as Row[])?.[0]?.r?.reason === "withdrawn_by_admin" && await statusOf(s15.id) === "withdrawn",
+      { r15, mr15 });
+    const ar15 = await as(rv, AD, "select admin_challenge_task_override($1, 'restore') r", [s15.id]);
+    ok("RV16 ...the admin can restore it (accepted, +5)", ar15.err === null && await statusOf(s15.id) === "accepted" &&
+      (await xpOf(rv, ST(15), `ch_task:${RT["2026-10-13"]}`))?.amount === 5, ar15);
+
+    const s17 = (await cap(rv, tgm({ from: TG(17), at: "2026-10-14T10:00:00", photo: "rv_s17", caption: T25 }))).submission;
+    setClock("2026-10-15T12:00:00Z");   // Thu 17:00 Tashkent: Monday 10-12's task closed at Thu 00:00; Wed 10-14's is open
+    const mv17 = (await one(rv, "select challenge_task_move_by_tg($1, $2, $3) r", [TG(17), s17.id, RT["2026-10-12"]])).r;
+    setClock("2026-10-17T00:00:00Z");   // Sat 05:00 Tashkent: Wed 10-14's task closed at Sat 00:00
+    const wd17 = (await one(rv, "select challenge_task_withdraw_by_tg($1, $2) r", [TG(17), s17.id])).r;
+    const mwd17 = await as(rv, ST(17), "select my_challenge_task_withdraw($1) r", [s17.id]);
+    const ad17 = (await one(rv, "select challenge_task_withdraw_by_tg(1011, $1) r", [s17.id])).r;
+    setClock("2026-09-30T12:00:00Z");
+    ok("RV17 a student move INTO a task that has closed is refused 'closed' (late 2 by the post date is not enough)",
+      mv17.ok === false && mv17.reason === "closed", mv17);
+    ok("RV18 a student withdraw after the task closed is refused 'closed' (bot and app); an admin still can",
+      wd17.ok === false && wd17.reason === "closed" && (mwd17.rows as Row[])?.[0]?.r?.reason === "closed" && ad17.ok === true, { wd17, mwd17, ad17 });
+
+    // ── finding 4: the frozen-week key the LIVE weekly freeze writes (a Sunday) ──
+    setClock("2026-10-12T04:10:00Z");   // the cron: Monday 09:10 Tashkent
+    await rv.query("select * from freeze_challenge_week()");
+    setClock("2026-10-12T06:00:00Z");
+    const f18 = await cap(rv, tgm({ from: TG(18), at: "2026-10-09T10:00:00", photo: "rv_f18" }));   // Friday's work, captured late
+    const fx18 = await xpOf(rv, ST(18), `ch_task:${RT["2026-10-09"]}`);
+    ok("RV19 a week frozen by the REAL cron freeze (key = Sunday 10-04): late-captured Friday work is paid NOW (10-12), not into it",
+      f18.submission?.points === 5 && new Date(fx18?.created_at).toISOString().startsWith("2026-10-12") &&
+      (await one(rv, "select challenge_tasks_health()->'invariants'->>'awards_after_freeze_7d' n")).n === "0", fx18);
+    await rv.query("update challenge_task_submissions set xp_created_at = '2026-10-09T05:00:00Z' where id = $1", [f18.submission.id]);
+    const af = (await one(rv, "select challenge_tasks_health()->'invariants'->>'awards_after_freeze_7d' n")).n;
+    await rv.query("update challenge_task_submissions set xp_created_at = $2 where id = $1", [f18.submission.id, fx18.created_at]);
+    setClock("2026-09-30T12:00:00Z");
+    ok("RV20 ...and awards_after_freeze_7d sees an award dated inside a week frozen under the Sunday key", af === "1", af);
+    ok("RV21 final: user_xp equals the ledger; every invariant is zero", await userXpOk(rv) &&
+      Object.values((await one(rv, "select challenge_tasks_health()->'invariants' i")).i).every((v) => Number(v) === 0),
+      (await one(rv, "select challenge_tasks_health()->'invariants' i")).i);
+    await rv.close();
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail > 0) throw new Error(`daily_tasks_engine: ${fail} check(s) failed`);
 }
