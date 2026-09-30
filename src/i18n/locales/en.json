@@ -1433,5 +1433,155 @@
   },
   "continue": {
     "loading": "Opening your lesson…"
+  },
+  "dailyTasks": {
+    "title": "Daily tasks",
+    "subtitle": "One task every task day. Do it to earn points and keep your streak.",
+    "streak": "{{days}}-day streak",
+    "points": "{{points}} points",
+    "openTopic": "Open the «Kunlik vazifalar» topic",
+    "emptyTitle": "No tasks yet",
+    "emptyBody": "The first task appears here once it is posted.",
+    "loadError": "Could not load the tasks.",
+    "notInChallengeTitle": "No daily tasks",
+    "notInChallengeBody": "This section is for challenge group students.",
+    "topicOnlyTitle": "Tasks live in your group",
+    "topicOnlyBody": "Post each daily task in your group's «Kunlik vazifalar» topic — the bot accepts and counts it.",
+    "today": "Today",
+    "dayNo": "Day {{n}}",
+    "instagram": "Instagram",
+    "late": "late ({{days}} d)",
+    "missing": "Missing: {{items}}",
+    "status": {
+      "none": "Not submitted",
+      "needs_more": "Incomplete",
+      "checking": "Being checked",
+      "accepted": "Accepted",
+      "rejected": "Not accepted",
+      "withdrawn": "Withdrawn",
+      "merged": "Merged",
+      "voided": "Voided",
+      "expired": "Expired",
+      "open": "Open",
+      "missed": "Missed"
+    },
+    "labels": {
+      "screenshot": "screenshot",
+      "video": "video",
+      "file": "file",
+      "text": "text",
+      "link": "link",
+      "ig_link": "Instagram post link",
+      "voice": "voice message",
+      "instagram_handle": "your Instagram username (Settings)"
+    },
+    "task": {
+      "backToList": "All tasks",
+      "postTitle": "Task",
+      "yourWork": "Your work",
+      "pointsEarned": "+{{n}} points",
+      "pointsWorth": "{{n}} points",
+      "whereBody": "Your work is posted in your group's «Kunlik vazifalar» topic under your name — your classmates will see it.",
+      "notFound": "Task not found."
+    },
+    "reasons": {
+      "disabled": "Daily tasks are paused right now.",
+      "miniapp_off": "Submitting from the app is not on yet. Post your work in the group's «Kunlik vazifalar» topic.",
+      "no_profile": "This section is for students.",
+      "staff": "This section is for students.",
+      "held_sender": "Your profile is not linked to this group yet. Contact an admin — your topic messages are kept.",
+      "no_task": "Task not found.",
+      "wrong_course": "This task is not from your course.",
+      "not_open": "This task is not open yet.",
+      "closed": "This task has closed.",
+      "done": "This task is already accepted.",
+      "attempts_exhausted": "No attempts left for this task. Good luck tomorrow!"
+    },
+    "submit": {
+      "title": "Submit from the app",
+      "pick": "Add a photo, video or file",
+      "pickHint": "up to 10",
+      "addMore": "More",
+      "remove": "Remove",
+      "textLabel": "Text",
+      "textPlaceholder": "Describe your work (at least 20 characters)…",
+      "igPlaceholder": "Instagram post link and your note…",
+      "needs": "Needed",
+      "send": "Submit",
+      "sending": "Submitting…",
+      "readonly": "Admin preview — submitting and corrections are off.",
+      "result": {
+        "accepted": "Accepted: +{{points}} points",
+        "checking": "Received — points are added after the check.",
+        "needs_more": "Received. Missing: {{items}}",
+        "rejected": "Not accepted.",
+        "default": "Sent."
+      },
+      "pending": "Sent — the result appears in a few minutes.",
+      "partial": "{{posted}} of {{total}} sent. Send the rest again.",
+      "noSlot": "This task has closed — your work stays in the topic but earns no points.",
+      "errors": {
+        "in_progress": "The previous submission is still in progress — wait a moment and tap again.",
+        "telegram_post_failed": "Could not post to Telegram. Try again in a little while.",
+        "rate_limited": "Telegram is busy — try again in {{sec}} s.",
+        "kind_not_accepted": "This task does not take that kind of file.",
+        "empty": "Add a photo, file or text first.",
+        "too_many_files": "At most {{max}} files.",
+        "file_too_large": "File too large: photos up to 10 MB, videos and files up to 50 MB.",
+        "batch_too_large": "The files are too large together. Send fewer.",
+        "text_too_long": "The text is too long.",
+        "expired": "The request expired — submit again.",
+        "refused": "This work cannot be accepted. Contact an admin.",
+        "topic_not_configured": "Your group's «Kunlik vazifalar» topic is not set up. Contact an admin.",
+        "network": "Check your connection and try again.",
+        "generic": "Something went wrong. Try again."
+      },
+      "fallback": "Or post your work straight in the topic:"
+    },
+    "fix": {
+      "title": "Fix",
+      "withdraw": "Not a submission",
+      "restore": "Restore",
+      "move": "Move to another day",
+      "moveTo": "To the {{date}} task",
+      "confirmWithdraw": "This work stops counting (its points are removed). You can «Restore» it later.",
+      "ok": {
+        "move": "Moved.",
+        "withdraw": "Withdrawn.",
+        "restore": "Restored."
+      },
+      "reasons": {
+        "not_owner": "This is not your submission.",
+        "closed": "The window has closed — it can no longer be changed.",
+        "rejected_final": "Only an admin can review work that was not accepted.",
+        "too_many_moves": "No moves left.",
+        "future_task": "You cannot move work to a future task.",
+        "slot_taken": "You already have work on that task.",
+        "withdrawn_by_admin": "An admin withdrew this — contact them.",
+        "attempts_exhausted": "No attempts left for that task.",
+        "bad_target": "It cannot be moved to that task.",
+        "same_task": "The work is already on this task.",
+        "default": "That did not work. Try again."
+      }
+    },
+    "notify": {
+      "title": "Reminders",
+      "body": "Let the bot send you tasks and results in a private message.",
+      "cta": "Allow",
+      "done": "Thanks! The bot can message you now."
+    },
+    "ig": {
+      "title": "Your Instagram",
+      "none": "For an Instagram task, enter your profile username first.",
+      "have": "Profile: @{{handle}}",
+      "save": "Save",
+      "saved": "Saved."
+    },
+    "dashboard": {
+      "title": "Daily task",
+      "action": "All",
+      "todayNone": "No task today",
+      "cta": "Open"
+    }
   }
 }

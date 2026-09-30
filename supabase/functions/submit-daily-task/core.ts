@@ -88,12 +88,25 @@ export interface InFile {
   mime: string;
 }
 
-/** sendPhoto takes JPEG / PNG / WebP; any other image (HEIC, GIF, …) goes as a document (the engine calls it image_doc). */
-export function fileKindOf(mime: string): FileKind {
+/**
+ * How a file is sent. sendPhoto takes JPEG / PNG / WebP up to 10 MB; any other image (HEIC, GIF, …) or a bigger one
+ * goes as a document (the engine calls it image_doc — still a screenshot). Same for a video Telegram would not play.
+ */
+export function fileKindOf(mime: string, size = 0): FileKind {
   const m = String(mime || "").toLowerCase();
-  if (m === "image/jpeg" || m === "image/jpg" || m === "image/png" || m === "image/webp") return "photo";
+  if ((m === "image/jpeg" || m === "image/jpg" || m === "image/png" || m === "image/webp") && size <= MAX_PHOTO_BYTES) return "photo";
   if (m === "video/mp4" || m === "video/quicktime" || m === "video/webm" || m === "video/3gpp" || m === "video/x-m4v") return "video";
   return "document";
+}
+
+/**
+ * A task that takes files but not photos (or videos) wants the image AS A FILE: its requires count document /
+ * image_doc, which a Telegram photo never is. Such a task gets the file as a document.
+ */
+export function effectiveKind(kind: FileKind, accepts: string[]): FileKind {
+  if (kind === "photo" && !accepts.includes("photo") && accepts.includes("document")) return "document";
+  if (kind === "video" && !accepts.includes("video") && accepts.includes("document")) return "document";
+  return kind;
 }
 
 /** A file's kind in the task's `accepts` vocabulary: an image or video sent as a document is a 'document' there too. */
@@ -140,7 +153,7 @@ export function parseForm(form: FormData): SubmitInput {
   };
   const files: InFile[] = form.getAll("files")
     .filter((f): f is File => typeof f === "object" && f !== null && typeof (f as File).size === "number" && (f as File).size > 0)
-    .map((f) => ({ kind: fileKindOf(f.type), blob: f, name: String(f.name || "file"), size: f.size, mime: String(f.type || "") }));
+    .map((f) => ({ kind: fileKindOf(f.type, f.size), blob: f, name: String(f.name || "file"), size: f.size, mime: String(f.type || "") }));
   return {
     taskId: /^[1-9][0-9]{0,15}$/.test(s("task_id").trim()) ? Number(s("task_id").trim()) : 0,
     requestId: s("request_id").trim(),
@@ -435,6 +448,7 @@ export async function handleSubmit(deps: Deps, userId: string, input: SubmitInpu
 
   // 4. what the task accepts (the picker enforces it too; the server never posts what the task cannot use)
   const accepts: string[] = Array.isArray(p.task?.accepts) ? p.task.accepts.map(String) : [];
+  input = { ...input, files: input.files.map((f) => ({ ...f, kind: effectiveKind(f.kind, accepts) })) };
   const offKind = input.files.find((f) => !acceptsFile(accepts, f));
   if (offKind || (input.text && input.files.length === 0 && !acceptsText(accepts))) {
     await deps.healthOnce("challenge_task_miniapp_submit_refused", `${userId}:kind_not_accepted:${input.taskId}`,

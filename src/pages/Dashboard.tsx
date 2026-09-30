@@ -10,6 +10,7 @@ import { tierFor, formatXp, type TierKey } from "@/lib/xp";
 import { loadCourseRows, pickResume, type CourseRow, type EnrollmentRow } from "@/lib/nextLesson";
 import { reportClientError } from "@/lib/beacon";
 import { readStatsRow, displayRank } from "@/lib/studentStats";
+import { DailyTasksCard } from "@/components/challenge/DailyTasksCard";
 import {
   Hero,
   StatTile,
@@ -323,6 +324,9 @@ export default function Dashboard() {
               <StreakChip days={stats?.streak ?? 0} />
               {tierInfo && <TierBadge tier={tierInfo.key} />}
             </div>
+
+            {/* Challenge daily task (PR-7): renders nothing unless the tasks and the Mini App path are live. */}
+            <DailyTasksCard />
 
             {isFirstRun ? (
               <>
