@@ -7,6 +7,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
+import { countLines, countPayload, type Loc, type TeacherGroupRow } from "../_shared/teacher-group-lines.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -45,6 +46,12 @@ Deno.serve(async (req) => {
       const groups = ((gs || []) as any[]);
       if (!groups.length) continue;
       const pending = groups.reduce((s, g) => s + (g.pending_homework || 0), 0);
+      // The same rows, one per group with its course (teacher_groups is junction-aware: co-taught groups
+      // are in it), so "📝 Baholashni kutmoqda: N" says WHICH group is waiting (teacher audit BOT-6).
+      const groupRows: TeacherGroupRow[] = groups.map((g: any) => ({
+        teacher_id: tch.id, group_id: g.group_id, group_name: g.group_name, course_title: g.course_name,
+        pending_homework: g.pending_homework,
+      }));
 
       // Students of this teacher who got a 7d/14d/30d system reminder and are
       // STILL flagged inactive — the "system couldn't bring them back" list.
@@ -149,7 +156,10 @@ Deno.serve(async (req) => {
       if (xpWeek > 0) impact.push(l.xpGain(xpWeek, lvlName));
       if (impact.length) lines.push(l.impactTitle, ...impact);
       // Then the actionable tail.
-      if (pending > 0) lines.push("", l.pend(pending));
+      if (pending > 0) {
+        lines.push("", l.pend(pending),
+          ...countLines(groupRows, (r) => r.pending_homework, { esc: escHtml, loc: loc as Loc }));
+      }
       if (names.length) lines.push("", l.stub, names.map((n) => `• ${n}`).join("\n"), "", `💡 ${l.hint}`);
 
       const out = await sendTelegram(BOT_TOKEN, "sendMessage", {
@@ -161,7 +171,8 @@ Deno.serve(async (req) => {
         sent++;
         await admin.from("notifications_log").insert({
           user_id: tch.id, notification_type: "teacher_weekly_digest",
-          payload: { pending, stubborn: names.length, graded: week?.graded ?? 0, xp_week: xpWeek }, sent_at: new Date().toISOString(),
+          payload: { pending, pending_by_group: countPayload(groupRows, (r) => r.pending_homework), stubborn: names.length,
+            graded: week?.graded ?? 0, xp_week: xpWeek }, sent_at: new Date().toISOString(),
         });
       }
     } catch (e) { console.error("teacher digest failed", tch.id, e); }
