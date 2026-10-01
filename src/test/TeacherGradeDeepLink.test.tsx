@@ -20,6 +20,10 @@ vi.mock("@/lib/teacherApi", () => ({
   notifyGradeVoice: vi.fn(),
   requestTeacherVoiceInTelegram: vi.fn(),
 }));
+// TeacherGrade reads the teacher's groups for its filter chips (#235); none are needed here.
+vi.mock("@/hooks/useSelectedGroup", () => ({
+  useSelectedGroup: () => ({ groups: [], groupId: null, setGroupId: vi.fn(), loading: false, error: false, reload: vi.fn() }),
+}));
 vi.mock("@/components/teacher/GradePhoto", () => ({ GradePhoto: () => null }));
 vi.mock("@/components/homework/VoiceRecorder", () => ({ VoiceRecorder: () => null }));
 vi.mock("@/lib/homeworkAudio", () => ({ uploadFeedbackVoice: vi.fn(), removeFeedbackVoice: vi.fn() }));
@@ -34,7 +38,7 @@ const row = (id: string, name: string) => ({
   submission_id: id, user_id: `u-${id}`, student_name: name, group_id: "g1", group_name: "1-GURUH VIP 5.0",
   module_number: 1, task_number: 1, assignment_id: "a1", assignment_title: "Prompt", max_score: 10,
   submitted_at: new Date().toISOString(), previous_score: null, is_resubmission: false, media: null,
-  submitted_image_url: null, course_title: "AI CREATORS 5.0",
+  submitted_image_url: null, course_id: "c5", course_title: "AI CREATORS 5.0",
 });
 
 let lastSearch = "";
@@ -93,6 +97,16 @@ describe("TeacherGrade ?sub= deep link", () => {
     h.gradeState = "unknown";
     renderAt("/tg/teacher/grade?sub=22222222-2222-4222-8222-222222222222");
     await waitFor(() => expect(h.toastMessage).toHaveBeenCalledWith("Bu ish navbatingizda yo'q", expect.anything()));
+  });
+
+  // Integration of #239 (?sub= focus) with #235 (the course/group filter lives in the URL): dropping ?sub= keeps
+  // the filter params, and the focused submission is the card on screen under a filter it matches.
+  it("?sub= next to a ?course= filter: THAT submission first, ?sub= dropped, ?course= kept", async () => {
+    renderAt(`/tg/teacher/grade?course=c5&sub=${B}`);
+    expect(await screen.findByText("Bobur Aliyev (@bobur)")).toBeInTheDocument();
+    await waitFor(() => expect(lastSearch).toBe("?course=c5"));
+    expect(h.fetchQueue).toHaveBeenCalledTimes(1);
+    expect(h.toastMessage).not.toHaveBeenCalled();
   });
 
   it("a malformed ?sub= is ignored (no lookup, no toast)", async () => {
