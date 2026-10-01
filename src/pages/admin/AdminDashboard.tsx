@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { mutate } from "@/lib/mutate";
 import { PageShell } from "@/components/Layout";
@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ResponsiveContainer, AreaChart, Area, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import { toast } from "sonner";
-import { Users as UsersIcon, LogIn, Activity, Trophy, Shield, UserCheck, UserX, Download, ArrowUpDown, Moon, MoonStar, RefreshCw } from "lucide-react";
+import { Users as UsersIcon, LogIn, Activity, Trophy, Shield, UserCheck, UserX, Download, ArrowUpDown, Moon, MoonStar, RefreshCw, Lock } from "lucide-react";
 import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Link, useSearchParams, useNavigate } from "react-router-dom";
@@ -42,7 +42,13 @@ export default function AdminDashboard() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const groupParam = searchParams.get("group");
-  const [teacherGroups, setTeacherGroups] = useState<{ id: string; name: string }[]>([]);
+  const [teacherGroups, setTeacherGroups] = useState<{ id: string; name: string; courseName: string | null }[]>([]);
+  // The open group's course, for a teacher (audit TUI-4). The Kurs select used to be set ONCE to the first published
+  // course by title ("AI CREATORS 5.0") and never followed ?group=, so a Challenge 6.0 group was shown with 5.0's
+  // modules, funnel and stuck list. For a teacher on a group the course now comes from the group and is locked.
+  const [groupCourse, setGroupCourse] = useState<{ groupId: string; courseId: string | null; courseTitle: string | null } | null>(null);
+  // Bumped per load(); a load that is no longer the latest commits nothing (a group or course switch mid-load).
+  const loadReq = useRef(0);
   const [teacherGroupsLoaded, setTeacherGroupsLoaded] = useState(false);
   const [teacherGroupCardStats, setTeacherGroupCardStats] = useState<Record<string, { total: number; logged: number; ungraded: number }>>({});
   const [courses, setCourses] = useState<{ id: string; title: string; published: boolean }[]>([]);
@@ -102,7 +108,30 @@ export default function AdminDashboard() {
     });
   }, []);
 
-  useEffect(() => { if (courseId) load(); /* eslint-disable-next-line */ }, [courseId, groupParam]);
+  // Teacher on a group: resolve that group's course (staff_group_overview is junction-gated; a direct groups read
+  // is RLS-blocked for teachers). Until it is known, nothing loads — never a first paint of the wrong course.
+  useEffect(() => {
+    if (!isTeacher || !groupParam) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase.rpc("staff_group_overview", { _group_id: groupParam });
+      if (cancelled) return;
+      const row = error ? null : (data ?? [])[0];
+      // A failed lookup falls back to the Kurs select (unlocked) rather than blocking the page.
+      setGroupCourse({ groupId: groupParam, courseId: row?.course_id ?? null, courseTitle: row?.course_name ?? null });
+    })();
+    return () => { cancelled = true; };
+  }, [isTeacher, groupParam]);
+
+  const groupCourseReady = !!groupCourse && groupCourse.groupId === groupParam;
+  // The course the page shows. Teacher on a group → the group's course (locked); otherwise the Kurs select.
+  // "" = not known yet (don't load).
+  const courseLocked = isTeacher && !!groupParam && groupCourseReady && !!groupCourse!.courseId;
+  const effectiveCourseId = isTeacher && groupParam
+    ? (groupCourseReady ? (groupCourse!.courseId || courseId) : "")
+    : courseId;
+
+  useEffect(() => { if (effectiveCourseId) load(effectiveCourseId); /* eslint-disable-next-line */ }, [effectiveCourseId, groupParam]);
 
   // Teacher: load owned groups, sync active_teacher_group_id, route 0/1/N
   useEffect(() => {
@@ -113,7 +142,7 @@ export default function AdminDashboard() {
       // junction-aware SECURITY DEFINER RPC (primary teacher ∪ group_teachers co-teachers) instead.
       const { data: tgRows } = await supabase.rpc("teacher_groups" as any, { uid: user.id });
       const rows = ((tgRows as any[]) || []);
-      const list = rows.map((r: any) => ({ id: r.group_id as string, name: r.group_name as string }));
+      const list = rows.map((r: any) => ({ id: r.group_id as string, name: r.group_name as string, courseName: (r.course_name as string) ?? null }));
       setTeacherGroups(list);
       setTeacherGroupsLoaded(true);
       if (list.length === 1 && !groupParam) {
@@ -158,7 +187,10 @@ export default function AdminDashboard() {
     })();
   }, [isTeacher, user, groupParam]);
 
-  const load = async () => {
+  const load = async (courseId: string) => {
+    const req = ++loadReq.current;
+    // A newer load (another group / course) has started: this one must not overwrite what it shows.
+    const stale = () => req !== loadReq.current;
     setLoading(true);
     try {
       const since30 = new Date(Date.now() - 30 * 86400_000).toISOString();
@@ -175,7 +207,14 @@ export default function AdminDashboard() {
         const memberIds = new Set(((gMembers as any[]) || []).map((m: any) => m.id));
         visibleIds = visibleIds.filter((id) => memberIds.has(id));
       }
+      if (stale()) return;
       const visibleSet = new Set(visibleIds);
+      // Teacher-side activity RPCs (staff_recent_auth_events / staff_recent_lesson_progress) return EVERY group the
+      // teacher is the primary teacher of — not the open group — so the charts and the stuck list used to show
+      // another cohort's named students under this group's heading (audit TUI-4). Every teacher-side activity row is
+      // kept only for students in scope (the open group's members, or all the teacher's students when no group).
+      const scopeRows = <T extends { user_id: string }>(rows: T[]): T[] =>
+        isTeacher ? rows.filter((r) => visibleSet.has(r.user_id)) : rows;
       setScopedIds(visibleIds);
       if (isTeacher && visibleIds.length === 0) {
         setNoGroups(true);
@@ -194,15 +233,16 @@ export default function AdminDashboard() {
       const totalUsers = isTeacher ? visibleIds.length : (await supabase.from("profiles").select("id", { count: "exact", head: true }).eq("status", "active")).count || 0;
 
       const events30 = isTeacher
-        ? ((await supabase.rpc("staff_recent_auth_events", { _since: since30 })).data || [])
+        ? scopeRows((await supabase.rpc("staff_recent_auth_events", { _since: since30 })).data || [])
         : ((await supabase.from("auth_events").select("user_id, created_at").gte("created_at", since30).limit(50000)).data || []);
       const prog7 = isTeacher
-        ? ((await supabase.rpc("staff_recent_lesson_progress", { _since: since7 })).data || []).map((p: any) => ({ user_id: p.user_id, updated_at: p.updated_at }))
+        ? scopeRows((await supabase.rpc("staff_recent_lesson_progress", { _since: since7 })).data || []).map((p: any) => ({ user_id: p.user_id, updated_at: p.updated_at }))
         : ((await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", since7).limit(50000)).data || []);
       const active7 = new Set((prog7 || []).map((p: any) => p.user_id)).size;
 
       // Lifetime activated + never logged in via staff_list_students RPC (scoped automatically)
       const { data: allUsers } = await supabase.rpc("staff_list_students");
+      if (stale()) return;
       const studentsAll = (allUsers || []);
       const students = (isTeacher && groupParam)
         ? studentsAll.filter((u: any) => visibleSet.has(u.id))
@@ -234,8 +274,9 @@ export default function AdminDashboard() {
       });
       const since30Iso = new Date(Date.now() - 30 * 86400_000).toISOString();
       const prog30Activity = isTeacher
-        ? ((await supabase.rpc("staff_recent_lesson_progress", { _since: since30Iso })).data || []).map((p: any) => ({ user_id: p.user_id, updated_at: p.updated_at }))
+        ? scopeRows((await supabase.rpc("staff_recent_lesson_progress", { _since: since30Iso })).data || []).map((p: any) => ({ user_id: p.user_id, updated_at: p.updated_at }))
         : ((await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", since30Iso).limit(100000)).data || []);
+      if (stale()) return;
       const lastLessonByUser = new Map<string, number>();
       (prog30Activity || []).forEach((p: any) => {
         const t = new Date(p.updated_at).getTime();
@@ -292,7 +333,7 @@ export default function AdminDashboard() {
       if (allLessonIds.length) {
         if (isTeacher) {
           const { data } = await supabase.rpc("staff_recent_lesson_progress", { _since: "1970-01-01T00:00:00Z" });
-          completedRows = (data || []).filter((r: any) => r.completed_at && allLessonIds.includes(r.lesson_id));
+          completedRows = scopeRows(data || []).filter((r: any) => r.completed_at && allLessonIds.includes(r.lesson_id));
         } else {
           const { data } = await supabase.from("lesson_progress").select("user_id, lesson_id, updated_at").in("lesson_id", allLessonIds).not("completed_at", "is", null).limit(50000);
           completedRows = data || [];
@@ -321,6 +362,7 @@ export default function AdminDashboard() {
       // immune to the PostgREST 1000-row cap that truncates the raw fetches above).
       // Overrides the capped values computed above and excludes staff from the lists.
       const { data: dsRaw } = await supabase.rpc("admin_dashboard_students", { _course_id: courseId, _since30: since30 });
+      if (stale()) return;
       let ds = ((dsRaw || []) as any[]);
       if (isTeacher && groupParam) ds = ds.filter((r) => visibleSet.has(r.id));
       const nowMs = Date.now();
@@ -388,6 +430,7 @@ export default function AdminDashboard() {
       const prog30 = isTeacher
         ? prog30Activity
         : ((await supabase.from("lesson_progress").select("user_id, updated_at").gte("updated_at", since30Iso).limit(100000)).data || []);
+      if (stale()) return;
       (prog30 || []).forEach((p: any) => {
         const k = fmtDay(startOfDay(new Date(p.updated_at)));
         if (dayMap.has(k)) dayMap.get(k)!.add(p.user_id);
@@ -479,6 +522,7 @@ export default function AdminDashboard() {
           const { data: profs } = await supabase.from("profiles").select("id, name, email").in("id", userIds);
           pmap = new Map((profs || []).map((p: any) => [p.id, p]));
         }
+        if (stale()) return;
         const lmap = new Map((lessonRows || []).map((l: any) => [l.id, l.title]));
         const enriched = stuckUserIds
           .map((s) => ({
@@ -495,10 +539,12 @@ export default function AdminDashboard() {
         setStuck([]);
       }
     } catch (e: any) {
-      toast.error(e.message || t("admin.dashboard.loadFailed"));
+      if (!stale()) toast.error(e.message || t("admin.dashboard.loadFailed"));
     } finally {
-      setLastUpdatedAt(new Date());
-      setLoading(false);
+      if (!stale()) {
+        setLastUpdatedAt(new Date());
+        setLoading(false);
+      }
     }
   };
 
@@ -535,7 +581,9 @@ export default function AdminDashboard() {
                   onClick={() => setSearchParams({ group: g.id })}
                 >
                   <div className="text-xs text-muted-foreground">Guruh</div>
-                  <div className="text-lg font-semibold mb-3">{g.name}</div>
+                  <div className="text-lg font-semibold">{g.name}</div>
+                  {/* The course, from the course record — a 5.0 group and a Challenge group must never look alike. */}
+                  <div className="text-xs text-muted-foreground mb-3">{t("admin.dashboard.courseLabel")}: <span className="font-medium text-foreground">{g.courseName || "—"}</span></div>
                   <div className="space-y-2 text-sm">
                     <div className="flex items-center justify-between">
                       <span className="text-muted-foreground">Talabalar</span>
@@ -577,6 +625,7 @@ export default function AdminDashboard() {
             <button onClick={() => navigate("/admin/dashboard")} className="text-primary hover:underline">← Mening guruhlarim</button>
             <span className="text-muted-foreground">|</span>
             <span className="font-semibold">{activeTeacherGroup.name}</span>
+            {activeTeacherGroup.courseName && <span className="text-muted-foreground">· {activeTeacherGroup.courseName}</span>}
           </div>
         )}
         <div className="flex items-end justify-between gap-4 flex-wrap">
@@ -590,24 +639,41 @@ export default function AdminDashboard() {
                 {t("admin.dashboard.lastUpdated", { defaultValue: "Yangilangan" })}: {lastUpdatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
               </span>
             )}
-            <Button variant="outline" size="sm" onClick={load} disabled={loading}>
+            <Button variant="outline" size="sm" onClick={() => { if (effectiveCourseId) void load(effectiveCourseId); }} disabled={loading || !effectiveCourseId}>
               <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
               {t("admin.dashboard.refresh", { defaultValue: "Yangilash" })}
             </Button>
-            <Select value={courseId} onValueChange={setCourseId}>
-              <SelectTrigger className="w-[260px]"><SelectValue placeholder={t("admin.dashboard.selectCourse")} /></SelectTrigger>
-              <SelectContent>
-                {courses.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>{c.title}{!c.published && t("admin.dashboard.draftSuffix")}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {courseLocked ? (
+              // A teacher's group has exactly one course: show it, don't offer every published course.
+              <div
+                className="inline-flex h-9 max-w-[260px] items-center gap-1.5 rounded-md border bg-muted/40 px-3 text-sm"
+                title={t("admin.dashboard.courseLockedHint")}
+                data-testid="dashboard-course-locked"
+              >
+                <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                <span className="text-muted-foreground">{t("admin.dashboard.courseLabel")}:</span>
+                <span className="truncate font-medium">{groupCourse!.courseTitle || "—"}</span>
+              </div>
+            ) : (
+              <Select value={courseId} onValueChange={setCourseId}>
+                <SelectTrigger className="w-[260px]"><SelectValue placeholder={t("admin.dashboard.selectCourse")} /></SelectTrigger>
+                <SelectContent>
+                  {courses.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.title}{!c.published && t("admin.dashboard.draftSuffix")}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
         </div>
 
         {noGroups && (
+          // "No students in scope". A teacher WITH no groups never reaches this view (the no-groups screen above
+          // handles it), so on a group this means the group is still empty — e.g. a new Challenge group.
           <Card className="p-6 border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-400">
-            Sizga hali biror guruh tayinlanmagan. Adminga murojaat qiling.
+            {isTeacher && groupParam
+              ? "Bu guruhda hali o'quvchi yo'q. O'quvchilar qo'shilgach, statistika shu yerda ko'rinadi."
+              : "Sizga hali biror guruh tayinlanmagan. Adminga murojaat qiling."}
           </Card>
         )}
         {!isTeacher && <AnalyticsTiles />}
