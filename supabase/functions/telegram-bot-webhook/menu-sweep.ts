@@ -44,7 +44,7 @@
 // Before the fix, "user not found" read as a refusal and the sweep stopped on member 96 of 166 every 30 minutes;
 // the 6-hour re-pass never ran and ~70 members never got the ☰ door.
 //
-// LIVENESS (read by watch_button_health → watch_button_watchdog, migration 20261001050000): `last_progress_at`
+// LIVENESS (read by watch_button_health → watch_button_watchdog, migration 20261001050010): `last_progress_at`
 // is stamped whenever a tick moves the cursor forward; `stop_cursor` / `stop_repeats` count consecutive hard stops
 // (refused / bot-wide) at the same cursor. Not done and no progress for 2 h, the same cursor stopped twice, or a
 // finished pass whose re-pass is 2 h overdue → the watchdog DMs the admins.

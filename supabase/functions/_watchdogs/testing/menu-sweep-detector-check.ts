@@ -1,4 +1,4 @@
-// Applies 20261001050000_menu_sweep_liveness.sql to a real PostgreSQL (PGlite) on top of the LIVE watch-button
+// Applies 20261001050010_menu_sweep_liveness.sql to a real PostgreSQL (PGlite) on top of the LIVE watch-button
 // watchdog functions and drives the new ☰-sweep liveness leg end to end with a stub ops_net_post.
 //
 //   deno run -A --node-modules-dir=none supabase/functions/_watchdogs/testing/menu-sweep-detector-check.ts
@@ -13,13 +13,14 @@
 // columns those functions read and write. ops_net_post is a stub that records each call.
 
 import { PGlite } from "npm:@electric-sql/pglite@0.5.8";
+import { isRecipientError } from "../../_shared/telegram-classify.ts";
 
 // deno-lint-ignore no-explicit-any
 type Row = Record<string, any>;
 
 const here = (p: string) => new URL(p, import.meta.url);
 const lf = (s: string) => s.replace(/\r\n/g, "\n"); // a Windows checkout is CRLF; production text is LF
-const MIG = lf(await Deno.readTextFile(here(Deno.env.get("MIG_PATH") ?? "../../../migrations/20261001050000_menu_sweep_liveness.sql")));
+const MIG = lf(await Deno.readTextFile(here(Deno.env.get("MIG_PATH") ?? "../../../migrations/20261001050010_menu_sweep_liveness.sql")));
 const WB = lf(await Deno.readTextFile(here("../../../migrations/20260930160000_watch_button_watchdog.sql")));
 
 /** The two CREATE statements 20260930160000 installed — verified byte-identical to production in section A. */
@@ -45,6 +46,30 @@ const OPS_HTTP = {
   alert_state: { "real:unattributed:403": "2026-09-25 17:30:00.549691+00" },
   last_sweep_at: "2026-10-01 04:18:00.353591+00", tg_expected_regex: LIVE_RX,
 };
+
+// admin_actions 'miniapp_button_rejected', LIVE, 2026-10-01 04:02:04 UTC — the incident row, verbatim. The only fault
+// row in 3 days; the 04:25 watch_button_watchdog_ALARM (fallback_fault, student button-fault DM) rests on it alone.
+const INCIDENT_ROW = {
+  fn: "menu_button_sweep", role: "student", error: "Bad Request: user not found", method: "setChatMenuButton",
+  source: "telegram-bot-webhook", status: 400, dedupe_key: "rejected:menu_button_sweep:setChatMenuButton",
+};
+// Descriptions the SQL exclusion must classify exactly as the edge isRecipientError does (the pinned strings of
+// telegram-classify.test.ts, both directions).
+const PARITY_PROBES = [
+  "Bad Request: user not found", "Bad Request: USER_ID_INVALID", "Bad Request: invalid user_id specified",
+  "Bad Request: PARTICIPANT_ID_INVALID", "Bad Request: member not found", "Bad Request: PEER_ID_INVALID",
+  "Bad Request: chat not found", "Forbidden: bot was blocked by the user", "Forbidden: user is deactivated",
+  "Forbidden: bot can't initiate conversation with a user", "Forbidden: bots can't send messages to bots",
+  "Bad Request: chat_id is empty", "Bad Request: have no rights to send a message",
+  "Bad Request: not enough rights to send text messages to the chat",
+  "Bad Request: group chat was upgraded to a supergroup chat",
+  "Bad Request: BUTTON_TYPE_INVALID", "Bad Request: BUTTON_URL_INVALID", "Bad Request: BUTTON_DATA_INVALID",
+  "Bad Request: WEBAPP_URL_INVALID",
+  "Bad Request: inline keyboard button Web App URL 'http://x' is invalid: Only HTTPS links are allowed",
+  "Bad Request: text must be encoded in UTF-8", "Bad Request: can't parse entities: Unsupported start tag",
+  "Bad Request: message is too long", "Bad Request: some description nobody has listed yet",
+  "Unauthorized", "Not Found", "http_400", "transport_error",
+];
 
 const AD1 = "a0000000-0000-0000-0000-000000000001";
 const AD2 = "a0000000-0000-0000-0000-000000000002";
@@ -188,7 +213,7 @@ console.log("M. migration: applies (with a frozen sweep at deploy time), ACLs, r
   ok("M applies", err === null, err);
   for (const fn of ["watch_button_health", "watch_button_watchdog"]) {
     const src = (await q(db, `select prosrc from pg_proc where oid = 'public.${fn}()'::regprocedure`))[0].prosrc as string;
-    ok(`M ${fn} carries the marker`, src.includes("(20261001050000)"));
+    ok(`M ${fn} carries the marker`, src.includes("(20261001050010)"));
     const acl = (await q(db, `select coalesce(array_to_string(proacl, ','), '') a, prosecdef s from pg_proc where oid = 'public.${fn}()'::regprocedure`))[0];
     ok(`M ${fn} ACL is still service_role only`, !/(^|,)=X|anon=|authenticated=/.test(acl.a) && acl.a.includes("service_role=X"), acl);
   }
@@ -276,8 +301,35 @@ console.log("V. watch_button_health(): the sweep leg");
   ok("V a STAFF refusal raises neither the student fault leg nor the sweep leg", h.fallback_fault === false && h.menu_sweep_stuck === false && h.alarm === false, h);
   await db.exec(`insert into public.admin_actions (action, details) values ('menu_button_sweep_member_skipped', '{"profile_id": "x"}')`);
   ok("V a member-skipped row is not a student button fault either", (await health(db)).fallback_fault === false);
+  // The incident row, verbatim: one member the bot cannot resolve — not a refusal of our button.
+  await db.query("insert into public.admin_actions (action, details, created_at) values ('miniapp_button_rejected', $1::jsonb, now() - interval '70 minutes')",
+    [JSON.stringify(INCIDENT_ROW)]);
+  h = await health(db);
+  ok("V the 04:02 incident row ('user not found') no longer raises the student fault leg", h.fallback_fault === false && h.alarm === false &&
+    h.fault_rows_recipient_24h === 1 && !("miniapp_button_rejected" in (h.fault_rows_24h ?? {})), h);
+  ok("V ...and the digest line carries no '⚠️ nosozlik'", !String(h.digest_line).includes("nosozlik"), h.digest_line);
+  await db.exec(`insert into public.admin_actions (action, details) values ('miniapp_button_rejected', '{"fn": "cron_engagement", "status": 400, "error": "Bad Request: BUTTON_URL_INVALID"}')`);
+  h = await health(db);
+  ok("V a refusal of OUR button next to it still raises the student leg (counted once)", h.fallback_fault === true && h.alarm === true &&
+    h.fault_rows_24h?.miniapp_button_rejected === 1 && h.fault_rows_recipient_24h === 1, h);
+  await db.exec("delete from public.admin_actions where action = 'miniapp_button_rejected'");
   await db.exec(`insert into public.admin_actions (action, details) values ('miniapp_button_rejected', '{"fn": "menu_button_sweep"}')`);
-  ok("V a STUDENT refusal still raises the student leg, as before", (await health(db)).fallback_fault === true);
+  ok("V a STUDENT refusal with no description still raises the student leg, as before", (await health(db)).fallback_fault === true);
+  await db.exec("delete from public.admin_actions where action = 'miniapp_button_rejected'");
+  await db.query("insert into public.admin_actions (action, details, created_at) values ('miniapp_button_rejected', $1::jsonb, now() - interval '25 hours')",
+    [JSON.stringify({ fn: "cron_engagement", status: 400, error: "Bad Request: BUTTON_URL_INVALID" })]);
+  ok("V the 24 h window is unchanged (a 25 h old refusal no longer counts)", (await health(db)).fallback_fault === false);
+
+  // Parity: the SQL exclusion classifies every pinned description exactly as the edge isRecipientError does.
+  for (const desc of PARITY_PROBES) {
+    await db.exec("delete from public.admin_actions where action = 'miniapp_button_rejected'");
+    await db.query("insert into public.admin_actions (action, details) values ('miniapp_button_rejected', $1::jsonb)",
+      [JSON.stringify({ fn: "parity", status: 400, error: desc })]);
+    const p = await health(db);
+    const recipient = isRecipientError(desc);
+    ok(`V parity (${recipient ? "per-recipient, dropped" : "kept"}): ${desc}`,
+      p.fallback_fault === !recipient && p.fault_rows_recipient_24h === (recipient ? 1 : 0), p.fault_rows_24h);
+  }
   await db.close();
 }
 
@@ -313,6 +365,48 @@ console.log("W. watch_button_watchdog(): DM, ALARM row, recovery");
   const rec = await q(db, "select body from public.test_sent order by id offset 2");
   ok("W healed → recovered DM to each admin", r.alarm === false && rec.length === 2 && String(rec[0].body.text).includes("normallashdi"), rec);
   ok("W one recovered row", (await q(db, "select count(*)::int n from public.admin_actions where action = 'watch_button_watchdog_recovered'"))[0].n === 1);
+  await db.close();
+}
+
+// ───────────── H. heal of the live false alarm (replay of 2026-10-01 ~05:10 UTC) ─────────────
+// Live: the 04:02 incident row is the only fault row; watch_button_watchdog_state = {alerting: true, last_alert_ms =
+// 04:25, dm_attempted_last_run: 2} from the 04:25 ALARM (fallback_fault only). Before this migration the alarm is
+// pinned true until that row ages out of the 24 h window (04:02 on 10-02), re-DMing at the 6 h cooldown.
+console.log("H. watch_button_watchdog(): the live false student alarm recovers on apply");
+{
+  // The sweep as it is right after the edge fix deploys: stepping again (progress a minute ago).
+  const db = await freshDb({ progress: liveRow(70, { last_progress_at: new Date(Date.now() - 60_000).toISOString() }) });
+  await db.query("insert into public.admin_actions (action, details, created_at) values ('miniapp_button_rejected', $1::jsonb, now() - interval '70 minutes')",
+    [JSON.stringify(INCIDENT_ROW)]);
+  await db.query("update public.app_settings set value = value || $1::jsonb where key = 'watch_button_watchdog_state'",
+    [JSON.stringify({ alerting: true, last_alert_ms: Date.now() - 47 * 60_000, dm_attempted_last_run: 2 })]);
+
+  // Before: the live functions keep the false alarm (no DM inside the cooldown, no recovery).
+  let r = (await q(db, "select public.watch_button_watchdog() r"))[0].r as Row;
+  ok("H before: the live functions hold the false student alarm on the incident row alone",
+    r.alarm === true && r.fallback_fault === true && r.fault_rows_24h?.miniapp_button_rejected === 1 &&
+      (await q(db, "select count(*)::int n from public.test_sent"))[0].n === 0, r);
+  await db.query("update public.app_settings set value = value || '{\"last_alert_ms\": 0}'::jsonb where key = 'watch_button_watchdog_state'");
+  r = (await q(db, "select public.watch_button_watchdog() r"))[0].r as Row;
+  const falseDm = await q(db, "select body from public.test_sent order by id");
+  ok("H before: once the 6 h cooldown passes, the false student button-fault DM goes out again (10:25 / 16:25 / 22:25)",
+    r.alarm === true && falseDm.length === 2 && String(falseDm[0].body.text).includes("miniapp_button_rejected"), falseDm);
+
+  // Apply, then the next :25 run: recovered.
+  if (await applyMigration(db)) throw new Error("migration failed");
+  const inst = (await q(db, "select details from public.admin_actions where action = 'menu_sweep_liveness_installed'"))[0]?.details;
+  ok("H the install row records the incident row as per-recipient, and no fault at deploy",
+    inst?.fault_rows_recipient_at_deploy === 1 && inst?.fallback_fault_at_deploy === false, inst);
+  r = (await q(db, "select public.watch_button_watchdog() r"))[0].r as Row;
+  const rec = await q(db, "select body from public.test_sent order by id offset 2");
+  ok("H after apply: alarm false, the recovered DM goes to each admin", r.alarm === false && r.fallback_fault === false &&
+    r.fault_rows_recipient_24h === 1 && rec.length === 2 && String(rec[0].body.text).includes("normallashdi"), rec);
+  ok("H one watch_button_watchdog_recovered row",
+    (await q(db, "select count(*)::int n from public.admin_actions where action = 'watch_button_watchdog_recovered'"))[0].n === 1);
+  const st = (await q(db, "select value from public.app_settings where key = 'watch_button_watchdog_state'"))[0].value as Row;
+  ok("H the watchdog state is no longer alerting (a REAL alarm from any leg DMs at once, no cooldown in the way)", st.alerting === false, st);
+  r = (await q(db, "select public.watch_button_watchdog() r"))[0].r as Row;
+  ok("H the next run is quiet (no further DM)", r.alarm === false && (await q(db, "select count(*)::int n from public.test_sent"))[0].n === 4);
   await db.close();
 }
 
