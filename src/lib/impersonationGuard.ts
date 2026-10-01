@@ -3,11 +3,20 @@
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
-const WRITE_RPCS = new Set([
+// Exported for the Vitest case that pins the daily-task writes (spec G12).
+export const WRITE_RPCS = new Set([
   "admin_change_role",
   "track_video_progress",
   "recalc_leaderboard",
   "admin-change-role",
+  // Kunlik vazifalar (Daily Tasks PR-7, G12): a student's one-tap corrections, the DM-permission stamp and the admin
+  // override. lib/dailyTasks.ts gates each on impersonatingReadonly() first; this is the second layer. (The
+  // submit-daily-task edge call is gated there too — functions.invoke is not patched here.)
+  "my_challenge_task_move",
+  "my_challenge_task_withdraw",
+  "my_challenge_task_restore",
+  "my_telegram_write_access_granted",
+  "admin_challenge_task_override",
 ]);
 
 const isImpersonating = () => {

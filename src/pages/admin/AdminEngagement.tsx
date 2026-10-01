@@ -4,6 +4,7 @@ import { PageShell } from "@/components/Layout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NudgesPanel } from "./AdminNudges";
 import { ReengagementPanel } from "./AdminReengagement";
+import { EngagementTargetingCard } from "@/components/admin/EngagementTargetingCard";
 
 /**
  * Merged engagement hub: combines Smart reminders (nudges) and Reactivation
@@ -19,6 +20,11 @@ export default function AdminEngagement() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold">🔔 Faollik va eslatmalar</h1>
         <p className="text-sm text-muted-foreground">Smart eslatmalar va reaktivatsiya kampaniyalari bir joyda.</p>
+      </div>
+
+      {/* Who the automatic reminders go to — applies to every tab below and to the daily reminders. */}
+      <div className="mb-6">
+        <EngagementTargetingCard />
       </div>
 
       <Tabs

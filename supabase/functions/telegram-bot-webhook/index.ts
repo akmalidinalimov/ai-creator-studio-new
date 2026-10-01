@@ -33,9 +33,23 @@ import {
 } from "./hw-labels.ts";
 import { loadGroupRanking, loadWeeklyStar } from "../_shared/group-rank.ts";
 import { boardLines, cardRankBit, statsRankLines } from "./rank-views.ts";
+// UX quick wins #2/#7/#8/#9/#13/#14 (2026-09-30): each lives in its own module; index.ts only calls them.
+import { flagSig, liveFresh, syncMenuLive } from "./menu-button.ts";
+import { runMenuSweepTick, scheduleMenuSweepTick } from "./menu-sweep.ts";
+import { handleNotToday } from "./reminder-snooze.ts";
+import { typedIntent } from "./typed-intents.ts";
+import { langChooserKeyboard, parseProfAction, profileRows, profileWebCells, showProfileView } from "./profile-tabs.ts";
+import { sendStudentWelcome } from "./student-welcome.ts";
 import {
   bellCallback, hourPickerKeyboard, parseBellTarget, parseReminderHour, parseTimezone, saveBotSetting, tzPickerKeyboard,
 } from "./bot-settings.ts";
+import {
+  messageIdOf, notANumberText, parseStrictScore, replacedSessionNotice, replyElsewhereText, replyMidOf, replyPointsElsewhere,
+} from "./grading-guard.ts";
+import { cancelVoiceRequests, onBridgeVoice, onVoicePick, remainingLine, type VoiceBridgeDeps } from "./voice-bridge.ts";
+import { normalizeVoiceState, restoreVoiceRequest, type VoiceRequest } from "../_shared/voice-requests.ts";
+import { createDailyTasks } from "./daily-tasks.ts";
+import { DAILY_COPY } from "../_shared/daily-task-render.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1157,9 +1171,9 @@ function escHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-/** Student profile: compact greeting + ONE button that opens the web profile
- *  directly (all stats/badges/ratings live there — no in-chat button maze). */
-async function buildProfileCard(admin: any, userId: string, locale: Locale): Promise<{ text: string; keyboard: any }> {
+/** Student profile card TEXT: compact greeting with level, XP, streak and group rank. Its keyboard is
+ *  profileViewRows(…, "card"); the tabs edit this same message in place (profile-tabs.ts). */
+async function buildProfileCard(admin: any, userId: string, locale: Locale): Promise<{ text: string }> {
   const p = PROF_T[locale];
   const [{ data: prof }, statsRes, { ranking }] = await Promise.all([
     admin.from("profiles").select("name, last_name").eq("id", userId).maybeSingle(),
@@ -1177,19 +1191,21 @@ async function buildProfileCard(admin: any, userId: string, locale: Locale): Pro
   if (rankBit) bits.push(rankBit);
 
   const text = `👤 <b>${name}</b> · ${bits.join(" · ")}\n\n${p.profOpenHint}`;
-  const url = await createMagicLink(admin, userId, "login", "/profile");
-  // ✏️ Edit name → reuses the confirm-your-name flow (name:edit → awaiting_name → preview →
-  // name:yes writes profiles.name/last_name). Lets any student fix their own display name so
-  // the rating/leaderboard shows it correctly. ⚙️ opens /sozlamalar (reminders), which had no button.
-  const keyboard = { inline_keyboard: [
-    [{ text: p.btnProfStats, callback_data: "prof:stats" },
-     { text: p.btnProfBadges, callback_data: "prof:badges" }],
-    [{ text: p.btnProfGroup, callback_data: "prof:group" },
-     { text: p.btnProfSettings, callback_data: "prof:settings" }],
-    [{ text: p.btnProfOpen, url }],
-    [{ text: p.btnEditName, callback_data: "name:edit" }],
-  ] };
-  return { text, keyboard };
+  return { text };
+}
+
+/** The keyboard of a Profil view (profile-tabs.ts): tabs that edit in place, ↗ Mini App buttons, ✏️ name, 🌐 Til.
+ *  ✏️ reuses the confirm-your-name flow (name:edit → awaiting_name → preview → name:yes). */
+async function profileViewRows(admin: any, chatId: number, userId: string, locale: Locale, view: "card" | "stats" | "badges" | "group") {
+  const p = PROF_T[locale];
+  const web = await profileWebCells(admin, {
+    chatId, locale, openLabel: p.btnProfOpen, webhookOn: __studentMiniAppEnabled?.on === true,
+    magicLink: (lp) => createMagicLink(admin, userId, "login", lp),
+  });
+  return profileRows(view, {
+    card: p.kbProfil, stats: p.btnProfStats, badges: p.btnProfBadges, group: p.btnProfGroup,
+    settings: p.btnProfSettings, editName: p.btnEditName, lang: T[locale].kbLang,
+  }, web);
 }
 
 /** Badges list for the bot (earned + locked teaser). */
@@ -1530,26 +1546,14 @@ async function loadTeacherMiniAppEnabled(admin: any): Promise<boolean> {
   return on;
 }
 
-// Per-teacher ☰ menu button → Mini App home (enabled) or reset to default (kill-switch off).
-// Best-effort + in-memory throttled (1h per chat+state) so we never hit the Telegram API on every DM.
-// Never throws; on failure the state isn't cached, so it retries on the teacher's next interaction.
-const __teacherMenuBtn = new Map<number, { on: boolean; locale: Locale; at: number }>();
-async function syncTeacherMenuButton(chatId: number, enabled: boolean, locale: Locale) {
-  const prev = __teacherMenuBtn.get(chatId);
-  if (prev && prev.on === enabled && prev.locale === locale && Date.now() - prev.at < 3_600_000) return;
-  try {
-    await tgApi("setChatMenuButton", {
-      chat_id: chatId,
-      menu_button: enabled
-        ? { type: "web_app", text: `📝 ${PROF_T[locale].profTeacher}`, web_app: { url: `${MINIAPP_BASE}/tg/teacher` } }
-        : { type: "default" },
-    });
-    __teacherMenuBtn.set(chatId, { on: enabled, locale, at: Date.now() });
-  } catch (e) {
-    // Health signal: a systemic failure (e.g. domain not registered, API change) would otherwise be
-    // invisible. Best-effort — never rethrows; state isn't cached, so it retries next interaction.
-    console.error("teacher-miniapp: setChatMenuButton failed", e);
-  }
+// ☰ menu button (both personas) → menu-button.ts: the same labels/URLs as before (📝 Ustoz → /tg/teacher for
+// teacher/admin, 🚀 Ilovani ochish → /dashboard for students; Telegram's default menu when that role's flag is
+// off), now also re-synced on inline-button taps, with every non-ok outcome DB-visible, and swept for every
+// current member by menu-sweep.ts. Throttled per chat (1h per state); never throws.
+function menuSyncOpts(persona: Persona, locale: Locale) {
+  const s = __studentMiniAppEnabled?.on === true;
+  const t = __teacherMiniAppEnabled?.on === true;
+  return { role: persona, locale, on: persona === "student" ? s : t, base: MINIAPP_BASE, sig: flagSig(s, t, MINIAPP_BASE) };
 }
 
 // ── Student Mini App entry wiring ─────────────────────────────────────────────────────────────
@@ -1574,26 +1578,6 @@ async function loadStudentMiniAppEnabled(admin: any): Promise<boolean> {
   }
   __studentMiniAppEnabled = { on, at: Date.now() };
   return on;
-}
-
-// Per-student ☰ menu button → Mini App home (enabled) or reset to default (kill-switch off).
-// Best-effort + in-memory throttled (1h per chat+state); never throws. Mirrors syncTeacherMenuButton.
-const __studentMenuBtn = new Map<number, { on: boolean; locale: Locale; at: number }>();
-async function syncStudentMenuButton(chatId: number, enabled: boolean, locale: Locale) {
-  const prev = __studentMenuBtn.get(chatId);
-  if (prev && prev.on === enabled && prev.locale === locale && Date.now() - prev.at < 3_600_000) return;
-  try {
-    await tgApi("setChatMenuButton", {
-      chat_id: chatId,
-      menu_button: enabled
-        ? { type: "web_app", text: MINIAPP_STUDENT_LABEL[locale], web_app: { url: `${MINIAPP_BASE}/dashboard` } }
-        : { type: "default" },
-    });
-    __studentMenuBtn.set(chatId, { on: enabled, locale, at: Date.now() });
-  } catch (e) {
-    // Best-effort — never rethrows; state isn't cached on failure so it retries next interaction.
-    console.error("student-miniapp: setChatMenuButton failed", e);
-  }
 }
 
 function getTeacherKeyboard(locale: Locale, pendingCount?: number) {
@@ -4339,7 +4323,20 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
     ? `\n${(t as any).pkPrevGrade((sub as any).previous_score, a?.max_score || 10)}`
     : (sub.score != null && (sub as any).score_is_stale
       ? `\n🔄 ${(t as any).pkPrevGrade(sub.score, a?.max_score || 10)}` : "");
-  await sendMessage(chatId, `${header}\n\n${body}${prevLine}`);
+  // One grading target at a time (audit BOT-4): this session replaces whatever the teacher's ONE conversation
+  // row holds. When that loses something — another student's unfinished grade, a typed score, pending Mini App
+  // voice requests — say so on top of the new header, and leave a countable row (grading-guard.ts).
+  const { data: prevRow } = await admin.from("bot_conversation_state")
+    .select("state, context, updated_at, expires_at").eq("telegram_id", graderTgId).maybeSingle();
+  const replaced = replacedSessionNotice(prevRow ?? null, [submissionId], Date.now(), locale);
+  if (replaced) {
+    await logHealth(admin, "grading_session_replaced", { ...replaced.details, to_submission_id: submissionId }, {
+      source: "telegram-bot-webhook", actorUserId: graderId, targetResourceType: "homework_submission", targetResourceId: submissionId,
+    });
+  }
+  // The header's message_id anchors this session: a score / comment that REPLIES to an older message (the
+  // previous student's screen) is refused instead of landing here (replyPointsElsewhere).
+  const anchorMid = await messageIdOf(await sendMessage(chatId, `${replaced ? `${replaced.text}\n\n` : ""}${header}\n\n${body}${prevLine}`));
   // PRIMARY FIX: re-send the actual submitted media so the teacher SEES the image/video/document
   // inline while grading — works for any grader (file_id / signed-URL based, no group membership).
   const media = await sendSubmissionMedia(admin, chatId, (sub as any).media, (sub as any).telegram_file_id, sub.telegram_file_kind, sub.submitted_image_url);
@@ -4381,7 +4378,7 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
     // student and "<course> · <group> · M V", so the teacher sees whose grade her next number becomes.
     context: {
       submission_id: submissionId, max_score: a?.max_score || 10, grader_id: graderId, is_admin: isAdmin, opened_sub_at: sub.submitted_at,
-      student_name: name, who_tag: lbl.tag,
+      student_name: name, who_tag: lbl.tag, anchor_mid: anchorMid,
     },
     updated_at: new Date().toISOString(),
     expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
@@ -4403,7 +4400,15 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
     .select("state, context, expires_at")
     .eq("telegram_id", tgId)
     .maybeSingle();
-  if (!state) return false;
+  if (!state) {
+    // A voice note with no pending Mini App request used to fall through to the generic keyboard hint, and the
+    // teacher could believe feedback was saved that never was (audit FB-4). Say it was NOT saved, and count it.
+    if (msg.voice || msg.audio) {
+      await onBridgeVoice(voiceBridgeDeps(admin, msg.chat.id, tgId, profileId, locale, isAdmin), msg, locale);
+      return true;
+    }
+    return false;
+  }
   if (new Date(state.expires_at).getTime() < Date.now()) {
     // Delete only while STILL expired: teacher-voice-request may have re-parked this row a moment ago.
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).lt("expires_at", new Date().toISOString());
@@ -4412,12 +4417,14 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
     // DB-visible trail (a steady stream of these means the request TTL is too short).
     if (state.state === "grade_voice" && (msg.voice || msg.audio)) {
       await sendMessage(msg.chat.id, t.gvExpired);
+      // The row holds one request per submission now (_shared/voice-requests.ts); name it when there was one.
+      const exReqs = normalizeVoiceState(state.context, state.expires_at, state.expires_at).reqs;
       try {
         await admin.from("admin_actions").insert({
           actor_user_id: profileId, action: "grade_voice_request_expired",
           target_resource_type: "homework_submission",
-          target_resource_id: (state.context as any)?.submission_id ?? null,
-          details: { source: "miniapp_voice_bridge" },
+          target_resource_id: exReqs.length === 1 ? exReqs[0].submission_id : null,
+          details: { source: "miniapp_voice_bridge", pending: exReqs.length },
         });
       } catch (_e) { /* best-effort */ }
       return true;
@@ -4462,11 +4469,22 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
       return true;
     }
     const max = Number(ctx.max_score || 10);
-    const score = parseInt(text, 10);
-    if (!Number.isFinite(score) || score < 0 || score > max) {
-      await sendMessage(msg.chat.id, t.gradeBadScore(max));
+    // A reply to an OLDER message points at a previous student's screen: refuse, never grade this one with it.
+    if (replyPointsElsewhere(replyMidOf(msg), ctx.anchor_mid)) {
+      await refuseGradingInput(admin, msg.chat.id, profileId, locale, ctx, "grade_score", "reply_to_older_message");
       return true;
     }
+    // Strictly a whole number: parseInt read "1 vazifa topilmadi" ("task 1 not found") as a score of 1.
+    const parsed = parseStrictScore(text, max);
+    if (!parsed.ok) {
+      if (parsed.reason === "not_a_number") {
+        await refuseGradingInput(admin, msg.chat.id, profileId, locale, ctx, "grade_score", "not_a_number");
+      } else {
+        await sendMessage(msg.chat.id, withWho(t.gradeBadScore(max), ctx.student_name, ctx.who_tag));
+      }
+      return true;
+    }
+    const score = parsed.score;
     ctx.score = score;
     await admin.from("bot_conversation_state").update({
       state: "grade_comment", context: ctx, updated_at: new Date().toISOString(),
@@ -4477,114 +4495,29 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
   }
 
   // Mini App → bot VOICE BRIDGE. Telegram's in-app webview does not grant Mini Apps microphone access, so
-  // the teacher's in-app recorder is dead on most devices. teacher-voice-request parks this state and
-  // prompts the teacher HERE, in the bot chat, where Telegram's own recorder always works. We attach the
-  // note to the submission and deliver it to the student through the SAME save + sendVoice path the in-bot
-  // grading flow already uses — no second delivery mechanism to keep in sync.
+  // the teacher's in-app recorder is dead on most devices. teacher-voice-request parks ONE REQUEST PER
+  // SUBMISSION here and prompts the teacher in the bot chat, where Telegram's own recorder always works.
+  // voice-bridge.ts decides which request a recording belongs to — the prompt it replies to, the only one
+  // EVER pending, or the teacher's pick from per-student buttons, never simply the newest (audit FB-4) — and
+  // commitBridgeVoice saves + delivers it through the same save + sendVoice path the in-bot grading flow uses.
   if (state.state === "grade_voice") {
-    const submissionId = String(ctx.submission_id || "");
-    // Every delete in this branch is scoped to THIS request (state + submission). teacher-voice-request can
-    // re-point the row at another card while this update is mid-flight; an unscoped delete would wipe that
-    // newer request, and the teacher's next voice note would fall through unsaved.
     if (text === "/cancel") {
-      await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice");
-      await sendWithKeyboard(msg.chat.id, t.gradeCancelled, locale, isAdmin, isAdmin ? "admin" : "teacher");
+      const bye = await cancelVoiceRequests(voiceBridgeDeps(admin, msg.chat.id, tgId, profileId, locale, isAdmin), tgId, locale);
+      await sendWithKeyboard(msg.chat.id, bye, locale, isAdmin, isAdmin ? "admin" : "teacher");
       return true;
     }
-    const voiceFileId: string | null = msg.voice?.file_id || msg.audio?.file_id || null;
-    if (!voiceFileId) {
-      // TEXT means she moved on — typically a keyboard-menu tap, which arrives as plain text and reaches this
-      // handler FIRST. Trapping every menu tap behind "send a voice message" for the whole 15-minute TTL is the
-      // opposite of member forgiveness: release the parked state and let the message route normally. The
-      // prompt stays in the chat, and one tap on the Mini App button re-arms it.
-      if (text) {
-        await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice").eq("context->>submission_id", submissionId);
-        return false;
-      }
-      // Non-text, non-voice (sticker, photo, video note): nudge rather than silently swallow it.
-      await sendMessage(msg.chat.id, t.gvNeedVoice);
+    if (msg.voice || msg.audio) {
+      await onBridgeVoice(voiceBridgeDeps(admin, msg.chat.id, tgId, profileId, locale, isAdmin), msg, locale);
       return true;
     }
-    const { data: sub } = await admin.from("homework_submissions")
-      .select("user_id, assignment_id").eq("id", submissionId).maybeSingle();
-    if (!sub) {
-      await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice").eq("context->>submission_id", submissionId);
-      await sendMessage(msg.chat.id, t.gradeNotFound);
-      return true;
-    }
-    // Re-check scope at COMMIT time (teachers only) — same guard the grade_comment path applies, so a
-    // stale parked state can never attach a note to a student outside the grader's groups.
-    if (!isAdmin) {
-      const scope = await gradingScopeIds(admin, profileId, false);
-      if (!scope || !scope.includes(sub.user_id)) {
-        await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice").eq("context->>submission_id", submissionId);
-        await sendMessage(msg.chat.id, t.gradeNotFound);
-        return true;
-      }
-    }
-    // Clear score_feedback_voice_path in the SAME write: hw-audio-url plays the app-recorded path FIRST and
-    // the bot file_id only as a fallback, so leaving an older in-app note in place would silently shadow the
-    // note the teacher just recorded here. Newest recording must win. (submitScore never touches the
-    // file_id column, so a later in-app save can't wipe this one either.)
-    const { error: vErr } = await admin.from("homework_submissions")
-      .update({ score_feedback_voice_file_id: voiceFileId, score_feedback_voice_path: null }).eq("id", submissionId);
-    if (vErr) {
-      await sendMessage(msg.chat.id, `❌ ${vErr.message}`);
-      // Same capture as the grade_save failure below: the teacher is told, and now so is the DB.
-      await logError(admin, "telegram-bot-webhook", vErr.message, {
-        action: "grade_voice_save", user_id: sub.user_id, telegram_id: tgId, context: { submission_id: submissionId },
-      });
-      return true;
-    }
-    // Deliver to the student in THEIR locale; a non-delivery stays DB-visible (doctrine), mirroring the
-    // grade_voice_delivery_failed row the in-bot grading path writes. Most students (~70%) never pressed
-    // Start, so "not delivered" is common and expected — the note is still saved and playable in the app.
-    let studentName = "";
-    let delivered = false;
-    try {
-      const { data: stu, error: stuErr } = await admin.from("profiles")
-        .select("telegram_id, preferred_locale, name, last_name").eq("id", sub.user_id).maybeSingle();
-      if (stuErr) throw stuErr; // a failed read is not "no telegram_id"
-      studentName = [stu?.name, stu?.last_name].filter(Boolean).join(" ");
-      if (stu?.telegram_id) {
-        const stuT = T[normLocale(stu.preferred_locale)];
-        // ctx.label = the hw-label teacher-voice-request parked with the request ("<course> · <group> · M V —
-        // <title>"), so a voice note arriving on its own says which homework it is about.
-        const vo = await sendVoice(Number(stu.telegram_id), voiceFileId, withLabelLine(stuT.gradeVoiceNote, ctx.label));
-        delivered = vo.ok;
-        if (!vo.ok) {
-          // Classified, so the watchdogs can tell "student blocked the bot" (expected) from a broken path.
-          await admin.from("admin_actions").insert({
-            actor_user_id: profileId, action: "grade_voice_delivery_failed",
-            target_user_id: sub.user_id, target_resource_type: "homework_submission",
-            target_resource_id: submissionId,
-            details: { source: "miniapp_voice_bridge", error: vo.error, recipient_error: vo.recipient, terminal: vo.terminal, content_error: vo.content },
-          });
-        }
-      } else {
-        // No telegram_id: nobody can send this note. Expected reach, counted (grade_voice_dm_skipped), not silent.
-        await recordGradeVoiceSkipped(admin, {
-          submissionId, studentId: sub.user_id, voiceKey: botVoiceKey(msg), source: "miniapp_voice_bridge", actorUserId: profileId,
-        });
-      }
-    } catch (e) {
-      console.error("grade_voice deliver threw", String(e));
-      try {
-        await admin.from("admin_actions").insert({
-          actor_user_id: profileId, action: "grade_voice_delivery_failed",
-          target_user_id: sub.user_id, target_resource_type: "homework_submission",
-          target_resource_id: submissionId,
-          // A throw (e.g. the profile read failed), not a Telegram refusal: no recipient_error, so the watchdogs count it.
-          details: { source: "miniapp_voice_bridge", error: redactSecrets((e as any)?.message ?? e), terminal: false, thrown: true },
-        });
-      } catch (_e2) { /* audit best-effort */ }
-    }
-    await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", "grade_voice").eq("context->>submission_id", submissionId);
-    cacheInvalidateUser(sub.user_id);
-    // Name the student in the confirmation: the state is one-per-teacher, so if she requested notes for two
-    // cards back to back the latest request wins — naming who received it makes any mix-up visible at once.
-    // …and the label line says which course/group/task it was attached to.
-    await sendWithKeyboard(msg.chat.id, withLabelLine(t.gvSaved(csvEscapeHtml(studentName || "—"), delivered), ctx.label), locale, isAdmin, isAdmin ? "admin" : "teacher");
+    // TEXT means she moved on — typically a keyboard-menu tap, which arrives as plain text and reaches this
+    // handler FIRST. Let it route normally: trapping every menu tap behind "send a voice message" is the
+    // opposite of member forgiveness. The pending requests STAY (a recording she sends next still reaches the
+    // right student); they expire on their own, on /cancel, or when a bot grading session replaces them (which
+    // names what it drops).
+    if (text) return false;
+    // Non-text, non-voice (sticker, photo, video note): nudge rather than silently swallow it.
+    await sendMessage(msg.chat.id, t.gvNeedVoice);
     return true;
   }
 
@@ -4596,6 +4529,11 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
     if (sub) cacheInvalidateUser(sub.user_id);
       await sendWithKeyboard(msg.chat.id, t.gradeCancelled, locale, isAdmin, isAdmin ? "admin" : "teacher");
+      return true;
+    }
+    // Same binding as the score: a comment or voice note replying to an older message is not for this student.
+    if (text !== "/skip" && replyPointsElsewhere(replyMidOf(msg), ctx.anchor_mid)) {
+      await refuseGradingInput(admin, msg.chat.id, profileId, locale, ctx, "grade_comment", "reply_to_older_message");
       return true;
     }
     // C2: re-check scope at commit time (teachers only) — the submission owner
@@ -4774,6 +4712,132 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
 
   return false;
 }
+
+// A score / comment the grading session will not take (grading-guard.ts): say why, name whose grade the session
+// is waiting for, and leave a countable row. The session itself is untouched — she just types again.
+async function refuseGradingInput(
+  admin: any, chatId: number, profileId: string, locale: Locale, ctx: any,
+  state: "grade_score" | "grade_comment", reason: "reply_to_older_message" | "not_a_number",
+): Promise<void> {
+  const text = reason === "not_a_number"
+    ? withWho(notANumberText(locale, Number(ctx.max_score || 10)), ctx.student_name, ctx.who_tag)
+    : replyElsewhereText(locale, ctx.student_name, ctx.who_tag);
+  await sendMessage(chatId, text);
+  await logHealth(admin, "bot_grading_input_refused", { reason, state, submission_id: ctx.submission_id ?? null }, {
+    source: "telegram-bot-webhook", actorUserId: profileId,
+  });
+}
+
+// The Telegram + commit side of voice-bridge.ts for one teacher chat.
+function voiceBridgeDeps(admin: any, chatId: number, tgId: number, profileId: string, locale: Locale, isAdmin: boolean): VoiceBridgeDeps {
+  return {
+    admin,
+    actorId: profileId,
+    send: async (c, text, markup) => messageIdOf(await sendMessage(c, text, markup)),
+    edit: async (c, mid, text, markup) => {
+      try {
+        await tgApi("editMessageText", { chat_id: c, message_id: mid, text, parse_mode: "HTML", ...(markup ? { reply_markup: markup } : {}) });
+      } catch (_e) { /* best-effort: the callback answer already told her */ }
+    },
+    answer: async (id, text) => { await answerCallback(id, text); },
+    commit: (req, voice, remaining) => commitBridgeVoice(admin, chatId, tgId, profileId, isAdmin, locale, req, voice, remaining),
+  };
+}
+
+// Save a Mini App-requested voice note on ITS submission and deliver it to the student. voice-bridge.ts already
+// took the request out of the teacher's pending set in the same write that matched it, so no other recording can
+// land on it; if the save fails the request is put back and she simply resends.
+async function commitBridgeVoice(
+  admin: any, chatId: number, tgId: number, profileId: string, isAdmin: boolean, locale: Locale,
+  req: VoiceRequest, voice: { file_id: string; key: string | null }, remaining: number,
+): Promise<void> {
+  const t = T[locale] as any;
+  const submissionId = req.submission_id;
+  const voiceFileId = voice.file_id;
+  const { data: sub } = await admin.from("homework_submissions")
+    .select("user_id, assignment_id").eq("id", submissionId).maybeSingle();
+  if (!sub) {
+    await sendMessage(chatId, t.gradeNotFound);
+    return;
+  }
+  // Re-check scope at COMMIT time (teachers only) — same guard the grade_comment path applies, so a
+  // stale parked request can never attach a note to a student outside the grader's groups.
+  if (!isAdmin) {
+    const scope = await gradingScopeIds(admin, profileId, false);
+    if (!scope || !scope.includes(sub.user_id)) {
+      await sendMessage(chatId, t.gradeNotFound);
+      return;
+    }
+  }
+  // Clear score_feedback_voice_path in the SAME write: hw-audio-url plays the app-recorded path FIRST and
+  // the bot file_id only as a fallback, so leaving an older in-app note in place would silently shadow the
+  // note the teacher just recorded here. Newest recording must win. (submitScore never touches the
+  // file_id column, so a later in-app save can't wipe this one either.)
+  const { error: vErr } = await admin.from("homework_submissions")
+    .update({ score_feedback_voice_file_id: voiceFileId, score_feedback_voice_path: null }).eq("id", submissionId);
+  if (vErr) {
+    await sendMessage(chatId, `❌ ${vErr.message}`);
+    // Same capture as the grade_save failure: the teacher is told, and so is the DB.
+    await logError(admin, "telegram-bot-webhook", vErr.message, {
+      action: "grade_voice_save", user_id: sub.user_id, telegram_id: tgId, context: { submission_id: submissionId },
+    });
+    await restoreVoiceRequest(admin, tgId, req);
+    return;
+  }
+  // Deliver to the student in THEIR locale; a non-delivery stays DB-visible (doctrine), mirroring the
+  // grade_voice_delivery_failed row the in-bot grading path writes. Most students (~70%) never pressed
+  // Start, so "not delivered" is common and expected — the note is still saved and playable in the app.
+  let studentName = "";
+  let delivered = false;
+  try {
+    const { data: stu, error: stuErr } = await admin.from("profiles")
+      .select("telegram_id, preferred_locale, name, last_name").eq("id", sub.user_id).maybeSingle();
+    if (stuErr) throw stuErr; // a failed read is not "no telegram_id"
+    studentName = [stu?.name, stu?.last_name].filter(Boolean).join(" ");
+    if (stu?.telegram_id) {
+      const stuT = T[normLocale(stu.preferred_locale)];
+      // req.label = the hw-label teacher-voice-request parked with the request ("<course> · <group> · M V —
+      // <title>"), so a voice note arriving on its own says which homework it is about.
+      const vo = await sendVoice(Number(stu.telegram_id), voiceFileId, withLabelLine(stuT.gradeVoiceNote, req.label));
+      delivered = vo.ok;
+      if (!vo.ok) {
+        // Classified, so the watchdogs can tell "student blocked the bot" (expected) from a broken path.
+        await admin.from("admin_actions").insert({
+          actor_user_id: profileId, action: "grade_voice_delivery_failed",
+          target_user_id: sub.user_id, target_resource_type: "homework_submission",
+          target_resource_id: submissionId,
+          details: { source: "miniapp_voice_bridge", error: vo.error, recipient_error: vo.recipient, terminal: vo.terminal, content_error: vo.content },
+        });
+      }
+    } else {
+      // No telegram_id: nobody can send this note. Expected reach, counted (grade_voice_dm_skipped), not silent.
+      await recordGradeVoiceSkipped(admin, {
+        submissionId, studentId: sub.user_id, voiceKey: voice.key || `tgfile:${voiceFileId}`, source: "miniapp_voice_bridge", actorUserId: profileId,
+      });
+    }
+  } catch (e) {
+    console.error("grade_voice deliver threw", String(e));
+    try {
+      await admin.from("admin_actions").insert({
+        actor_user_id: profileId, action: "grade_voice_delivery_failed",
+        target_user_id: sub.user_id, target_resource_type: "homework_submission",
+        target_resource_id: submissionId,
+        // A throw (e.g. the profile read failed), not a Telegram refusal: no recipient_error, so the watchdogs count it.
+        details: { source: "miniapp_voice_bridge", error: redactSecrets((e as any)?.message ?? e), terminal: false, thrown: true },
+      });
+    } catch (_e2) { /* audit best-effort */ }
+  }
+  cacheInvalidateUser(sub.user_id);
+  // Name the student (and the course/group/task label) in the confirmation, and say how many requests are still
+  // waiting — each one needs its own recording, replying to its own prompt.
+  const more = remainingLine(remaining, locale);
+  await sendWithKeyboard(
+    chatId,
+    withLabelLine(t.gvSaved(csvEscapeHtml(studentName || req.student || "—"), delivered), req.label) + (more ? `\n\n${more}` : ""),
+    locale, isAdmin, isAdmin ? "admin" : "teacher",
+  );
+}
+
 async function handleTeacherSession(admin: any, msg: any, profileId: string, locale: Locale): Promise<boolean> {
   const t = T[locale] as any;
   const { data: sess } = await admin.from("bot_sessions").select("state, data").eq("user_id", profileId).maybeSingle();
@@ -4842,6 +4906,24 @@ async function handleTeacherSession(admin: any, msg: any, profileId: string, loc
     locale, false, "teacher",
   );
   return true;
+}
+
+// /start (and a typed "Start") for a registered student: the welcome of student-welcome.ts, carrying the
+// CURRENT keyboard, then one "▶️ Keyingi dars" button (Mini App /continue, or today's magic link when off).
+async function studentWelcome(admin: any, chatId: number, profile: any, locale: Locale) {
+  await sendStudentWelcome(admin, {
+    chatId, locale, profile,
+    labels: { davom: T[locale].kbDavom, homework: T[locale].kbHomework, profil: PROF_T[locale].kbProfil },
+    appOn: __studentMiniAppEnabled?.on === true,
+    sendWithKeyboard: (text) => sendWithKeyboard(chatId, text, locale, false, "student"),
+    primaryCourseId: () => getPrimaryCourseIdForUser(admin, profile.id),
+    nextLessonId: async (courseId) => (await getNextIncompleteLesson(admin, profile.id, courseId))?.id ?? null,
+    watch: (o) => studentWatchButton(admin, {
+      chatId, text: o.text, miniPath: o.miniPath, legacyPath: o.legacyPath, src: "bot_start",
+      webhookOn: __studentMiniAppEnabled?.on === true,
+      magicLink: (p) => createMagicLink(admin, profile.id, p.startsWith("/course/") ? "deeplink_course" : "deeplink_lesson", p),
+    }),
+  });
 }
 
 async function handleCommand(admin: any, msg: any, cmdRaw: string) {
@@ -5044,8 +5126,8 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
       const { text, keyboard } = await buildTeacherProfileCard(admin, profile.id, locale, null, { chatId, readOnly: !!effectivePersona });
       await sendTeacherCard(admin, chatId, text, keyboard);
     } else {
-      const { text, keyboard } = await buildProfileCard(admin, profile.id, locale);
-      await sendMessage(chatId, text, keyboard);
+      const { text } = await buildProfileCard(admin, profile.id, locale);
+      await sendStudentWatchMessage(admin, chatId, text, await profileViewRows(admin, chatId, profile.id, locale, "card"));
     }
     console.timeEnd(`bot:profile:${profile.id}`);
     return;
@@ -5989,7 +6071,11 @@ async function sweepExpiredPendingPosts(admin: any) {
           });
           continue;
         }
-        await finalizePendingPost(admin, p, resolved.assignment.id, resolved.moduleId, true);
+        const fin = await finalizePendingPost(admin, p, resolved.assignment.id, resolved.moduleId, true);
+        // Daily Tasks PR-4 (G14): an auto-tag in a challenge-scope group may be daily work in the wrong topic.
+        if (fin === "created" || fin === "appended") {
+          try { await dailyTasks.noteMisplacedHomework(admin, p, fin); } catch (_e) { /* a counter, never the sweep */ }
+        }
       } catch (e) {
         console.error("pk:sweep-row-err", String(e));
         // The row stays pending, so the next sweep retries it; a persistent throw would loop unseen.
@@ -6139,6 +6225,61 @@ async function autoRegisterProvisionalPoster(
     return null;
   }
 }
+
+// ═══ KUNLIK VAZIFALAR (Daily Tasks PR-4) ═══════════════════════════════════════════════════════════════════
+// Everything daily-task lives in daily-tasks.ts (I/O) / daily-task-dispatch.ts (decisions) /
+// _shared/daily-task-render.ts (copy); index.ts only wires it in at five points: the group dispatcher, the
+// edited_message hook, the dt: callbacks, /start dt_<id> | ig, and my_chat_member (+ the U1 hint buttons and the
+// misplaced-homework counter). The registrar below is the daily-topic twin of autoRegisterProvisionalPoster: the
+// group comes from challenge_task_topics() (chat AND thread — never the thread alone), chat admins never register
+// (U4), the same admin-create-students engine, and NO in-thread welcome (it is folded into the first receipt, G7).
+async function autoRegisterDailyTaskPoster(
+  admin: any,
+  msg: any,
+  grp: { id: string; course_id: string },
+): Promise<{ profile: any; created: boolean } | null> {
+  const from = msg?.from;
+  if (!from?.id || from.is_bot || !grp?.id || !grp?.course_id) return null;
+  try {
+    const cmResp = await tgApi("getChatMember", { chat_id: msg.chat.id, user_id: from.id });
+    const cm: any = await cmResp.json().catch(() => null);
+    const st = cm?.result?.status;
+    if (st === "administrator" || st === "creator") {
+      await logHealthOnce(admin, "challenge_task_autoreg_skipped", `chat_admin:${msg.chat.id}:${from.id}`, {
+        reason: "chat_admin", chat_id: msg.chat.id, thread_id: msg.message_thread_id ?? null, message_id: msg.message_id,
+        telegram_id: from.id, group_id: grp.id,
+      }, { source: "telegram-bot-webhook" });
+      return null;
+    }
+  } catch (_e) { /* best-effort — proceed, like the homework registrar */ }
+  try {
+    const reg = await registerProvisionalViaEngine(admin, from, grp, "daily_task_post");
+    if (!reg) return null; // the engine path recorded its own auto_register_failed row
+    const prof = await findProfileByTelegramId(admin, from.id);
+    if (!prof) {
+      await recordAutoRegisterFailed(admin, "profile_not_linked", from, grp, "daily_task_post", {
+        engine_status: reg.status ?? null, matched_user_id: reg.userId ?? null, chat_id: msg.chat.id, message_id: msg.message_id,
+      });
+      return null;
+    }
+    return { profile: prof, created: reg.created };
+  } catch (e) {
+    await recordAutoRegisterFailed(admin, "error", from, grp, "daily_task_post", {
+      error: redactSecrets(e).slice(0, 200), chat_id: msg.chat.id, message_id: msg.message_id,
+    });
+    return null;
+  }
+}
+
+const dailyTasks = createDailyTasks({
+  botToken: BOT_TOKEN,
+  botUsername: () => Deno.env.get("TELEGRAM_BOT_USERNAME") || "",
+  answerCallback: (id, text) => answerCallback(id, text),
+  autoRegister: (admin, msg, grp) => autoRegisterDailyTaskPoster(admin, msg, grp),
+  magicLink: async (admin, userId, path) => {
+    try { return await createMagicLink(admin, userId, "login", path); } catch (_e) { return null; }
+  },
+});
 
 // Server-to-server into the proven creation engine (same pattern as staff-intake). Shared by
 // the in-topic auto-register and the DM /start membership path — one engine, all dedupe/role
@@ -7028,7 +7169,12 @@ async function handleCallback(admin: any, cq: any) {
   const chatId = cq.message?.chat?.id;
 
   if (data === "ack:not_today") {
-    await answerCallback(cq.id, "OK 👍");
+    // 🌙 Bugun emas: skip tonight's streak warning, say so, remove the buttons (reminder-snooze.ts).
+    await handleNotToday(admin, cq, {
+      call: (method, payload) => sendTelegram(BOT_TOKEN, method, payload, { record: false }),
+      findProfile: (id) => findProfileByTelegramId(admin, id),
+      answer: (text) => answerCallback(cq.id, text),
+    });
     return;
   }
 
@@ -7047,6 +7193,18 @@ async function handleCallback(admin: any, cq: any) {
   }
   if (_isImp && (/^grade_task:|^grade:open:|^gs:open:|^settings:|^setlang:|^ops:|^ast:/.test(data) || /^hw:(start|resub_yes):/.test(data))) {
     await answerCallback(cq.id, "👁 Faqat o'qish — /admin");
+    return;
+  }
+  // Daily Tasks PR-4 (§7.5): the dt: correction buttons (move / "Bu topshiriq emas" / undo) are WRITES — denied
+  // under impersonation like the list above (kept as its own line so the shared regex stays untouched).
+  if (_isImp && /^dt:/.test(data)) {
+    await answerCallback(cq.id, "👁 Faqat o'qish — /admin");
+    return;
+  }
+  if (data.startsWith("dt:")) {
+    // The owner lock is SQL-side (challenge_task_tg_actor on the REAL tapper's telegram id); an admin tap is a
+    // logged override. Every refusal is a friendly toast, never an error (member forgiveness).
+    await dailyTasks.onCallback(admin, cq);
     return;
   }
 
@@ -7178,17 +7336,20 @@ async function handleCallback(admin: any, cq: any) {
     const locale: Locale = normLocale(_clicker?.preferred_locale);
     const action = data.slice("prof:".length);
     await answerCallback(cq.id);
-    if (action === "card") {
-      const { text, keyboard } = await buildProfileCard(admin, _effId, locale);
-      await sendMessage(chatId, text, keyboard);
-    } else if (action === "stats") {
-      const text = await buildStatsMessage(admin, _effId, locale);
-      const url = await createMagicLink(admin, _effId, "login", "/profile");
-      await sendMessage(chatId, text, { inline_keyboard: [[{ text: PROF_T[locale].btnProfOpen, url }]] });
-    } else if (action === "badges") {
-      await sendMessage(chatId, await buildBadgesMessage(admin, _effId, locale));
-    } else if (action === "group") {
-      await sendMessage(chatId, await buildGroupBoardMessage(admin, _effId, locale));
+    // card | home | stats | badges | group: ONE message whose tabs edit it in place (profile-tabs.ts);
+    // prof:card (from other messages) still posts a new card.
+    const pv = parseProfAction(action);
+    if (pv) {
+      const text = pv.view === "card" ? (await buildProfileCard(admin, _effId, locale)).text
+        : pv.view === "stats" ? await buildStatsMessage(admin, _effId, locale)
+        : pv.view === "badges" ? await buildBadgesMessage(admin, _effId, locale)
+        : await buildGroupBoardMessage(admin, _effId, locale);
+      await showProfileView(admin, {
+        chatId, messageId: cq.message?.message_id, edit: pv.edit, text,
+        rows: await profileViewRows(admin, chatId, _effId, locale, pv.view),
+      });
+    } else if (action === "lang") {
+      await sendMessage(chatId, T[locale].chooseLang, langChooserKeyboard());
     } else if (action === "settings") {
       // Same panel as /sozlamalar. Under admin impersonation it shows the student's settings read-only: every
       // settings:* tap is already refused for an impersonating admin (the _isImp guard above).
@@ -7457,6 +7618,16 @@ async function handleCallback(admin: any, cq: any) {
     return;
   }
 
+  // Mini App voice bridge: "who is this voice note for?" (voice-bridge.ts). The question lives in the teacher's
+  // private bot chat, and the held note + requests are read by the tapper's own telegram_id — owner-locked.
+  if (data.startsWith("gvp:") && chatId) {
+    if (_isImp) { await answerCallback(cq.id, "👁 Faqat o'qish — /admin"); return; }
+    if (!_clicker || (_effPersona !== "admin" && _effPersona !== "teacher")) { await answerCallback(cq.id); return; }
+    const locale: Locale = normLocale(_clicker.preferred_locale);
+    await onVoicePick(voiceBridgeDeps(admin, chatId, tgId, _clicker.id, locale, _effPersona === "admin"), cq, locale);
+    return;
+  }
+
   // Teacher re-tag at grading time: hwmv:<subId> -> module picker -> hwmv:<subId>:<mIdx> ->
   // task picker -> hwmv:<subId>:<mIdx>:<lIdx> -> atomic move via admin_retag_submission RPC.
   // Indices (not UUIDs) keep callback_data under Telegram's 64-byte cap; the server re-derives
@@ -7536,15 +7707,34 @@ async function handleCallback(admin: any, cq: any) {
     if (status !== "moved" && status !== "merged") { await answerCallback(cq.id, t.gradeNotFound); return; }
     const lbl = `M${(mod.position ?? 0) + 1} · ${leafLabel(leaf)}`;
     await answerCallback(cq.id, "✅");
-    // Refresh the grading session so the score prompt targets the surviving row + right max.
+    // Refresh the grading session so the score prompt targets the surviving row + right max. One target at a
+    // time (grading-guard.ts): this button sits on an OLDER prompt, so if she has since opened another homework,
+    // this tap takes the session back — say what it replaces and name whose score the prompt now wants. The
+    // reply anchor carries over only when the session was already on this homework.
+    const { data: prevRow } = await admin.from("bot_conversation_state")
+      .select("state, context, updated_at, expires_at").eq("telegram_id", tgId).maybeSingle();
+    const replaced = replacedSessionNotice(prevRow ?? null, [subId, survivorId], Date.now(), locale);
+    const prevCtx: any = prevRow?.context ?? {};
+    const sameSession = (prevRow?.state === "grade_score" || prevRow?.state === "grade_comment")
+      && [subId, survivorId].includes(prevCtx.submission_id);
+    const { data: rStu } = await admin.from("profiles").select("name, last_name").eq("id", sub.user_id).maybeSingle();
+    const rName = [rStu?.name, rStu?.last_name].filter(Boolean).join(" ") || null;
     await admin.from("bot_conversation_state").upsert({
       telegram_id: tgId,
       state: "grade_score",
-      context: { submission_id: survivorId, max_score: leaf.max_score || 10, grader_id: _clicker.id, is_admin: persona === "admin" },
+      context: {
+        submission_id: survivorId, max_score: leaf.max_score || 10, grader_id: _clicker.id, is_admin: persona === "admin",
+        student_name: rName, ...(sameSession && typeof prevCtx.anchor_mid === "number" ? { anchor_mid: prevCtx.anchor_mid } : {}),
+      },
       updated_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
     });
-    await sendMessage(chatId, `${t.retagDone(lbl)}\n${t.gradeAskScore(leaf.max_score || 10)}`);
+    if (replaced) {
+      await logHealth(admin, "grading_session_replaced", { ...replaced.details, to_submission_id: survivorId, via: "retag" }, {
+        source: "telegram-bot-webhook", actorUserId: _clicker.id, targetResourceType: "homework_submission", targetResourceId: survivorId,
+      });
+    }
+    await sendMessage(chatId, `${replaced ? `${replaced.text}\n\n` : ""}${t.retagDone(lbl)}\n${withWho(t.gradeAskScore(leaf.max_score || 10), rName, null)}`);
     // Tell the student (best-effort, their locale).
     try {
       const { data: stu } = await admin.from("profiles")
@@ -8059,7 +8249,16 @@ Deno.serve(async (req) => {
       const adminC = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
       __pkLastSweep = 0; // bypass the per-instance throttle for explicit ticks
       await sweepExpiredPendingPosts(adminC);
+      // The ☰ sweep rides this minute tick in the background: bounded, lease-guarded, usually a no-op read
+      // (menu-sweep.ts; kill-switch platform_settings.menu_button_sweep {"enabled": false}).
+      scheduleMenuSweepTick(adminC, { base: MINIAPP_BASE });
       return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    if (body?.action === "menu_button_sweep") {
+      // On demand: one tick now ({"restart": true} starts a fresh pass). Same bounds as the minute tick.
+      const adminC = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      const report = await runMenuSweepTick(adminC, { base: MINIAPP_BASE, restart: body.restart === true });
+      return new Response(JSON.stringify(report), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
     return new Response(JSON.stringify({ error: "unknown action" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
@@ -8112,10 +8311,21 @@ Deno.serve(async (req) => {
   const inboxId = await logWebhookInbox(admin, update);
 
   try {
+    // Daily Tasks PR-4 (G15): the bot's own membership / rights changed in a chat. Recorded only for a chat
+    // that holds a daily-task topic ('challenge_bot_status_changed' → health bot_status, watchdog alarm).
+    // Nothing handled my_chat_member before (it fell through to the 200 below), so nothing else changes.
+    if (update.my_chat_member) {
+      try { await dailyTasks.onMyChatMember(admin, update.my_chat_member); } catch (e) { console.error("dt:mcm:err", String(e).slice(0, 200)); }
+      return new Response("ok", { status: 200, headers: corsHeaders });
+    }
+
     // U7: a student EDITING their homework post (e.g. replacing the photo) used to be ignored —
     // the submission kept the original file. Update the stored file_id + matching media item.
     if (update.edited_message) {
       const em = update.edited_message;
+      // Daily Tasks PR-4 (C17): an edit to a captured daily-task item is re-judged by the engine (inert while
+      // challenge_tasks is off). Best-effort and first, so the homework edit handling below is unchanged.
+      try { await dailyTasks.onEdited(admin, em); } catch (e) { console.error("dt:edit:err", String(e).slice(0, 200)); }
       const emChatType = em.chat?.type;
       if ((emChatType === "supergroup" || emChatType === "group") && em.from?.id && !em.from.is_bot) {
         try {
@@ -8168,6 +8378,26 @@ Deno.serve(async (req) => {
       if (chatType === "supergroup" || chatType === "group" || chatType === "channel") {
         // v3.14.29: passively record topic messages for Statistika analytics.
         try { await recordGroupMessageEvent(admin, msg); } catch (e) { console.error("recordGroupMessageEvent failed", e); }
+        // Daily Tasks PR-4 (§11.1): a post in a KUNLIK VAZIFALAR topic — (chat, thread) from the 60-second
+        // challenge_task_topics() snapshot, never the thread number alone — goes to the SQL engine. FAIL CLOSED:
+        // not a daily topic, challenge_tasks inactive (INERT at merge), the snapshot unavailable, or the engine
+        // not taking it → handled:false, and today's handler below runs exactly as before.
+        let dtHandled = false;
+        try {
+          const dt = await dailyTasks.onGroupMessage(admin, msg);
+          if (dt.handled) {
+            dtHandled = true;
+            await updateInboxResolution(admin, inboxId, { skip_reason: "daily_task_topic", daily_task_outcome: dt.outcome ?? null });
+          }
+        } catch (e) {
+          console.error("dt:dispatch:err", String(e).slice(0, 200));
+          try {
+            await logHealth(admin, "challenge_task_capture_failed", {
+              reason: "handler_error", error: redactSecrets(e).slice(0, 200), chat_id: msg.chat?.id ?? null, message_id: msg.message_id ?? null,
+            }, { source: "telegram-bot-webhook" });
+          } catch (_e) { /* never let logging break the 200 */ }
+        }
+        if (dtHandled) return new Response("ok", { status: 200, headers: corsHeaders });
         // v3.14.40: handleGroupTopicMessage now auto-synthesizes an intent for the
         // sender when there's no pending /vazifalar intent. Strict per-sender
         // attribution is preserved inside the handler (anon/bot/unknown senders
@@ -8211,19 +8441,11 @@ Deno.serve(async (req) => {
       const persona: Persona = profileForLocale ? await getPersona(admin, profileForLocale.id) : "student";
       const adminFlag = persona === "admin";
 
-      // Teacher Mini App (Task 7): best-effort set the ☰ menu button → Mini App (kill-switch on) or
-      // reset to default (off). Staff-only (teacher/admin) + private-chat only — students never get it.
-      // Throttled 1h/chat; wrapped so it can never block or break the teacher's actual interaction.
-      if (isPrivateChat && (persona === "teacher" || persona === "admin")) {
-        try { await syncTeacherMenuButton(msg.chat.id, __teacherMiniAppEnabled?.on === true, locale); } catch (_e) { /* best-effort */ }
-      }
-
-      // Student Mini App (kill-switch platform_settings.student_miniapp, default OFF): mirror the
-      // teacher sync. Student persona + private chat + a RESOLVED profile (a registered member —
-      // non-members already returned upstream). Throttled 1h/chat; wrapped so it can never block or
-      // break the student's actual interaction. When the flag is off this resets the menu to default.
-      if (isPrivateChat && persona === "student" && profileForLocale) {
-        try { await syncStudentMenuButton(msg.chat.id, __studentMiniAppEnabled?.on === true, locale); } catch (_e) { /* best-effort */ }
+      // ☰ menu button for a RESOLVED member (non-members returned upstream), private chat only: 📝 Ustoz
+      // (teacher/admin, teacher_miniapp) or 🚀 Ilovani ochish (student, student_miniapp); the default menu when
+      // that flag is off. Throttled 1h/chat; can never block or break the actual interaction (menu-button.ts).
+      if (isPrivateChat && profileForLocale) {
+        try { await syncMenuLive(admin, msg.chat.id, menuSyncOpts(persona, locale)); } catch (_e) { /* best-effort */ }
       }
 
       // U1: students WILL try DMing homework media to the bot. Point them to their group's
@@ -8247,8 +8469,20 @@ Deno.serve(async (req) => {
               ru: "📌 Задания отправляются не боту, а в топик <b>UYGA VAZIFA</b> вашей группы. Там вы выберете модуль и задание кнопками.",
               en: "📌 Homework goes to your group's <b>UYGA VAZIFA</b> topic, not to the bot. Post it there and pick the module/task with the buttons.",
             }[locale];
-            await sendMessage(msg.chat.id, hint,
-              topicUrl ? { inline_keyboard: [[{ text: "📥 Vazifa topigiga o'tish", url: topicUrl }]] } : undefined);
+            // Daily Tasks PR-4 (G14): a challenge-scope student (only while challenge_tasks is active) gets BOTH
+            // topic buttons — the DM'd media may just as well be a daily task.
+            let dailyUrl: string | null = null;
+            try { dailyUrl = await dailyTasks.dailyTopicUrlFor(admin, profileForLocale.group_id); } catch (_e) { dailyUrl = null; }
+            if (dailyUrl) {
+              const dc = DAILY_COPY[locale];
+              const rows: any[] = [];
+              if (topicUrl) rows.push([{ text: dc.btnHwTopic, url: topicUrl }]);
+              rows.push([{ text: dc.btnDailyTopic, url: dailyUrl }]);
+              await sendMessage(msg.chat.id, `${hint}\n${dc.u1Daily}`, { inline_keyboard: rows });
+            } else {
+              await sendMessage(msg.chat.id, hint,
+                topicUrl ? { inline_keyboard: [[{ text: "📥 Vazifa topigiga o'tish", url: topicUrl }]] } : undefined);
+            }
             await admin.from("notifications_log").insert({
               user_id: profileForLocale.id, notification_type: "hw_dm_media_hint", sent_at: new Date().toISOString(),
             });
@@ -8262,6 +8496,12 @@ Deno.serve(async (req) => {
         if (arg.startsWith("login_")) {
           const tok = arg.slice(6);
           await handleStartLogin(admin, msg, tok, locale);
+        } else if (/^(dt_[0-9]+|ig)$/.test(arg)) {
+          // Daily Tasks PR-4 (§10.5): t.me/<bot>?start=dt_<id> from the group post → the task card with a
+          // button to the student's OWN group's daily topic (G14); ?start=ig → where to set the Instagram handle.
+          let answered = false;
+          try { answered = await dailyTasks.onStart(admin, msg, arg, locale, profileForLocale); } catch (e) { console.error("dt:start:err", String(e).slice(0, 200)); }
+          if (!answered) await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag, persona);
         } else {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag, persona);
         }
@@ -8278,6 +8518,8 @@ Deno.serve(async (req) => {
           // where the ☰ "📝 Ustoz" app is. The reply keyboard is unchanged.
           const greet = teacherStartGreeting(locale, nm, pend, __teacherMiniAppEnabled?.on === true);
           await sendMessage(msg.chat.id, greet, getTeacherKeyboard(locale, pend));
+        } else if (isPrivateChat && persona === "student" && profileForLocale) {
+          await studentWelcome(admin, msg.chat.id, profileForLocale, locale);
         } else {
           await sendWithKeyboard(msg.chat.id, T[locale].helpReply, locale, adminFlag, persona);
         }
@@ -8339,7 +8581,12 @@ Deno.serve(async (req) => {
         }
         if (!consumed) {
           const mapped = buttonTextToCommand(text);
+          // A student who TYPES "uyga vazifa" / "Давом этамиз" / "Start" gets that screen (typed-intents.ts);
+          // anything else still gets kbHint with the keyboard re-sent.
+          const intent = !mapped && isPrivateChat && persona === "student" && profileForLocale ? typedIntent(text) : null;
           if (mapped) await handleCommand(admin, msg, mapped);
+          else if (intent === "/start") await studentWelcome(admin, msg.chat.id, profileForLocale, locale);
+          else if (intent) await handleCommand(admin, msg, intent);
           else if (isPrivateChat) await sendWithKeyboard(msg.chat.id, T[locale].kbHint, locale, adminFlag, persona);
         }
       }
@@ -8364,6 +8611,18 @@ Deno.serve(async (req) => {
         return new Response("ok", { status: 200, headers: corsHeaders });
       }
       await handleCallback(admin, cq);
+      // ☰ re-sync on an inline-button tap too (not only on typed messages) — after the reply, for the clicker's
+      // OWN persona, private chat only; skips the persona lookup when this chat is fresh (menu-button.ts).
+      if (cq.message?.chat?.type === "private") {
+        try {
+          const cbLocale: Locale = cbProfile.preferred_locale ? normLocale(cbProfile.preferred_locale) : normLocale(cq.from.language_code);
+          const sig = flagSig(__studentMiniAppEnabled?.on === true, __teacherMiniAppEnabled?.on === true, MINIAPP_BASE);
+          if (!liveFresh(Number(cq.message.chat.id), sig)) {
+            const cbPersona = await getPersona(admin, cbProfile.id);
+            await syncMenuLive(admin, Number(cq.message.chat.id), menuSyncOpts(cbPersona, cbLocale));
+          }
+        } catch (_e) { /* best-effort */ }
+      }
     }
   } catch (e) {
     // A genuine, unhandled failure while processing a Telegram update — capture it DB-visibly so

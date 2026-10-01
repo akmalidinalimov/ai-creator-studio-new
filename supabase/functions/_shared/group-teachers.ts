@@ -8,9 +8,11 @@
 // groups.teacher_id drops every co-teacher, and treats a group whose teachers are all in the junction
 // (the admin form can save a group with co-teachers and no primary) as teacherless.
 //
-// groups.teacher_id is still the primary for ATTRIBUTION: teacher XP, per-teacher stats, the
-// student-facing "your teacher". Use this module only where the question is "who teaches this group /
-// who should hear about it".
+// groups.teacher_id is still the primary for DISPLAY: the student-facing "your teacher", and the teacher
+// named on a group's admin row. Per-teacher stats and teacher XP count co-teachers since 20260930183000:
+// SQL's teacher_group_pairs() is this same set for every teacher at once, grading is credited to
+// hs.scored_by and answer XP to whoever answered. Use this module where the question is "who teaches this
+// group / who should hear about it".
 
 // A service-role Supabase client (typed loosely, like the rest of the codebase).
 // deno-lint-ignore no-explicit-any
