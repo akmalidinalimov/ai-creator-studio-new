@@ -386,9 +386,10 @@ Deno.test("pickVercelStatus: exact context, then a Vercel-prefixed one, absent o
 });
 
 Deno.test("cleanText strips control / bidi characters, collapses whitespace, redacts secrets and caps", () => {
-  const nasty = "line1\nline2‮ evil\u0007 Bearer abcdefghijklmnopqrstuvwxyz0123";
+  const RLO = String.fromCharCode(0x202e), BEL = String.fromCharCode(7); // a bidi override and a control character
+  const nasty = `line1\nline2${RLO} evil${BEL} Bearer abcdefghijklmnopqrstuvwxyz0123`;
   const out = cleanText(nasty, 200);
-  assert(!/[\n‮\u0007]/.test(out));
+  assert(!["\n", RLO, BEL].some((c) => out.includes(c)));
   assert(!out.includes("abcdefghijklmnopqrstuvwxyz0123"));
   assertEquals(cleanText("x".repeat(50), 10), "xxxxxxxxx…");
   assertEquals(cleanText(42, 10), "");
