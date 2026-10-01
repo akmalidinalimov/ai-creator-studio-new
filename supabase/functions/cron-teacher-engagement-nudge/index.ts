@@ -9,6 +9,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
+import { logHealthOnce } from "../_shared/edge.ts";
+import { countLines, countPayload, rowsByTeacher, type TeacherGroupRow } from "../_shared/teacher-group-lines.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -46,24 +48,32 @@ function tashkentHour(): number {
   }
 }
 
-// Localized copy. Warm, specific, one clear action.
+// Localized copy. Warm, specific, one clear action. `g` is the per-group block (one line per group with its
+// course, "\n   • 5.0 · 1-GURUH PRE — 2"), or "" when there is none -- then the text is exactly as before.
 const COPY = {
   waiting: {
-    uz: (n: number, h: number | null) =>
-      `👋 <b>Ustoz, sizni kutishmoqda.</b>\n${n} ta talaba javob kutmoqda${h != null ? ` — eng eskisi ${Math.round(h)} soat oldin` : ""}.\nGuruhingizga o'tib, qisqacha javob bering 🙌`,
-    ru: (n: number, h: number | null) =>
-      `👋 <b>Вас ждут, преподаватель.</b>\n${n} студ. ждут ответа${h != null ? ` — самый давний ${Math.round(h)} ч назад` : ""}.\nЗайдите в группу и ответьте 🙌`,
-    en: (n: number, h: number | null) =>
-      `👋 <b>Your students are waiting.</b>\n${n} waiting for a reply${h != null ? ` — oldest ${Math.round(h)}h ago` : ""}.\nHop into your group and answer 🙌`,
+    uz: (n: number, h: number | null, g = "") =>
+      `👋 <b>Ustoz, sizni kutishmoqda.</b>\n${n} ta talaba javob kutmoqda${h != null ? ` — eng eskisi ${Math.round(h)} soat oldin` : ""}.${g}\nGuruhingizga o'tib, qisqacha javob bering 🙌`,
+    ru: (n: number, h: number | null, g = "") =>
+      `👋 <b>Вас ждут, преподаватель.</b>\n${n} студ. ждут ответа${h != null ? ` — самый давний ${Math.round(h)} ч назад` : ""}.${g}\nЗайдите в группу и ответьте 🙌`,
+    en: (n: number, h: number | null, g = "") =>
+      `👋 <b>Your students are waiting.</b>\n${n} waiting for a reply${h != null ? ` — oldest ${Math.round(h)}h ago` : ""}.${g}\nHop into your group and answer 🙌`,
   },
   offline: {
-    uz: (days: number, pending: number) =>
-      `👋 <b>Xush kelibsiz, ustoz!</b>\n${days} kundan beri ko'rinmadingiz.${pending > 0 ? ` ${pending} ta vazifa sizni kutmoqda 🌱` : ""}\nBir daqiqa vaqt topsangiz — talabalaringiz xursand bo'ladi.`,
-    ru: (days: number, pending: number) =>
-      `👋 <b>С возвращением, преподаватель!</b>\nВас не было ${days} дн.${pending > 0 ? ` ${pending} заданий ждут проверки 🌱` : ""}\nНайдёте минутку — студенты будут рады.`,
-    en: (days: number, pending: number) =>
-      `👋 <b>Welcome back!</b>\nYou've been away ${days} days.${pending > 0 ? ` ${pending} submissions are waiting 🌱` : ""}\nA minute of your time means a lot to your students.`,
+    uz: (days: number, pending: number, g = "") =>
+      `👋 <b>Xush kelibsiz, ustoz!</b>\n${days} kundan beri ko'rinmadingiz.${pending > 0 ? ` ${pending} ta vazifa sizni kutmoqda 🌱` : ""}${g}\nBir daqiqa vaqt topsangiz — talabalaringiz xursand bo'ladi.`,
+    ru: (days: number, pending: number, g = "") =>
+      `👋 <b>С возвращением, преподаватель!</b>\nВас не было ${days} дн.${pending > 0 ? ` ${pending} заданий ждут проверки 🌱` : ""}${g}\nНайдёте минутку — студенты будут рады.`,
+    en: (days: number, pending: number, g = "") =>
+      `👋 <b>Welcome back!</b>\nYou've been away ${days} days.${pending > 0 ? ` ${pending} submissions are waiting 🌱` : ""}${g}\nA minute of your time means a lot to your students.`,
   },
+};
+
+const escHtml = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+/** "\n   • 5.0 · 1-GURUH PRE — 2 ..." for the groups whose `pick` is above 0; "" when none. */
+const groupBlock = (rows: TeacherGroupRow[] | undefined, pick: (r: TeacherGroupRow) => unknown, loc: Locale): string => {
+  const lines = countLines(rows, pick, { esc: escHtml, loc });
+  return lines.length ? "\n" + lines.join("\n") : "";
 };
 const BTN: Record<Locale, { waiting: string; offline: string }> = {
   uz: { waiting: "📋 Navbatni ochish", offline: "👤 Profilni ochish" },
@@ -109,6 +119,19 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ ok: true, processed: 0 }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
+  // One line per group, with its course (teacher audit BOT-6: "Guruhingizga o'tib" never said WHICH group).
+  // teacher_group_signals() is the per-group engine teacher_nudge_signals' totals are summed from, with the
+  // same windows, so the lines add up to the number in the DM. A failed read only drops the lines -- recorded
+  // once a day as teacher_group_lines_failed -- and the nudge still goes out as before.
+  let linesByTeacher = new Map<string, TeacherGroupRow[]>();
+  const { data: sigRows, error: sigErr } = await admin.rpc("teacher_group_signals", { p_q_hours: Q_HOURS, p_window_days: WINDOW_DAYS });
+  if (sigErr) {
+    await logHealthOnce(admin, "teacher_group_lines_failed", "cron-teacher-engagement-nudge",
+      { part: "teacher_group_signals", error: String(sigErr.message).slice(0, 300) }, { source: "cron-teacher-engagement-nudge" });
+  } else {
+    linesByTeacher = rowsByTeacher((sigRows || []) as TeacherGroupRow[]);
+  }
+
   // Recent nudge log for cooldown checks (one query, then in-memory).
   const teacherIds = signals.map((s) => s.teacher_id);
   const since = new Date(Date.now() - Math.max(WAIT_COOLDOWN_H, OFFLINE_COOLDOWN_H) * 3600_000).toISOString();
@@ -144,13 +167,19 @@ Deno.serve(async (req) => {
       }
       if (!type) { skipped++; continue; }
 
+      const rows = linesByTeacher.get(s.teacher_id);
+      const pick = type === "waiting"
+        ? (r: TeacherGroupRow) => r.waiting_questions
+        : (r: TeacherGroupRow) => r.pending_homework;
+      const text = type === "waiting"
+        ? COPY.waiting[loc](s.waiting_questions, s.oldest_wait_hours, groupBlock(rows, pick, loc))
+        : COPY.offline[loc](Math.round(s.offline_hours / 24), s.pending_homework, groupBlock(rows, pick, loc));
+
       if (dryRun) {
         preview.push({
           teacher_id: s.teacher_id, type,
           waiting_questions: s.waiting_questions, offline_hours: s.offline_hours, pending: s.pending_homework,
-          text: type === "waiting"
-            ? COPY.waiting[loc](s.waiting_questions, s.oldest_wait_hours)
-            : COPY.offline[loc](Math.round(s.offline_hours / 24), s.pending_homework),
+          text,
         });
         continue;
       }
@@ -163,9 +192,6 @@ Deno.serve(async (req) => {
       });
       const url = `${SITE_URL}/auth/magic?t=${token}`;
 
-      const text = type === "waiting"
-        ? COPY.waiting[loc](s.waiting_questions, s.oldest_wait_hours)
-        : COPY.offline[loc](Math.round(s.offline_hours / 24), s.pending_homework);
       const btn = type === "waiting" ? BTN[loc].waiting : BTN[loc].offline;
 
       const out = await sendTelegram(BOT_TOKEN, "sendMessage", {
@@ -178,8 +204,8 @@ Deno.serve(async (req) => {
         user_id: s.teacher_id,
         notification_type: type === "waiting" ? "teacher_waiting" : "teacher_offline",
         payload: type === "waiting"
-          ? { waiting_questions: s.waiting_questions, oldest_wait_hours: s.oldest_wait_hours }
-          : { offline_hours: s.offline_hours, pending_homework: s.pending_homework },
+          ? { waiting_questions: s.waiting_questions, oldest_wait_hours: s.oldest_wait_hours, groups: countPayload(rows, pick) }
+          : { offline_hours: s.offline_hours, pending_homework: s.pending_homework, groups: countPayload(rows, pick) },
         sent_at: new Date().toISOString(),
       });
       if (type === "waiting") sentWaiting++; else sentOffline++;
