@@ -51,6 +51,17 @@
 // comments, so a header may explain what it removed; E7 does not, because a key in a comment is still
 // a key in git history.
 //
+// A THIRD CLASS: THE PROFILES COLUMN GUARD MUST FIRE LAST (E11). BEFORE ROW triggers fire in name order (byte
+// order), and the security guard on public.profiles (profiles_column_guard(), #222) judges NEW: a BEFORE trigger
+// that fires after it could rewrite account_type / group_id / telegram_id once the guard has said yes. On
+// 2026-09-30 #232 named its Instagram lock trg_profiles_zz_ig_handle_lock, which sorted after the guard (then
+// trg_profiles_zz_column_guard) — harmless only because that lock never assigns NEW — and the watchdog's
+// 'guard_down' alert latched for a day, blind to any real outage. 20261001060000 renamed the guard
+// trg_profiles_zzz_column_guard; E11 keeps it last at author time: a migration that creates a BEFORE ROW trigger
+// on public.profiles named after the guard, renames one to such a name, renames/drops the guard, or disables it,
+// fails — unless the line carries `-- lint:allow E11: <reason>` (e.g. a rolled-back self-test, or a trigger
+// reviewed as never assigning NEW AND pinned in profiles_guard_health()'s _vetted list).
+//
 // CI usage:  node scripts/check-migration-grants.mjs            (fails on errors)
 //            node scripts/check-migration-grants.mjs --strict   (fails on warnings too)
 // It is chained onto `npm run lint:footguns`, which CI already runs as a blocking step — deliberately,
@@ -92,6 +103,10 @@ const ANON_ALLOWLIST = {
   "has_role": "Called by 124 RLS policy expressions across 63 tables, 39 of which name no role and so apply to PUBLIC including anon. A policy expression runs with the CALLER's privileges, so revoking anon makes every such policy RAISE instead of returning false. Broke the app once already: see 20260705110000_grant_has_role_to_anon.sql. Returns boolean; has_role(NULL,...) is false.",
   "get_public_setting": "Deliberately public and FIELD-WHITELISTED: returns bot_username and the bot_id parsed from before the ':' in the token, never the token itself, and only booleans for content_protection. Read by src/pages/LessonPage.tsx, a page anonymous visitors can reach. Contrast challenge_config(), which returned its settings row VERBATIM and was therefore revoked, not allowlisted — a whitelisting function cannot widen when a secret is added to its row.",
 };
+
+// The profiles column guard's trigger (E11). It must sort after every other BEFORE ROW trigger on public.profiles.
+// Renaming it means updating this, profiles_guard_health() and profiles_guard_alert_text() in the same PR.
+const PROFILES_GUARD_TRIGGER = "trg_profiles_zzz_column_guard";
 
 // ─────────────────────────── SQL-aware scanner ───────────────────────────
 // Blanks out comments and string/dollar-quoted bodies, preserving offsets and newlines so that
@@ -711,6 +726,66 @@ function checkFile(file, raw) {
     e9(m.index,
       `revokes EXECUTE on every function in schema public from postgres or service_role — that ` +
       `includes public.ops_net_post, which every converted watchdog and cron job runs as those roles.`);
+  }
+
+  // E11 (ERROR): keep the profiles column guard the LAST BEFORE ROW trigger on public.profiles (see the header).
+  // Scanned on comment-free text with strings kept, so DDL inside a DO block or an EXECUTE string counts.
+  // Names compare in BYTE order, which is the order Postgres fires triggers in ("name" sorts in the C collation).
+  const e11 = (index, msg) => {
+    if (lintAllowed(raw, noComments, index, "E11")) return;
+    push(errors, lineOf(noComments, index),
+      msg + ` BEFORE ROW triggers fire in name order, and one that fires after ${PROFILES_GUARD_TRIGGER} can rewrite ` +
+      `account_type / group_id / telegram_id after the guard approved the row. Name it so it sorts BEFORE the guard ` +
+      `(e.g. trg_profiles_zz_…), or, if it is reviewed as never assigning NEW, pin it in profiles_guard_health()'s ` +
+      `_vetted list and add a comment on this line: "lint:allow E11: <reason>".`);
+  };
+  {
+    const IDENT = `(?:"(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*)`;
+    const QUAL = `(?:${IDENT}\\s*\\.\\s*)?${IDENT}`;
+    const identOf = (s) => (s.startsWith('"') ? s.slice(1, -1).replace(/""/g, '"') : s.toLowerCase());
+    const isProfiles = (qual) => {
+      const parts = qual.match(new RegExp(IDENT, "g")) || [];
+      const name = identOf(parts[parts.length - 1] || "");
+      const schema = parts.length > 1 ? identOf(parts[0]) : "public";
+      return name === "profiles" && schema === "public";
+    };
+    const afterGuard = (name) =>
+      name !== PROFILES_GUARD_TRIGGER && Buffer.compare(Buffer.from(name), Buffer.from(PROFILES_GUARD_TRIGGER)) > 0;
+    const stmtAt = (i) => {
+      const end = noComments.indexOf(";", i);
+      return noComments.slice(i, end === -1 ? noComments.length : end);
+    };
+    for (const m of noComments.matchAll(new RegExp(
+      `\\bcreate\\s+(?:or\\s+replace\\s+)?(?:constraint\\s+)?trigger\\s+(${IDENT})\\s+(before|after|instead\\s+of)\\b[^;]*?\\bon\\s+(?:only\\s+)?(${QUAL})`,
+      "gi"))) {
+      const name = identOf(m[1]);
+      if (m[2].toLowerCase() !== "before" || !isProfiles(m[3]) || !/\bfor\s+each\s+row\b/i.test(stmtAt(m.index))) continue;
+      if (afterGuard(name)) {
+        e11(m.index, `creates BEFORE ROW trigger "${name}" on public.profiles, which sorts AFTER the column guard ${PROFILES_GUARD_TRIGGER}.`);
+      }
+    }
+    for (const m of noComments.matchAll(new RegExp(
+      `\\balter\\s+trigger\\s+(${IDENT})\\s+on\\s+(?:only\\s+)?(${QUAL})\\s+rename\\s+to\\s+(${IDENT})`, "gi"))) {
+      if (!isProfiles(m[2])) continue;
+      const from = identOf(m[1]), to = identOf(m[3]);
+      if (from === PROFILES_GUARD_TRIGGER && to !== PROFILES_GUARD_TRIGGER) {
+        e11(m.index, `renames the column guard ${PROFILES_GUARD_TRIGGER} to "${to}" (update PROFILES_GUARD_TRIGGER and the health check with it).`);
+      } else if (afterGuard(to)) {
+        e11(m.index, `renames trigger "${from}" on public.profiles to "${to}", which sorts AFTER the column guard.`);
+      }
+    }
+    for (const m of noComments.matchAll(new RegExp(
+      `\\balter\\s+table\\s+(?:if\\s+exists\\s+)?(?:only\\s+)?(${QUAL})\\s+(disable|enable\\s+replica)\\s+trigger\\s+(${IDENT})`, "gi"))) {
+      const name = identOf(m[3]);
+      if (!isProfiles(m[1]) || ![PROFILES_GUARD_TRIGGER, "all", "user"].includes(name)) continue;
+      e11(m.index, `turns off the column guard on public.profiles (${m[2].toLowerCase().replace(/\s+/g, " ")} trigger ${name}).`);
+    }
+    for (const m of noComments.matchAll(new RegExp(
+      `\\bdrop\\s+trigger\\s+(?:if\\s+exists\\s+)?(${IDENT})\\s+on\\s+(?:only\\s+)?(${QUAL})`, "gi"))) {
+      if (isProfiles(m[2]) && identOf(m[1]) === PROFILES_GUARD_TRIGGER) {
+        e11(m.index, `drops the column guard ${PROFILES_GUARD_TRIGGER} on public.profiles.`);
+      }
+    }
   }
 
   // E1 (ERROR, always): a blanket grant over every function in the schema. There is no legitimate

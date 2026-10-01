@@ -3,6 +3,8 @@
 // Alerts only on a healthy->down transition and re-alerts hourly while down
 // (state stored in app_settings) so an outage doesn't spam.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { adminTelegramIds } from "../_shared/admin-recipients.ts";
+import { logHealthOnce } from "../_shared/edge.ts";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 
@@ -71,15 +73,20 @@ Deno.serve(async (req) => {
   const recovered = ok && prev.down;
 
   if (shouldAlert || recovered) {
-    const { data: admins } = await admin
-      .from("profiles").select("telegram_id, user_roles!inner(role)")
-      .not("telegram_id", "is", null)
-      .in("user_roles.role", ["admin", "superadmin"]);
+    // Two queries via the shared helper. The old profiles→user_roles embed had no FK to follow, failed with
+    // PGRST200 on every call and was ignored, so no canary alert reached anyone from 2026-07-05 to 2026-10-01.
+    const rec = await adminTelegramIds(admin);
     const msg = recovered
       ? `✅ aicreator.academy recovered — all checks passing.`
       : `🚨 aicreator.academy health check FAILED:\n• ${failures.join("\n• ")}`;
-    for (const a of (admins || []) as any[]) {
-      if (a.telegram_id) await tg(admin, Number(a.telegram_id), msg);
+    for (const id of rec.ids) await tg(admin, id, msg);
+    if (rec.ids.length === 0) {
+      // Graceful is not silent: an alert with no recipient (lookup failed, or no admin has a telegram_id).
+      await logHealthOnce(admin, "canary_alert_undelivered", "recipients", {
+        recovered,
+        failures,
+        error: rec.error ?? "no admin or superadmin with a telegram_id",
+      }, { source: "canary" });
     }
   }
 
