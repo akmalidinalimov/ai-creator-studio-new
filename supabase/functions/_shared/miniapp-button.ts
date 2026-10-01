@@ -32,7 +32,7 @@ import {
   type WatchTrack,
 } from "./miniapp-links.ts";
 import { logHealthOnce } from "./edge.ts";
-import { isRecipientError } from "./telegram-classify.ts";
+import { isButtonRejection } from "./telegram-classify.ts";
 
 export const DEFAULT_MINIAPP_BASE = "https://www.aicreator.academy";
 export const DEFAULT_MINIAPP_DIRECT = "https://t.me/aicreatorsdarsliklari_bot/app";
@@ -294,15 +294,18 @@ export function hasWebAppButton(replyMarkup: unknown): boolean {
 export type SendLike = { ok: boolean; status: number; error: string | null };
 
 /**
- * A Telegram refusal that means "this payload will never be delivered as is" — a 400 Bad Request (e.g.
- * BUTTON_TYPE_INVALID, a web app url Telegram will not accept) that is NOT about the recipient. Nothing was
- * delivered, so a resend cannot duplicate a message. Recipient errors (blocked / never started) and transient
- * ones (429 / 5xx / transport) are never retried here.
+ * Telegram refused the BUTTON — a 400 that positively names a button or a web app (BUTTON_TYPE_INVALID,
+ * BUTTON_URL_INVALID, "…Web App URL … is invalid"; telegram-classify.ts isButtonRejection). Nothing was delivered,
+ * so a resend without the web_app button cannot duplicate a message.
+ *
+ * It used to be "any 400 that is not a recipient error", which read every unlisted per-user 400 ("user not found")
+ * and every content 400 that has nothing to do with the button ("can't parse entities", "message is too long",
+ * "text must be encoded in UTF-8") as a Mini App button refusal: a student 'miniapp_button_rejected' alarm with
+ * student kill-switch advice, plus a resend that fails the same way (incident 2026-10-01). Recipient errors and
+ * transient ones (429 / 5xx / transport) are never retried here.
  */
 export function isWatchContentRejection(r: SendLike): boolean {
-  if (r.ok) return false;
-  if (isRecipientError(r.error)) return false;
-  return r.status === 400;
+  return isButtonRejection(r);
 }
 
 /**

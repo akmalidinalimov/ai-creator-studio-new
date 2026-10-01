@@ -10,18 +10,67 @@ export function tgResult(
   return { ok: false, error: String(j?.description || `http_${httpStatus}`).slice(0, 300) };
 }
 
-// Recipient-side: the user must act (blocked the bot, never pressed Start → "chat not found", etc.).
+// Recipient-side: ONE user (or, for a group, that chat's admins) must act — blocked the bot, never pressed Start
+// ("chat not found"), deleted, unknown to the bot, or the bot lost its rights in that chat. Per recipient, never
+// global: a failure here says nothing about our payload or the bot, so it is the reach metric, not an alarm.
+//
+// Incident 2026-10-01 (fix/telegram-recipient-class): "Bad Request: user not found" — what setChatMenuButton /
+// getChatMember answer for a user the bot cannot resolve, where sendMessage says "chat not found" — was missing,
+// so it read as a non-recipient 400. menu-button.ts then took it for "Telegram refuses our Mini App button", the ☰
+// sweep stopped on that one member every 30 minutes and never finished (95 of 166), and every such row counted as
+// "Telegram is broken" in hw_dm_health_stats.telegram_send_broken_24h. The per-user / per-chat siblings found by
+// the fan-out are listed with it; each is pinned verbatim in telegram-classify.test.ts.
+const RECIPIENT_RE = new RegExp(
+  [
+    "bot was blocked", "chat not found", "user is deactivated", "can't initiate", "peer_id_invalid", "user_is_blocked",
+    "have no rights", "forbidden", "chat_id is empty", "bots can't send",
+    // per USER (2026-10-01): the bot cannot resolve this user / this user is not in the chat
+    "user not found", "user_id_invalid", "invalid user_id", "participant_id_invalid", "member not found",
+    // per CHAT (2026-10-01): an admin of that chat must restore the bot's rights / the chat moved to a supergroup id.
+    // Already 'expected' in the pg_net classifier (platform_settings.ops_http_watchdog.tg_expected_regex).
+    "not enough rights", "group chat was upgraded",
+  ].map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+);
+
 export function isRecipientError(err: string | null): boolean {
   if (!err) return false;
-  const e = err.toLowerCase();
-  return /bot was blocked|chat not found|user is deactivated|can't initiate|peer_id_invalid|user_is_blocked|have no rights|forbidden|chat_id is empty|bots can't send/.test(e);
+  return RECIPIENT_RE.test(err.toLowerCase());
 }
 
-// Content/validation: same payload will never succeed on retry (caption too long, bad media URL…).
+// Content/validation: same payload will never succeed on retry (caption too long, bad media URL…). Since
+// 2026-10-01 also invalid UTF-16 in the text (a lone surrogate left by a .slice()) and a button Telegram refuses
+// (BUTTON_TYPE_INVALID / BUTTON_URL_INVALID / BUTTON_DATA_INVALID / "…Web App URL … is invalid") — both used to
+// fall through to transient and be retried.
 export function isContentError(err: string | null): boolean {
   if (!err) return false;
   const e = err.toLowerCase();
-  return /too long|can't parse|wrong file identifier|wrong type|failed to get http url|wrong remote file|image_process|webpage_curl|media_empty|caption/.test(e);
+  return /too long|can't parse|wrong file identifier|wrong type|failed to get http url|wrong remote file|image_process|webpage_curl|media_empty|caption|must be encoded in utf-8|button|web ?app/.test(e);
+}
+
+/**
+ * Telegram refused a BUTTON in our payload (BUTTON_TYPE_INVALID, BUTTON_URL_INVALID, WEBAPP_URL_INVALID, "inline
+ * keyboard button Web App URL … is invalid") — a POSITIVE match on a 400 about a button, never a recipient error.
+ * This is the only 400 a resend without the web_app button (or a fixed URL / label) can cure, and the only one that
+ * may raise a Mini App button alarm. It replaces the old negative rule "any non-recipient 400 on a message with a
+ * web_app button", which read every unlisted per-user 400 ("user not found") and every content 400 ("can't parse
+ * entities") as "Telegram refuses our button".
+ */
+export function isButtonRejection(r: { ok: boolean; status: number; error: string | null }): boolean {
+  if (r.ok || r.status !== 400 || !r.error) return false;
+  if (isRecipientError(r.error)) return false;
+  return /button|web ?app/i.test(r.error);
+}
+
+/**
+ * A failure of the BOT, not of one recipient or one payload: 401 Unauthorized (the token was revoked or rotated)
+ * or 404 Not Found (malformed token / unknown method). Every call fails until a human fixes it, so a loop over
+ * recipients must stop instead of burning through everyone. isTerminal is deliberately NOT changed for it: a
+ * queued message will go out once the token is fixed, and as a non-recipient failure it already counts as
+ * "Telegram broken" in telegram_send_broken_24h, which is the loud signal it deserves.
+ */
+export function isGlobalFailure(status: number, err: string | null): boolean {
+  if (status === 401 || status === 404) return true;
+  return !!err && /^(unauthorized|not found)$/i.test(err.trim());
 }
 
 // Terminal = don't retry, mark failed with the reason.
@@ -30,10 +79,12 @@ export function isTerminal(err: string | null): boolean {
 }
 
 // ── Finer send classes (Daily Tasks PR-4, spec G7) ─────────────────────────────────────────────────────────
-// Used ONLY by sendTelegramWithResult (telegram-send.ts). tgResult / isTerminal / isRecipientError /
-// isContentError above are deliberately UNCHANGED: every existing importer (sendTelegram, the broadcast
-// drainer, notify-* senders) keeps its exact classification on its next deploy, so hw_dm_health_stats'
-// telegram_send_broken_24h keeps its meaning. A caller opts into the finer classes by using the new sender.
+// Used ONLY by sendTelegramWithResult (telegram-send.ts). PR-4 left tgResult / isTerminal / isRecipientError /
+// isContentError untouched; 2026-10-01 widened isRecipientError / isContentError with the descriptions the
+// fan-out found misclassified (see above). Their MEANING is unchanged — recipient = one recipient must act,
+// content = this payload never renders — so telegram_send_broken_24h still counts exactly the non-recipient
+// failures, now without per-user errors that were never "Telegram broken". A caller opts into the finer classes
+// by using the new sender.
 //   ok            accepted
 //   not_modified  "message is not modified": an edit to the SAME text/markup. The desired state already
 //                 holds, so it is a SUCCESS (never a failure row).
