@@ -7,6 +7,7 @@ import {
   classifyMenuOutcome,
   flagSig,
   liveFresh,
+  menuButtonAudience,
   menuButtonFor,
   menuKey,
   syncMenuLive,
@@ -102,6 +103,24 @@ Deno.test("live sync: a refused web_app menu raises the watch-button alarm row",
   const rows = db.actions("miniapp_button_rejected");
   assertEquals(rows.length, 1);
   assertEquals([rows[0].details.fn, rows[0].details.method], ["menu_button_live", "setChatMenuButton"]);
+  _resetLiveMenuSync();
+});
+
+// Integration of #237 (☰ for every member) with #239 (teacher Mini App faults never feed the STUDENT
+// watch-button watchdog): a refused STAFF menu (📝 Ustoz → /tg/teacher) is recorded under the teacher row.
+Deno.test("live sync: a refused STAFF web_app menu is a teacher fault, never the student watch-button alarm", async () => {
+  _resetLiveMenuSync();
+  const db = new FakeDb();
+  const tg = fakeTelegram(() => ({ ok: false, status: 400, error: "Bad Request: WEBAPP_URL_INVALID" }));
+  assertEquals(await syncMenuLive(db, 91, opts({ call: tg.call, role: "teacher" })), "rejected");
+  assertEquals(db.actions("miniapp_button_rejected").length, 0);
+  const rows = db.actions("teacher_miniapp_button_rejected");
+  assertEquals(rows.length, 1);
+  assertEquals([rows[0].details.fn, rows[0].details.role], ["menu_button_live", "teacher"]);
+  assertEquals(menuButtonAudience(menuButtonFor("admin", true, "uz", BASE)), "teacher");
+  assertEquals(menuButtonAudience(menuButtonFor("student", true, "uz", BASE)), "student");
+  assertEquals(menuButtonAudience({ type: "default" }), "student");
+  assertEquals(menuButtonAudience({ type: "web_app", text: "x", web_app: { url: "not a url" } }), "student");
   _resetLiveMenuSync();
 });
 

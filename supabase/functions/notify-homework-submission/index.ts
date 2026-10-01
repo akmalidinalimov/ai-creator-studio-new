@@ -1,10 +1,23 @@
 // v3.14.18: Drains homework_teacher_dm_queue and DMs teachers about student submissions.
 // Triggered by pg_cron every minute. Respects notifications_enabled, quiet hours, RBAC.
+//
+// 2026-09-30: 🎯 Baholash opens THIS submission in the teacher Mini App (web_app → /tg/teacher/grade?sub=<id>,
+// _shared/teacher-miniapp.ts) when platform_settings.teacher_miniapp is on; the in-chat flow (gs:open) stays as
+// the second button. Flag off → today's keyboard, byte-identical. A web_app button Telegram rejects is resent
+// once with today's keyboard. Each delivered DM's homework_submission_dm_sent row says which: details.button.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 import { loadAssignmentLabels } from "../_shared/hw-label-load.ts";
-import { type Locale, submissionDmText } from "./copy.ts";
+import { type Locale, submissionDmKeyboard, submissionDmText } from "./copy.ts";
+import { sendWithWatchFallback } from "../_shared/miniapp-button.ts";
+import {
+  GRADE_APP_LABEL,
+  GRADE_CHAT_LABEL,
+  loadTeacherMiniAppFlag,
+  teacherAppButton,
+  teacherGradePath,
+} from "../_shared/teacher-miniapp.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -76,6 +89,9 @@ Deno.serve(async (req) => {
   for (const gt of (gTeachers || []) as any[]) teacherOfGroup.add(`${gt.group_id}:${gt.teacher_id}`);
 
   let sent = 0, skipped = 0;
+  // Teacher Mini App kill-switch, once per run (cached 60 s; a read error = today's buttons, DB-visible).
+  const teacherFlag = await loadTeacherMiniAppFlag(admin, "notify-homework-submission");
+  const buttonModes = { web_app: 0, callback: 0, rejected: 0 };
 
   for (const row of rows) {
     const markSent = async (err?: string) => {
@@ -122,36 +138,39 @@ Deno.serve(async (req) => {
         ? "\n\n⚠️ <b>Auto-assigned</b> — the task was guessed. If it's wrong, fix it with ✏️."
         : "\n\n⚠️ <b>Avto-belgilangan</b> — vazifa taxminan tanlandi. Noto'g'ri bo'lsa ✏️ bilan to'g'rilang.";
     }
-    // Class F fix (2026-08-18 review): a miniapp-sourced row's message_url is a bot deep-link
-    // placeholder (https://t.me/<bot>?start=hw_<id>_<attempt> — see submit-homework/index.ts and
-    // the reconcile_teacher_dm_queue() migration that mirrors it), not a real group-topic post —
-    // tapping "Open post" for one just opens the bot chat, a dead end. Real topic links always
-    // look like https://t.me/c/<chat>/<thread>/<message> (buildMessageLink, telegram-bot-webhook/
-    // index.ts:4679-4683) and never carry a "?start=" query string, so this check is unambiguous
-    // without needing a schema change or extra join. "🎯 Grade" already renders the image via a
-    // signed URL for miniapp submissions (telegram-bot-webhook/index.ts:4057-4063), so it alone is
-    // still a complete, working action for those rows.
-    const isRealTopicLink = /^https:\/\/t\.me\/c\//.test(row.message_url || "");
-    const buttons = [
-      ...(isRealTopicLink
-        ? [{ text: loc === "ru" ? "📂 Открыть пост" : loc === "en" ? "📂 View post" : "📂 Topshirgan postni ko'rish", url: row.message_url }]
-        : []),
-      { text: loc === "ru" ? "🎯 Оценить" : loc === "en" ? "🎯 Grade" : "🎯 Baholash", callback_data: `gs:open:${row.submission_id}` },
-    ];
-    const retagRow = guessed
-      ? [[{ text: loc === "ru" ? "✏️ Изменить задание" : loc === "en" ? "✏️ Change task" : "✏️ Vazifani o'zgartirish", callback_data: `hwmv:${row.submission_id}` }]]
-      : [];
+    // The keyboard (copy.ts submissionDmKeyboard): a Mini App / web submission's message_url is a bot deep-link
+    // placeholder, not a topic post, so it gets no "Open post" button (Class F fix, 2026-08-18 review); the
+    // grade buttons still render its image. With the teacher Mini App on, 🎯 opens THIS submission in the app
+    // and the in-chat flow is the second button; off → today's keyboard, byte-identical.
+    const gradeApp = await teacherAppButton({
+      text: GRADE_APP_LABEL[loc], flag: teacherFlag, chatId: teacher.telegram_id,
+      path: teacherGradePath(row.submission_id), src: "teacher_hw_dm", ref: row.submission_id,
+      fn: "notify-homework-submission", admin,
+    });
+    const kb = (app: typeof gradeApp) => submissionDmKeyboard(loc, {
+      submissionId: row.submission_id, messageUrl: row.message_url, guessed, gradeApp: app, chatLabel: GRADE_CHAT_LABEL[loc],
+    });
+    const payload = (app: typeof gradeApp) => ({
+      chat_id: Number(teacher.telegram_id),
+      text,
+      parse_mode: "HTML",
+      reply_markup: kb(app),
+    });
     try {
       // record:false — this drainer writes its own per-row homework_teacher_dm_queue status below,
       // so the shared helper only sends+classifies (no double-logged admin_actions row). The
       // transient-vs-permanent decision stays HTTP-code based, unchanged from before: Telegram's
       // error_code mirrors the HTTP status, so out.status reproduces the old `error_code ?? status`.
-      const out = await sendTelegram(BOT_TOKEN, "sendMessage", {
-        chat_id: Number(teacher.telegram_id),
-        text,
-        parse_mode: "HTML",
-        reply_markup: { inline_keyboard: [buttons, ...retagRow] },
-      }, { record: false });
+      // A web_app button Telegram refuses (a 400 content error) is resent ONCE with today's keyboard.
+      const { result: out, retried } = await sendWithWatchFallback(
+        (p) => sendTelegram(BOT_TOKEN, "sendMessage", p, { record: false }),
+        payload(gradeApp),
+        async () => (gradeApp ? payload(null) : null),
+        { fn: "notify-homework-submission", admin },
+      );
+      if (retried) buttonModes.rejected++;
+      const buttonMode = gradeApp && !retried ? "web_app" : "callback";
+      if (out.ok) buttonModes[buttonMode]++;
       if (!out.ok) {
         const code = out.status;
         const errTxt = String(out.error ?? "").slice(0, 120);
@@ -180,6 +199,8 @@ Deno.serve(async (req) => {
               module_id: row.module_id,
               message_url: row.message_url,
               queued_for_quiet_hours: !!row.queued_for_quiet_hours,
+              // Which 🎯 went out: "web_app" (opens the teacher Mini App) or "callback" (the in-chat flow).
+              button: buttonMode,
             },
           });
         } catch { /* ignore */ }
@@ -191,7 +212,7 @@ Deno.serve(async (req) => {
     }
   }
 
-  return new Response(JSON.stringify({ ok: true, processed: rows.length, sent, skipped }), {
+  return new Response(JSON.stringify({ ok: true, processed: rows.length, sent, skipped, buttons: buttonModes, teacher_miniapp: teacherFlag.on }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 });

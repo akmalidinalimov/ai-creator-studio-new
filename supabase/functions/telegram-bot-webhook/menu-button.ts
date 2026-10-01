@@ -18,12 +18,17 @@
 //   unreachable  a recipient error (never pressed Start, blocked, deleted): the reach metric. Counted by the
 //                sweep, never alarmed — expected and high-volume (member forgiveness).
 //   rejected     a web_app menu button refused with a 400 that is not about the recipient: Telegram will not
-//                take our Mini App URL or label → admin_actions 'miniapp_button_rejected' (once a day), the row
-//                watch_button_watchdog already alarms on.
+//                take our Mini App URL or label → for a STUDENT menu (<base>/dashboard) admin_actions
+//                'miniapp_button_rejected' (once a day), the row watch_button_watchdog already alarms on; for a
+//                STAFF menu (<base>/tg/teacher) 'teacher_miniapp_button_rejected' instead — derived from the
+//                button's own URL (_shared/miniapp-button.ts BUTTON_FAULT_ACTIONS / isTeacherAppPath), because
+//                watch_button_health() reads every 'miniapp_button_rejected' row as STUDENT watch-button evidence
+//                and advises the student kill-switch. Still DB-visible; no watchdog reads the teacher row yet.
 //   failed       anything else (429, 5xx, transport) → 'menu_button_sync_failed' (once a day per where/method/
 //                status). Visible, not alarmed; the next interaction or the next sweep pass retries it.
 import { sendTelegram, type SendOutcome } from "../_shared/telegram-send.ts";
 import { logHealthOnce } from "../_shared/edge.ts";
+import { BUTTON_FAULT_ACTIONS, type ButtonAudience, isTeacherAppPath } from "../_shared/miniapp-button.ts";
 import { chatCommandCall, COMMANDS_VERSION, type CommandRole, type Locale, type TgCall } from "./bot-commands.ts";
 
 export type { Locale, TgCall } from "./bot-commands.ts";
@@ -73,6 +78,19 @@ export function menuKey(mb: MenuButton, role: MenuRole, locale: Locale): string 
   return (mb.type === "default" ? "default" : `web_app|${mb.text}|${mb.web_app.url}`) + cmd;
 }
 
+/**
+ * Whose Mini App a menu button opens: 'teacher' only for a web_app url under /tg/teacher. The default menu, a
+ * student url, or an unparseable url is 'student', so a doubtful fault still raises the student alarm.
+ */
+export function menuButtonAudience(mb: MenuButton): ButtonAudience {
+  if (mb.type !== "web_app") return "student";
+  try {
+    return isTeacherAppPath(new URL(mb.web_app.url).pathname) ? "teacher" : "student";
+  } catch {
+    return "student";
+  }
+}
+
 export type MenuOutcome = "ok" | "unreachable" | "rejected" | "failed";
 
 export function classifyMenuOutcome(o: SendOutcome, webApp: boolean): MenuOutcome {
@@ -87,7 +105,7 @@ export async function recordMenuOutcome(
   admin: unknown,
   outcome: MenuOutcome,
   o: SendOutcome,
-  ctx: { where: "live" | "sweep"; method: string; role: MenuRole },
+  ctx: { where: "live" | "sweep"; method: string; role: MenuRole; audience?: ButtonAudience },
 ): Promise<void> {
   if (!admin || outcome === "ok" || outcome === "unreachable") return;
   const details = {
@@ -98,7 +116,9 @@ export async function recordMenuOutcome(
     error: o.error, // Telegram's description only — never the token
   };
   if (outcome === "rejected") {
-    await logHealthOnce(admin, "miniapp_button_rejected", `rejected:menu_button_${ctx.where}:${ctx.method}`, details, {
+    // A refused staff (/tg/teacher) menu is a TEACHER fault and must not raise the student watch-button alarm.
+    const action = BUTTON_FAULT_ACTIONS[ctx.audience ?? "student"].rejected;
+    await logHealthOnce(admin, action, `rejected:menu_button_${ctx.where}:${ctx.method}`, details, {
       source: "telegram-bot-webhook",
     });
   } else {
@@ -118,7 +138,7 @@ export async function applyMenuButton(
 ): Promise<MenuOutcome> {
   const o = await call("setChatMenuButton", { chat_id: chatId, menu_button: mb });
   const outcome = classifyMenuOutcome(o, mb.type === "web_app");
-  await recordMenuOutcome(admin, outcome, o, { ...ctx, method: "setChatMenuButton" });
+  await recordMenuOutcome(admin, outcome, o, { ...ctx, method: "setChatMenuButton", audience: menuButtonAudience(mb) });
   return outcome;
 }
 
