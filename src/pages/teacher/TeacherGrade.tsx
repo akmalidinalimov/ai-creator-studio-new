@@ -38,6 +38,12 @@
 // advance) · already-graded-by-co-teacher (gentle "boshqa ustoz baholadi" skip, member-forgiveness) ·
 // undo (Sonner toast "Ortga" RE-OPENS the just-graded item for correction — purely client-side, NO DB
 // score-clear; the correction lands on the next submitScore).
+//
+// DEEP LINK: ?sub=<submission id> (the bot's 🎯 Baholash on a new-homework DM / 24 h reminder) opens THAT
+// submission first, once; the rest of the queue follows in its usual order. Not in the queue (a co-teacher graded
+// it, it was returned, another group's) → a gentle toast and the queue as usual (src/lib/teacherGradeFocus.ts).
+// The bot's link carries no ?course= / ?group=, so the filter is "Hammasi" and the focused item is the card on
+// screen; dropping ?sub= keeps any filter params (and the filter's own URL writes never re-read ?sub=).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
@@ -62,12 +68,14 @@ import {
 import { useSelectedGroup } from "@/hooks/useSelectedGroup";
 import {
   fetchPendingQueue,
+  fetchSubmissionGradeState,
   submitScore,
   returnForRedo,
   notifyGradeVoice,
   requestTeacherVoiceInTelegram,
   type PendingSubmission,
 } from "@/lib/teacherApi";
+import { focusSubmission, missingSubmissionMessage, readSubParam } from "@/lib/teacherGradeFocus";
 
 const PENDING_COUNT_KEY = ["teacher-pending-grading-count"]; // prefix — invalidates usePendingGrading
 
@@ -96,6 +104,12 @@ export default function TeacherGrade() {
   // The teacher's groups (junction-aware teacher_groups), so a group with nothing waiting still has its chip.
   // Only the list is used: the shared selected group is deliberately NOT a grading filter (see the header).
   const { groups: teacherGroups, loading: groupsLoading } = useSelectedGroup();
+  // ?sub=<id>: focus THAT submission on the first successful load, once. setSearchParams changes identity with
+  // the URL, so it is read through a ref — dropping ?sub= must not re-run the load effect (a refetch would reset
+  // the session's progress).
+  const pendingFocus = useRef<string | null>(readSubParam(searchParams));
+  const setSearchParamsRef = useRef(setSearchParams);
+  setSearchParamsRef.current = setSearchParams;
 
   const [queue, setQueue] = useState<PendingSubmission[]>([]);
   const [handled, setHandled] = useState<PendingSubmission[]>([]);
@@ -274,6 +288,12 @@ export default function TeacherGrade() {
     setSearchParams(searchFromFilter({ courseId: appliedCourse, groupId: appliedGroup }), { replace: true });
   }, [loading, error, groupsLoading, urlFilterStale, appliedCourse, appliedGroup, setSearchParams]);
 
+  // A deep-linked submission that is not in the queue: say why, gently, and carry on with the queue.
+  const explainMissing = useCallback(async (subId: string) => {
+    const m = missingSubmissionMessage(await fetchSubmissionGradeState(subId));
+    toast.message(m.title, { description: m.description });
+  }, []);
+
   // Initial load / retry.
   useEffect(() => {
     let cancelled = false;
@@ -283,10 +303,23 @@ export default function TeacherGrade() {
       try {
         const q = await fetchPendingQueue();
         if (cancelled) return;
+        // ?sub=<id>: THAT submission first — once, on the first load that succeeds (a failed load keeps it for
+        // the retry). The param is then dropped so a reload does not jump back to it.
+        const focus = pendingFocus.current;
+        pendingFocus.current = null;
+        const { queue: focused, found } = focusSubmission(q, focus);
         processed.current = new Set();
-        setQueue(q);
+        setQueue(focused);
         setHandled([]);
         resetInputs();
+        if (focus) {
+          setSearchParamsRef.current((prev) => {
+            const next = new URLSearchParams(prev);
+            next.delete("sub");
+            return next;
+          }, { replace: true });
+          if (!found) void explainMissing(focus);
+        }
       } catch {
         if (!cancelled) setError(true);
       } finally {
@@ -296,7 +329,7 @@ export default function TeacherGrade() {
     return () => {
       cancelled = true;
     };
-  }, [reloadKey, resetInputs]);
+  }, [reloadKey, resetInputs, explainMissing]);
 
   // Non-disruptive background reconcile after a write: preserve the on-screen card, prune items a
   // co-teacher graded ahead of us (gone from the fresh server queue), and append brand-new

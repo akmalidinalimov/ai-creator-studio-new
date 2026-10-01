@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 import { type GroupRanking, loadGroupRanking, rankOf } from "../_shared/group-rank.ts";
+import { loadStaffOnlyIds, skipStaffOnly } from "../_shared/student-audience.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -37,8 +38,11 @@ Deno.serve(async (req) => {
     .eq("status", "active")
     .not("telegram_id", "is", null);
 
-  let sent = 0, skipped = 0, errors = 0;
+  let sent = 0, skipped = 0, errors = 0, skippedStaff = 0;
   const since = new Date(Date.now() - 7 * 86400_000).toISOString();
+  // The weekly digest is a STUDENT message (_shared/student-audience.ts): a staff-only account (teacher / admin
+  // role, no student role) matches every profile filter above. A failed role read filters nobody (DB-visible).
+  const staffOnly = await loadStaffOnlyIds(admin, "weekly-digest");
 
   // The rank line is the student's GROUP rank from the same GroupRanking the bot's 👤 card, 📊 Statistika and
   // 👥 Guruh reytingi print (_shared/group-rank.ts → group_leaderboard). It used to be leaderboard_cache.rank: a
@@ -57,6 +61,7 @@ Deno.serve(async (req) => {
   };
 
   for (const p of profiles || []) {
+    if (skipStaffOnly(staffOnly, p.id)) { skipped++; skippedStaff++; continue; }
     try {
       const [{ data: prog }, { data: streak }, rank] = await Promise.all([
         admin.from("lesson_progress").select("watch_seconds_total, completed_at").eq("user_id", p.id).gte("updated_at", since),
@@ -90,7 +95,7 @@ Deno.serve(async (req) => {
     } catch (_) { errors++; }
   }
 
-  return new Response(JSON.stringify({ sent, skipped, errors, dryRun }), {
+  return new Response(JSON.stringify({ sent, skipped, skipped_staff: skippedStaff, staff_filter: staffOnly.ids ? "ok" : "failed", errors, dryRun }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 });

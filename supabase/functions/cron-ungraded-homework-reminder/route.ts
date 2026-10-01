@@ -92,15 +92,29 @@ export function teacherReminderText(loc: Locale, studentName: string, label: str
 }
 
 /**
- * 🎯 opens THIS submission in the bot's grading flow (gs:open:<id> = 44 bytes, under Telegram's 64-byte
- * callback_data cap; the handler re-checks the teacher's scope). Before, the only button was the generic web
- * /teacher/homework page, which never opened the submission itself. The web link stays as the second button.
+ * 🎯 opens THIS submission. `gradeApp` null (teacher Mini App off, or not a private chat) → today's keyboard,
+ * byte-identical: [🎯 in the bot's grading flow (gs:open:<id> = 44 bytes, under Telegram's 64-byte callback_data
+ * cap; the handler re-checks the teacher's scope)] · [🌐 the web /teacher/homework page].
+ * `gradeApp` (a web_app button to /tg/teacher/grade?sub=<id>, _shared/teacher-miniapp.ts) → [🎯 in the teacher
+ * Mini App] · [<chatLabel> the in-chat flow, 🌐 the web page] — the desktop grader keeps the site link.
  */
-export function teacherReminderKeyboard(loc: Locale, submissionId: string) {
+// deno-lint-ignore no-explicit-any
+export function teacherReminderKeyboard(loc: Locale, submissionId: string, gradeApp?: Record<string, any> | null, chatLabel?: string) {
+  if (!gradeApp) {
+    return {
+      inline_keyboard: [
+        [{ text: TEACHER_BTN[loc], callback_data: `gs:open:${submissionId}` }],
+        [{ text: TEACHER_SITE_BTN[loc], url: TEACHER_URL }],
+      ],
+    };
+  }
   return {
     inline_keyboard: [
-      [{ text: TEACHER_BTN[loc], callback_data: `gs:open:${submissionId}` }],
-      [{ text: TEACHER_SITE_BTN[loc], url: TEACHER_URL }],
+      [gradeApp],
+      [
+        { text: chatLabel || TEACHER_BTN[loc], callback_data: `gs:open:${submissionId}` },
+        { text: TEACHER_SITE_BTN[loc], url: TEACHER_URL },
+      ],
     ],
   };
 }

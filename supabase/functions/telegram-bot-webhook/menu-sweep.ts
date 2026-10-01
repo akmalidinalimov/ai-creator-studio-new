@@ -24,8 +24,9 @@
 //     `rerun` value) and every 6 hours otherwise — which is how new members (Challenge 6.0 joins) get the button
 //     and how a flipped kill-switch converges on everyone, not only on the members who happen to write.
 //   * Finished pass → one admin_actions 'menu_button_sweep_pass' row with the totals. Refusals and failures are
-//     recorded by menu-button.ts (a refused web_app menu → 'miniapp_button_rejected', which
-//     watch_button_watchdog alarms on). A refusal or a 429 stops the tick and backs off; the cursor does not
+//     recorded by menu-button.ts (a refused student web_app menu → 'miniapp_button_rejected', which
+//     watch_button_watchdog alarms on; a refused staff /tg/teacher menu → 'teacher_miniapp_button_rejected',
+//     kept out of the student detector). A refusal or a 429 stops the tick and backs off; the cursor does not
 //     move past a member who was not processed.
 //
 // KILL-SWITCHES: platform_settings 'menu_button_sweep' {"enabled": false} stops the sweep (an absent row = on;
