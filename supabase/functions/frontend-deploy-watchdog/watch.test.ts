@@ -8,12 +8,15 @@ import {
   cleanText,
   cleanVercelUrl,
   decide,
+  DM_RETRY_EVERY_MS,
   failClass,
   headVerdict,
   type MainCommit,
   observe,
   parseState,
+  type PendingDm,
   pickVercelStatus,
+  settleDelivery,
   STALL_MS,
   type VercelStatus,
   type WatchAction,
@@ -413,4 +416,125 @@ Deno.test("parseState reads the migration's seed row and rejects garbage", () =>
   assertEquals(parseState([1]), null);
   const odd = parseState({ state: "weird", alerting: "yes", alarm_class: "nope", blind_since: "not a date" })!;
   assertEquals([odd.state, odd.alerting, odd.alarm_class, odd.blind_since], ["seeded", false, null, null]);
+  assertEquals(seed.pending_dm, null);
+});
+
+// ─────────────── undelivered DMs: the pending slot (review fix) ───────────────
+
+/** Like replay(), but every DM-carrying action is "delivered" only when deliver(at) says so — what run.ts does. */
+function replayDelivering(timeline: TimelineCommit[], times: number[], deliver: (at: number) => boolean): Step[] {
+  let st: WatchState | null = null;
+  const out: Step[] = [];
+  for (const at of times) {
+    const d = decide(st, worldAt(timeline, at), at);
+    let next = d.next;
+    for (const a of d.actions) {
+      const carries = a.type !== "blind" || a.dm !== null;
+      if (carries) next = settleDelivery(next, a, { attempted: deliver(at) ? 2 : 0, sent: deliver(at) ? 2 : 0 }, at);
+    }
+    out.push({ at, actions: d.actions, state: next });
+    st = parseState(JSON.parse(JSON.stringify(next)));
+  }
+  return out;
+}
+
+Deno.test("replay at the cron cadence with NO admin reachable until 05:00: the alarm is re-sent every 30 min, delivered once, then the recovery", () => {
+  const timeline = [...TIMELINE, HEAL];
+  const steps = replayDelivering(timeline, every15("2026-09-30T17:37:00Z", "2026-10-01T08:07:00Z"), (at) => at >= T("2026-10-01T05:00:00Z"));
+  const acted = steps.filter((s) => s.actions.length);
+  // 20:07 alarm (undelivered), then a retry every 30 min until 05:07 (the first run at which someone is reachable)
+  assertEquals(new Date(acted[0].at).toISOString(), "2026-09-30T20:07:00.000Z");
+  assertEquals(acted[0].actions.map((a) => a.type), ["alarm"]);
+  const retries = acted.filter((s) => s.actions.some((a) => a.type === "retry"));
+  assertEquals(retries.length, 18); // 20:37 … 05:07, every 30 min
+  assertEquals(new Date(retries[retries.length - 1].at).toISOString(), "2026-10-01T05:07:00.000Z");
+  assertEquals(retries[retries.length - 1].state.pending_dm, null); // delivered → slot cleared
+  const lastRetry = retries[retries.length - 1].actions[0];
+  assert(lastRetry.type === "retry");
+  assertStringIncludes(lastRetry.text, "first raised 2026-09-30 20:07 UTC");
+  assertStringIncludes(lastRetry.text, "Attempt 19.");
+  assertStringIncludes(lastRetry.text, "Frontend deploy FAILED");
+  // still ONE alarm and ONE recovery in the whole replay
+  assertEquals(steps.flatMap((s) => s.actions).filter((a) => a.type === "alarm").length, 1);
+  const rec = steps.flatMap((s) => s.actions).filter((a) => a.type === "recovered");
+  assertEquals(rec.length, 1);
+  assertEquals(steps[steps.length - 1].state.pending_dm, null);
+});
+
+Deno.test("replay with NO admin reachable at all: the recovery replaces the never-delivered alarm (no late 'FAILED' after the fix)", () => {
+  const timeline = [...TIMELINE, HEAL];
+  const steps = replayDelivering(timeline, every15("2026-09-30T17:37:00Z", "2026-10-01T08:07:00Z"), () => false);
+  const recStep = steps.find((s) => s.actions.some((a) => a.type === "recovered"))!;
+  assertEquals(recStep.actions.map((a) => a.type), ["recovered"]); // no alarm retry alongside it
+  assertEquals(recStep.state.pending_dm?.row, "frontend_deploy_recovered");
+  const after = steps.filter((s) => s.at > recStep.at);
+  assert(after.some((s) => s.actions.some((a) => a.type === "retry" && a.row === "frontend_deploy_recovered")));
+  assert(!after.some((s) => s.actions.some((a) => a.type === "retry" && a.row !== "frontend_deploy_recovered")));
+});
+
+const pendingAlarm = (overrides: Partial<PendingDm> = {}): PendingDm => ({
+  row: "frontend_deploy_failed",
+  kind: "alarm",
+  ref: "148fe169ad3de8eca27baea13c9e2ec03ac54f77",
+  text: "🚨 Frontend deploy FAILED",
+  raised_at: "2026-09-30T19:55:00.000Z",
+  attempts: 1,
+  next_try_at: "2026-09-30T20:25:00.000Z",
+  ...overrides,
+});
+
+Deno.test("a pending alarm is re-sent during a BLIND run too (Telegram does not need GitHub)", () => {
+  const prev = { ...decide(null, worldAt(TIMELINE, T("2026-09-30T19:55:00Z")), T("2026-09-30T19:55:00Z")).next, pending_dm: pendingAlarm() };
+  const d = decide(prev, { kind: "blind", reason: "api_error", detail: "status HTTP 502" }, T("2026-09-30T20:30:00Z"));
+  assertEquals(d.actions.map((a) => a.type), ["blind", "retry"]);
+  assertEquals(d.next.pending_dm?.ref, "148fe169ad3de8eca27baea13c9e2ec03ac54f77");
+  // not due yet → no retry, slot kept
+  const early = decide(prev, { kind: "blind", reason: "api_error", detail: "x" }, T("2026-09-30T20:10:00Z"));
+  assertEquals(early.actions.map((a) => a.type), ["blind"]);
+  assertEquals(early.next.pending_dm?.attempts, 1);
+});
+
+Deno.test("a pending BLIND DM is dropped once the watchdog can see again, and never displaces a pending alarm", () => {
+  const blindPending: PendingDm = { ...pendingAlarm(), row: "frontend_deploy_watch_forbidden", kind: "blind", ref: "forbidden" };
+  const seen = decide({ ...parseState({ state: "forbidden" })!, pending_dm: blindPending }, worldAt(TIMELINE, T("2026-09-30T17:30:00Z")), T("2026-09-30T17:30:00Z"));
+  assertEquals(seen.actions, []);
+  assertEquals(seen.next.pending_dm, null);
+
+  // an undelivered blind DM while an alarm is pending: the alarm keeps the slot
+  const next = { ...parseState({ state: "forbidden" })!, pending_dm: pendingAlarm() };
+  const blindAction: WatchAction = {
+    type: "blind", row: "frontend_deploy_watch_forbidden", reason: "forbidden", dedupeKey: "forbidden", details: {}, dm: "⚠️ BLIND",
+  };
+  assertEquals(settleDelivery(next, blindAction, { attempted: 0, sent: 0 }, T("2026-09-30T21:00:00Z")).pending_dm?.kind, "alarm");
+  // …but takes an empty slot
+  const empty = { ...next, pending_dm: null };
+  const took = settleDelivery(empty, blindAction, { attempted: 1, sent: 0 }, T("2026-09-30T21:00:00Z")).pending_dm!;
+  assertEquals([took.kind, took.row, took.ref, took.attempts], ["blind", "frontend_deploy_watch_forbidden", "forbidden", 1]);
+  assertEquals(took.next_try_at, new Date(T("2026-09-30T21:00:00Z") + DM_RETRY_EVERY_MS).toISOString());
+});
+
+Deno.test("settleDelivery: a delivered retry clears the slot, a failed one counts an attempt, 'nothing sent' changes nothing", () => {
+  const st = { ...parseState({ state: "failed" })!, pending_dm: pendingAlarm() };
+  const retry: WatchAction = { type: "retry", row: "frontend_deploy_failed", ref: "x", text: "t", details: {} };
+  assertEquals(settleDelivery(st, retry, { attempted: 2, sent: 1 }, T("2026-09-30T20:30:00Z")).pending_dm, null);
+  const failed = settleDelivery(st, retry, { attempted: 2, sent: 0 }, T("2026-09-30T20:30:00Z")).pending_dm!;
+  assertEquals([failed.attempts, failed.next_try_at, failed.raised_at], [2, "2026-09-30T21:00:00.000Z", "2026-09-30T19:55:00.000Z"]);
+  assertEquals(settleDelivery(st, retry, null, T("2026-09-30T20:30:00Z")), st);
+});
+
+Deno.test("parseState keeps a valid pending_dm and drops a malformed one", () => {
+  const ok = parseState({ state: "failed", pending_dm: pendingAlarm({ attempts: 4 }) })!;
+  assertEquals(ok.pending_dm?.attempts, 4);
+  for (const bad of [
+    { ...pendingAlarm(), row: "frontend_deploy_whatever" },
+    { ...pendingAlarm(), kind: "nope" },
+    { ...pendingAlarm(), text: "   " },
+    { ...pendingAlarm(), raised_at: "not a date" },
+    "a string",
+    [pendingAlarm()],
+  ]) {
+    assertEquals(parseState({ state: "failed", pending_dm: bad })!.pending_dm, null);
+  }
+  const long = parseState({ state: "failed", pending_dm: pendingAlarm({ text: "x".repeat(9000), attempts: -3 }) })!.pending_dm!;
+  assertEquals([long.text.length, long.attempts], [3500, 1]);
 });

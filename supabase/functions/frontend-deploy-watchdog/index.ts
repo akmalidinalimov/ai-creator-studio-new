@@ -14,7 +14,9 @@
 // Signals (admin_actions): frontend_deploy_failed / frontend_deploy_stalled (one per incident, deduped per sha),
 // frontend_deploy_recovered (only after an alarm), frontend_deploy_watch_no_pat / _forbidden / _api_error / _crashed
 // (once per Tashkent day each — graceful is not silent), frontend_deploy_watch_caller_forbidden (a wrong internal
-// secret). Liveness: app_settings 'frontend_deploy_watchdog_state'.checked_at on every run.
+// secret), '<row>_dm_undelivered' (once a day while a DM reaches no admin; it is re-sent every 30 min until one does)
+// and '<row>_dm_delivered_late', frontend_deploy_watch_recipients_failed (the admin lookup itself failed).
+// Liveness: app_settings 'frontend_deploy_watchdog_state'.checked_at on every run.
 //
 // Auth: no config.toml entry on purpose (adding one redeploys every function, the live bot included) — the gateway
 // default verify_jwt=true accepts the cron's `Authorization: Bearer cron_service_key()`, exactly like canary-15min;
@@ -23,6 +25,7 @@
 // does nothing else. Kill-switch: select cron.unschedule('frontend-deploy-watchdog');
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { adminTelegramIds } from "../_shared/admin-recipients.ts";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 import { corsHeaders, json, logHealth, logHealthOnce } from "../_shared/edge.ts";
 import { redactSecrets } from "../_shared/redact.ts";
@@ -76,22 +79,14 @@ Deno.serve(async (req) => {
       log: (action, details) => logHealth(admin, action, details, { source: SOURCE }),
       logOnce: (action, key, details) => logHealthOnce(admin, action, key, details, { source: SOURCE }),
       async adminChatIds() {
-        const { data, error } = await admin
-          .from("profiles").select("telegram_id, user_roles!inner(role)")
-          .not("telegram_id", "is", null)
-          .in("user_roles.role", ["admin", "superadmin"]);
-        if (error) {
-          await logHealthOnce(admin, "frontend_deploy_watch_recipients_failed", "recipients", { error: error.message }, {
-            source: SOURCE,
-          });
-          return [];
+        // Two queries, never a profiles→user_roles embed (no FK: PGRST200 on every call — see admin-recipients.ts).
+        const r = await adminTelegramIds(admin, { limit: MAX_ADMINS });
+        if (r.error) {
+          await logHealthOnce(admin, "frontend_deploy_watch_recipients_failed", "recipients", {
+            error: redactSecrets(r.error).slice(0, 200),
+          }, { source: SOURCE });
         }
-        const ids = new Set<number>();
-        for (const r of (data ?? []) as { telegram_id: number | string | null }[]) {
-          const id = Number(r.telegram_id);
-          if (Number.isFinite(id) && id !== 0) ids.add(id);
-        }
-        return [...ids].slice(0, MAX_ADMINS);
+        return r.ids; // [] → the DM stays pending and '<row>_dm_undelivered' is written (run.ts)
       },
       async send(chatId, text) {
         if (!botToken) return false; // the alarm's admin_actions row carries dm_sent: 0

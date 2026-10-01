@@ -14,6 +14,8 @@
 // Cron-invoked (x-internal-secret). Dormant until SAFE_BROWSING_API_KEY and/or VIRUSTOTAL_API_KEY
 // exist (both free tiers) — same "dormant until secret" contract as the ops pipeline.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { adminTelegramIds } from "../_shared/admin-recipients.ts";
+import { logHealthOnce } from "../_shared/edge.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 
@@ -150,13 +152,17 @@ Deno.serve(async (req) => {
   const shouldRecover = !firstRun && !shouldAlert && recoveries.length > 0;
 
   if (shouldAlert || shouldRecover) {
-    const { data: admins } = await admin
-      .from("profiles").select("telegram_id, user_roles!inner(role)")
-      .not("telegram_id", "is", null)
-      .in("user_roles.role", ["admin", "superadmin"]);
+    // Two queries via the shared helper. The old profiles→user_roles embed had no FK to follow, failed with
+    // PGRST200 on every call and was ignored, so no reputation alert reached anyone from 2026-07-21 to 2026-10-01.
+    const rec = await adminTelegramIds(admin);
     const msg = shouldAlert ? alerts.join("\n\n") : recoveries.join("\n");
-    for (const a of (admins || []) as any[]) {
-      if (a.telegram_id) await tg(admin, Number(a.telegram_id), msg);
+    for (const id of rec.ids) await tg(admin, id, msg);
+    if (rec.ids.length === 0) {
+      // Graceful is not silent: an alert with no recipient (lookup failed, or no admin has a telegram_id).
+      await logHealthOnce(admin, "reputation_alert_undelivered", "recipients", {
+        alert: shouldAlert,
+        error: rec.error ?? "no admin or superadmin with a telegram_id",
+      }, { source: "reputation-check" });
     }
   }
 

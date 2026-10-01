@@ -26,6 +26,14 @@
 // can fix that) and after BLIND_DM_AFTER_MS of continuous blindness for 'api_error' / 'crashed', then at most
 // once per BLIND_DM_EVERY_MS. 'no_pat' never DMs: an unset OPS_GITHUB_PAT is the documented dormant mode of the
 // whole ops flow. A blind run never raises or clears an alarm.
+//
+// UNDELIVERED. A DM that reaches no admin (no recipient, no bot token, Telegram refused every send) does not count
+// as said. The first draft latched `alerting` on the DECISION, and its recipient query always failed (PGRST200), so
+// every alarm was "raised" to nobody and never retried. Now an alarm / recovery / blind DM that reaches 0 admins is
+// kept in state.pending_dm and re-sent (marked as late) every DM_RETRY_EVERY_MS until one admin gets it; run.ts
+// writes '<row>_dm_undelivered' once a Tashkent day while it cannot, and '<row>_dm_delivered_late' when it finally
+// does. A newer alarm or recovery supersedes a pending one (only the newest news is worth a late DM); a pending
+// blind DM never displaces a pending alarm, and is dropped once the watchdog can see again.
 
 import { redactSecrets } from "../_shared/redact.ts";
 
@@ -35,6 +43,8 @@ export const VERCEL_CONTEXT = "Vercel";
 export const STALL_MS = 30 * 60_000;
 export const BLIND_DM_AFTER_MS = 2 * 3_600_000;
 export const BLIND_DM_EVERY_MS = 24 * 3_600_000;
+export const DM_RETRY_EVERY_MS = 30 * 60_000; // an undelivered DM is re-sent at most every 30 min (every 2nd run)
+const PENDING_TEXT_MAX = 3500;                 // Telegram's cap is 4096; the late-delivery prefix needs room
 
 export type VercelState = "success" | "failure" | "error" | "pending" | "absent";
 /** rateLimited is read from the RAW description + target_url (the cleaned URL drops the ?upgradeToPro=… query). */
@@ -69,7 +79,20 @@ export type WatchState = {
   blind_since: string | null;  // first run of the current blind streak
   blind_dm_at: string | null;  // last blind DM (dedupe across days and reasons)
   detail: string | null;       // why the last run was blind (endpoint, HTTP status, GitHub's message)
+  pending_dm: PendingDm | null; // a DM that reached no admin yet (see UNDELIVERED above)
 };
+
+export type DmRow = AlarmRow | "frontend_deploy_recovered" | `frontend_deploy_watch_${BlindReason}`;
+export type PendingDm = {
+  row: DmRow;                  // the admin_actions row the DM belongs to
+  kind: "alarm" | "blind";     // alarm = an alarm or a recovery; blind = a "watchdog cannot see" DM
+  ref: string;                 // the sha (alarm / recovery) or the blind reason
+  text: string;                // the original DM text, re-sent with a "delivered late" prefix
+  raised_at: string;
+  attempts: number;
+  next_try_at: string;
+};
+export type DmOutcome = { attempted: number; sent: number };
 
 export type WatchInput =
   | { kind: "seen"; obs: Observation }
@@ -86,7 +109,8 @@ export type WatchAction =
     dedupeKey: string;
     details: Record<string, unknown>;
     dm: string | null; // null = record only
-  };
+  }
+  | { type: "retry"; row: DmRow; ref: string; text: string; details: Record<string, unknown> };
 
 // ─────────────────────────── sanitizing (everything shown or stored came from GitHub) ───────────────────────────
 
@@ -217,13 +241,39 @@ export function parseState(v: unknown): WatchState | null {
     blind_since: iso(o.blind_since),
     blind_dm_at: iso(o.blind_dm_at),
     detail: str(o.detail),
+    pending_dm: parsePending(o.pending_dm),
+  };
+}
+
+const DM_ROWS: string[] = [
+  "frontend_deploy_failed", "frontend_deploy_stalled", "frontend_deploy_recovered",
+  ...BLIND.map((r) => `frontend_deploy_watch_${r}`),
+];
+
+function parsePending(v: unknown): PendingDm | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  // deno-lint-ignore no-explicit-any
+  const p = v as any;
+  const text = typeof p.text === "string" ? p.text.slice(0, PENDING_TEXT_MAX) : "";
+  const raised = iso(p.raised_at);
+  if (!DM_ROWS.includes(p.row) || (p.kind !== "alarm" && p.kind !== "blind") || !str(p.ref) || !text.trim() || !raised) {
+    return null;
+  }
+  return {
+    row: p.row,
+    kind: p.kind,
+    ref: p.ref,
+    text,
+    raised_at: raised,
+    attempts: Number.isFinite(p.attempts) && p.attempts > 0 ? Math.floor(p.attempts) : 1,
+    next_try_at: iso(p.next_try_at) ?? raised,
   };
 }
 
 function emptyState(nowIso: string): WatchState {
   return {
     checked_at: nowIso, state: "seeded", sha: null, lag: null, live_sha: null, alerting: false, alarm_sha: null,
-    alarm_class: null, alarm_at: null, blind_since: null, blind_dm_at: null, detail: null,
+    alarm_class: null, alarm_at: null, blind_since: null, blind_dm_at: null, detail: null, pending_dm: null,
   };
 }
 
@@ -319,12 +369,73 @@ export function blindText(reason: BlindReason, detail: string, blindMinutes: num
   ].join("\n");
 }
 
+/** A DM re-sent because no admin got it the first time: marked late, with when it was first raised. */
+export function lateText(p: PendingDm): string {
+  const at = p.raised_at.slice(0, 16).replace("T", " ");
+  return `(Delivered late: first raised ${at} UTC, when it reached no admin. Attempt ${p.attempts + 1}.)\n\n${p.text}`;
+}
+
 // ─────────────────────────── the decision ───────────────────────────
 
+type Decision = { next: WatchState; actions: WatchAction[] };
+
 /** One run: the next state to store and the actions to execute (run.ts executes them; nothing here sends). */
-export function decide(prevIn: WatchState | null, input: WatchInput, nowMs: number): { next: WatchState; actions: WatchAction[] } {
+export function decide(prevIn: WatchState | null, input: WatchInput, nowMs: number): Decision {
+  const prev = prevIn ?? emptyState(new Date(nowMs).toISOString());
+  return withPendingDm(prev, decideVerdict(prev, input, nowMs), nowMs);
+}
+
+/**
+ * The undelivered-DM slot (see UNDELIVERED above). A fresh alarm / recovery supersedes any pending DM; a fresh blind
+ * DM supersedes a pending blind DM; a pending blind DM is moot once the watchdog can see. Whatever is still pending
+ * is re-sent when its next_try_at has come — blind or not, because Telegram does not depend on GitHub.
+ */
+function withPendingDm(prev: WatchState, d: Decision, nowMs: number): Decision {
+  let pending = prev.pending_dm;
+  const freshAlarm = d.actions.some((a) => a.type === "alarm" || a.type === "recovered");
+  const freshBlindDm = d.actions.some((a) => a.type === "blind" && a.dm);
+  const seeing = !BLIND.includes(d.next.state);
+  if (pending && (freshAlarm || (pending.kind === "blind" && (freshBlindDm || seeing)))) pending = null;
+  const actions = [...d.actions];
+  if (pending && nowMs >= Date.parse(pending.next_try_at)) {
+    actions.push({
+      type: "retry",
+      row: pending.row,
+      ref: pending.ref,
+      text: lateText(pending),
+      details: { ref: pending.ref, raised_at: pending.raised_at, attempt: pending.attempts + 1 },
+    });
+  }
+  return { next: { ...d.next, pending_dm: pending }, actions };
+}
+
+/**
+ * The state after one executed DM-carrying action, by what Telegram did with it (pure; run.ts calls it once per
+ * action). `dm` null = nothing was sent (a record-only blind row, or an alarm deduped in the database).
+ *   delivered (sent > 0)  → a retry clears the slot; anything else leaves the state as decided.
+ *   undelivered           → an alarm / recovery takes the slot; a blind DM takes it unless an alarm holds it
+ *                           (a frontend failure outranks "the watchdog is blind"); a retry counts one more attempt.
+ */
+export function settleDelivery(next: WatchState, a: WatchAction, dm: DmOutcome | null, nowMs: number): WatchState {
+  if (!dm) return next;
   const nowIso = new Date(nowMs).toISOString();
-  const prev = prevIn ?? emptyState(nowIso);
+  const retryAt = new Date(nowMs + DM_RETRY_EVERY_MS).toISOString();
+  if (dm.sent > 0) return a.type === "retry" ? { ...next, pending_dm: null } : next;
+  if (a.type === "retry") {
+    const p = next.pending_dm;
+    return p ? { ...next, pending_dm: { ...p, attempts: p.attempts + 1, next_try_at: retryAt } } : next;
+  }
+  const fresh = (kind: PendingDm["kind"], row: DmRow, ref: string, text: string): WatchState => ({
+    ...next,
+    pending_dm: { row, kind, ref, text: text.slice(0, PENDING_TEXT_MAX), raised_at: nowIso, attempts: 1, next_try_at: retryAt },
+  });
+  if (a.type === "alarm" || a.type === "recovered") return fresh("alarm", a.row, a.sha, a.text);
+  if (a.type === "blind" && a.dm && next.pending_dm?.kind !== "alarm") return fresh("blind", a.row, a.reason, a.dm);
+  return next;
+}
+
+function decideVerdict(prev: WatchState, input: WatchInput, nowMs: number): Decision {
+  const nowIso = new Date(nowMs).toISOString();
   const actions: WatchAction[] = [];
 
   if (input.kind === "blind") {

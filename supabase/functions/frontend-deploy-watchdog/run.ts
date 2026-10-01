@@ -10,10 +10,24 @@
 //      liveness signal hw_dm_health_stats() reads (and through it the out-of-band GitHub verifier).
 //   4. Nothing here throws: a failure inside gather() is a 'crashed' blind run; a failure inside an action is
 //      recorded and the remaining actions still run.
+//   5. A DM that reached no admin is not "sent": settleDelivery() keeps it in state.pending_dm and a later run
+//      re-sends it; '<row>_dm_undelivered' is written once a Tashkent day while it cannot be delivered (an empty
+//      recipient list included), '<row>_dm_delivered_late' when a retry finally gets through. An action that THROWS
+//      counts as undelivered too (a duplicate DM beats a lost one).
 
 import { redactSecrets } from "../_shared/redact.ts";
 import { failDetail, type FetchFn, fetchMainCommits, fetchVercelStatus } from "./github.ts";
-import { decide, type MainCommit, observe, parseState, type WatchAction, type WatchInput, type WatchState } from "./watch.ts";
+import {
+  decide,
+  type DmOutcome,
+  type MainCommit,
+  observe,
+  parseState,
+  settleDelivery,
+  type WatchAction,
+  type WatchInput,
+  type WatchState,
+} from "./watch.ts";
 
 export const SCAN_COMMITS = 15;      // how far back to look for the live (last successful) build
 export const GATHER_BUDGET_MS = 25_000;
@@ -30,6 +44,7 @@ export type RunDeps = {
   log(action: string, details: Record<string, unknown>): Promise<boolean>;
   /** One row per (action, key) per Tashkent day (logHealthOnce). */
   logOnce(action: string, key: string, details: Record<string, unknown>): Promise<boolean>;
+  /** Up to 3 admin chat ids (adminTelegramIds). [] when there are none or the lookup failed (index.ts records that). */
   adminChatIds(): Promise<number[]>;
   /** One plain-text DM through sendTelegram (which records any non-delivery itself). True = Telegram accepted. */
   send(chatId: number, text: string): Promise<boolean>;
@@ -41,6 +56,8 @@ export type RunResult = {
   lag: WatchState["lag"];
   actions: string[];
   state_written: boolean;
+  /** The row of a DM still waiting for an admin to receive it, or null. */
+  dm_pending: string | null;
 };
 
 /** What GitHub says about main right now, or why the watchdog cannot see. */
@@ -71,28 +88,42 @@ export async function gather(deps: RunDeps): Promise<WatchInput> {
   return { kind: "seen", obs };
 }
 
-async function dmAdmins(deps: RunDeps, text: string): Promise<{ attempted: number; sent: number }> {
+async function dmAdmins(deps: RunDeps, text: string): Promise<DmOutcome> {
   const ids = await deps.adminChatIds();
   let sent = 0;
   for (const id of ids) if (await deps.send(id, text)) sent++;
   return { attempted: ids.length, sent };
 }
 
-async function execute(deps: RunDeps, a: WatchAction): Promise<string> {
+type Executed = { label: string; dm: DmOutcome | null };
+const dmLabel = (row: string, dm: DmOutcome) => `${row}+dm(${dm.sent}/${dm.attempted})`;
+
+async function execute(deps: RunDeps, a: WatchAction): Promise<Executed> {
   if (a.type === "blind") {
     await deps.logOnce(a.row, a.dedupeKey, a.details);
-    if (!a.dm) return a.row;
+    if (!a.dm) return { label: a.row, dm: null };
     const dm = await dmAdmins(deps, a.dm);
     if (dm.sent === 0) {
       // A blind DM that reached nobody must still be visible (no bot token, no admin with a telegram_id).
-      await deps.logOnce(`${a.row}_dm_undelivered`, a.dedupeKey, { attempted: dm.attempted });
+      await deps.logOnce(`${a.row}_dm_undelivered`, a.dedupeKey, { attempted: dm.attempted, attempt: 1 });
     }
-    return `${a.row}+dm(${dm.sent}/${dm.attempted})`;
+    return { label: dmLabel(a.row, dm), dm };
   }
-  if (await deps.alreadyLogged(a.row, a.sha)) return `${a.row}:deduped`;
+  if (a.type === "retry") {
+    const dm = await dmAdmins(deps, a.text);
+    if (dm.sent > 0) await deps.log(`${a.row}_dm_delivered_late`, { ...a.details, dm_attempted: dm.attempted, dm_sent: dm.sent });
+    else await deps.logOnce(`${a.row}_dm_undelivered`, a.ref, { ...a.details, attempted: dm.attempted });
+    return { label: dmLabel(`${a.row}:retry`, dm), dm };
+  }
+  if (await deps.alreadyLogged(a.row, a.sha)) return { label: `${a.row}:deduped`, dm: null };
   const dm = await dmAdmins(deps, a.text);
   await deps.log(a.row, { ...a.details, dm_attempted: dm.attempted, dm_sent: dm.sent });
-  return `${a.row}+dm(${dm.sent}/${dm.attempted})`;
+  if (dm.sent === 0) {
+    // The alarm row above already says dm_sent 0, but nothing reads that field; this row is the loud one, and the
+    // DM stays pending (settleDelivery) so a later run re-sends it.
+    await deps.logOnce(`${a.row}_dm_undelivered`, a.sha, { sha: a.sha, attempted: dm.attempted, attempt: 1 });
+  }
+  return { label: dmLabel(a.row, dm), dm };
 }
 
 export async function runWatch(deps: RunDeps): Promise<RunResult> {
@@ -110,14 +141,19 @@ export async function runWatch(deps: RunDeps): Promise<RunResult> {
     input = { kind: "blind", reason: "crashed", detail: redactSecrets(e).slice(0, 200) };
   }
 
-  const { next, actions } = decide(prev, input, deps.now());
+  const decided = decide(prev, input, deps.now());
+  let next = decided.next;
 
   const done: string[] = [];
-  for (const a of actions) {
+  for (const a of decided.actions) {
     try {
-      done.push(await execute(deps, a));
+      const x = await execute(deps, a);
+      done.push(x.label);
+      next = settleDelivery(next, a, x.dm, deps.now());
     } catch (e) {
       done.push(`${a.row}:error`);
+      const carriesDm = a.type !== "blind" || a.dm !== null;
+      if (carriesDm) next = settleDelivery(next, a, { attempted: 0, sent: 0 }, deps.now());
       await deps.logOnce("frontend_deploy_watch_crashed", "action", { row: a.row, error: redactSecrets(e).slice(0, 200) })
         .catch(() => false);
     }
@@ -132,5 +168,12 @@ export async function runWatch(deps: RunDeps): Promise<RunResult> {
   if (!written) {
     await deps.logOnce("frontend_deploy_watch_state_write_failed", "state", { state: next.state }).catch(() => false);
   }
-  return { state: next.state, sha: next.sha, lag: next.lag, actions: done, state_written: written };
+  return {
+    state: next.state,
+    sha: next.sha,
+    lag: next.lag,
+    actions: done,
+    state_written: written,
+    dm_pending: next.pending_dm?.row ?? null,
+  };
 }
