@@ -3,8 +3,10 @@
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   _resetStudentMiniAppFlagCache,
+  BUTTON_FAULT_ACTIONS,
   DEFAULT_MINIAPP_BASE,
   hasWebAppButton,
+  isTeacherAppPath,
   isWatchContentRejection,
   loadStudentMiniAppFlag,
   newButtonTally,
@@ -13,6 +15,7 @@ import {
   sendWithWatchFallback,
   tallyButton,
   watchButton,
+  webAppAudience,
   type WatchFlag,
 } from "./miniapp-button.ts";
 
@@ -253,4 +256,57 @@ Deno.test("hasWebAppButton / isWatchContentRejection", () => {
   assertEquals(isWatchContentRejection({ ok: false, status: 400, error: "Bad Request: chat not found" }), false);
   assertEquals(isWatchContentRejection({ ok: false, status: 0, error: "transport_error" }), false);
   assertEquals(isWatchContentRejection({ ok: true, status: 200, error: null }), false);
+});
+
+// ─────────────────────────── whose button (teacher faults stay out of the student alarm) ───────────────────────────
+// watch_button_health() sums every 'miniapp_button_fallback' / 'miniapp_button_rejected' row, for ANY fn, into the
+// STUDENT watch-button alarm. A button into the teacher Mini App (/tg/teacher…) must file its faults elsewhere —
+// derived from the button's own path, so no sender can forget to say so.
+const teacherPayload = { chat_id: 1, text: "hi", reply_markup: { inline_keyboard: [
+  [{ text: "🎯", web_app: { url: `${DEFAULT_MINIAPP_BASE}/tg/teacher/grade?sub=${REF}&src=teacher_hw_dm&ref=${REF}` } }],
+  [{ text: "🎤", callback_data: `grade:open:${REF}` }],
+  [{ text: "📌", url: "https://t.me/c/1/2" }],
+] } };
+
+Deno.test("isTeacherAppPath: the teacher Mini App and nothing that merely starts like it", () => {
+  for (const p of ["/tg/teacher", "/tg/teacher/grade", `/tg/teacher/grade?sub=${REF}`, "/tg/teacher?src=teacher_card"]) {
+    assertEquals(isTeacherAppPath(p), true, p);
+  }
+  for (const p of ["/tg/teachers", "/tg/teacherx/grade", "/tg", "/continue", "/dashboard", "", null, undefined, "tg/teacher"]) {
+    assertEquals(isTeacherAppPath(p), false, String(p));
+  }
+});
+
+Deno.test("webAppAudience: teacher only when EVERY web_app button opens /tg/teacher; doubt is student", () => {
+  assertEquals(webAppAudience(teacherPayload.reply_markup), "teacher");
+  assertEquals(webAppAudience(webAppPayload.reply_markup), "student");
+  const mixed = { inline_keyboard: [...teacherPayload.reply_markup.inline_keyboard, ...webAppPayload.reply_markup.inline_keyboard] };
+  assertEquals(webAppAudience(mixed), "student"); // a mixed keyboard still raises the student alarm
+  assertEquals(webAppAudience({ inline_keyboard: [[{ text: "x", web_app: { url: "not a url" } }]] }), "student");
+  assertEquals(webAppAudience({ inline_keyboard: [[{ text: "x", web_app: { url: `${DEFAULT_MINIAPP_BASE}/tg/teachers` } }]] }), "student");
+  assertEquals(webAppAudience(magicPayload.reply_markup), "student");
+  assertEquals(webAppAudience(undefined), "student");
+});
+
+Deno.test("a rejected TEACHER web_app button → teacher_miniapp_button_rejected, never the student alarm's row", async () => {
+  const admin = fakeAdmin();
+  const s = sender([{ ok: false, status: 400, error: "Bad Request: BUTTON_TYPE_INVALID" }, { ok: true, status: 200, error: null }]);
+  const { retried } = await sendWithWatchFallback(s.send, teacherPayload, () => Promise.resolve(magicPayload), { fn: "telegram-bot-webhook", admin });
+  assertEquals(retried, true);
+  assertEquals(admin.inserts.map((i) => i.row.action), [BUTTON_FAULT_ACTIONS.teacher.rejected]);
+  assertEquals(BUTTON_FAULT_ACTIONS.teacher.rejected, "teacher_miniapp_button_rejected");
+  // …and a STUDENT rejection in the same function the same day still writes its own row (separate dedupe space).
+  const s2 = sender([{ ok: false, status: 400, error: "Bad Request: BUTTON_TYPE_INVALID" }, { ok: true, status: 200, error: null }]);
+  await sendWithWatchFallback(s2.send, webAppPayload, () => Promise.resolve(magicPayload), { fn: "telegram-bot-webhook", admin });
+  assertEquals(admin.inserts.map((i) => i.row.action), ["teacher_miniapp_button_rejected", "miniapp_button_rejected"]);
+});
+
+Deno.test("a bad base on a TEACHER path → teacher_miniapp_button_fallback; a student path keeps miniapp_button_fallback", async () => {
+  const t = fakeAdmin();
+  const r = await watchButton({ ...priv(ON), miniPath: "/tg/teacher/grade", legacyPath: "/tg/teacher/grade", base: "", admin: t, fn: "bbt" });
+  assertEquals([r.button, r.reason], [null, "bad_base"]);
+  assertEquals(t.inserts.map((i) => i.row.action), ["teacher_miniapp_button_fallback"]);
+  const s = fakeAdmin();
+  await watchButton({ ...priv(ON), base: "", admin: s, fn: "bbs" });
+  assertEquals(s.inserts.map((i) => i.row.action), ["miniapp_button_fallback"]);
 });
