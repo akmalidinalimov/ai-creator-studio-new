@@ -117,8 +117,10 @@ Deno.test("a bot sender or a missing group never reaches the engine", async () =
 // The sweep runs up to 26 h (regular) or days (PR-8's window pre-step) after the post, so the post no longer proves
 // membership: only a positive 'member' answer registers; everything else is declined, fail closed, DB-visible.
 const answer = (outcome: SendResultOutcome, result: Row | null): SendFn => () => Promise.resolve({ outcome, result });
+// The REAL classification of this description since 2026-10-01 (per-user → recipient, terminal). The registrar reads
+// only `ok`, so membership stays fail-closed whatever the class: a failed probe is never a member.
 const failedProbe: SendResultOutcome = {
-  ok: false, status: 400, error: "Bad Request: user not found", terminal: false, recipient: false, content: false, klass: "transient", retryAfterSec: null,
+  ok: false, status: 400, error: "Bad Request: user not found", terminal: true, recipient: true, content: false, klass: "recipient", retryAfterSec: null,
 };
 const threw: SendFn = () => Promise.reject(new Error("network down"));
 

@@ -15,20 +15,26 @@
 //
 // OUTCOMES (classifyMenuOutcome) and what is recorded (recordMenuOutcome) — every non-ok one is DB-visible:
 //   ok           accepted
-//   unreachable  a recipient error (never pressed Start, blocked, deleted): the reach metric. Counted by the
-//                sweep, never alarmed — expected and high-volume (member forgiveness).
-//   rejected     a web_app menu button refused with a 400 that is not about the recipient: Telegram will not
-//                take our Mini App URL or label → for a STUDENT menu (<base>/dashboard) admin_actions
+//   unreachable  a recipient error (never pressed Start, blocked, deleted, "user not found"): the reach metric.
+//                Counted by the sweep, never alarmed — expected and high-volume (member forgiveness).
+//   rejected     a web_app menu button refused with a 400 that POSITIVELY names a button / web app
+//                (telegram-classify.ts isButtonRejection): Telegram will not take our Mini App URL or label. It
+//                used to be "any non-recipient 400", so an unlisted per-user error ("Bad Request: user not
+//                found", 2026-10-01) read as a refusal of OUR button and froze the sweep on one member. → for a
+//                STUDENT menu (<base>/dashboard) admin_actions
 //                'miniapp_button_rejected' (once a day), the row watch_button_watchdog already alarms on; for a
 //                STAFF menu (<base>/tg/teacher) 'teacher_miniapp_button_rejected' instead — derived from the
 //                button's own URL (_shared/miniapp-button.ts BUTTON_FAULT_ACTIONS / isTeacherAppPath), because
 //                watch_button_health() reads every 'miniapp_button_rejected' row as STUDENT watch-button evidence
 //                and advises the student kill-switch. Still DB-visible; no watchdog reads the teacher row yet.
-//   failed       anything else (429, 5xx, transport) → 'menu_button_sync_failed' (once a day per where/method/
-//                status). Visible, not alarmed; the next interaction or the next sweep pass retries it.
+//   global       the BOT cannot call Telegram (401 Unauthorized / 404 Not Found: token revoked or malformed) →
+//                'menu_button_sync_failed' like failed, but the sweep stops on it instead of walking everyone.
+//   failed       anything else (429, 5xx, transport, an unlisted 400) → 'menu_button_sync_failed' (once a day per
+//                where/method/status). Visible, not alarmed; the next interaction or the next sweep pass retries it.
 import { sendTelegram, type SendOutcome } from "../_shared/telegram-send.ts";
 import { logHealthOnce } from "../_shared/edge.ts";
 import { BUTTON_FAULT_ACTIONS, type ButtonAudience, isTeacherAppPath } from "../_shared/miniapp-button.ts";
+import { isButtonRejection, isGlobalFailure } from "../_shared/telegram-classify.ts";
 import { chatCommandCall, COMMANDS_VERSION, type CommandRole, type Locale, type TgCall } from "./bot-commands.ts";
 
 export type { Locale, TgCall } from "./bot-commands.ts";
@@ -91,12 +97,13 @@ export function menuButtonAudience(mb: MenuButton): ButtonAudience {
   }
 }
 
-export type MenuOutcome = "ok" | "unreachable" | "rejected" | "failed";
+export type MenuOutcome = "ok" | "unreachable" | "rejected" | "global" | "failed";
 
 export function classifyMenuOutcome(o: SendOutcome, webApp: boolean): MenuOutcome {
   if (o.ok) return "ok";
   if (o.recipient) return "unreachable";
-  if (webApp && o.status === 400) return "rejected";
+  if (isGlobalFailure(o.status, o.error)) return "global";
+  if (webApp && isButtonRejection(o)) return "rejected";
   return "failed";
 }
 

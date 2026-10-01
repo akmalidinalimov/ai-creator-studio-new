@@ -20,6 +20,7 @@
 import { BUTTON_FAULT_ACTIONS, hasWebAppButton, sendWithWatchFallback } from "../_shared/miniapp-button.ts";
 import { isUuid } from "../_shared/miniapp-links.ts";
 import { sendTelegram, type SendOutcome } from "../_shared/telegram-send.ts";
+import { isButtonRejection } from "../_shared/telegram-classify.ts";
 import { logHealthOnce } from "../_shared/edge.ts";
 import {
   GRADE_APP_LABEL,
@@ -191,13 +192,12 @@ export function isNotModified(error: string | null | undefined): boolean {
 
 /**
  * Telegram refused a BUTTON (BUTTON_TYPE_INVALID, BUTTON_URL_INVALID, "…Web App URL … is invalid") — the only
- * 400 a resend without the web_app buttons can fix. Narrower than the shared isWatchContentRejection on purpose:
- * an edit also fails with "message to edit not found" / "message can't be edited", which must neither be retried
- * nor raise the teacher_miniapp_button_rejected signal.
+ * 400 a resend without the web_app buttons can fix. An edit also fails with "message to edit not found" /
+ * "message can't be edited", which must neither be retried nor raise the teacher_miniapp_button_rejected signal.
+ * This positive match was born here; since 2026-10-01 it is the ONE shared rule (telegram-classify.ts), also used by
+ * isWatchContentRejection and the ☰ menu, and re-exported so this module's callers and tests are unchanged.
  */
-export function isButtonRejection(r: { ok: boolean; status: number; error: string | null }): boolean {
-  return !r.ok && r.status === 400 && /button|web ?app/i.test(r.error || "");
-}
+export { isButtonRejection };
 
 type CardDeps = { send?: (method: string, p: Record<string, unknown>, record: boolean) => Promise<SendOutcome> };
 

@@ -258,6 +258,28 @@ Deno.test("hasWebAppButton / isWatchContentRejection", () => {
   assertEquals(isWatchContentRejection({ ok: true, status: 200, error: null }), false);
 });
 
+// Incident 2026-10-01: the rule was "any 400 that is not a recipient error", so an unlisted per-user 400 and every
+// content 400 on a message that happened to carry a web_app button raised the STUDENT watch-button alarm (with
+// student kill-switch advice) and resent a payload that fails the same way. Only a positive button match counts now.
+Deno.test("isWatchContentRejection: a per-user or content 400 is NOT a button refusal (no alarm, no resend)", async () => {
+  for (const error of [
+    "Bad Request: user not found",
+    "Bad Request: USER_ID_INVALID",
+    "Bad Request: can't parse entities: Unsupported start tag",
+    "Bad Request: message is too long",
+    "Bad Request: text must be encoded in UTF-8",
+    "Bad Request: failed to get HTTP URL content",
+    "Bad Request: some description nobody has listed yet",
+  ]) {
+    assertEquals(isWatchContentRejection({ ok: false, status: 400, error }), false, error);
+    const admin = fakeAdmin();
+    const s = sender([{ ok: false, status: 400, error }]);
+    const { retried, result } = await sendWithWatchFallback(s.send, webAppPayload, () => Promise.resolve(magicPayload), { fn: "t-neg", admin });
+    assertEquals([retried, result.ok, s.sent.length], [false, false, 1], error);
+    assertEquals(admin.inserts.filter((i) => String(i.row.action).endsWith("button_rejected")).length, 0, error);
+  }
+});
+
 // ─────────────────────────── whose button (teacher faults stay out of the student alarm) ───────────────────────────
 // watch_button_health() sums every 'miniapp_button_fallback' / 'miniapp_button_rejected' row, for ANY fn, into the
 // STUDENT watch-button alarm. A button into the teacher Mini App (/tg/teacher…) must file its faults elsewhere —

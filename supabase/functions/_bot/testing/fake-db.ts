@@ -4,6 +4,8 @@
 // eq / in / is / not(col,"is",null) / gt / gte / order / limit / maybeSingle — plus "col->>key" json paths.
 // A table listed in `failOn` answers every read AND write with an error, to drive the failure paths.
 
+import { isContentError, isRecipientError, isTerminal } from "../../_shared/telegram-classify.ts";
+
 // deno-lint-ignore no-explicit-any
 export type Row = Record<string, any>;
 
@@ -146,22 +148,25 @@ class Query {
   }
 }
 
-/** A recording Telegram call. `answer(method, payload)` decides each outcome (default: accepted). */
+/**
+ * A recording Telegram call. `answer(method, payload)` decides each outcome (default: accepted). The outcome is
+ * classified by the REAL shared classifier, exactly as sendTelegram does: this fake used to carry its own copy of
+ * the recipient regex, so a test could pass with a description production classifies differently (the class of
+ * the 2026-10-01 "user not found" sweep freeze).
+ */
 export function fakeTelegram(answer?: (method: string, payload: Row) => { ok: boolean; status?: number; error?: string | null }) {
   const calls: { method: string; payload: Row }[] = [];
   const call = (method: string, payload: Record<string, unknown>) => {
     calls.push({ method, payload: structuredClone(payload) as Row });
     const a = answer?.(method, payload as Row) ?? { ok: true };
     const error = a.ok ? null : (a.error ?? `http_${a.status ?? 400}`);
-    const e = (error ?? "").toLowerCase();
-    const recipient = /bot was blocked|chat not found|user is deactivated|forbidden/.test(e);
     return Promise.resolve({
       ok: a.ok,
       status: a.ok ? 200 : (a.status ?? 400),
       error,
-      terminal: recipient,
-      recipient,
-      content: false,
+      terminal: isTerminal(error),
+      recipient: isRecipientError(error),
+      content: isContentError(error),
     });
   };
   return { calls, call };
