@@ -9,6 +9,7 @@
 // `ignores`; a couple of legitimate raw senders (the webhook bot core + its multipart CSV export, and
 // detect-and-nudge) carry an inline `// eslint-disable-next-line no-restricted-syntax` with a reason.
 // Rule 3 (hand-rolled x-internal-secret receiver check) is BLOCKING too, with its legacy sites listed.
+// Rule 5 (a PostgREST embed of user_roles, which has no FK path and always fails) is BLOCKING everywhere.
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
@@ -30,6 +31,21 @@ const USERNAME_SELECTORS = [
     selector:
       "CallExpression[callee.property.name='ilike'][arguments.0.value='telegram_username']:not(:has(CallExpression[callee.name='likeEscape']))",
     message: USERNAME_MSG,
+  },
+];
+
+// Rule 5 — no PostgREST embed of user_roles. profiles and user_roles share no foreign key (both reference
+// auth.users), so `profiles.select("telegram_id, user_roles!inner(role)")` is HTTP 400 PGRST200 on EVERY call and
+// the caller sees no rows. canary (since 2026-07-05), reputation-check (since 2026-07-21) and the first draft of
+// frontend-deploy-watchdog DMed their alerts to nobody this way. Only `.select()` arguments are matched, so SQL text
+// such as "insert into public.user_roles (user_id, role)" in a test fixture is not flagged.
+const EMBED_MSG =
+  "PostgREST embed of user_roles — profiles and user_roles have no foreign key, so this select fails with PGRST200 every time and returns no rows. Use adminTelegramIds() from _shared/admin-recipients.ts, or two queries: user_roles → user_id list, then profiles.in('id', ids).";
+const EMBED_SELECTORS = [
+  { selector: "CallExpression[callee.property.name='select'] > Literal[value=/user_roles\\s*[!(]/]", message: EMBED_MSG },
+  {
+    selector: "CallExpression[callee.property.name='select'] > TemplateLiteral > TemplateElement[value.raw=/user_roles\\s*[!(]/]",
+    message: EMBED_MSG,
   },
 ];
 
@@ -66,9 +82,11 @@ export default tseslint.config(
       "supabase/functions/hw-audio-url/index.ts",          // getFile / file-byte media retrieval — not a send
     ],
     languageOptions: { parser: tseslint.parser },
-    // Rule 3 rides in the same list: flat config REPLACES (doesn't merge) a rule's options when two
-    // blocks configure it for one file, so the two rule families share one no-restricted-syntax entry.
-    rules: { "no-restricted-syntax": ["error", ...TELEGRAM_SELECTORS, ...SECRET_SELECTORS, ...USERNAME_SELECTORS] },
+    // Rules 3, 4 and 5 ride in the same list: flat config REPLACES (doesn't merge) a rule's options when two
+    // blocks configure it for one file, so the rule families share one no-restricted-syntax entry.
+    rules: {
+      "no-restricted-syntax": ["error", ...TELEGRAM_SELECTORS, ...SECRET_SELECTORS, ...USERNAME_SELECTORS, ...EMBED_SELECTORS],
+    },
   },
 
   // Rule 3 — no hand-rolled x-internal-secret RECEIVER check in edge functions. BLOCKING ("error").
@@ -91,7 +109,7 @@ export default tseslint.config(
       "supabase/functions/notify-completion/index.ts",           // no caller since #188 (deletion candidate)
     ],
     languageOptions: { parser: tseslint.parser },
-    rules: { "no-restricted-syntax": ["error", ...TELEGRAM_SELECTORS, ...USERNAME_SELECTORS] },
+    rules: { "no-restricted-syntax": ["error", ...TELEGRAM_SELECTORS, ...USERNAME_SELECTORS, ...EMBED_SELECTORS] },
   },
 
   // Rule 2 — no UNWRAPPED supabase write in src/. `mutate()` WRAPS the write (`mutate(() => x.update())`)
@@ -117,6 +135,7 @@ export default tseslint.config(
             "CallExpression[callee.property.name='upsert']:not(CallExpression[callee.name=/^(mutate|mutateMany|saveWithToast)$/] CallExpression[callee.property.name='upsert'])",
           message: WRITE_MSG,
         },
+        ...EMBED_SELECTORS, // Rule 5 holds in the web app too
       ],
     },
   },
