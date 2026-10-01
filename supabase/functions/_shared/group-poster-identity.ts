@@ -255,12 +255,19 @@ export function groupPosterDeps(admin: Db): GroupPosterDeps<Record<string, unkno
         const needle = `%/c/${stripped}/%`;
         const orFilter = `homework_topic_url.ilike.${needle},telegram_group_url.ilike.${needle}`;
         const baseCols = "id, course_id, homework_topic_id";
-        // Only the daily kind asks for the PR-1 column, so the homework path never depends on it. No memo:
+        // Only the daily kind asks for the PR-1 columns, so the homework path never depends on them. No memo:
         // nothing calls the daily kind before PR-1 is ledgered (PR-4 depends on it), so the retry is a
         // safety net, not a hot path.
         const wantDaily = kinds.includes("daily_task");
-        let res = await admin.from("groups").select(wantDaily ? `${baseCols}, daily_task_topic_id` : baseCols).or(orFilter);
-        if (res.error && wantDaily && isMissingColumn(res.error, "daily_task_topic_id")) {
+        // 20261001070000: the daily kind also finds a group by its OWN daily-topic chat (groups.daily_task_chat_id,
+        // the full -100… id). Before, a daily topic resolved only through homework_topic_url / telegram_group_url
+        // in the same chat, so clearing or editing a 6.0 group's homework URL silently made every unknown poster
+        // in its daily topic 'not_registered_topic' (no link, no registration, no row). chatId is a safe integer
+        // here (digits checked above), so the or-filter cannot be broken out of.
+        const dailyFilter = wantDaily && Number.isSafeInteger(Number(chatId))
+          ? `${orFilter},daily_task_chat_id.eq.${Number(chatId)}` : orFilter;
+        let res = await admin.from("groups").select(wantDaily ? `${baseCols}, daily_task_topic_id` : baseCols).or(dailyFilter);
+        if (res.error && wantDaily && (isMissingColumn(res.error, "daily_task_topic_id") || isMissingColumn(res.error, "daily_task_chat_id"))) {
           res = await admin.from("groups").select(baseCols).or(orFilter);
         }
         if (res.error) {

@@ -3,9 +3,10 @@
 // resolveGroupPoster (_shared/group-poster-identity.ts) calls it ONLY when no profile carries the sender's telegram_id
 // or username, so the getChatMember probe below runs only for users WITHOUT a profile (spec §10.2).
 //
-// Same rules as the bot, deliberately, with ONE difference:
-//   * the sender must be a member of the chat NOW, and an unconfirmed answer counts as "not a member" (fail closed,
-//     like _shared/telegram-membership.ts). The bot registers at post time, when the post itself proves membership;
+// Same rules as the bot, deliberately (since 20261001070000 the membership rule too -- both call
+// _shared/telegram-membership.ts membershipVerdict):
+//   * the sender must be a member of the chat NOW, and an unconfirmed answer counts as "not a member" (fail closed).
+//     The bot registers at post time, when the post nearly proves membership;
 //     the sweep runs up to 26 h later (regular) or days later (PR-8's window pre-step over a paused period, when the
 //     bot registered nobody), and members do leave or get removed. So 'left', 'kicked', 'restricted' with
 //     is_member=false -> 'challenge_task_autoreg_skipped' {reason: not_member}; a failed probe or an unknown status
@@ -21,6 +22,7 @@ import { logHealth, logHealthOnce } from "../_shared/edge.ts";
 import { POSTER_PROFILE_COLS } from "../_shared/group-poster-identity.ts";
 import { redactSecrets } from "../_shared/redact.ts";
 import type { SendResultOutcome } from "../_shared/telegram-send.ts";
+import { membershipVerdict, type MembershipVerdict } from "../_shared/telegram-membership.ts";
 
 // deno-lint-ignore no-explicit-any
 type Db = any;
@@ -61,19 +63,10 @@ async function recordFailed(admin: Db, reason: AutoRegisterFailReason, inp: Regi
   }, { source: "daily_task_post" });
 }
 
-/** What a getChatMember answer means for the sweep. Anything not positively a member is NOT a member (fail closed). */
-export type MembershipVerdict = "member" | "chat_admin" | "not_member" | "unknown";
-
-export function membershipVerdict(ok: boolean, result: TgResult): MembershipVerdict {
-  if (!ok) return "unknown";
-  const st = String(result?.status ?? "");
-  if (st === "administrator" || st === "creator") return "chat_admin";
-  if (st === "member") return "member";
-  // ChatMemberRestricted carries is_member: false when the user has left the chat while restricted
-  if (st === "restricted") return result?.is_member === false ? "not_member" : "member";
-  if (st === "left" || st === "kicked") return "not_member";
-  return "unknown";
-}
+// What a getChatMember answer means for the sweep. Anything not positively a member is NOT a member (fail closed).
+// Since 20261001070000 this is the shared rule (_shared/telegram-membership.ts), so the bot's on-the-spot registrar
+// applies exactly the same one; re-exported here for this module's callers and tests.
+export { membershipVerdict, type MembershipVerdict };
 
 /** The profile (POSTER_PROFILE_COLS) now carrying this telegram_id, or null (declined / refused / failed — recorded). */
 export async function registerDailyTaskPoster(d: RegistrarDeps, inp: RegisterInput): Promise<Record<string, unknown> | null> {

@@ -10,6 +10,27 @@
 
 export type MembershipResult = boolean | null;
 
+/**
+ * What a getChatMember answer means for REGISTERING a group poster: the one rule both daily-topic registrars use
+ * (the bot's autoRegisterDailyTaskPoster and challenge-tasks-worker/registrar.ts). Fail closed: anything that is not
+ * positively a member is not a member. 'left' / 'kicked' (and 'restricted' with is_member false) are not members; a
+ * failed probe (`ok` false) or an unknown status is 'unknown', and the caller declines it (the identity sweep retries
+ * later). The chat's admins / creator are never registered as students (U4).
+ */
+export type MembershipVerdict = "member" | "chat_admin" | "not_member" | "unknown";
+
+// deno-lint-ignore no-explicit-any
+export function membershipVerdict(ok: boolean, result: any): MembershipVerdict {
+  if (!ok) return "unknown";
+  const st = String(result?.status ?? "");
+  if (st === "administrator" || st === "creator") return "chat_admin";
+  if (st === "member") return "member";
+  // ChatMemberRestricted carries is_member: false when the user has left the chat while restricted
+  if (st === "restricted") return result?.is_member === false ? "not_member" : "member";
+  if (st === "left" || st === "kicked") return "not_member";
+  return "unknown";
+}
+
 export async function isChatMember(
   botToken: string,
   chatId: number | string,

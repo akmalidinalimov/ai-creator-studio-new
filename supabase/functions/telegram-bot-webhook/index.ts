@@ -51,6 +51,7 @@ import { normalizeVoiceState, restoreVoiceRequest, type VoiceRequest } from "../
 import { createDailyTasks } from "./daily-tasks.ts";
 import { DAILY_COPY } from "../_shared/daily-task-render.ts";
 import { createWeekApproval } from "./week-approval.ts";
+import { membershipVerdict, type MembershipVerdict } from "../_shared/telegram-membership.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6241,18 +6242,30 @@ async function autoRegisterDailyTaskPoster(
 ): Promise<{ profile: any; created: boolean } | null> {
   const from = msg?.from;
   if (!from?.id || from.is_bot || !grp?.id || !grp?.course_id) return null;
+  // 20261001070000: the SAME membership rule as the worker's registrar (challenge-tasks-worker/registrar.ts), one
+  // shared verdict: only a positive member answer registers. 'left' / 'kicked' / a failed probe are declined and
+  // DB-visible; the work is not lost (the reconciler re-derives it, the identity sweep retries the sender). The chat's
+  // admins never register (U4).
+  let verdict: MembershipVerdict = "unknown";
+  let memberStatus: string | null = null;
+  let probeError: string | null = null;
   try {
     const cmResp = await tgApi("getChatMember", { chat_id: msg.chat.id, user_id: from.id });
     const cm: any = await cmResp.json().catch(() => null);
-    const st = cm?.result?.status;
-    if (st === "administrator" || st === "creator") {
-      await logHealthOnce(admin, "challenge_task_autoreg_skipped", `chat_admin:${msg.chat.id}:${from.id}`, {
-        reason: "chat_admin", chat_id: msg.chat.id, thread_id: msg.message_thread_id ?? null, message_id: msg.message_id,
-        telegram_id: from.id, group_id: grp.id,
-      }, { source: "telegram-bot-webhook" });
-      return null;
-    }
-  } catch (_e) { /* best-effort — proceed, like the homework registrar */ }
+    verdict = membershipVerdict(cm?.ok === true, cm?.result);
+    memberStatus = cm?.ok === true ? (String(cm?.result?.status ?? "") || null) : null;
+    if (cm?.ok !== true) probeError = String(cm?.description ?? `http_${cmResp.status}`).slice(0, 120);
+  } catch (e) {
+    probeError = redactSecrets(e).slice(0, 120) || "probe_threw";
+  }
+  if (verdict !== "member") {
+    const reason = verdict === "chat_admin" ? "chat_admin" : verdict === "not_member" ? "not_member" : "membership_unknown";
+    await logHealthOnce(admin, "challenge_task_autoreg_skipped", `${reason}:${msg.chat.id}:${from.id}`, {
+      reason, chat_id: msg.chat.id, thread_id: msg.message_thread_id ?? null, message_id: msg.message_id,
+      telegram_id: from.id, group_id: grp.id, member_status: memberStatus, probe_error: probeError,
+    }, { source: "telegram-bot-webhook" });
+    return null;
+  }
   try {
     const reg = await registerProvisionalViaEngine(admin, from, grp, "daily_task_post");
     if (!reg) return null; // the engine path recorded its own auto_register_failed row
