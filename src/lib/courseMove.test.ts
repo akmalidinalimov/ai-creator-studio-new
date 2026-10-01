@@ -12,6 +12,7 @@ import {
   loadGroupMovePlan,
   type MoveRow,
   sameCourseMoveNote,
+  transferDecision,
   waitingText,
 } from "./courseMove";
 
@@ -101,6 +102,56 @@ describe("classifyGroupMoves (admin bulk move / group CSV)", () => {
   });
   it("a target group with no course cannot be judged cross-course (same as the server)", () => {
     expect(classifyGroupMoves([row({ waiting: 5 })], { groupId: "gx", courseId: null, courseTitle: null }).cross).toEqual([]);
+  });
+});
+
+describe("transferDecision (group page → «Talaba qo'shish»)", () => {
+  const to6 = { groupId: "g6", courseId: C6, courseTitle: "AI CREATORS CHALLENGE 6.0" };
+
+  it("a same-course or groupless student is placed with no confirm", () => {
+    const plan = classifyGroupMoves([row({ fromGroupId: "g5b", fromCourseId: C6 })], to6);
+    expect(transferDecision(plan)).toEqual({ kind: "go" });
+  });
+
+  it("waiting homework in the old course blocks the transfer, even for an admin", () => {
+    const plan = classifyGroupMoves([row({ waiting: 2 })], to6);
+    const d = transferDecision(plan, { unenroll: true });
+    expect(d.kind).toBe("blocked");
+    if (d.kind === "blocked") expect(d.text).toContain("2 ta vazifa hali baholanmagan");
+  });
+
+  it("0 waiting asks for a confirm and names the old course's enrollment to remove", () => {
+    const plan = classifyGroupMoves([row({ waiting: 0 })], to6);
+    const d = transferDecision(plan, { unenroll: true });
+    expect(d.kind).toBe("confirm");
+    if (d.kind !== "confirm") return;
+    expect(d.fromCourseIds).toEqual([C5]);
+    // Every consequence the admin must see before they agree.
+    expect(d.text).toContain("AI CREATORS 5.0");
+    expect(d.text).toContain("AI CREATORS CHALLENGE 6.0");
+    expect(d.text).toContain("0 dan boshlaydi");          // the new course's rating starts at zero
+    expect(d.text).toContain("topshira olmaydi");          // the old course's remaining homework
+    expect(d.text).toContain("darslari yopiladi");         // the old course's access closes
+    expect(d.text).toContain("2-GURUH VIP 5.0");           // which group they come from
+  });
+
+  it("without unenroll the confirm never promises to close the old course", () => {
+    const plan = classifyGroupMoves([row({ waiting: 0 })], to6);
+    const d = transferDecision(plan);
+    expect(d.kind).toBe("confirm");
+    if (d.kind === "confirm") expect(d.text).not.toContain("darslari yopiladi");
+  });
+
+  it("the target course is never listed as an enrollment to remove", () => {
+    const plan = classifyGroupMoves([
+      row({ userId: "a", waiting: 0 }),
+      row({ userId: "b", fromGroupId: "g4", fromCourseId: "c4", fromCourseTitle: "AI CREATORS 4.0", waiting: 0 }),
+    ], to6);
+    const d = transferDecision(plan, { unenroll: true });
+    if (d.kind !== "confirm") throw new Error("expected confirm");
+    expect(d.fromCourseIds.sort()).toEqual(["c4", C5].sort());
+    expect(d.fromCourseIds).not.toContain(C6);
+    expect(d.text).toContain("2 talaba");
   });
 });
 

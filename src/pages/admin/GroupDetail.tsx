@@ -23,7 +23,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ChevronLeft, Pencil, Plus, Upload as UploadIcon, X, UserMinus } from "lucide-react";
 import { toast } from "sonner";
 import { GroupTopicsSection } from "@/components/admin/GroupTopicsSection";
-import { CLEAR_GROUP_WARNING, isEngineFailure } from "@/lib/courseMove";
+import { CLEAR_GROUP_WARNING, isEngineFailure, loadGroupMovePlan, transferDecision } from "@/lib/courseMove";
 
 type Overview = {
   group_id: string;
@@ -319,12 +319,36 @@ export default function GroupDetail() {
       // Try to find existing profile so we can pass a name (the function requires name OR contacts).
       let displayName = "";
       let displayLast = "";
+      let existingId: string | null = null;
       if (tgId) {
-        const { data } = await supabase.from("profiles").select("name,last_name").eq("telegram_id", tgId).maybeSingle();
-        if (data) { displayName = (data as any).name || ""; displayLast = (data as any).last_name || ""; }
+        const { data } = await supabase.from("profiles").select("id,name,last_name").eq("telegram_id", tgId).maybeSingle();
+        if (data) { existingId = (data as any).id || null; displayName = (data as any).name || ""; displayLast = (data as any).last_name || ""; }
       } else if (tgUser) {
-        const { data } = await supabase.from("profiles").select("name,last_name").eq("telegram_username", tgUser as any).maybeSingle();
-        if (data) { displayName = (data as any).name || ""; displayLast = (data as any).last_name || ""; }
+        const { data } = await supabase.from("profiles").select("id,name,last_name").eq("telegram_username", tgUser as any).maybeSingle();
+        if (data) { existingId = (data as any).id || null; displayName = (data as any).name || ""; displayLast = (data as any).last_name || ""; }
+      }
+
+      // A student already in ANOTHER course's group: admin-create-students refuses the placement unless an
+      // admin asks for it (allow_cross_course_move), and the database refuses it while the old course still
+      // has homework waiting for a grade. Decide here so the admin sees the consequences before anything moves
+      // instead of a flat "cross_course_refused". A check that cannot run moves nobody.
+      let allowCrossCourse = false;
+      let removeCourseIds: string[] = [];
+      if (existingId) {
+        let plan: Awaited<ReturnType<typeof loadGroupMovePlan>>;
+        try {
+          plan = await loadGroupMovePlan(supabase, [existingId], id);
+        } catch (e: any) {
+          toast.error(`Kursni tekshirib bo'lmadi: ${e?.message || "xato"}. Hech kim ko'chirilmadi.`);
+          return;
+        }
+        const d = transferDecision(plan, { unenroll: true });
+        if (d.kind === "blocked") { toast.error(d.text, { duration: 12000 }); return; }
+        if (d.kind === "confirm") {
+          if (!window.confirm(d.text)) return;
+          allowCrossCourse = true;
+          removeCourseIds = d.fromCourseIds;
+        }
       }
 
       const r = await fetch(`${FN_BASE}/admin-create-students`, {
@@ -342,6 +366,7 @@ export default function GroupDetail() {
           }],
           target_group_id: id,
           target_course_id: overview?.course_id ?? undefined,
+          ...(allowCrossCourse ? { allow_cross_course_move: true } : {}),
         }),
       });
       const res = await r.json();
@@ -352,7 +377,30 @@ export default function GroupDetail() {
       // Any other refusal (cross_course_refused: the student is in another course; telegram_id_conflict; ...)
       // is an error with the engine's own message — an unknown status must never read as "added".
       if (isEngineFailure(row.status)) { toast.error(row.error || row.status || "Xato", { duration: 12000 }); return; }
-      toast.success("Talaba guruhga qo'shildi");
+
+      // The transfer's second half: close the old course. admin-create-students already wrote the
+      // cross_course_move_override audit row for the MOVE itself; this records what the old access was.
+      // A failure here never un-does the move: the student is in the new group either way, so it is reported
+      // and the admin can finish it in Talabalar → Boshqarish.
+      if (allowCrossCourse && removeCourseIds.length && existingId) {
+        const del = await mutate(() => supabase.from("enrollments").delete().eq("user_id", existingId as string).in("course_id", removeCourseIds));
+        if (!del.ok && del.reason !== "impersonation_readonly") {
+          toast.warning(`Ko'chirildi, lekin eski kurs darslari yopilmadi: ${del.message ?? "saqlanmadi"}. Talabalar → Boshqarish'da kursni olib tashlang.`, { duration: 12000 });
+        }
+        fetch(`${FN_BASE}/log-admin-action`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+          body: JSON.stringify({
+            action: "cross_course_move_override",
+            target_user_id: existingId,
+            details: {
+              source: "group_detail_add_student", to_group_id: id, to_course_id: overview?.course_id ?? null,
+              removed_course_ids: removeCourseIds, unenrolled: del.ok,
+            },
+          }),
+        }).catch(() => {});
+      }
+      toast.success(allowCrossCourse ? "Talaba yangi kursga ko'chirildi" : "Talaba guruhga qo'shildi");
       setAddQuery("");
       setAddAccountType("");
       setOpenAdd(false);

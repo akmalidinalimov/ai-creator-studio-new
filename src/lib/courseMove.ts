@@ -243,6 +243,62 @@ export function crossMoveConfirmText(plan: MovePlan): string {
     `Qoida: yangi kurs faqat yangi o'quvchilar uchun. Baribir o'tkazasizmi?`;
 }
 
+/**
+ * A deliberate single-student TRANSFER into another course's group (the group page's "Talaba qo'shish").
+ * crossMoveConfirmText above is the BULK text and leaves the old course's access alone; a transfer also
+ * closes the old course, which is what moving a student to a new course means in practice.
+ *
+ * Every line is a real consequence, verified in the code it describes:
+ *  - the old course's lessons close (the enrollment row is deleted; an admin can re-add it in
+ *    Talabalar → Boshqarish, so this step is reversible);
+ *  - they can no longer hand in the REST of the old course's homework (student_assignable_homework offers
+ *    only the current group's course), and the new group's teachers see their old grades;
+ *  - the new course's rating starts at 0: user_course_join_floor (migration 20260929192010) drops XP earned
+ *    before this course from this course's board and from the weekly prize snapshot. Their account XP
+ *    history is NOT touched, and the floor still holds after the old enrollment is removed, because it also
+ *    recognises a mover by their earlier lesson/homework XP of another course.
+ */
+export function transferConfirmText(plan: MovePlan, opts?: { unenroll?: boolean }): string {
+  const from = [...new Set(plan.cross.map((r) => r.fromCourseTitle || "boshqa kurs"))].join(", ");
+  const to = plan.targetCourseTitle || "tanlangan kurs";
+  const who = plan.cross.length > 1 ? `${plan.cross.length} talaba` : "Talaba";
+  const fromGroup = plan.cross.length === 1 ? plan.cross[0]?.fromGroupName : null;
+  const lines = [
+    `${who} ${from} kursidan ${to} kursiga ko'chiriladi${fromGroup ? ` (eski guruh: ${fromGroup})` : ""}.`,
+    "",
+    "• Eski kursda baholanmagan vazifa yo'q.",
+    `• ${to} reytingida 0 dan boshlaydi: eski kursda yiqqan ball yangi kurs reytingiga va mukofot hisobiga qo'shilmaydi.`,
+    "• Eski kursning qolgan vazifalarini endi topshira olmaydi; baholangan ishlari tarixda qoladi.",
+  ];
+  if (opts?.unenroll) {
+    lines.push(`• Eski kurs (${from}) darslari yopiladi. Kerak bo'lsa, Talabalar → Boshqarish'da qaytarib belgilash mumkin.`);
+  }
+  lines.push("", "Ko'chirilsinmi?");
+  return lines.join("\n");
+}
+
+export type TransferDecision =
+  /** No course boundary is crossed: place the student exactly as before. */
+  | { kind: "go" }
+  /** Never movable, even by an admin: homework still waits for a grade in the old course. */
+  | { kind: "blocked"; text: string }
+  /** An admin may proceed after confirming; fromCourseIds are the enrollments a transfer removes. */
+  | { kind: "confirm"; text: string; fromCourseIds: string[] };
+
+/**
+ * Pure: what an admin screen must do before placing these students into the target group. The database
+ * guard (trg_profiles_aa_course_move_guard) stays the final word — it refuses a cross-course write whose
+ * old course still has waiting homework even when this says "confirm", because homework can arrive in
+ * between.
+ */
+export function transferDecision(plan: MovePlan, opts?: { unenroll?: boolean }): TransferDecision {
+  if (plan.blocked.length) return { kind: "blocked", text: blockedMoveText(plan) };
+  if (!plan.cross.length) return { kind: "go" };
+  const fromCourseIds = [...new Set(plan.cross.map((r) => r.fromCourseId))]
+    .filter((c): c is string => !!c && c !== plan.targetCourseId);
+  return { kind: "confirm", text: transferConfirmText(plan, opts), fromCourseIds };
+}
+
 /** The prefix of the database guard's refusal (profiles_course_move_guard, migration 20260930181010). */
 export const DB_MOVE_REFUSAL_PREFIX = "cross_course_refused:";
 
