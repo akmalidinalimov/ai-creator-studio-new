@@ -1,6 +1,7 @@
-// Pure, dependency-free pieces of cron-engagement: local time, the reminder-window decision, and the
-// keyset paginator. Split out so CI (`deno test supabase/functions/`) can pin the reminder rules — see
+// Pure pieces of cron-engagement (the only import is the pure route grammar): local time, the reminder-window
+// decision, the keyset paginator, the reminder keyboards and button targets. Split out so CI (`deno test supabase/functions/`) can pin the reminder rules — see
 // core.test.ts. Nothing here touches the network except through the query builder it is handed.
+import { continuePath, coursePath } from "../_shared/miniapp-links.ts";
 
 // ─────────────────────────── local time (formatters cached per timezone) ───────────────────────────
 // Same options as the old per-call constructions. `null` = the zone is not a valid IANA name (live data
@@ -161,4 +162,31 @@ export function streakKeyboard(watch: ReminderButton | null): { inline_keyboard:
 /** Re-engagement drip: [watch] when the template has a button label, else no keyboard. */
 export function dripKeyboard(watch: ReminderButton | null): { inline_keyboard: ReminderButton[][] } | undefined {
   return watch ? { inline_keyboard: [[watch]] } : undefined;
+}
+
+// ─────────────────────────── where a course-linked reminder button opens ───────────────────────────
+export type ReminderPaths = {
+  /** The Mini App path (web_app button). */
+  miniPath: string;
+  /** Today's magic-link target (used only when the student Mini App is off). */
+  legacyPath: string;
+  /** True when engagement_targeting.trial_to_course_page sent a trial student to the course page. */
+  trial: boolean;
+};
+
+/**
+ * The daily / streak / drip (not day 14) button target for a student's course.
+ *   default            → /continue/<c> (the next lesson, resolved when TAPPED); magic link /lesson/<c>/<next>
+ *                        (drip with no next lesson: /dashboard) — exactly the old targets.
+ *   trial + switch on  → /course/<c>, the trial card, on both paths: a provisional account cannot open a lesson,
+ *                        and a magic link to one was a dead end. (The Mini App's /continue already lands a trial
+ *                        student on the course page; this makes the magic-link fallback agree and skips the hop.)
+ */
+export function reminderPaths(courseId: string, nextId: string | null, trialToCoursePage: boolean): ReminderPaths {
+  if (trialToCoursePage) return { miniPath: coursePath(courseId), legacyPath: `/course/${courseId}`, trial: true };
+  return {
+    miniPath: continuePath(courseId),
+    legacyPath: nextId ? `/lesson/${courseId}/${nextId}` : "/dashboard",
+    trial: false,
+  };
 }
