@@ -7,6 +7,8 @@
 // profile is kept in `matched_user_id` for the admin screens and the audit.
 import {
   type CourseMoveFacts,
+  DB_REFUSAL_PREFIX,
+  dbRefusalFacts,
   moveSummary,
   refusalMessage,
   REFUSED_STATUS,
@@ -42,4 +44,26 @@ export function refusedMoveRow(
     row_index: row.row_index,
     identifier_used: row.identifier_used,
   };
+}
+
+/**
+ * The same refusal row for a move the DATABASE guard refused at the write (PR-3b, migration 20260930181010):
+ * homework arrived between the engine's check and its profiles UPDATE, or the student had no group (a
+ * placement, which the engine's check does not judge). null when `err` is any other error, so
+ * the caller keeps its generic "error" row. The facts come from the refusal's DETAIL; when they are unreadable
+ * the database's own Uzbek sentence is kept instead of a count we do not know.
+ */
+export function dbRefusedMoveRow(
+  err: { message?: string | null; details?: string | null } | null | undefined,
+  row: { email: string; row_index: number; identifier_used: string },
+  matchedUserId: string,
+): RefusedMoveRow | null {
+  const facts = dbRefusalFacts(err);
+  if (!facts) return null;
+  const out = refusedMoveRow(facts, "old_course_waiting", row, matchedUserId);
+  if (facts.oldCourseWaiting === null) {
+    const own = String(err?.message ?? "").trim().slice(DB_REFUSAL_PREFIX.length).trim();
+    if (own) out.error = own;
+  }
+  return out;
 }

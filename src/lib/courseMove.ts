@@ -2,6 +2,12 @@
 // supabase/functions/_shared/course-move-guard.ts and is enforced by staff-intake and admin-create-students;
 // this module only explains its answers (the /intake form) and applies the same rule to the admin screens
 // that change profiles.group_id without going through that engine (bulk "Guruhga ko'chirish", the group CSV).
+// Since PR-3b the DATABASE enforces it too, for every writer: the trigger trg_profiles_aa_course_move_guard
+// (migration 20260930181010) refuses a move between courses while the old course has waiting homework, and a
+// placement of a student with NO group (or a group without a course) into a group while they have waiting
+// homework of another course, so a screen's own check can race or be skipped without harm (classifyGroupMoves
+// does not judge placements at all: the database does). dbMoveRefusalText() turns that refusal into its
+// Uzbek sentence.
 //
 // Why a move between courses is refused: a teacher's access follows the student's CURRENT group, so moving a
 // 5.0 student into a Challenge 6.0 group hands their waiting 5.0 homework to the 6.0 teachers and takes it
@@ -235,6 +241,21 @@ export function crossMoveConfirmText(plan: MovePlan): string {
   return `${plan.cross.length} talaba boshqa kursdan (${from}) ${plan.targetCourseTitle || "tanlangan kurs"} guruhiga o'tkaziladi.\n\n` +
     `Eski kursda baholanmagan vazifa yo'q. Lekin ular eski kursning qolgan vazifalarini endi topshira olmaydi, eski baholarini esa yangi guruh ustozlari ko'radi.\n\n` +
     `Qoida: yangi kurs faqat yangi o'quvchilar uchun. Baribir o'tkazasizmi?`;
+}
+
+/** The prefix of the database guard's refusal (profiles_course_move_guard, migration 20260930181010). */
+export const DB_MOVE_REFUSAL_PREFIX = "cross_course_refused:";
+
+/**
+ * The Uzbek sentence of a database cross-course refusal, e.g. "Aziza Karimova boshqa kursga (…) o'tkazilmadi:
+ * eski kursda (…) 2 ta vazifa hali baholanmagan. …", or null when `message` is any other error (the caller then
+ * shows its own text). The refused statement moved nobody: the whole write rolled back.
+ */
+export function dbMoveRefusalText(message: string | null | undefined): string | null {
+  const m = String(message ?? "").trim();
+  if (!m.startsWith(DB_MOVE_REFUSAL_PREFIX)) return null;
+  const text = m.slice(DB_MOVE_REFUSAL_PREFIX.length).trim();
+  return text || "Talabani boshqa kursga o'tkazib bo'lmadi: eski kursda baholanmagan vazifa bor. Hech kim ko'chirilmadi.";
 }
 
 /** Warning before clearing a student's group (the group CSV/remove buttons). */
