@@ -202,6 +202,33 @@ const T = {
     nmNotMember: "Bu bot faqat AI Creators talabalari uchun.",
     nmWaitForSales: "Siz guruhdasiz ✅\n\nHisobingiz hali ochilmagan. Administrator sizni ro'yxatga qo'shgandan keyin bot avtomatik ishga tushadi va darslaringiz ochiladi.\n\nIltimos, kutib turing — hech narsa qilish shart emas.",
     nmWelcome: (name: string) => `👋 <b>${name}</b>, xush kelibsiz! Akkountingiz yaratildi (sinov hisobi) — vazifalaringiz qabul qilinadi, ball va statistika yuritiladi. Darsliklar to'liq to'lovdan so'ng ochiladi. Quyidagi menyudan foydalaning 👇`,
+    // The ladder welcome (onboarding "starter kit"): sent to a Challenge member whose modules are open
+    // by tier, so it must NOT repeat nmWelcome's "lessons unlock after full payment" — that is false for
+    // them. Every button and number here is real: see the module ladder (migration 20261001075500),
+    // platform_settings.challenge_tasks.points (5 / 8, late half, +10 per 5 on-time days) and
+    // platform_settings.challenge.points (chat 1 capped 5/day, group_media 5 capped 3/day). The two
+    // rules that do NOT pay yet are deliberately absent: answering a classmate (qa.mode = 'shadow') and
+    // the Instagram @mention bonus (needs the Meta app).
+    nmWelcomeChallenge: (name: string, open: number) =>
+      `🎉 <b>${name}</b>, <b>AI CREATORS CHALLENGE 6.0</b>ga xush kelibsiz!\n\n` +
+      `Hisobingiz ochildi. Quyida 4 ta muhim narsa — bir daqiqada o'qib chiqing.\n\n` +
+      `<b>1) Darslar 📚</b>\n` +
+      `Hozir ${open === 1 ? "<b>1-modul</b>" : `<b>1–${open}-modullar</b>`} ochiq — «📚 Davom etish» tugmasini bosing. Keyingi modullar har hafta navbati bilan ochiladi.\n\n` +
+      `<b>2) Ismingizni to'g'rilang ✏️</b>\n` +
+      `/profil → «✏️ Ismni o'zgartirish». Reyting va sertifikatda aynan shu ism chiqadi.\n\n` +
+      `<b>3) Ball jadvali ⭐️</b>\n` +
+      `• Dars tugatish — <b>+20</b>\n` +
+      `• Uyga vazifa topshirish — <b>+15</b> (guruhdagi «UYGA VAZIFA» mavzusiga yuboring)\n` +
+      `• Vazifaga 9–10 baho — <b>+25</b>\n` +
+      `• Kunlik vazifa — <b>+5</b>, Instagram vazifasi — <b>+8</b> (5-oktabrdan, har kuni 09:00da «KUNLIK VAZIFALAR» mavzusida)\n` +
+      `• 5 kun ketma-ket o'z vaqtida bajarsangiz — <b>+10 bonus</b>\n` +
+      `• Guruhda faollik — har xabar uchun <b>+1</b> (kuniga 5 ballgacha)\n` +
+      `• O'z ishingizni guruhga tashlasangiz (rasm/video) — <b>+5</b> (kuniga 3 martagacha)\n` +
+      `• Har kuni platformaga kirish — <b>+5</b>\n` +
+      `Kechikkan kunlik vazifa — yarim ball; 2 kundan keyin yopiladi.\n\n` +
+      `<b>4) Reytingni ko'rish 📊</b>\n` +
+      `«📊 Statistikam» — o'z ballaringiz. /profil → «👥 Guruh reytingi» — guruhingizdagi o'rningiz.\n\n` +
+      `Savol bo'lsa — «❓ Yordam». Omad! 🚀`,
     noNextLesson: "Yangi dars yo'q. Keyinroq qayta urinib ko'ring.",
     noCourse: "Kurs topilmadi.",
     kbDavom: "📚 Davom etish",
@@ -505,6 +532,26 @@ const T = {
     nmNotMember: "Этот бот только для студентов AI Creators.",
     nmWaitForSales: "Вы в группе ✅\n\nАккаунт пока не открыт. Как только администратор добавит вас в список, бот включится автоматически и уроки откроются.\n\nПожалуйста, подождите — ничего делать не нужно.",
     nmWelcome: (name: string) => `👋 <b>${name}</b>, добро пожаловать! Ваш аккаунт создан (пробный) — задания принимаются, баллы и статистика ведутся. Уроки откроются после полной оплаты. Пользуйтесь меню ниже 👇`,
+    nmWelcomeChallenge: (name: string, open: number) =>
+      `🎉 <b>${name}</b>, добро пожаловать в <b>AI CREATORS CHALLENGE 6.0</b>!\n\n` +
+      `Аккаунт открыт. Ниже 4 главных вещи — прочитайте за минуту.\n\n` +
+      `<b>1) Уроки 📚</b>\n` +
+      `Сейчас открыт ${open === 1 ? "<b>1-й модуль</b>" : `<b>1–${open}-й модули</b>`} — нажмите «📚 Продолжить». Следующие модули открываются каждую неделю по очереди.\n\n` +
+      `<b>2) Исправьте своё имя ✏️</b>\n` +
+      `/profil → «✏️ Изменить имя». Именно это имя попадёт в рейтинг и сертификат.\n\n` +
+      `<b>3) Как начисляются баллы ⭐️</b>\n` +
+      `• Завершить урок — <b>+20</b>\n` +
+      `• Сдать домашнее задание — <b>+15</b> (в тему «UYGA VAZIFA» вашей группы)\n` +
+      `• Оценка 9–10 за задание — <b>+25</b>\n` +
+      `• Ежедневное задание — <b>+5</b>, задание с Instagram — <b>+8</b> (с 5 октября, каждый день в 09:00 в теме «KUNLIK VAZIFALAR»)\n` +
+      `• 5 дней подряд вовремя — <b>+10 бонус</b>\n` +
+      `• Активность в группе — <b>+1</b> за сообщение (до 5 баллов в день)\n` +
+      `• Своя работа в группе (фото/видео) — <b>+5</b> (до 3 раз в день)\n` +
+      `• Ежедневный вход на платформу — <b>+5</b>\n` +
+      `Опоздали с ежедневным заданием — половина баллов; через 2 дня оно закрывается.\n\n` +
+      `<b>4) Рейтинг 📊</b>\n` +
+      `«📊 Моя статистика» — ваши баллы. /profil → «👥 Рейтинг группы» — ваше место в группе.\n\n` +
+      `Вопросы — «❓ Помощь». Удачи! 🚀`,
     noNextLesson: "Новых уроков нет. Попробуйте позже.",
     noCourse: "Курс не найден.",
     kbDavom: "📚 Продолжить",
@@ -796,6 +843,26 @@ const T = {
     nmNotMember: "This bot is for AI Creators students only.",
     nmWaitForSales: "You're in the group ✅\n\nYour account isn't open yet. Once an administrator adds you to the list, the bot starts automatically and your lessons open.\n\nPlease wait — there is nothing you need to do.",
     nmWelcome: (name: string) => `👋 <b>${name}</b>, welcome! Your account has been created (trial) — homework is accepted, points and stats are tracked. Lessons unlock after full payment. Use the menu below 👇`,
+    nmWelcomeChallenge: (name: string, open: number) =>
+      `🎉 <b>${name}</b>, welcome to <b>AI CREATORS CHALLENGE 6.0</b>!\n\n` +
+      `Your account is open. Four things to know — one minute to read.\n\n` +
+      `<b>1) Lessons 📚</b>\n` +
+      `${open === 1 ? "<b>Module 1</b> is" : `<b>Modules 1–${open}</b> are`} open now — tap «📚 Continue». The next modules open one per week.\n\n` +
+      `<b>2) Fix your name ✏️</b>\n` +
+      `/profil → «✏️ Edit name». This is the name that appears in the rating and on your certificate.\n\n` +
+      `<b>3) How points work ⭐️</b>\n` +
+      `• Finish a lesson — <b>+20</b>\n` +
+      `• Submit homework — <b>+15</b> (into your group's «UYGA VAZIFA» topic)\n` +
+      `• A score of 9–10 — <b>+25</b>\n` +
+      `• Daily task — <b>+5</b>, Instagram task — <b>+8</b> (from 5 October, every day at 09:00 in «KUNLIK VAZIFALAR»)\n` +
+      `• 5 days in a row on time — <b>+10 bonus</b>\n` +
+      `• Being active in the group — <b>+1</b> per message (up to 5 a day)\n` +
+      `• Sharing your own work in the group (photo/video) — <b>+5</b> (up to 3 a day)\n` +
+      `• Opening the platform each day — <b>+5</b>\n` +
+      `A late daily task pays half; after 2 days it closes.\n\n` +
+      `<b>4) Your rating 📊</b>\n` +
+      `«📊 My stats» — your points. /profil → «👥 Group rating» — your place in the group.\n\n` +
+      `Questions — «❓ Help». Good luck! 🚀`,
     noNextLesson: "No new lesson. Check back later.",
     noCourse: "Course not found.",
     kbDavom: "📚 Continue",
@@ -2158,8 +2225,12 @@ async function sendUnregisteredReply(
           await admin.from("bot_conversation_state").delete().eq("telegram_id", from.id).eq("state", "nm_cache");
           const name = (from.first_name || from.username || "do'st").slice(0, 40);
           // Engine may MATCH an existing account instead of creating one — never tell a paid
-          // student their account "was created (trial)" (review finding).
-          const text = reg.created ? t.nmWelcome(csvEscapeHtml(name)) : t.kbHint;
+          // student their account "was created (trial)" (review finding). A LADDER account (its
+          // modules are open by tier) gets the onboarding starter kit instead, because nmWelcome's
+          // "lessons unlock after full payment" is simply untrue for them.
+          const text = reg.created
+            ? (reg.moduleLimit ? t.nmWelcomeChallenge(csvEscapeHtml(name), reg.moduleLimit) : t.nmWelcome(csvEscapeHtml(name)))
+            : t.kbHint;
           await sendWithKeyboard(chatId, text, locale, false, "student");
           return;
         }
@@ -6350,7 +6421,7 @@ async function registerProvisionalViaEngine(
   from: { id: number; username?: string; first_name?: string; last_name?: string },
   grp: { id: string; course_id: string },
   source: AutoRegisterSource,
-): Promise<{ created: boolean; status?: string; userId?: string } | null> {
+): Promise<{ created: boolean; status?: string; userId?: string; moduleLimit?: number | null } | null> {
   const { data: sec } = await admin.rpc("internal_fn_secret");
   if (!sec) {
     console.error("hw:autoreg:no-internal-secret", JSON.stringify({ tg: from.id, source }));
@@ -6416,7 +6487,7 @@ async function registerProvisionalViaEngine(
       });
     } catch (_e) { /* audit best-effort */ }
     console.log("hw:autoreg:created", JSON.stringify({ user_id: r0.userId, tg: from.id, group_id: grp.id, source, account_type: acct, module_limit: ladderLimit }));
-    return { created: true, status: r0.status, userId: r0.userId };
+    return { created: true, status: r0.status, userId: r0.userId, moduleLimit: ladderLimit };
   }
   console.log("hw:autoreg:matched-existing", JSON.stringify({ user_id: r0.userId, tg: from.id, status: r0.status, source }));
   return { created: false, status: r0.status, userId: r0.userId };
