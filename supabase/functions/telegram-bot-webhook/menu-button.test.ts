@@ -37,6 +37,45 @@ Deno.test("classifyMenuOutcome: recipient → unreachable; web_app 400 → rejec
   assertEquals(classifyMenuOutcome(o(false, 0, "transport_error"), true), "failed");
 });
 
+// Incident 2026-10-01: the live answer that froze the sweep. Classified by the REAL shared classifier (fakeTelegram
+// uses it), it is now a recipient → unreachable; an unlisted 400 is 'failed' (counted, never "our button"); only a
+// positive button / web app 400 is 'rejected'; a 401 is the bot itself → 'global'.
+Deno.test("classifyMenuOutcome (real classifier): 'user not found' is unreachable, an unknown 400 is failed, 401 is global", async () => {
+  const outcome = async (answer: { ok: boolean; status?: number; error?: string }) =>
+    classifyMenuOutcome(await fakeTelegram(() => answer).call("setChatMenuButton", { chat_id: 1 }), true);
+  assertEquals(await outcome({ ok: false, status: 400, error: "Bad Request: user not found" }), "unreachable");
+  assertEquals(await outcome({ ok: false, status: 400, error: "Bad Request: USER_ID_INVALID" }), "unreachable");
+  assertEquals(await outcome({ ok: false, status: 400, error: "Bad Request: something nobody listed" }), "failed");
+  assertEquals(await outcome({ ok: false, status: 400, error: "Bad Request: BUTTON_URL_INVALID" }), "rejected");
+  assertEquals(await outcome({ ok: false, status: 400, error: "Bad Request: WEBAPP_URL_INVALID" }), "rejected");
+  assertEquals(await outcome({ ok: false, status: 401, error: "Unauthorized" }), "global");
+  assertEquals(await outcome({ ok: false, status: 404, error: "Not Found" }), "global");
+});
+
+Deno.test("live sync: 'user not found' is unreachable — cached, silent, never the student watch-button alarm", async () => {
+  _resetLiveMenuSync();
+  const db = new FakeDb();
+  const tg = fakeTelegram(() => ({ ok: false, status: 400, error: "Bad Request: user not found" }));
+  assertEquals(await syncMenuLive(db, 4242, opts({ call: tg.call })), "unreachable");
+  assertEquals(db.actions("miniapp_button_rejected").length, 0);
+  assertEquals(db.actions("teacher_miniapp_button_rejected").length, 0);
+  assertEquals(db.actions("menu_button_sync_failed").length, 0);
+  _resetLiveMenuSync();
+});
+
+Deno.test("live sync: a bot-wide 401 is 'global' — recorded (menu_button_sync_failed), not cached, not a refusal", async () => {
+  _resetLiveMenuSync();
+  const db = new FakeDb();
+  const tg = fakeTelegram(() => ({ ok: false, status: 401, error: "Unauthorized" }));
+  assertEquals(await syncMenuLive(db, 4343, opts({ call: tg.call })), "global");
+  const rows = db.actions("menu_button_sync_failed");
+  assertEquals(rows.length, 1);
+  assertEquals([rows[0].details.status, rows[0].details.error], [401, "Unauthorized"]);
+  assertEquals(db.actions("miniapp_button_rejected").length, 0);
+  assertEquals(liveFresh(4343, flagSig(true, true, BASE), T0 + 1000), false);
+  _resetLiveMenuSync();
+});
+
 const opts = (o: Partial<Parameters<typeof syncMenuLive>[2]> = {}) => ({
   role: "student" as const, locale: "uz" as const, on: true, base: BASE, sig: flagSig(true, true, BASE), now: T0, ...o,
 });
