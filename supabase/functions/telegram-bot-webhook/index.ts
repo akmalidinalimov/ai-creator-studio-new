@@ -11,7 +11,7 @@ import { taughtScope } from "./teacher-scope.ts";
 import { botVoiceKey, recordGradeCardSkipped, recordGradeVoiceSkipped } from "../_shared/grade-card-signals.ts";
 import {
   type AutoRegisterSource, isRealReply, isRegisteredHomeworkTopic, mergeCappedMedia, recordAutoRegisterFailed,
-  recordCaptureFailed, recordCaptureSkipped, recordPendingAppendDrop,
+  recordCaptureFailed, recordCaptureSkipped, recordGuestWaitingForSales, recordPendingAppendDrop,
 } from "./capture-signals.ts";
 import {
   courseToken, findOwnHomeworkTopic, homeworkTopicGroupIds, type OtherCoursePath, otherCourseTask,
@@ -119,16 +119,52 @@ async function getEnrollmentSettings(admin: any, locale: Locale): Promise<{ mess
 //     taken from their Telegram profile — no form to fill) and their work is accepted normally.
 //     Existing platform students matched by username just gain their telegram_id — their
 //     account type is NEVER touched.
+//   "auto_register_paid_course_ids": [<course>] — the module LADDER (owner's rule, 2026-10-01). For a
+//     course in this list, an auto-registered member is NOT trial-locked: their account is a normal one
+//     and what they may watch is decided by their group's tier (course_tiers.module_limit — limit 1 =
+//     the first module only, raised a step at a time in Admin → Kurslar → Tariflar). Outside the list,
+//     and whenever the group's tier does not actually BOUND access, the account stays 'provisional'
+//     (no video at all) exactly as before — so this can never hand out a whole course by accident.
 // Missing/malformed row ⇒ auto, so deploying this code changes nothing until the flag is flipped.
-async function getHomeworkCaptureConfig(admin: any): Promise<{ mode: "auto" | "require_intent" | "picker"; courseIds: string[]; autoRegister: boolean }> {
+async function getHomeworkCaptureConfig(admin: any): Promise<{ mode: "auto" | "require_intent" | "picker"; courseIds: string[]; autoRegister: boolean; paidCourseIds: string[] }> {
   try {
     const { data } = await admin.from("platform_settings").select("value").eq("key", "homework_capture").maybeSingle();
     const v = (data?.value as any) || {};
     const mode = v.mode === "require_intent" ? "require_intent" : (v.mode === "picker" ? "picker" : "auto");
     const courseIds = Array.isArray(v.course_ids) ? v.course_ids.filter((x: any) => typeof x === "string") : [];
-    return { mode, courseIds, autoRegister: v.auto_register === true };
+    const paidCourseIds = Array.isArray(v.auto_register_paid_course_ids)
+      ? v.auto_register_paid_course_ids.filter((x: any) => typeof x === "string")
+      : [];
+    return { mode, courseIds, autoRegister: v.auto_register === true, paidCourseIds };
   } catch (_e) {
-    return { mode: "auto", courseIds: [], autoRegister: false };
+    return { mode: "auto", courseIds: [], autoRegister: false, paidCourseIds: [] };
+  }
+}
+
+/**
+ * The module ladder: how many modules an auto-registered member of `grp` may watch, or null when they
+ * must stay trial-locked ('provisional', no video). Both conditions must hold, and either one failing
+ * falls back to the old, safe behaviour:
+ *   1. the group's course is listed in homework_capture.auto_register_paid_course_ids, and
+ *   2. the group carries a tier whose module_limit actually BOUNDS access (a positive number).
+ * A tier with module_limit NULL means "every module", so it is deliberately NOT accepted here: an
+ * unbounded group can never turn a Telegram group member into a full-access student.
+ */
+async function autoRegisterLadderLimit(
+  admin: any,
+  grp: { id: string; course_id: string },
+  paidCourseIds: string[],
+): Promise<number | null> {
+  try {
+    if (!grp.course_id || !paidCourseIds.includes(grp.course_id)) return null;
+    const { data: g } = await admin.from("groups").select("tier_id").eq("id", grp.id).maybeSingle();
+    const tierId = (g as any)?.tier_id;
+    if (!tierId) return null;
+    const { data: ti } = await admin.from("course_tiers").select("module_limit").eq("id", tierId).maybeSingle();
+    const lim = (ti as any)?.module_limit;
+    return typeof lim === "number" && lim > 0 ? lim : null;
+  } catch (_e) {
+    return null; // never widen access on a read failure
   }
 }
 
@@ -164,6 +200,7 @@ const T = {
     langSet: "Til o'zgartirildi ✅",
     noProfile: "Akkauntingiz topilmadi. Avval saytda ro'yxatdan o'tishingiz kerak.",
     nmNotMember: "Bu bot faqat AI Creators talabalari uchun.",
+    nmWaitForSales: "Siz guruhdasiz ✅\n\nHisobingiz hali ochilmagan. Administrator sizni ro'yxatga qo'shgandan keyin bot avtomatik ishga tushadi va darslaringiz ochiladi.\n\nIltimos, kutib turing — hech narsa qilish shart emas.",
     nmWelcome: (name: string) => `👋 <b>${name}</b>, xush kelibsiz! Akkountingiz yaratildi (sinov hisobi) — vazifalaringiz qabul qilinadi, ball va statistika yuritiladi. Darsliklar to'liq to'lovdan so'ng ochiladi. Quyidagi menyudan foydalaning 👇`,
     noNextLesson: "Yangi dars yo'q. Keyinroq qayta urinib ko'ring.",
     noCourse: "Kurs topilmadi.",
@@ -466,6 +503,7 @@ const T = {
     langSet: "Язык изменён ✅",
     noProfile: "Аккаунт не найден. Сначала зарегистрируйтесь на сайте.",
     nmNotMember: "Этот бот только для студентов AI Creators.",
+    nmWaitForSales: "Вы в группе ✅\n\nАккаунт пока не открыт. Как только администратор добавит вас в список, бот включится автоматически и уроки откроются.\n\nПожалуйста, подождите — ничего делать не нужно.",
     nmWelcome: (name: string) => `👋 <b>${name}</b>, добро пожаловать! Ваш аккаунт создан (пробный) — задания принимаются, баллы и статистика ведутся. Уроки откроются после полной оплаты. Пользуйтесь меню ниже 👇`,
     noNextLesson: "Новых уроков нет. Попробуйте позже.",
     noCourse: "Курс не найден.",
@@ -756,6 +794,7 @@ const T = {
     langSet: "Language updated ✅",
     noProfile: "Account not found. Please sign up on the site first.",
     nmNotMember: "This bot is for AI Creators students only.",
+    nmWaitForSales: "You're in the group ✅\n\nYour account isn't open yet. Once an administrator adds you to the list, the bot starts automatically and your lessons open.\n\nPlease wait — there is nothing you need to do.",
     nmWelcome: (name: string) => `👋 <b>${name}</b>, welcome! Your account has been created (trial) — homework is accepted, points and stats are tracked. Lessons unlock after full payment. Use the menu below 👇`,
     noNextLesson: "No new lesson. Check back later.",
     noCourse: "Course not found.",
@@ -2133,7 +2172,19 @@ async function sendUnregisteredReply(
     }
   }
 
-  // Member but flag off / staff / engine refused → the human enrollment funnel (form button).
+  // Member, but the bot did not give them an account (the flag is off, they are staff, or the engine
+  // refused). The owner's rule (2026-10-01): ONLY sales grants access — through the /intake form or the
+  // admin panel — so a member waiting for that is a GUEST. They get one plain sentence and nothing else:
+  // no keyboard, no buttons, and no self-serve enrollment link that would bypass sales.
+  // The wait is DB-visible so sales can see who to add: admin_actions 'onboarding_guest_waiting',
+  // one row per member per Tashkent day, carrying their username, first name and group.
+  if (membership.member && from?.id) {
+    await recordGuestWaitingForSales(admin, from as any, membership.group, { staff: membership.staff });
+    await sendMessage(chatId, t.nmWaitForSales);
+    return;
+  }
+
+  // Membership could not be established at all → the human enrollment funnel (form button), unchanged.
   const enroll = await getEnrollmentSettings(admin, locale);
   await sendMessage(chatId, enroll.message, {
     inline_keyboard: [[{ text: enroll.buttonLabel, url: enroll.formUrl }]],
@@ -6346,16 +6397,25 @@ async function registerProvisionalViaEngine(
     return null;
   }
   if (r0.status === "created") {
-    // New account → trial. (Existing matched accounts keep their type untouched.)
-    await admin.from("profiles").update({ account_type: "provisional" }).eq("id", r0.userId);
+    // New account. On a LADDER course (see autoRegisterLadderLimit) the account is a normal one and the
+    // group's tier decides what they may watch — limit 1 means the first module only. Everywhere else it
+    // stays a trial (no video at all), which is the old behaviour and the safe default on any doubt.
+    // (Existing matched accounts keep their type untouched, here and below.)
+    const cfgL = await getHomeworkCaptureConfig(admin);
+    const ladderLimit = await autoRegisterLadderLimit(admin, grp, cfgL.paidCourseIds);
+    const acct = ladderLimit === null ? "provisional" : "paid";
+    await admin.from("profiles").update({ account_type: acct }).eq("id", r0.userId);
     try {
       await admin.from("admin_actions").insert({
         actor_user_id: null, action: "auto_registered_provisional", target_user_id: r0.userId,
         target_resource_type: "profile", target_resource_id: r0.userId,
-        details: { telegram_id: from.id, telegram_username: from.username || null, group_id: grp.id, source },
+        details: {
+          telegram_id: from.id, telegram_username: from.username || null, group_id: grp.id, source,
+          account_type: acct, module_limit: ladderLimit,
+        },
       });
     } catch (_e) { /* audit best-effort */ }
-    console.log("hw:autoreg:created", JSON.stringify({ user_id: r0.userId, tg: from.id, group_id: grp.id, source }));
+    console.log("hw:autoreg:created", JSON.stringify({ user_id: r0.userId, tg: from.id, group_id: grp.id, source, account_type: acct, module_limit: ladderLimit }));
     return { created: true, status: r0.status, userId: r0.userId };
   }
   console.log("hw:autoreg:matched-existing", JSON.stringify({ user_id: r0.userId, tg: from.id, status: r0.status, source }));

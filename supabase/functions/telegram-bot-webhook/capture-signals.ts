@@ -125,6 +125,28 @@ export async function recordPendingAppendDrop(admin: any, n: unknown, d: DropDet
   else await recordCaptureFailed(admin, drop.reason, d);
 }
 
+/**
+ * A GUEST: a member of an active-course group, with no account, who opened the bot while sales-only
+ * onboarding is in force (both auto_register flags off, migration 20261001071500). This is not a
+ * failure — it is the queue the sales team works from, so it gets its own action instead of sharing
+ * 'auto_register_failed' (which detectors read as a problem). One row per member per Tashkent day,
+ * carrying what sales needs to add them: the username, the first name and the group they are in.
+ */
+export async function recordGuestWaitingForSales(
+  admin: any,
+  from: { id: number; username?: string; first_name?: string },
+  grp: { id: string } | null,
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  await logHealthOnce(admin, "onboarding_guest_waiting", `dm_start:${from.id}`, {
+    telegram_id: from.id,
+    telegram_username: from.username || null,
+    first_name: from.first_name || null,
+    group_id: grp?.id ?? null,
+    ...extra,
+  }, { source: "dm_start_member" });
+}
+
 export async function recordAutoRegisterFailed(
   admin: any,
   reason: AutoRegisterFailReason,

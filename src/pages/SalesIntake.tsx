@@ -104,7 +104,7 @@ export default function SalesIntake() {
     const uname = username.trim().replace(/^@/, "");
     const courseTitle = selCourse.title;
     const groupName = opts.groupName.trim();
-    const acctSuffix = accountType === "provisional" ? " 🔒 Sinov hisob (qisman to'lov — darsliksiz)." : "";
+    const acctSuffix = accountType === "provisional" ? " 🔒 Cheklangan kirish (yarim to'lov — video darsliklar yopiq)." : "";
     // The Instagram field is per student too: left filled, the NEXT student was submitted with the previous one's handle.
     const clearStudentFields = () => { setFirst(""); setLast(""); setUsername(""); setPhone(""); setEmail(""); setInstagram(""); setIgError(null); };
     // Checked in submit(); the NORMALIZED handle is sent ("@Ali.Uz" / a profile link -> "ali.uz").
@@ -412,13 +412,13 @@ export default function SalesIntake() {
             <Select value={accountType} onValueChange={(v) => setAccountType(v as "paid" | "provisional")}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="paid">✅ To'liq to'lagan — to'liq kirish</SelectItem>
-                <SelectItem value="provisional">🔒 Sinov (qisman to'lov) — darsliksiz</SelectItem>
+                <SelectItem value="paid">✅ To'liq to'lagan — to'liq kirish (darsliklar ochiq)</SelectItem>
+                <SelectItem value="provisional">🔒 Yarim to'lov / cheklangan — darsliklar yopiq</SelectItem>
               </SelectContent>
             </Select>
             {accountType === "provisional" && (
               <p className="text-xs text-amber-600 dark:text-amber-400 leading-snug">
-                Talaba tanlangan guruh/tarifga qo'shiladi, lekin darsliklar yopiq bo'ladi. Uy vazifa, ball va statistika ishlaydi. To'liq to'lovdan keyin admin panelida yoki shu formani "To'liq to'lagan" bilan qayta yuborib ochiladi.
+                Cheklangan kirish: talaba tanlangan guruhga qo'shiladi, lekin video darsliklar yopiq bo'ladi. Uy vazifa, ball, reyting va statistika to'liq ishlaydi. To'liq to'lovdan keyin admin panelida yoki shu formani "To'liq to'lagan" bilan qayta yuborib ochiladi.
               </p>
             )}
           </div>
