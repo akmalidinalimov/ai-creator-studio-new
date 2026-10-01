@@ -7,7 +7,10 @@
 //   • ROSTER — a group's students from `staff_group_members(_group_id)` (gated by junction-aware
 //             `can_see_group`, so co-teachers pass). Each row → the Task-2 student-detail route.
 // Opening a group ALSO sets the shared `groupId` (via setGroupId), so the pick follows the teacher to
-// Stats/Grading. A pure list/roster screen carries NO coral primary (allowed by the coral rule).
+// Stats, Nudge, Xabar and the student detail screen. It does NOT follow her to Grading (Baholash): that
+// screen has its own course + group filter, which starts at "Hammasi" so work is never hidden by a pick
+// made here (teacher audit PR-4). A pure list/roster screen carries NO coral primary (allowed by the coral
+// rule).
 //
 // STATES (all required): loading `Skeleton`; empty `EmptyState` — "Sizda guruh yo'q" (no groups) and a
 // DISTINCT "Bu guruhda o'quvchi yo'q" (a group with no students); `navigator.onLine`-aware error +
@@ -74,7 +77,7 @@ export default function TeacherGroups() {
 
   const handleOpenGroup = (id: string) => {
     setOpenGroupId(id);
-    setGroupId(id); // the pick follows the teacher to Stats/Grading (shared selection).
+    setGroupId(id); // shared selection: Stats / Nudge / Xabar follow it; Grading keeps its own filter.
     setRoster([]);
   };
 

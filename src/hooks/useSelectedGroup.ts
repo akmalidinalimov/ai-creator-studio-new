@@ -3,9 +3,12 @@
 // Loads the caller's groups from the JUNCTION-AWARE `teacher_groups(uid)` RPC (primary ∪
 // co-teacher — src: supabase/migrations/20260818190000_group_teachers_multi.sql:219), and holds a
 // single selected `groupId` persisted in localStorage keyed by user id. Because each teacher screen
-// (Groups / Stats / — later — Grading's filter) mounts fresh under its own `TeacherShell` route,
+// (Groups / Stats / Nudge / Xabar / student detail) mounts fresh under its own `TeacherShell` route,
 // the in-memory selection would not survive navigation on its own; localStorage IS the cross-tab
 // source of truth, so picking group B on Stats shows B on Groups and vice-versa.
+//
+// Grading (TeacherGrade) reads only `groups`, for its filter chips: the persisted `groupId` is deliberately NOT a
+// grading filter, so a pick made here never hides waiting work there (teacher audit PR-4).
 //
 // Contract consumed by Task 3 (Stats): `{ groupId, setGroupId, groups }` — `groups` is `{id,name,…}[]`.
 // The RPC's raw `group_id`/`group_name` columns are mapped to stable `id`/`name` so consumers never
