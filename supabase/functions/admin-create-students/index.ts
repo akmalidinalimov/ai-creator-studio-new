@@ -5,13 +5,14 @@ import { incomingTelegramVerdict } from "./telegram-link.ts";
 import {
   type CourseMoveFacts,
   type CourseMoveVerdict,
+  dbRefusalFacts,
   decideCourseMove,
   emptyFacts,
   isAdminUser,
   loadCourseMoveFacts,
   moveAuditDetails,
 } from "../_shared/course-move-guard.ts";
-import { type RefusedMoveRow, refusedMoveRow } from "./move-row.ts";
+import { dbRefusedMoveRow, type RefusedMoveRow, refusedMoveRow } from "./move-row.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -278,6 +279,28 @@ Deno.serve(async (req) => {
       }
       return { proceed: true, override: v.kind === "override" ? { facts, adminId: v.adminId } : null };
     };
+    // PR-3b: the database guard (trg_profiles_aa_course_move_guard, 20260930181010) refused the profiles write
+    // itself: homework arrived after guardGroupMove checked, or the student had NO group (a placement, which
+    // guardGroupMove does not judge: their waiting work of another course would follow them into this group).
+    // Reported and audited like the engine's own refusal (no userId, so no caller goes on to act on the new
+    // course; from_group_id is null for a placement). false = `err` is some other error.
+    const reportDbRefusal = async (
+      err: { message?: string; details?: string } | null,
+      row: { email: string; row_index: number; identifier_used: string },
+      userId: string,
+    ): Promise<boolean> => {
+      const refused = dbRefusedMoveRow(err, row, userId);
+      if (!refused) return false;
+      results.push(refused);
+      auditLog(row.row_index, row.identifier_used, "cross_course_refused", "db_guard");
+      await logAdminAction(admin, actorId ?? overrideAdminId, "cross_course_move_refused", {
+        target_user_id: userId, target_resource_type: "profile", target_resource_id: userId,
+        details: moveAuditDetails(dbRefusalFacts(err) ?? emptyFacts(null, null, null), {
+          reason: "old_course_waiting", source: "db_guard", caller: isSystem ? "system" : "admin", request_id: requestId,
+        }),
+      });
+      return true;
+    };
     const logMoveOverride = async (userId: string, o: { facts: CourseMoveFacts; adminId: string }) => {
       await logAdminAction(admin, o.adminId, "cross_course_move_override", {
         target_user_id: userId, target_resource_type: "profile", target_resource_id: userId,
@@ -536,6 +559,7 @@ Deno.serve(async (req) => {
         if (tgIdNum !== undefined) patch.telegram_id = tgIdNum;
         if (Object.keys(patch).length) {
           const { error: updateErr } = await admin.from("profiles").update(patch).eq("id", existingId);
+          if (updateErr && await reportDbRefusal(updateErr, { email, row_index, identifier_used }, existingId)) continue;
           if (updateErr) {
             results.push({ email, status: "error", error: updateErr.message, row_index, identifier_used });
             auditLog(row_index, identifier_used, "failed", updateErr.message);
@@ -599,7 +623,17 @@ Deno.serve(async (req) => {
             if (csvTgUsernameRaw) profilePatch.telegram_username = csvTgUsernameRaw;
             if (tgIdNum !== undefined) profilePatch.telegram_id = tgIdNum;
             if (resolvedGroupId && s.role !== "teacher" && s.role !== "admin") profilePatch.group_id = resolvedGroupId;
-            await admin.from("profiles").update(profilePatch).eq("id", foundId);
+            // This write's error used to be ignored, so a failed adoption still reported "updated" (and enrolled
+            // the student in the target course below). A database refusal is reported as one; any other failure
+            // as an error row. Either way nothing below runs for this student.
+            const { error: adoptErr } = await admin.from("profiles").update(profilePatch).eq("id", foundId);
+            if (adoptErr) {
+              if (!(await reportDbRefusal(adoptErr, { email, row_index, identifier_used }, foundId))) {
+                results.push({ email, status: "error", error: adoptErr.message, row_index, identifier_used });
+                auditLog(row_index, identifier_used, "failed", adoptErr.message);
+              }
+              continue;
+            }
             if (collisionOverride) await logMoveOverride(foundId, collisionOverride);
             if (s.role === "teacher") {
               await admin.from("user_roles").upsert({ user_id: foundId, role: "teacher", ...(actorId ? { created_by: actorId } : {}) } as any, { onConflict: "user_id,role" });
