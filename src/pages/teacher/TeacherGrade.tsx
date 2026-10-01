@@ -6,28 +6,60 @@
 // submits and auto-advances. Every write goes through src/lib/teacherApi.ts, which mirrors
 // TeacherHomework.saveScore's exact columns so XP triggers fire identically (see that file's header).
 //
-// QUEUE MODEL: `remaining` is the working list (front = current card). `doneCount` counts items
-// handled this session (graded / skipped / redo / co-teacher-claimed) and drives the "3 / 12"
-// progress. `processed` (a ref Set) remembers handled ids so a background reconcile() refetch never
-// re-surfaces a skipped/redone item, while still pruning items a co-teacher graded ahead of us and
-// appending brand-new submissions — without disturbing the card currently on screen.
+// QUEUE MODEL: `queue` is every item still waiting, in the RPC's oldest-first order; the card on screen
+// is the first item of `queue` that passes the filter (`visible[0]`). `handled` lists the items handled
+// this session (graded / skipped / redo / co-teacher-claimed); the ones under the current filter drive
+// the "3 / 12" progress. `processed` (a ref Set) remembers handled ids so a background reconcile()
+// refetch never re-surfaces a skipped/redone item, while still pruning items a co-teacher graded ahead
+// of us and appending brand-new submissions — without disturbing the card currently on screen.
+// Items leave the queue BY ID (never "drop the head").
+//
+// THE INPUTS BELONG TO ONE SUBMISSION: the score, feedback and voice note are tied to the submission they
+// were entered for (`inputsForRef`), and are cleared the moment any OTHER card is on screen — whatever
+// moved it: grading/skipping, a filter chip, the bottom nav's "Baholash" tab (same route, so no remount,
+// but the URL filter goes), a ?group= link that only resolves once the teacher's groups load, a background
+// reconcile. One rule, not one reset per path, so a typed score or a recorded note can never land on a
+// student the teacher is not looking at. An "Ortga" re-opens its card and claims the inputs for it, so an
+// "Ortga" tapped while another grade is still being written keeps its restored score (audit TUI-6).
+//
+// FILTER (teacher audit PR-4, TUI-1): a teacher of AI Creators 5.0 and Challenge 6.0 can work through one
+// course or one group at a time — "Hammasi · N", one chip per course with its count, one per group
+// (GradeFilterBar; the rules are in src/lib/gradeFilter.ts). The whole queue is still loaded (the chips
+// need every count); the filter only chooses which item is on screen. It starts at "Hammasi" unless the
+// URL says otherwise (?course= / ?group=, e.g. from Home's per-course counts): the Groups screen's pick
+// does NOT follow the teacher here, so work is never hidden by a choice made elsewhere. A URL filter that
+// names nothing there (a stale link) is taken out of the URL once the queue and the groups have loaded,
+// so it cannot wake up later and switch the card by itself. The filter is locked while a write is in
+// flight. The card's course chip carries the course's colour (src/lib/courseTone.ts).
 //
 // STATES (all required): loading (Skeleton) · error/offline (navigator.onLine + retry) · empty /
-// end-of-queue ("Baholash tugadi ✅") · submit-in-flight (disabled primary + spinner) · submit-failed
-// (toast, KEEP the score, DON'T advance) · already-graded-by-co-teacher (gentle "boshqa ustoz
-// baholadi" skip, member-forgiveness) · undo (Sonner toast "Ortga" RE-OPENS the just-graded item for
-// correction — purely client-side, NO DB score-clear; the correction lands on the next submitScore).
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+// end-of-queue ("Baholash tugadi ✅") · nothing under the chosen filter ("Hammasini ko'rsatish") ·
+// submit-in-flight (disabled primary + spinner) · submit-failed (toast, KEEP the score, DON'T
+// advance) · already-graded-by-co-teacher (gentle "boshqa ustoz baholadi" skip, member-forgiveness) ·
+// undo (Sonner toast "Ortga" RE-OPENS the just-graded item for correction — purely client-side, NO DB
+// score-clear; the correction lands on the next submitScore).
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Loader2, MessageSquarePlus, Mic, RotateCcw, SkipForward } from "lucide-react";
 import { Card, Button, StatusChip, ProgressBar, EmptyState, Skeleton } from "@/components/ui-kit";
 import { cn } from "@/lib/utils";
 import { GradePhoto } from "@/components/teacher/GradePhoto";
+import { GradeFilterBar } from "@/components/teacher/GradeFilterBar";
 import { VoiceRecorder } from "@/components/homework/VoiceRecorder";
 import { uploadFeedbackVoice, removeFeedbackVoice } from "@/lib/homeworkAudio";
 import { hwLabel, scopeTag } from "@/lib/hwLabel";
+import { courseTone } from "@/lib/courseTone";
+import {
+  NO_FILTER,
+  buildGradeFilter,
+  filterFromSearch,
+  matchesFilter,
+  searchFromFilter,
+  type GradeFilter,
+} from "@/lib/gradeFilter";
+import { useSelectedGroup } from "@/hooks/useSelectedGroup";
 import {
   fetchPendingQueue,
   submitScore,
@@ -60,9 +92,13 @@ const chipValuesFor = (maxScore: number) => [maxScore, maxScore - 1, maxScore - 
 export default function TeacherGrade() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  // The teacher's groups (junction-aware teacher_groups), so a group with nothing waiting still has its chip.
+  // Only the list is used: the shared selected group is deliberately NOT a grading filter (see the header).
+  const { groups: teacherGroups, loading: groupsLoading } = useSelectedGroup();
 
-  const [remaining, setRemaining] = useState<PendingSubmission[]>([]);
-  const [doneCount, setDoneCount] = useState(0);
+  const [queue, setQueue] = useState<PendingSubmission[]>([]);
+  const [handled, setHandled] = useState<PendingSubmission[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -91,11 +127,28 @@ export default function TeacherGrade() {
   // resetInputs() (new card) and explicitly cleared in restoreInputs() (a restore is not a new
   // recording).
   const voiceRecordedThisRoundRef = useRef(false);
+  // The submission the inputs above were entered for (null = nothing entered). See "THE INPUTS BELONG TO ONE
+  // SUBMISSION" in the header: whenever another card is on screen, the inputs are cleared.
+  const inputsForRef = useRef<string | null>(null);
 
-  const current = remaining[0] ?? null;
-  const total = doneCount + remaining.length;
-  const position = remaining.length ? doneCount + 1 : total;
-  const pct = total > 0 ? (doneCount / total) * 100 : 100;
+  const wanted = useMemo(() => filterFromSearch(searchParams), [searchParams]);
+  const model = useMemo(
+    () => buildGradeFilter(queue, handled, teacherGroups, wanted),
+    [queue, handled, teacherGroups, wanted],
+  );
+  const visible = model.visible;
+  const current = visible[0] ?? null;
+  const currentId = current?.submission_id ?? null;
+  // The id of the card on screen, readable from async handlers (reconcile, the voice recorder, the inputs).
+  const currentIdRef = useRef<string | null>(null);
+  currentIdRef.current = currentId;
+  // The filter in force, readable from the undo toast (its closure is from an older render).
+  const filterRef = useRef<GradeFilter>(model.filter);
+  filterRef.current = model.filter;
+  const doneInView = handled.filter((h) => matchesFilter(h, model.filter)).length;
+  const total = doneInView + visible.length;
+  const position = visible.length ? doneInView + 1 : total;
+  const pct = total > 0 ? (doneInView / total) * 100 : 100;
   const offline = typeof navigator !== "undefined" && !navigator.onLine;
 
   const resetInputs = useCallback(() => {
@@ -106,16 +159,35 @@ export default function TeacherGrade() {
     setFeedback("");
     setVoiceBlob(null);
     voiceRecordedThisRoundRef.current = false;
+    inputsForRef.current = null;
   }, []);
+
+  // The teacher entered something on the card on screen: the inputs are now that submission's.
+  const claimInputs = useCallback(() => {
+    inputsForRef.current = currentIdRef.current;
+  }, []);
+
+  // ONE rule for every way the card can change (see the header): inputs entered for another submission are
+  // cleared. A layout effect, so the new card is never painted — or tapped — with the old card's score.
+  useLayoutEffect(() => {
+    if (inputsForRef.current !== null && inputsForRef.current !== currentId) resetInputs();
+  }, [currentId, resetInputs]);
 
   // Wraps VoiceRecorder's onChange: a non-null blob here means the recorder JUST finished capturing
   // + encoding a fresh note (VoiceRecorder only calls onChange from finishRecording/handleDelete/
   // handleReRecord — never as a reaction to the parent setting `value`), so this is the ONLY place
-  // `voiceRecordedThisRoundRef` may be set true.
-  const handleVoiceChange = useCallback((blob: Blob | null) => {
+  // `voiceRecordedThisRoundRef` may be set true. `forId` is the card the recorder was on: a note that
+  // finishes encoding after its card has left the screen belongs to that student, never to this one.
+  const handleVoiceChange = useCallback((forId: string | null, blob: Blob | null) => {
+    if (forId === null || forId !== currentIdRef.current) {
+      if (blob) toast.message("Ovozli izoh saqlanmadi", { description: "U boshqa o'quvchining ishi uchun yozilgan edi." });
+      return;
+    }
+    inputsForRef.current = forId;
     voiceRecordedThisRoundRef.current = blob != null;
     setVoiceBlob(blob);
   }, []);
+  const onVoiceChange = useCallback((blob: Blob | null) => handleVoiceChange(currentId, blob), [currentId, handleVoiceChange]);
 
   // Voice bridge. Telegram's webview denies Mini Apps the microphone on most devices, so the in-app
   // recorder is a dead end there. This asks the bot to prompt the teacher in her Telegram chat, where the
@@ -149,6 +221,8 @@ export default function TeacherGrade() {
   // local state (the voice blob is the SAME object already uploaded by the just-undone submit; if
   // the teacher deletes it before re-submitting, handleSubmit best-effort removes that object).
   const restoreInputs = useCallback((item: PendingSubmission, score: number, fb: string, voice: Blob | null) => {
+    // The restored inputs are the re-opened item's (it is put back on screen in the same update).
+    inputsForRef.current = item.submission_id;
     if (chipValuesFor(item.max_score).includes(score)) {
       setChipScore(score);
       setCustomOpen(false);
@@ -166,11 +240,33 @@ export default function TeacherGrade() {
     setShowFeedback(fb.trim() !== "" || voice != null);
   }, []);
 
-  const advance = useCallback(() => {
-    setRemaining((prev) => prev.slice(1));
-    setDoneCount((c) => c + 1);
-    resetInputs();
-  }, [resetInputs]);
+  // `item` is handled: it leaves the queue BY ID. If it was the card on screen, the next card comes up and the
+  // inputs rule clears them; after an "Ortga" during this item's write, the re-opened card (and its restored
+  // score) stays put.
+  const advance = useCallback((item: PendingSubmission) => {
+    setQueue((prev) => prev.filter((p) => p.submission_id !== item.submission_id));
+    setHandled((prev) => [...prev.filter((p) => p.submission_id !== item.submission_id), item]);
+  }, []);
+
+  // A new filter may show another card; the inputs rule clears the inputs when it does.
+  const changeFilter = useCallback(
+    (f: GradeFilter) => {
+      setSearchParams(searchFromFilter(f), { replace: true });
+    },
+    [setSearchParams],
+  );
+
+  // A URL filter naming a course or group that is not there is ignored (buildGradeFilter drops it). Take it out of
+  // the URL too, or it would wake up when that course's first new item arrives and switch the card by itself.
+  // Judged only once the queue AND the teacher's groups have loaded: a ?group= of a group with nothing waiting
+  // is only known from teacher_groups.
+  const appliedCourse = model.filter.courseId;
+  const appliedGroup = model.filter.groupId;
+  const urlFilterStale = wanted.courseId !== appliedCourse || wanted.groupId !== appliedGroup;
+  useEffect(() => {
+    if (loading || error || groupsLoading || !urlFilterStale) return;
+    setSearchParams(searchFromFilter({ courseId: appliedCourse, groupId: appliedGroup }), { replace: true });
+  }, [loading, error, groupsLoading, urlFilterStale, appliedCourse, appliedGroup, setSearchParams]);
 
   // Initial load / retry.
   useEffect(() => {
@@ -182,8 +278,8 @@ export default function TeacherGrade() {
         const q = await fetchPendingQueue();
         if (cancelled) return;
         processed.current = new Set();
-        setRemaining(q);
-        setDoneCount(0);
+        setQueue(q);
+        setHandled([]);
         resetInputs();
       } catch {
         if (!cancelled) setError(true);
@@ -196,24 +292,21 @@ export default function TeacherGrade() {
     };
   }, [reloadKey, resetInputs]);
 
-  // Non-disruptive background reconcile after a write: preserve the on-screen card (head), prune
-  // items a co-teacher graded ahead of us (gone from the fresh server queue), and append brand-new
+  // Non-disruptive background reconcile after a write: preserve the on-screen card, prune items a
+  // co-teacher graded ahead of us (gone from the fresh server queue), and append brand-new
   // submissions. Skipped/redone/graded ids stay hidden via `processed`. A failed refetch is a no-op.
   const reconcile = useCallback(async () => {
     try {
       const fresh = await fetchPendingQueue();
       const freshIds = new Set(fresh.map((f) => f.submission_id));
-      setRemaining((prev) => {
-        if (prev.length === 0) {
-          return fresh.filter((f) => !processed.current.has(f.submission_id));
-        }
-        const [head, ...rest] = prev;
-        const keptRest = rest.filter((p) => freshIds.has(p.submission_id));
+      setQueue((prev) => {
+        const onScreen = currentIdRef.current;
+        const kept = prev.filter((p) => p.submission_id === onScreen || freshIds.has(p.submission_id));
         const known = new Set(prev.map((p) => p.submission_id));
         const added = fresh.filter(
           (f) => !known.has(f.submission_id) && !processed.current.has(f.submission_id),
         );
-        return [head, ...keptRest, ...added];
+        return [...kept, ...added];
       });
     } catch {
       /* keep the local queue; reconcile is best-effort */
@@ -245,6 +338,9 @@ export default function TeacherGrade() {
     // whatever finalized blob is in state right now — a mid-recording/mid-encode note (still null,
     // onChange hasn't fired yet) is treated as no-voice-this-round, which is acceptable (T2 note).
     const blob = voiceBlob;
+    // Read with the blob, not after the write: if the card changes while the write is in flight, the inputs
+    // rule clears the ref, but this note is still this student's and still new.
+    const voiceFresh = voiceRecordedThisRoundRef.current;
     setSubmitting(true);
     try {
       // Fix round 1 (Important A): default to `undefined`, NOT null. The RPC backing this queue
@@ -274,7 +370,7 @@ export default function TeacherGrade() {
       if (res.status === "already_graded") {
         // Member-forgiveness: a co-teacher grabbed it between load and submit. Don't clobber; skip it.
         processed.current.add(item.submission_id);
-        advance();
+        advance(item);
         invalidateBadge();
         void reconcile();
         toast.message("Boshqa ustoz baholadi", { description: `${plainName(item)} — o'tkazib yuborildi` });
@@ -290,11 +386,11 @@ export default function TeacherGrade() {
       // `blob` — an undo→resubmit still has `blob` truthy but must NOT re-fire) gets pushed to the
       // student's Telegram DM if they've started the bot — fire-and-forget: never awaited, never
       // allowed to affect the grade UI (notifyGradeVoice swallows its own errors).
-      notifyGradeVoice(item.submission_id, { voiceFresh: voiceRecordedThisRoundRef.current });
+      notifyGradeVoice(item.submission_id, { voiceFresh });
 
       // Advance immediately, offer a 6s undo (auto-advance makes a fat-finger unrecoverable).
       processed.current.add(item.submission_id);
-      advance();
+      advance(item);
       invalidateBadge();
       toast.success(`${plainName(item)} — ${value}/${item.max_score} ✓`, {
         duration: 6000,
@@ -308,8 +404,11 @@ export default function TeacherGrade() {
           label: "Ortga",
           onClick: () => {
             processed.current.delete(item.submission_id);
-            setRemaining((prev) => [item, ...prev.filter((p) => p.submission_id !== item.submission_id)]);
-            setDoneCount((c) => Math.max(0, c - 1));
+            setQueue((prev) => [item, ...prev.filter((p) => p.submission_id !== item.submission_id)]);
+            setHandled((prev) => prev.filter((p) => p.submission_id !== item.submission_id));
+            // The re-opened item must be the card on screen (or the inputs rule would clear its restored
+            // score): if the filter was changed since, widen it back to "Hammasi" in the same update.
+            if (!matchesFilter(item, filterRef.current)) changeFilter(NO_FILTER);
             restoreInputs(item, value, fb, blob);
             toast.info("Qayta baholash uchun ochildi");
           },
@@ -329,7 +428,7 @@ export default function TeacherGrade() {
   const handleSkip = () => {
     if (!current || submitting || redoing) return;
     processed.current.add(current.submission_id);
-    advance();
+    advance(current);
   };
 
   const handleRedo = async () => {
@@ -343,7 +442,7 @@ export default function TeacherGrade() {
         return;
       }
       processed.current.add(item.submission_id);
-      advance();
+      advance(item);
       invalidateBadge();
       void reconcile();
       toast.success(`${plainName(item)} — talabaga qaytarildi 🔓`);
@@ -399,13 +498,13 @@ export default function TeacherGrade() {
     );
   }
 
-  if (!current) {
+  if (model.total === 0) {
     return (
       <EmptyState
         icon="✅"
         title="Baholash tugadi"
         body={
-          doneCount > 0
+          handled.length > 0
             ? "Barcha ishlar baholandi. Ajoyib ish! Yangi topshiriqlar kelganda shu yerda ko'rinadi."
             : "Hozircha baholanadigan ish yo'q. Yangi topshiriqlar kelganda shu yerda ko'rinadi."
         }
@@ -418,9 +517,39 @@ export default function TeacherGrade() {
     );
   }
 
+  // Course + group chips; locked while a grade or a return is being written (the card must not change mid-write).
+  const filterBar = <GradeFilterBar model={model} onChange={changeFilter} disabled={submitting || redoing} />;
+
+  if (!current) {
+    // Work is waiting, just not under the chosen course / group.
+    return (
+      <div className="space-y-4">
+        {filterBar}
+        <EmptyState
+          icon="✅"
+          title="Bu tanlovda ish qolmadi"
+          body={
+            doneInView > 0
+              ? "Tanlangan kurs yoki guruhdagi ishlar baholandi. Boshqa ishlar hali kutmoqda."
+              : "Tanlangan kurs yoki guruhda baholanadigan ish yo'q. Boshqa ishlar kutmoqda."
+          }
+          cta={
+            <Button variant="secondary" size="sm" onClick={() => changeFilter(NO_FILTER)}>
+              Hammasini ko'rsatish ({model.total})
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
+
+  const tone = courseTone(current.course_title);
+
   return (
     <div className="space-y-4">
-      {/* Progress: slim bar + "3 / 12" (tabular-nums). */}
+      {filterBar}
+
+      {/* Progress under the chosen filter: slim bar + "3 / 12" (tabular-nums). */}
       <div className="flex items-center gap-3">
         <ProgressBar value={pct} />
         <span className="flex-none tabular-nums text-sm font-bold text-muted-foreground">
@@ -433,15 +562,20 @@ export default function TeacherGrade() {
 
         {/* Student + course/group chip + "M<n> V<step> — <title>" + submitted-ago. Chip and line together are
             the shared hw-label ("5.0 · 1-GURUH PRE · M2 V1 — <title>", src/lib/hwLabel.ts): the Challenge
-            6.0 tasks are copies of the 5.0 tasks, so name + "Modul 2 · Vazifa 1" alone could be either course. */}
+            6.0 tasks are copies of the 5.0 tasks, so name + "Modul 2 · Vazifa 1" alone could be either course.
+            The chip is in the course's colour (the TASK's course), the same colour as its filter chip. */}
         <div className="min-w-0 space-y-1">
           <div className="truncate text-[15px] font-extrabold tracking-tight text-foreground">
             {current.student_name}
           </div>
           {currentScope && (
             <span
-              className="inline-block max-w-full truncate rounded-full bg-tint px-2.5 py-1 align-middle text-[11px] font-extrabold text-foreground"
+              className={cn(
+                "inline-block max-w-full truncate rounded-full px-2.5 py-1 align-middle text-[11px] font-extrabold",
+                tone.chip,
+              )}
               title={currentScope}
+              data-course-tone={tone.key}
             >
               {currentScope}
             </span>
@@ -475,6 +609,7 @@ export default function TeacherGrade() {
                   key={v}
                   type="button"
                   onClick={() => {
+                    claimInputs();
                     setChipScore(v);
                     setCustomOpen(false);
                     setCustom("");
@@ -494,6 +629,7 @@ export default function TeacherGrade() {
             <button
               type="button"
               onClick={() => {
+                claimInputs();
                 setCustomOpen(true);
                 setChipScore(null);
               }}
@@ -518,7 +654,10 @@ export default function TeacherGrade() {
                 max={current.max_score}
                 value={custom}
                 autoFocus
-                onChange={(e) => setCustom(e.target.value)}
+                onChange={(e) => {
+                  claimInputs();
+                  setCustom(e.target.value);
+                }}
                 placeholder={`0–${current.max_score}`}
                 className="w-28 rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-base font-extrabold tabular-nums text-foreground placeholder:text-sm placeholder:font-semibold placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
@@ -536,14 +675,17 @@ export default function TeacherGrade() {
           <div className="space-y-2">
             <textarea
               value={feedback}
-              onChange={(e) => setFeedback(e.target.value)}
+              onChange={(e) => {
+                claimInputs();
+                setFeedback(e.target.value);
+              }}
               rows={3}
               placeholder="Izoh (ixtiyoriy)"
               className="w-full resize-none rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             <VoiceRecorder
               value={voiceBlob}
-              onChange={handleVoiceChange}
+              onChange={onVoiceChange}
               disabled={submitting || redoing}
               fallback={
                 current ? (
@@ -563,7 +705,10 @@ export default function TeacherGrade() {
         ) : (
           <button
             type="button"
-            onClick={() => setShowFeedback(true)}
+            onClick={() => {
+              claimInputs();
+              setShowFeedback(true);
+            }}
             className="inline-flex min-h-[40px] items-center gap-1.5 text-[13px] font-bold text-muted-foreground transition-colors hover:text-foreground"
           >
             <MessageSquarePlus className="size-4" />

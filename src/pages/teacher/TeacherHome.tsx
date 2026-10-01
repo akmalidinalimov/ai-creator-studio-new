@@ -14,15 +14,21 @@
 // Data sources (see task-5 report for the tile-by-tile provenance):
 //   • Kutilmoqda (pending)  ← usePendingGrading() → teacher_pending_submissions() (junction-aware).
 //   • Guruhlar / O'quvchilar / Faol ← teacher_groups(uid) aggregated across the teacher's scope.
+//   • Per-course counts (teacher audit PR-4) ← usePendingGrading().byCourse (each item's TASK course),
+//     shown only for a teacher whose work or groups span two or more courses; a course with work opens
+//     the grading queue filtered to it (/tg/teacher/grade?course=<id>), a course with none shows 0.
 // "Bugun baholandi" (graded-today) is intentionally OMITTED — no cheap data source exists; we show
 // only tiles backed by a real query rather than invent a number.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { ClipboardCheck, Users, GraduationCap, Activity, BarChart3, Send, BellRing, type LucideIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePendingGrading } from "@/hooks/usePendingGrading";
+import { courseShort } from "@/lib/hwLabel";
+import { courseTone } from "@/lib/courseTone";
+import { cn } from "@/lib/utils";
 import {
   Hero,
   StatTile,
@@ -127,6 +133,19 @@ export default function TeacherHome() {
 
   const n = pending.count;
 
+  // Waiting work per course: every course with work (from the queue), plus 0 for a course the teacher has a
+  // group in but no work from. Shown only when that makes two or more courses.
+  const courseCounts = useMemo(() => {
+    const list: { key: string; id: string | null; title: string | null; short: string; count: number }[] =
+      pending.byCourse.map((c) => ({ key: c.id, id: c.id, title: c.title, short: c.short, count: c.count }));
+    const titles = new Set(list.map((c) => c.title));
+    for (const t of new Set(groups.map((g) => g.course_name).filter((x): x is string => !!x))) {
+      if (!titles.has(t)) list.push({ key: `title:${t}`, id: null, title: t, short: courseShort(t) || t, count: 0 });
+    }
+    return list.sort((a, b) => a.short.localeCompare(b.short, undefined, { numeric: true }));
+  }, [pending.byCourse, groups]);
+  const showCourseCounts = n > 0 && courseCounts.length >= 2;
+
   return (
     <div className="space-y-4">
       {loading ? (
@@ -189,6 +208,46 @@ export default function TeacherHome() {
                 Baholash navbati bo'sh — yangi ishlar kelganda shu yerda ko'rinadi.
               </p>
             </Card>
+          )}
+
+          {/* Per-course counts (two or more courses only). A course with work opens the queue filtered to it;
+              selection chips in the course's colour, never coral (the Hero owns the one primary). */}
+          {showCourseCounts && (
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Kurslar bo'yicha kutilmoqda">
+              {courseCounts.map((c) => {
+                const tone = courseTone(c.title);
+                const inner = (
+                  <>
+                    <span className={cn("size-2 shrink-0 rounded-full", tone.dot)} aria-hidden />
+                    <span className="min-w-0 truncate">{c.short}</span>
+                    <span className="shrink-0 rounded-full bg-foreground/10 px-1.5 text-[11px] font-extrabold tabular-nums text-foreground">
+                      {c.count}
+                    </span>
+                  </>
+                );
+                const base =
+                  "inline-flex min-h-[40px] max-w-full items-center gap-1.5 rounded-full border px-3 text-[12.5px] font-bold";
+                return c.id && c.count > 0 ? (
+                  <button
+                    key={c.key}
+                    type="button"
+                    onClick={() => navigate(`/tg/teacher/grade?course=${encodeURIComponent(c.id as string)}`)}
+                    title={`${c.title ?? c.short}: ${c.count} ta ish kutmoqda`}
+                    className={cn(base, tone.active, "transition-transform active:scale-[0.98]")}
+                  >
+                    {inner}
+                  </button>
+                ) : (
+                  <span
+                    key={c.key}
+                    title={`${c.title ?? c.short}: kutayotgan ish yo'q`}
+                    className={cn(base, "border-border bg-card text-muted-foreground")}
+                  >
+                    {inner}
+                  </span>
+                );
+              })}
+            </div>
           )}
 
           {/* "Bugun" strip folded into tiles. Every value is backed by a real query (see header). */}
