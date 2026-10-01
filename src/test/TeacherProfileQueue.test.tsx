@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 // TeacherProfile's grading queue loads the oldest 100 pending rows + a head-only exact count of the
@@ -66,6 +66,11 @@ const row = (i: number) => ({
   homework_assignments: { max_score: 10, title: "HW", description: "", modules: { position: 0, title: "M1" } },
 });
 const rows = (n: number) => Array.from({ length: n }, (_, i) => row(i));
+// A row whose task belongs to a known course (assignment → module → course, as the queue select embeds it).
+const courseRow = (i: number, courseId: string, title: string) => ({
+  ...row(i),
+  homework_assignments: { max_score: 10, title: "HW", description: "", modules: { position: 0, title: "M1", course_id: courseId, courses: { title } } },
+});
 
 async function openQueue() {
   render(<MemoryRouter><TeacherProfile /></MemoryRouter>);
@@ -149,5 +154,64 @@ describe("TeacherProfile grading queue — capped page indicator", () => {
     await openQueue();
     expect(await screen.findByText(/No ungraded homework/)).toBeInTheDocument();
     expect(h.beacon).not.toHaveBeenCalled();
+  });
+});
+
+// Audit TUI-7: a tap on a score chip used to grade at once, and when the graded card left the list the next
+// student's card slid under the finger — a quick second tap graded someone else. Now a chip only PICKS; the one
+// Send button (naming the score) grades, and it is disabled on a card with no pick.
+describe("TeacherProfile grading queue — pick the score, then send (TUI-7)", () => {
+  it("tapping a score writes nothing; Send · <score> grades exactly once", async () => {
+    h.subs = { data: rows(2), error: null };
+    h.count = { count: 2, error: null };
+    await openQueue();
+    expect(await screen.findByText("answer 0")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "8" })[0]);
+    expect(h.writes).toEqual([]);
+    expect(screen.getAllByRole("button", { name: "8" })[0]).toHaveAttribute("aria-pressed", "true");
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send · 8/10" })); });
+    expect(h.writes).toEqual(["homework_submissions"]);
+    expect(screen.queryByText("answer 0")).not.toBeInTheDocument();
+    // The card that slid up has no pick, so its Send can't fire from a stray tap.
+    expect(screen.getByText("answer 1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+});
+
+// Audit F3 / TUI-1 / TUI-7: a teacher of 5.0 and Challenge 6.0 got one mixed queue with no course on the cards.
+describe("TeacherProfile grading queue — course label and filter", () => {
+  it("every card names its task's course, and the filter narrows the queue to one course", async () => {
+    h.subs = {
+      data: [
+        courseRow(0, "c5", "AI CREATORS 5.0"),
+        courseRow(1, "c6", "AI CREATORS CHALLENGE 6.0"),
+        courseRow(2, "c5", "AI CREATORS 5.0"),
+      ],
+      error: null,
+    };
+    h.count = { count: 3, error: null };
+    await openQueue();
+    expect(await screen.findByText("answer 0")).toBeInTheDocument();
+    expect(screen.getAllByText("5.0")).toHaveLength(2);
+    expect(screen.getAllByText("CHALLENGE 6.0")).toHaveLength(1);
+
+    expect(screen.getByRole("button", { name: "All · 3" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "CHALLENGE 6.0 · 1" }));
+    expect(screen.getByText("answer 1")).toBeInTheDocument();
+    expect(screen.queryByText("answer 0")).not.toBeInTheDocument();
+    expect(screen.queryByText("answer 2")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "All · 3" }));
+    expect(screen.getAllByText(/^answer \d+$/)).toHaveLength(3);
+  });
+
+  it("one course only → no filter row (nothing to choose)", async () => {
+    h.subs = { data: [courseRow(0, "c5", "AI CREATORS 5.0"), courseRow(1, "c5", "AI CREATORS 5.0")], error: null };
+    h.count = { count: 2, error: null };
+    await openQueue();
+    expect(await screen.findByText("answer 0")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^All · / })).not.toBeInTheDocument();
   });
 });

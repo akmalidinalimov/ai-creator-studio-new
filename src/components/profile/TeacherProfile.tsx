@@ -16,7 +16,14 @@ import { reportClientError } from "@/lib/beacon";
 import { rowsBeyondPage } from "@/lib/queuePage";
 
 /* Mission Control (design A) with the cross-group grading queue (design B).
-   Group context is ALWAYS visible as chips; grading is one tap per score. */
+   Group context is ALWAYS visible as chips. Grading is "pick the score, then Yuborish": a single tap
+   used to grade at once, and when the graded card left the list the next student's card slid under the
+   finger, so a quick second tap graded someone else (teacher audit 2026-09-30, TUI-7). Every card names
+   the TASK's course, and a teacher of two courses can filter the queue to one of them. */
+
+// "AI CREATORS CHALLENGE 6.0" → "CHALLENGE 6.0", "AI CREATORS 5.0" → "5.0" — the short course name used on
+// this screen's group chips, queue cards and course filter (one vocabulary per screen).
+const shortCourseName = (title: string | null | undefined) => (title || "").replace(/AI CREATORS\s*/i, "").trim();
 
 // The queue loads the oldest QUEUE_PAGE pending rows. A parallel head-only exact count of the SAME
 // filter (same RLS scope) tells the UI how many the cap left out, so a teacher with more than
@@ -38,6 +45,9 @@ interface QueueItem {
   prompt: string; is_resub: boolean; prev_score: number | null;
   media: Array<{ kind: string; url?: string; msg_url?: string }>; tg_url: string | null;
   student: string; group_name: string;
+  // The TASK's course (assignment → module → course), not the student's current group's. null when the
+  // course isn't readable (an unpublished course) — the card then shows the group alone.
+  course_id: string | null; course_title: string | null;
   // Task 3 (voice-homework-feedback): a voice note left on a PRIOR grading round of this same
   // submission row (a resubmission keeps score_feedback_voice_path — start_homework_resubmission
   // doesn't clear it). Additive/display-only here; grade() resolves the final value to write.
@@ -129,7 +139,7 @@ export default function TeacherProfile() {
           // score_feedback_voice_path (Task 3, voice-homework-feedback): not in the generated
           // types yet (Task 1's migration), but PostgREST doesn't need a typed column list — the
           // `as any` cast on the mapped row below covers it.
-          .select("id, user_id, submitted_text, submitted_image_url, submitted_at, score, score_is_stale, previous_attempts, media, telegram_message_url, score_feedback_voice_path, homework_assignments(max_score, title, description, modules(position, title))")
+          .select("id, user_id, submitted_text, submitted_image_url, submitted_at, score, score_is_stale, previous_attempts, media, telegram_message_url, score_feedback_voice_path, homework_assignments(max_score, title, description, modules(position, title, course_id, courses(title)))")
           .or(PENDING_FILTER)
           .order("submitted_at", { ascending: true })
           .limit(QUEUE_PAGE),
@@ -180,6 +190,8 @@ export default function TeacherProfile() {
             tg_url: r.telegram_message_url || null,
             student: [st.name, st.last_name ? st.last_name[0] + "." : ""].filter(Boolean).join(" "),
             group_name: groupName(st.group_id),
+            course_id: r.homework_assignments?.modules?.course_id ?? null,
+            course_title: r.homework_assignments?.modules?.courses?.title ?? null,
             voice_path: r.score_feedback_voice_path ?? null,
           };
         });
@@ -297,6 +309,30 @@ export default function TeacherProfile() {
   const oldestDays = queue.length ? daysSince(queue[0].submitted_at) : null;
   // What's really waiting: the loaded page (shrinks as the teacher grades) + what the cap left out.
   const queueTotal = queue.length + queueHidden;
+  // One colour per course, shared by the group chips and the queue cards, so a course looks the same everywhere.
+  const courseOrder = useMemo(() => {
+    const titles: string[] = [];
+    for (const g of groups) if (g.course_name && !titles.includes(g.course_name)) titles.push(g.course_name);
+    for (const q of queue) if (q.course_title && !titles.includes(q.course_title)) titles.push(q.course_title);
+    return titles;
+  }, [groups, queue]);
+  const courseDotCls = (title: string | null) => (courseOrder.indexOf(title ?? "") % 2 === 1 ? "bg-violet-500" : "bg-primary");
+  // Course filter for the queue (a teacher of 5.0 AND Challenge 6.0 can grade one course at a time). Offered only
+  // when the loaded queue really holds two or more courses; a filter whose course has been graded away falls back
+  // to "all" instead of showing an empty list.
+  const [courseFilter, setCourseFilter] = useState<string | null>(null);
+  const queueCourses = useMemo(() => {
+    const byId = new Map<string, { id: string; title: string | null; count: number }>();
+    for (const q of queue) {
+      if (!q.course_id) continue;
+      const c = byId.get(q.course_id) ?? { id: q.course_id, title: q.course_title, count: 0 };
+      c.count++;
+      byId.set(q.course_id, c);
+    }
+    return [...byId.values()];
+  }, [queue]);
+  const activeCourseFilter = courseFilter && queueCourses.some((c) => c.id === courseFilter) ? courseFilter : null;
+  const visibleQueue = activeCourseFilter ? queue.filter((q) => q.course_id === activeCourseFilter) : queue;
   // Inactivity range filter: null = everyone, 3/7/14 = inactive >= N days.
   const [inactFilter, setInactFilter] = useState<number | null>(null);
   const filteredRoster = useMemo(() => {
@@ -368,9 +404,8 @@ export default function TeacherProfile() {
               const attention = g.pending_homework > 0 || (g.total_students > 0 && g.active_7d / g.total_students < 0.3);
               // Course identity on every chip: colored dot + short course label,
               // so multi-course teachers always know which world a group is in.
-              const courseIdx = [...new Set(groups.map((x) => x.course_name))].indexOf(g.course_name);
-              const dotCls = courseIdx % 2 === 0 ? "bg-primary" : "bg-violet-500";
-              const shortCourse = (g.course_name || "").replace(/AI CREATORS\s*/i, "");
+              const dotCls = courseDotCls(g.course_name);
+              const shortCourse = shortCourseName(g.course_name);
               return (
                 <button key={g.group_id} role="tab" aria-selected={selected === g.group_id}
                   onClick={() => pickGroup(g.group_id)}
@@ -485,6 +520,21 @@ export default function TeacherProfile() {
         {tab === "queue" && (
           <div className="space-y-3">
             <p className="text-xs text-muted-foreground">{t("profile.tQueueNote")}</p>
+            {!queueLoading && !queueError && queueCourses.length >= 2 && (
+              <div className="flex flex-wrap gap-2" role="group" aria-label={t("profile.tQueueByCourse")}>
+                {[{ id: null as string | null, label: t("profile.tQueueAll"), count: queue.length, dot: null as string | null }]
+                  .concat(queueCourses.map((c) => ({ id: c.id, label: shortCourseName(c.title) || "—", count: c.count, dot: courseDotCls(c.title) })))
+                  .map((f) => (
+                    <button key={f.id ?? "all"} type="button" aria-pressed={activeCourseFilter === f.id}
+                      onClick={() => setCourseFilter(f.id)}
+                      className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                        activeCourseFilter === f.id ? "border-primary bg-primary/10 font-semibold text-foreground" : "bg-card text-muted-foreground hover:text-foreground"}`}>
+                      {f.dot && <span className={`inline-block h-2 w-2 rounded-full ${f.dot} mr-1.5 align-middle`} aria-hidden />}
+                      {f.label} · <span className="tabular-nums">{f.count}</span>
+                    </button>
+                  ))}
+              </div>
+            )}
             {queueLoading ? (
               <Card className="h-32 animate-pulse bg-muted/40" />
             ) : queueError ? (
@@ -508,7 +558,9 @@ export default function TeacherProfile() {
                     <Card className="p-8 text-center text-sm text-muted-foreground">🎉 {t("profile.tQueueEmpty")}</Card>
                   )
                 ) : (
-                  queue.map((item) => <QueueCard key={item.id} item={item} onGrade={grade} t={t} />)
+                  visibleQueue.map((item) => (
+                    <QueueCard key={item.id} item={item} onGrade={grade} t={t} courseDotCls={courseDotCls(item.course_title)} />
+                  ))
                 )}
               </>
             )}
@@ -687,17 +739,22 @@ function presetsFor(score: number, max: number): string[] {
 }
 
 function QueueCard({
-  item, onGrade, t,
+  item, onGrade, t, courseDotCls,
 }: {
   item: QueueItem;
-  onGrade: (i: QueueItem, s: number, f?: string, voicePath?: string | null, voiceJustUploaded?: boolean) => void;
+  onGrade: (i: QueueItem, s: number, f?: string, voicePath?: string | null, voiceJustUploaded?: boolean) => void | Promise<void>;
   t: any;
+  courseDotCls: string;
 }) {
   const [feedback, setFeedback] = useState("");
   const [showFb, setShowFb] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
   const [lightbox, setLightbox] = useState(false);
+  // The picked score. Picking never grades — only the Send button does (TUI-7: a tap on a score used to grade at
+  // once, and the next student's card then slid under the finger).
   const [pick, setPick] = useState<number | null>(null);
+  // In flight (voice upload + grade write): the card's buttons are locked so a double tap can't send twice.
+  const [sending, setSending] = useState(false);
   // Task 3 (voice-homework-feedback): `voiceBlob` = a freshly-recorded note pending upload.
   // `existingPath` starts at whatever this submission already carries (a resubmission can retain a
   // voice note from an earlier grading round) and becomes null the moment the teacher deletes it —
@@ -708,32 +765,48 @@ function QueueCard({
   const [uploadingVoice, setUploadingVoice] = useState(false);
   const d = daysSince(item.submitted_at) ?? 0;
   const send = async (score: number) => {
-    // Captured BEFORE the upload: true only when this round recorded a brand new note (not a
-    // preserved-existing or cleared-to-null path) — tells `grade` whether to fire the Task 6
-    // Telegram push after the write succeeds.
-    const voiceJustUploaded = !!voiceBlob;
-    let voicePath: string | null = existingPath;
-    if (voiceBlob) {
-      setUploadingVoice(true);
-      try {
-        voicePath = await uploadFeedbackVoice(item.user_id, item.id, voiceBlob);
-      } catch {
-        toast.error("Ovozli izohni yuklab bo'lmadi. Qayta urinib ko'ring.");
-        setUploadingVoice(false);
-        return;
+    if (sending) return;
+    setSending(true);
+    try {
+      // Captured BEFORE the upload: true only when this round recorded a brand new note (not a
+      // preserved-existing or cleared-to-null path) — tells `grade` whether to fire the Task 6
+      // Telegram push after the write succeeds.
+      const voiceJustUploaded = !!voiceBlob;
+      let voicePath: string | null = existingPath;
+      if (voiceBlob) {
+        setUploadingVoice(true);
+        try {
+          voicePath = await uploadFeedbackVoice(item.user_id, item.id, voiceBlob);
+        } catch {
+          toast.error("Ovozli izohni yuklab bo'lmadi. Qayta urinib ko'ring.");
+          return;
+        } finally {
+          setUploadingVoice(false);
+        }
+      } else if (existingPath == null && item.voice_path) {
+        // The teacher explicitly deleted a prior note without recording a replacement — best-effort
+        // clean up the now-orphaned object (the write below already carries voicePath=null).
+        void removeFeedbackVoice(item.user_id, item.id);
       }
-      setUploadingVoice(false);
-    } else if (existingPath == null && item.voice_path) {
-      // The teacher explicitly deleted a prior note without recording a replacement — best-effort
-      // clean up the now-orphaned object (the write below already carries voicePath=null).
-      void removeFeedbackVoice(item.user_id, item.id);
+      await onGrade(item, score, feedback, voicePath, voiceJustUploaded);
+    } finally {
+      setSending(false);
     }
-    onGrade(item, score, feedback, voicePath, voiceJustUploaded);
   };
+  const courseShortLabel = shortCourseName(item.course_title);
   return (
     <Card className="p-4">
       <div className="flex items-center gap-2 text-sm flex-wrap">
         <b className="truncate">{item.student}</b>
+        {/* The TASK's course, in the same colour as its group chips: the Challenge 6.0 tasks are copies of the 5.0
+            tasks, so "N-modul" alone could be either course. */}
+        {courseShortLabel && (
+          <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-medium text-foreground"
+            title={item.course_title ?? undefined}>
+            <span className={`inline-block h-1.5 w-1.5 rounded-full ${courseDotCls}`} aria-hidden />
+            {courseShortLabel}
+          </span>
+        )}
         <span className="text-xs text-muted-foreground truncate">· {item.group_name} · {item.module_pos + 1}-modul</span>
         {item.is_resub && (
           <span className="text-[11px] rounded-md bg-violet-500/15 text-violet-600 px-1.5 py-0.5">
@@ -788,14 +861,20 @@ function QueueCard({
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {[item.max_score, 8, 6, 4].filter((v, i, a) => a.indexOf(v) === i && v <= item.max_score).map((s) => (
-          <Button key={s} size="sm" variant={pick === s ? "default" : "outline"}
-            onClick={() => { setPick(s); if (!showFb) void send(s); }}>
+          <Button key={s} size="sm" variant={pick === s ? "default" : "outline"} aria-pressed={pick === s}
+            disabled={sending} onClick={() => setPick(s)}>
             {s === item.max_score ? `✓ ${s}` : s}
           </Button>
         ))}
         <button onClick={() => setShowFb((v) => !v)} className="text-xs text-muted-foreground hover:text-foreground">
           ✍️ {t("profile.tFeedback")}
         </button>
+        {/* The ONE send: names the score it will write, and stays disabled until a score is picked — so a tap
+            that lands on the NEXT card after this one leaves the list can only pick, never grade. */}
+        <Button size="sm" className="ml-auto" disabled={pick == null || sending || uploadingVoice}
+          onClick={() => pick != null && void send(pick)}>
+          {t("profile.tSend")}{pick != null ? ` · ${pick}/${item.max_score}` : ""}
+        </Button>
       </div>
 
       {showFb && (
@@ -811,13 +890,9 @@ function QueueCard({
               ))}
             </div>
           )}
-          <div className="flex gap-2">
-            <input value={feedback} onChange={(e) => setFeedback(e.target.value)} placeholder={t("profile.tFeedbackPh")}
-              className="flex-1 rounded-md border bg-background px-3 py-1.5 text-sm" maxLength={500} />
-            <Button size="sm" disabled={pick == null || uploadingVoice} onClick={() => pick != null && void send(pick)}>
-              {t("profile.tSend")}
-            </Button>
-          </div>
+          <input value={feedback} onChange={(e) => setFeedback(e.target.value)} placeholder={t("profile.tFeedbackPh")}
+            className="w-full rounded-md border bg-background px-3 py-1.5 text-sm" maxLength={500} />
+          {pick == null && <p className="text-[11px] text-muted-foreground">{t("profile.tPickScoreFirst")}</p>}
           {/* Task 3: voice note beside the text field. A retained prior note (resubmission) shows as
               a compact removable chip; recording a new one overwrites the same deterministic
               storage key regardless. */}

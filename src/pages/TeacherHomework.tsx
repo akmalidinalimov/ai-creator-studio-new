@@ -1,4 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+// TeacherHomework — `/teacher/homework`, the web grading screen with a group (and, for admins, course) picker.
+//
+// Teacher audit 2026-09-30:
+//   F8   — the student list was a direct `profiles` read, which RLS limits to the caller's own row for a teacher,
+//          so the page was EMPTY for every teacher. Teachers now load students through `staff_group_members`
+//          (gated by can_see_group: primary ∪ co-teacher); admins keep the direct read.
+//   F8/TUI-2 — submissions were loaded for the students with no course filter, so a student who moved from 5.0 to
+//          Challenge 6.0 would show their old 5.0 work under the 6.0 group. Only the selected group's COURSE is
+//          listed now (task → module → course); how many other-course items were left out is said on the page.
+//   TUI-8 — three unguarded async effects could land the PREVIOUS group's data under a newly selected group. One
+//          loader now clears the lists at once and commits a response only if it still belongs to the current
+//          selection (reqRef); the select names "<group> · <course>".
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
@@ -15,28 +27,44 @@ import { toast } from "sonner";
 import { VoiceRecorder } from "@/components/homework/VoiceRecorder";
 import { uploadFeedbackVoice, removeFeedbackVoice } from "@/lib/homeworkAudio";
 import { notifyGradeVoice, type QueueMedia } from "@/lib/teacherApi";
+import { reportClientError } from "@/lib/beacon";
+import { groupWithCourse } from "@/lib/groupLabel";
 import { GradePhoto } from "@/components/teacher/GradePhoto";
 
 interface Row {
   id: string; assignment_id: string; user_id: string;
   submitted_text: string; submitted_image_url: string | null;
-  // Full multi-media array (photo/video/document/link) — populated by load()'s select("*"). Rendered
+  // Full multi-media array (photo/video/document/link) — populated by loadSubmissions()'s select("*"). Rendered
   // via the shared GradePhoto gallery so the web grading Drawer shows video/documents, not just images.
   media?: QueueMedia[] | null;
   submitted_at: string; score: number | null; score_feedback: string | null; is_late: boolean;
   scored_at: string | null;
   user_name: string; user_group: string | null; assignment_title: string; max_score: number;
-  // Task 3 (voice-homework-feedback): populated by `load()`'s `select("*")` once the column exists
+  // Task 3 (voice-homework-feedback): populated by `loadSubmissions()`'s `select("*")` once the column exists
   // (no query change needed there); optional since older in-flight rows may predate the column.
   score_feedback_voice_path?: string | null;
 }
 
-interface Group { id: string; name: string; course_id: string | null; }
+// course_id: known for admins (direct groups read); null for teachers (teacher_groups has no course_id — resolved per
+// selected group via staff_group_overview). course_title: the course NAME for the picker label.
+interface Group { id: string; name: string; course_id: string | null; course_title: string | null; }
 interface Student { id: string; name: string | null; last_name: string | null; group_id: string | null; telegram_username?: string | null; }
 interface ModuleRow { id: string; title: string; position: number; course_id: string; }
 interface Assignment { id: string; module_id: string; task_number: number; sap_number: number | null; parent_id: string | null; max_score: number; title: string; }
 
+// What the lists on screen were loaded FOR.
+interface Scope {
+  groupKey: string;                    // the selectedGroup (or ALL) this scope belongs to
+  students: Student[];
+  // Modules of the selection's course. Submissions whose task is outside them are left out. null = the course (or
+  // its modules) is unknown → nothing is filtered, rather than everything.
+  courseModuleIds: Set<string> | null;
+}
+
 const ALL = "__ALL__";
+
+const errCode = (e: unknown) =>
+  (e as { code?: string; message?: string } | null)?.code ?? (e as { message?: string } | null)?.message ?? String(e);
 
 export default function TeacherHomework() {
   const { user, role } = useAuth();
@@ -58,6 +86,19 @@ export default function TeacherHomework() {
   const [submissions, setSubmissions] = useState<any[]>([]);
   const [groupNameMap, setGroupNameMap] = useState<Map<string, string>>(new Map());
 
+  const [groupsLoaded, setGroupsLoaded] = useState(false);
+  // Admins pick a course before "Barcha guruhlar" loads (so the first paint is never every course mixed).
+  const [coursesReady, setCoursesReady] = useState(false);
+  const [scope, setScope] = useState<Scope | null>(null);
+  const [scopeLoading, setScopeLoading] = useState(true);
+  const [scopeError, setScopeError] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
+  // Submissions of the selected students whose task belongs to ANOTHER course (left out, said on the page).
+  const [otherCourseHidden, setOtherCourseHidden] = useState(0);
+  const [tab, setTab] = useState("modules");
+  // Bumped on every new selection; an async result is committed only while its number is still current (TUI-8).
+  const reqRef = useRef(0);
+
   // Load groups for the selector
   useEffect(() => {
     (async () => {
@@ -65,19 +106,20 @@ export default function TeacherHomework() {
       // Groups RLS is admin-only ("groups admin all"), so a direct groups read returns ZERO rows
       // for a teacher — even filtered by id — leaving the group picker empty. Admins read groups
       // directly; teachers go through the junction-aware teacher_groups RPC (primary ∪ co-teacher).
-      // teacher_groups carries no course_id; it's resolved lazily per selected group below.
+      // teacher_groups carries no course_id (only the course NAME); the id is resolved per selected group below.
       let gs: Group[] = [];
       if (isAdmin) {
         const { data } = await supabase.from("groups").select("id, name, course_id").order("name");
-        gs = (data || []) as Group[];
+        gs = (data || []).map((g) => ({ id: g.id, name: g.name, course_id: g.course_id ?? null, course_title: null }));
       } else {
         const { data: tgRows } = await supabase.rpc("teacher_groups" as any, { uid: user.id });
         gs = (((tgRows as any[]) || []).map((r: any) => ({
-          id: r.group_id as string, name: r.group_name as string, course_id: null,
+          id: r.group_id as string, name: r.group_name as string, course_id: null, course_title: (r.course_name as string) ?? null,
         }))) as Group[];
       }
       setGroups(gs);
       setGroupNameMap(new Map(gs.map((g) => [g.id, g.name])));
+      setGroupsLoaded(true);
       if (gs.length && !selectedGroup) setSelectedGroup(isAdmin ? ALL : gs[0].id);
       if (!gs.length && isAdmin) setSelectedGroup(ALL);
       // course filter (admin): default to last-opened, else first course
@@ -90,107 +132,69 @@ export default function TeacherHomework() {
           setSelectedCourse((prev) => prev || (saved && courseList.some((c) => c.id === saved) ? saved : courseList[0].id));
         }
       }
+      setCoursesReady(true);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, isAdmin]);
 
-  // Compute scope (student user_ids) from selected group
-  const [scopeIds, setScopeIds] = useState<string[] | null>(null);
-  useEffect(() => {
-    (async () => {
-      if (!user || !selectedGroup) return;
-      let pq = supabase.from("profiles").select("id, name, last_name, group_id, telegram_username");
-      if (selectedGroup === ALL) {
-        // scope to the selected course's groups (admin) so it's one clean course at a time
-        const gIds = groups.filter((g) => !isAdmin || !selectedCourse || g.course_id === selectedCourse).map((g) => g.id);
-        if (!gIds.length) { setStudents([]); setScopeIds([]); return; }
-        pq = pq.in("group_id", gIds);
-      } else {
-        pq = pq.eq("group_id", selectedGroup);
-      }
-      const { data } = await pq;
-      const sts = (data || []) as Student[];
-      sts.sort((a, b) => (a.last_name || a.name || "").localeCompare(b.last_name || b.name || ""));
-      setStudents(sts);
-      setScopeIds(sts.map((s) => s.id));
-    })();
-  }, [selectedGroup, user, isAdmin, groups, selectedCourse]);
-
-  // Load modules + assignments based on group's course (or all if admin/ALL)
-  useEffect(() => {
-    (async () => {
-      let courseIds: string[] | null = null;
-      if (selectedGroup && selectedGroup !== ALL) {
-        const g = groups.find((x) => x.id === selectedGroup);
-        let cid = g?.course_id ?? null;
-        if (!cid && !isAdmin) {
-          // Teacher groups (from teacher_groups RPC) carry no course_id — resolve the selected
-          // group's course via the junction-gated staff_group_overview RPC (a direct groups read
-          // is RLS-blocked for teachers). Without this, modules would load across ALL courses.
-          const { data: ov } = await supabase.rpc("staff_group_overview" as any, { _group_id: selectedGroup });
-          cid = ((ov as any[]) || [])[0]?.course_id ?? null;
-        }
-        if (cid) courseIds = [cid];
-      } else if (selectedCourse) {
-        courseIds = [selectedCourse];
-      }
-      let mq = supabase.from("modules").select("id, title, position, course_id").order("position");
-      if (courseIds) mq = mq.in("course_id", courseIds);
-      const { data: mods } = await mq;
-      const modList = (mods || []) as ModuleRow[];
-      setModules(modList);
-      if (!modList.length) { setAssignments([]); return; }
-      const { data: asgns } = await supabase
-        .from("homework_assignments")
-        .select("id, module_id, task_number, sap_number, parent_id, max_score, title")
-        .in("module_id", modList.map((m) => m.id))
-        .eq("is_active", true);
-      setAssignments((asgns || []) as Assignment[]);
-    })();
-  }, [selectedGroup, groups, selectedCourse, isAdmin]);
-
-  const load = async () => {
-    if (scopeIds === null) return;
-    if (scopeIds.length === 0) { setPending([]); setScored([]); setSubmissions([]); return; }
+  // Submissions of the scope's students, limited to the scope's course. Throws on a read error (the caller decides
+  // how to surface it); commits nothing once `req` is no longer the current selection.
+  const loadSubmissions = useCallback(async (sc: Scope, req: number) => {
+    const stale = () => req !== reqRef.current;
+    const ids = sc.students.map((s) => s.id);
+    if (!ids.length) {
+      setSubmissions([]); setPending([]); setScored([]); setOtherCourseHidden(0);
+      return;
+    }
     // Paginate: PostgREST caps a single response at 1000 rows. At 560 students
     // (esp. admin "Barcha guruhlar") one query silently truncated, hiding
     // submitted work and dropping the oldest-ungraded items from the Pending tab.
     const pageSize = 1000;
     let all: any[] = [];
     for (let from = 0; ; from += pageSize) {
-      const { data: page } = await supabase
+      const { data: page, error } = await supabase
         .from("homework_submissions")
         .select("*")
-        .in("user_id", scopeIds)
+        .in("user_id", ids)
         .order("submitted_at", { ascending: false })
         .range(from, from + pageSize - 1);
+      if (error) throw error;
+      if (stale()) return;
       const rows = (page || []) as any[];
       all = all.concat(rows);
       if (rows.length < pageSize) break;
     }
-    setSubmissions(all);
-    if (!all.length) { setPending([]); setScored([]); return; }
-    const aIds = Array.from(new Set(all.map((s) => s.assignment_id)));
-    const uIds = Array.from(new Set(all.map((s) => s.user_id)));
-    const [{ data: assigns }, { data: profs }] = await Promise.all([
-      supabase.from("homework_assignments").select("id, title, max_score, task_number, sap_number, parent_id").in("id", aIds),
-      supabase.from("profiles").select("id, name, last_name, group_id").in("id", uIds),
-    ]);
-    const aMap = new Map((assigns || []).map((a: any) => [a.id, a]));
-    const parentIds = Array.from(new Set((assigns || []).map((a: any) => a.parent_id).filter(Boolean)));
-    let parentMap = new Map<string, any>();
-    if (parentIds.length) {
-      const { data: parents } = await supabase.from("homework_assignments").select("id, title, task_number").in("id", parentIds);
-      parentMap = new Map((parents || []).map((p: any) => [p.id, p]));
+    type AsgMeta = { title: string | null; max_score: number | null; task_number: number | null; sap_number: number | null; parent_id: string | null; module_id: string | null };
+    let aMap = new Map<string, AsgMeta>();
+    let parentMap = new Map<string, { task_number: number | null }>();
+    const aIds = Array.from(new Set(all.map((s) => s.assignment_id as string)));
+    if (aIds.length) {
+      const { data: assigns, error } = await supabase
+        .from("homework_assignments").select("id, title, max_score, task_number, sap_number, parent_id, module_id").in("id", aIds);
+      if (error) throw error;
+      aMap = new Map((assigns || []).map((a) => [a.id, a]));
+      const parentIds = Array.from(new Set((assigns || []).map((a) => a.parent_id).filter((x): x is string => !!x)));
+      if (parentIds.length) {
+        const { data: parents } = await supabase.from("homework_assignments").select("id, title, task_number").in("id", parentIds);
+        parentMap = new Map((parents || []).map((p) => [p.id, p]));
+      }
     }
-    const pMap = new Map((profs || []).map((p: any) => [p.id, p]));
-    const enriched: Row[] = all.map((s: any) => {
-      const a: any = aMap.get(s.assignment_id) || {};
-      const p: any = pMap.get(s.user_id) || {};
+    if (stale()) return;
+    // Only work whose TASK belongs to the selection's course (task → module → course). A student moved from 5.0 to
+    // Challenge 6.0 keeps their 5.0 submissions; they must not appear — or be graded — under the 6.0 group.
+    const kept = sc.courseModuleIds
+      ? all.filter((s) => sc.courseModuleIds!.has(aMap.get(s.assignment_id)?.module_id ?? ""))
+      : all;
+    // Names come from the scope's own student list: a teacher cannot read other users' profiles rows (RLS), so the
+    // old direct profiles lookup here rendered every name as "—" for teachers.
+    const sMap = new Map(sc.students.map((s) => [s.id, s]));
+    const enriched: Row[] = kept.map((s) => {
+      const a: Partial<AsgMeta> = aMap.get(s.assignment_id) || {};
+      const st = sMap.get(s.user_id);
       let label = a.title || "";
       if (a.parent_id) {
-        const par: any = parentMap.get(a.parent_id) || {};
-        label = `V${par.task_number ?? "?"}.S${a.sap_number ?? "?"} — ${a.title || ""}`;
+        const par = parentMap.get(a.parent_id);
+        label = `V${par?.task_number ?? "?"}.S${a.sap_number ?? "?"} — ${a.title || ""}`;
       } else if (a.task_number) {
         label = `V${a.task_number} — ${a.title || ""}`;
       }
@@ -198,17 +202,127 @@ export default function TeacherHomework() {
         ...s,
         assignment_title: label,
         max_score: a.max_score || 10,
-        user_name: [p.name, p.last_name].filter(Boolean).join(" ") || "—",
-        user_group: p.group_id ? (groupNameMap.get(p.group_id) as string) : null,
+        user_name: [st?.name, st?.last_name].filter(Boolean).join(" ") || "—",
+        user_group: st?.group_id ? (groupNameMap.get(st.group_id) as string) ?? null : null,
       };
     });
+    setSubmissions(kept);
+    setOtherCourseHidden(all.length - kept.length);
     // A resubmitted item keeps its old score but has score_is_stale=true; treat
     // it as pending so re-opened work resurfaces for grading instead of hiding
     // in "Baholangan" looking done.
     setPending(enriched.filter((r) => r.score == null || (r as any).score_is_stale === true));
     setScored(enriched.filter((r) => r.score != null && (r as any).score_is_stale !== true));
+  }, [groupNameMap]);
+
+  // ONE loader per selection: course → students → modules/tasks → submissions. The previous selection's lists are
+  // cleared at once, and every step bails out if the teacher has picked another group meanwhile (TUI-8).
+  useEffect(() => {
+    if (!user || !selectedGroup || !coursesReady) return;
+    const req = ++reqRef.current;
+    const stale = () => req !== reqRef.current;
+    setScope(null);
+    setStudents([]); setModules([]); setAssignments([]);
+    setSubmissions([]); setPending([]); setScored([]); setOtherCourseHidden(0);
+    setScopeError(false);
+    setScopeLoading(true);
+    (async () => {
+      try {
+        // 1. The selection's course: a group → its course; "Barcha guruhlar" (admin) → the Kurs filter.
+        let courseId: string | null = null;
+        if (selectedGroup === ALL) {
+          courseId = selectedCourse || null;
+        } else {
+          courseId = groups.find((x) => x.id === selectedGroup)?.course_id ?? null;
+          if (!courseId && !isAdmin) {
+            // Teacher groups carry no course_id and a direct groups read is RLS-blocked for teachers — the
+            // junction-gated staff_group_overview RPC knows the selected group's course.
+            const { data: ov, error } = await supabase.rpc("staff_group_overview", { _group_id: selectedGroup });
+            if (error) throw error;
+            courseId = (ov ?? [])[0]?.course_id ?? null;
+          }
+        }
+        if (stale()) return;
+
+        // 2. The students.
+        let sts: Student[] = [];
+        if (selectedGroup === ALL) {
+          // scope to the selected course's groups (admin) so it's one clean course at a time
+          const gIds = groups.filter((g) => !isAdmin || !selectedCourse || g.course_id === selectedCourse).map((g) => g.id);
+          if (gIds.length) {
+            const { data, error } = await supabase.from("profiles").select("id, name, last_name, group_id, telegram_username").in("group_id", gIds);
+            if (error) throw error;
+            sts = (data || []) as Student[];
+          }
+        } else if (isAdmin) {
+          const { data, error } = await supabase.from("profiles").select("id, name, last_name, group_id, telegram_username").eq("group_id", selectedGroup);
+          if (error) throw error;
+          sts = (data || []) as Student[];
+        } else {
+          // Teachers: profiles RLS is own-row-or-admin, so a direct read returned NOBODY (audit F8). This RPC is
+          // gated by can_see_group (primary ∪ co-teacher) and lists exactly profiles.group_id = the group.
+          const { data, error } = await supabase.rpc("staff_group_members", { _group_id: selectedGroup });
+          if (error) throw error;
+          sts = (data ?? []).map((m) => ({
+            id: m.id, name: m.name ?? null, last_name: m.last_name ?? null, group_id: selectedGroup,
+            telegram_username: m.telegram_username ?? null,
+          }));
+        }
+        sts.sort((a, b) => (a.last_name || a.name || "").localeCompare(b.last_name || b.name || ""));
+        if (stale()) return;
+
+        // 3. The course's modules + active tasks (the matrix columns). No course → every module (admin "all").
+        let mq = supabase.from("modules").select("id, title, position, course_id").order("position");
+        if (courseId) mq = mq.eq("course_id", courseId);
+        const { data: mods, error: modErr } = await mq;
+        if (modErr) throw modErr;
+        const modList = (mods || []) as ModuleRow[];
+        let asgns: Assignment[] = [];
+        if (modList.length) {
+          const { data, error } = await supabase
+            .from("homework_assignments")
+            .select("id, module_id, task_number, sap_number, parent_id, max_score, title")
+            .in("module_id", modList.map((m) => m.id))
+            .eq("is_active", true);
+          if (error) throw error;
+          asgns = (data || []) as Assignment[];
+        }
+        if (stale()) return;
+
+        const next: Scope = {
+          groupKey: selectedGroup,
+          students: sts,
+          // Filter by course only when its modules are known — an unpublished course's modules are invisible to a
+          // teacher, and then hiding nothing is right, not hiding everything.
+          courseModuleIds: courseId && modList.length ? new Set(modList.map((m) => m.id)) : null,
+        };
+        setStudents(sts);
+        setModules(modList);
+        setAssignments(asgns);
+        await loadSubmissions(next, req);
+        if (stale()) return;
+        setScope(next);
+      } catch (e) {
+        if (stale()) return;
+        // Graceful is not silent: an empty page must never pass for "nothing to grade".
+        setScopeError(true);
+        reportClientError({ type: "other", message: "teacher_homework_load_failed", extra: { code: errCode(e), admin: isAdmin } });
+      } finally {
+        if (!stale()) setScopeLoading(false);
+      }
+    })();
+  }, [selectedGroup, user, isAdmin, groups, selectedCourse, coursesReady, retryKey, loadSubmissions]);
+
+  // Re-read the submissions after a grade / return, for the SAME selection (a newer selection wins).
+  const reloadSubmissions = () => {
+    if (!scope) return;
+    const req = reqRef.current;
+    loadSubmissions(scope, req).catch((e) => {
+      if (req !== reqRef.current) return;
+      toast.error("Ro'yxatni yangilab bo'lmadi — sahifani yangilang.");
+      reportClientError({ type: "other", message: "teacher_homework_reload_failed", extra: { code: errCode(e) } });
+    });
   };
-  useEffect(() => { load(); }, [scopeIds]);
 
   // `voicePath` (Task 3, voice-homework-feedback) is additive: Drawer resolves it BEFORE calling
   // (uploads a new recording first, or carries forward the unchanged/cleared existing path) and it
@@ -240,13 +354,13 @@ export default function TeacherHomework() {
     // Fire-and-forget: never awaited, never allowed to affect the save UX (notifyGradeVoice
     // swallows its own errors; the edge fn itself is fully graceful on no-telegram/blocked-bot).
     notifyGradeVoice(id, { voiceFresh: voiceJustUploaded });
-    toast.success("Baholandi"); setOpen(null); setDrawerRows(null); load();
+    toast.success("Baholandi"); setOpen(null); setDrawerRows(null); reloadSubmissions();
   };
 
   const reset = async (id: string) => {
     const { error } = await supabase.rpc("start_homework_resubmission", { p_submission_id: id });
     if (error) toast.error(error.message);
-    else { toast.success("Talabaga qayta topshirish uchun qaytarildi"); setOpen(null); setDrawerRows(null); load(); }
+    else { toast.success("Talabaga qayta topshirish uchun qaytarildi"); setOpen(null); setDrawerRows(null); reloadSubmissions(); }
   };
 
   // Build matrix lookup: user_id -> module_id -> ordered submissions
@@ -309,6 +423,11 @@ export default function TeacherHomework() {
     setDrawerRows(rows);
   };
 
+  // The lists on screen belong to the selected group (never the previous one) and are fully loaded.
+  const ready = !scopeLoading && !scopeError && scope?.groupKey === selectedGroup;
+  const noTeacherGroups = groupsLoaded && !isAdmin && groups.length === 0;
+  const count = (n: number) => (ready ? n : "…");
+
   return (
     <PageShell>
       <div className="max-w-6xl space-y-5">
@@ -328,22 +447,43 @@ export default function TeacherHomework() {
             )}
             <Label className="text-sm text-muted-foreground">Guruh</Label>
             <Select value={selectedGroup} onValueChange={setSelectedGroup}>
-              <SelectTrigger className="w-[220px]"><SelectValue placeholder="Guruhni tanlang" /></SelectTrigger>
+              <SelectTrigger className="w-[340px] max-w-full" aria-label="Guruh"><SelectValue placeholder="Guruhni tanlang" /></SelectTrigger>
               <SelectContent>
                 {isAdmin && <SelectItem value={ALL}>Barcha guruhlar</SelectItem>}
-                {groups.filter((g) => !isAdmin || !selectedCourse || g.course_id === selectedCourse).map((g) => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
+                {/* "<group> · <course>": a 5.0 group and a Challenge 6.0 group must never look alike (TUI-8). */}
+                {groups.filter((g) => !isAdmin || !selectedCourse || g.course_id === selectedCourse).map((g) => (
+                  <SelectItem key={g.id} value={g.id}>
+                    {groupWithCourse(g.name, g.course_title ?? courses.find((c) => c.id === g.course_id)?.title ?? null)}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
         </div>
 
-        <Tabs defaultValue="modules">
+        {ready && otherCourseHidden > 0 && (
+          <p className="text-xs text-muted-foreground" role="status">
+            {`Boshqa kursdagi ${otherCourseHidden} ta topshiriq bu ro'yxatga kiritilmadi — ular o'quvchining oldingi kursiga tegishli.`}
+          </p>
+        )}
+
+        <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
-            <TabsTrigger value="modules">📦 Modul bo'yicha ({modules.length})</TabsTrigger>
-            <TabsTrigger value="students">👥 Talabalar ({students.length})</TabsTrigger>
-            <TabsTrigger value="pending">Kutilmoqda ({pending.length})</TabsTrigger>
-            <TabsTrigger value="scored">Baholangan ({scored.length})</TabsTrigger>
+            <TabsTrigger value="modules">📦 Modul bo'yicha ({count(modules.length)})</TabsTrigger>
+            <TabsTrigger value="students">👥 Talabalar ({count(students.length)})</TabsTrigger>
+            <TabsTrigger value="pending">Kutilmoqda ({count(pending.length)})</TabsTrigger>
+            <TabsTrigger value="scored">Baholangan ({count(scored.length)})</TabsTrigger>
           </TabsList>
+          {noTeacherGroups ? (
+            <Card className="p-8 text-center text-muted-foreground">Sizga hali guruh biriktirilmagan.</Card>
+          ) : scopeError ? (
+            <Card className="p-8 text-center space-y-3">
+              <p className="text-sm text-muted-foreground">Ma'lumotlarni yuklab bo'lmadi.</p>
+              <Button size="sm" variant="outline" onClick={() => setRetryKey((k) => k + 1)}>Qayta urinish</Button>
+            </Card>
+          ) : !ready ? (
+            <Card className="p-8 text-center text-muted-foreground">Yuklanmoqda…</Card>
+          ) : (<>
           <TabsContent value="modules">
             <ModuleHomeworkView
               students={students}
@@ -365,6 +505,7 @@ export default function TeacherHomework() {
           </TabsContent>
           <TabsContent value="pending"><FlatTable rows={pending} onOpen={setOpen} /></TabsContent>
           <TabsContent value="scored"><FlatTable rows={scored} onOpen={setOpen} scored /></TabsContent>
+          </>)}
         </Tabs>
       </div>
 
