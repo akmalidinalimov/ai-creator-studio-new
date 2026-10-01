@@ -2,6 +2,8 @@
 // spec v2 §10.2). pg_cron's challenge_tasks_tick() (every minute) calls the function ONLY when
 // challenge_tasks_worker_due() says a claim would lease something; while the feature is paused it is never called.
 // challenge_task_identity_sweep_request() (PR-8's pre-step) calls it with mode 'identity_sweep' and a window.
+// challenge_tasks_week_approval_tick() (PR-9, every 5 minutes) calls it with mode 'week_approval': ONLY the weekly
+// approval ask / reminder / note to the admins (week-approval.ts), nothing else.
 //
 //   posts     challenge_task_post_claim / _record      (PR-3) the 09:00 task post (text rendered by SQL, the one the
 //                                                      approve guard measured) and the 20:00 summary, + the dt_ button
@@ -27,6 +29,7 @@ import {
   postKeyboard, renderBackfillDm, renderEveningDm, renderMorningDm, renderResultDm, renderSummary, toLocale,
 } from "./render.ts";
 import { registerDailyTaskPoster, type RegisterInput, type SendFn } from "./registrar.ts";
+import { sendWeekApprovals } from "./week-approval.ts";
 
 // A service-role Supabase client (typed loosely, like the rest of the codebase).
 // deno-lint-ignore no-explicit-any
@@ -133,21 +136,22 @@ export async function runWorker(env: WorkerEnv, io: WorkerIO, req: WorkerRequest
   const admin = io.admin;
   const t0 = io.now();
   const left = () => BUDGET_MS - (io.now() - t0);
-  const mode = req?.mode === "identity_sweep" ? "identity_sweep" : "run";
+  const mode = req?.mode === "identity_sweep" ? "identity_sweep" : req?.mode === "week_approval" ? "week_approval" : "run";
   const errors: string[] = [];
   const posts: Tally = {};
   const receipts: Tally = {};
   const dms: Tally = {};
   const identity: Tally = {};
+  let week: Tally = {};
   const resolve = io.resolvePoster ?? resolveGroupPoster;
   const register = io.register ?? ((inp: RegisterInput) =>
     registerDailyTaskPoster({ admin, send: io.send, fetchFn: io.fetchFn, supabaseUrl: env.supabaseUrl, serviceKey: env.serviceKey }, inp));
 
   const heartbeat = async (status: string, extra: Record<string, unknown> = {}) => {
-    const did = [posts, receipts, dms, identity].some((t) => Object.keys(t).length > 0);
+    const did = [posts, receipts, dms, identity, week].some((t) => Object.keys(t).length > 0);
     const body = {
-      status, mode, posts, receipts, dms, identity, errors: errors.slice(0, 20), elapsed_ms: io.now() - t0,
-      due: req?.due ?? null, ...extra,
+      status, mode, posts, receipts, dms, identity, ...(mode === "week_approval" ? { week } : {}), errors: errors.slice(0, 20),
+      elapsed_ms: io.now() - t0, due: req?.due ?? null, ...extra,
     };
     if (did || errors.length > 0 || status !== "ok" || mode === "identity_sweep") {
       await logHealth(admin, "challenge_task_worker_run", body, { source: "challenge-tasks-worker" });
@@ -246,6 +250,11 @@ export async function runWorker(env: WorkerEnv, io: WorkerIO, req: WorkerRequest
     // Nothing is claimed without a way to send (a claim would burn an attempt).
     await logHealthOnce(admin, "challenge_task_worker_no_bot_token", "no_bot_token", {}, { source: "challenge-tasks-worker" });
     return { httpStatus: 200, body: { status: "no_bot_token" } };
+  }
+  if (mode === "week_approval") {
+    // PR-9: the admins' weekly approval messages only (the claim applies quiet hours and expiry)
+    week = await sendWeekApprovals({ admin, send: io.send, left, sleep: io.sleep, errors });
+    return { httpStatus: 200, body: await heartbeat(errors.length ? "partial" : "ok") };
   }
 
   const chatPacer = createPacer(io, CHAT_GAP_MS);

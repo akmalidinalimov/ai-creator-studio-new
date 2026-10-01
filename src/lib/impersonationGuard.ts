@@ -17,6 +17,7 @@ export const WRITE_RPCS = new Set([
   "my_challenge_task_restore",
   "my_telegram_write_access_granted",
   "admin_challenge_task_override",
+  "challenge_tasks_approve_week", // Daily Tasks PR-9: approves a whole week of tasks
 ]);
 
 const isImpersonating = () => {

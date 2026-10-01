@@ -50,6 +50,7 @@ import { cancelVoiceRequests, onBridgeVoice, onVoicePick, remainingLine, type Vo
 import { normalizeVoiceState, restoreVoiceRequest, type VoiceRequest } from "../_shared/voice-requests.ts";
 import { createDailyTasks } from "./daily-tasks.ts";
 import { DAILY_COPY } from "../_shared/daily-task-render.ts";
+import { createWeekApproval } from "./week-approval.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6281,6 +6282,13 @@ const dailyTasks = createDailyTasks({
   },
 });
 
+// Daily Tasks PR-9: the admins' weekly approval buttons (dtw:). isAdmin = the REAL clicker's persona, like ops:.
+const weekApproval = createWeekApproval({
+  botToken: BOT_TOKEN,
+  answerCallback: (id, text) => answerCallback(id, text),
+  isAdmin: async (admin, userId) => (await getPersona(admin, userId)) === "admin",
+});
+
 // Server-to-server into the proven creation engine (same pattern as staff-intake). Shared by
 // the in-topic auto-register and the DM /start membership path — one engine, all dedupe/role
 // rules apply in one place. CRITICAL: account_type is NOT passed to the engine — an existing
@@ -7197,7 +7205,8 @@ async function handleCallback(admin: any, cq: any) {
   }
   // Daily Tasks PR-4 (§7.5): the dt: correction buttons (move / "Bu topshiriq emas" / undo) are WRITES — denied
   // under impersonation like the list above (kept as its own line so the shared regex stays untouched).
-  if (_isImp && /^dt:/.test(data)) {
+  // PR-9: ^dtw: (the weekly approval, an admin write) is refused here too.
+  if (_isImp && /^(dt|dtw):/.test(data)) {
     await answerCallback(cq.id, "👁 Faqat o'qish — /admin");
     return;
   }
@@ -7205,6 +7214,11 @@ async function handleCallback(admin: any, cq: any) {
     // The owner lock is SQL-side (challenge_task_tg_actor on the REAL tapper's telegram id); an admin tap is a
     // logged override. Every refusal is a friendly toast, never an error (member forgiveness).
     await dailyTasks.onCallback(admin, cq);
+    return;
+  }
+  // --- Daily Tasks PR-9: weekly approval dtw:a|y|b:<yyyymmdd> — ADMIN ONLY (the real clicker; SQL re-checks) ---
+  if (data.startsWith("dtw:")) {
+    await weekApproval.onCallback(admin, cq, { clicker: _clicker, impersonating: _isImp });
     return;
   }
 
