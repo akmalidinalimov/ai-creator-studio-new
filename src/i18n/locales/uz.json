@@ -1438,5 +1438,158 @@
   },
   "continue": {
     "loading": "Darsingiz ochilmoqda…"
+  },
+  "dailyTasks": {
+    "title": "Kunlik vazifalar",
+    "subtitle": "Har vazifa kuni bitta vazifa. Bajaring — ball va seriya oling.",
+    "streak": "{{days}} kun ketma-ket",
+    "points": "{{points}} ball",
+    "openTopic": "«Kunlik vazifalar» topikini ochish",
+    "emptyTitle": "Hali vazifa yo'q",
+    "emptyBody": "Birinchi vazifa e'lon qilinganda shu yerda ko'rinadi.",
+    "loadError": "Vazifalarni yuklab bo'lmadi.",
+    "notInChallengeTitle": "Kunlik vazifalar yo'q",
+    "notInChallengeBody": "Bu bo'lim challenge guruhlari o'quvchilari uchun.",
+    "topicOnlyTitle": "Vazifalar guruhingizda",
+    "topicOnlyBody": "Kunlik vazifani guruhingizdagi «Kunlik vazifalar» topikiga yuboring — bot o'zi qabul qiladi va hisoblaydi.",
+    "today": "Bugun",
+    "dayNo": "{{n}}-kun",
+    "instagram": "Instagram",
+    "late": "kechikkan ({{days}} kun)",
+    "missing": "Yetishmayapti: {{items}}",
+    "status": {
+      "none": "Topshirilmagan",
+      "needs_more": "To'liq emas",
+      "checking": "Tekshirilmoqda",
+      "accepted": "Qabul qilindi",
+      "rejected": "Qabul qilinmadi",
+      "withdrawn": "Bekor qilingan",
+      "merged": "Birlashtirilgan",
+      "voided": "Bekor qilingan",
+      "expired": "Muddati o'tdi",
+      "open": "Ochiq",
+      "missed": "O'tkazib yuborildi"
+    },
+    "labels": {
+      "screenshot": "skrinshot",
+      "video": "video",
+      "file": "fayl",
+      "text": "matn",
+      "link": "havola",
+      "ig_link": "Instagram post havolasi",
+      "voice": "ovozli xabar",
+      "instagram_handle": "Instagram nomingiz (Sozlamalar)"
+    },
+    "task": {
+      "backToList": "Barcha vazifalar",
+      "postTitle": "Vazifa",
+      "yourWork": "Sizning ishingiz",
+      "pointsEarned": "+{{n}} ball",
+      "pointsWorth": "{{n}} ball",
+      "whereBody": "Ishingiz guruhingizdagi «Kunlik vazifalar» topikiga sizning ismingiz bilan joylanadi — sinfdoshlaringiz ko'radi.",
+      "notFound": "Vazifa topilmadi."
+    },
+    "reasons": {
+      "disabled": "Kunlik vazifalar hozir to'xtatilgan.",
+      "miniapp_off": "Ilovadan topshirish hali yoqilmagan. Ishingizni guruhdagi «Kunlik vazifalar» topikiga yuboring.",
+      "no_profile": "Bu bo'lim o'quvchilar uchun.",
+      "staff": "Bu bo'lim o'quvchilar uchun.",
+      "held_sender": "Profilingiz hali bu guruhga biriktirilmagan. Admin bilan bog'laning — topikdagi xabarlaringiz saqlanib qoladi.",
+      "no_task": "Bu vazifa topilmadi.",
+      "wrong_course": "Bu vazifa sizning kursingizga tegishli emas.",
+      "not_open": "Bu vazifa hali ochilmagan.",
+      "closed": "Bu vazifaning muddati tugagan.",
+      "done": "Bu vazifa allaqachon qabul qilingan.",
+      "attempts_exhausted": "Bu vazifa uchun urinishlar tugadi. Ertangi vazifada omad!"
+    },
+    "submit": {
+      "title": "Ilovadan topshirish",
+      "pick": "Rasm, video yoki fayl qo'shish",
+      "pickHint": "10 tagacha",
+      "addMore": "Yana",
+      "remove": "O'chirish",
+      "textLabel": "Matn",
+      "textPlaceholder": "Ishingiz haqida yozing (kamida 20 belgi)…",
+      "igPlaceholder": "Instagram post havolasi va izohingiz…",
+      "needs": "Kerak",
+      "send": "Yuborish",
+      "sending": "Yuborilmoqda…",
+      "readonly": "Admin ko'rish rejimi — yuborish va tuzatish o'chirilgan.",
+      "result": {
+        "accepted": "Qabul qilindi: +{{points}} ball",
+        "checking": "Qabul qilindi — tekshiruvdan so'ng ball qo'shiladi.",
+        "needs_more": "Qabul qilindi. Yetishmayapti: {{items}}",
+        "rejected": "Qabul qilinmadi.",
+        "default": "Yuborildi."
+      },
+      "pending": "Yuborildi — natija bir necha daqiqada chiqadi.",
+      "partial": "{{total}} tadan {{posted}} tasi yuborildi. Qolganini qayta yuboring.",
+      "noSlot": "Bu vazifaning muddati tugagan — ishingiz topikda qoldi, lekin ball berilmadi.",
+      "errors": {
+        "in_progress": "Oldingi yuborish hali tugamadi — biroz kutib, qayta bosing.",
+        "too_many_requests": "Juda ko'p yuborildi — 10 daqiqadan keyin qayta urinib ko'ring.",
+        "telegram_post_failed": "Telegramga yuborib bo'lmadi. Birozdan keyin qayta urinib ko'ring.",
+        "rate_limited": "Telegram band — {{sec}} soniyadan keyin qayta urinib ko'ring.",
+        "kind_not_accepted": "Bu vazifa bunday faylni qabul qilmaydi.",
+        "empty": "Avval rasm, fayl yoki matn qo'shing.",
+        "too_many_files": "Ko'pi bilan {{max}} ta fayl.",
+        "too_many_files_with_text": "Matn uzun — u alohida xabar bo'lib ketadi, shuning uchun ko'pi bilan {{max}} ta fayl yuborish mumkin. Bitta faylni olib tashlang yoki matnni qisqartiring.",
+        "file_too_large": "Fayl juda katta: rasm 10 MB gacha, video va fayl 50 MB gacha.",
+        "batch_too_large": "Fayllar jami juda katta. Kamroq fayl yuboring.",
+        "text_too_long": "Matn juda uzun.",
+        "expired": "So'rov eskirdi — qayta yuboring.",
+        "refused": "Bu ishni qabul qilib bo'lmadi. Admin bilan bog'laning.",
+        "capture_rejected": "Ishingiz topikka joylandi, lekin hisobga olinmadi. Admin bilan bog'laning.",
+        "topic_not_configured": "Guruhingizning «Kunlik vazifalar» topiki sozlanmagan. Admin bilan bog'laning.",
+        "network": "Internet aloqasini tekshiring va qayta urinib ko'ring.",
+        "generic": "Xatolik yuz berdi. Qayta urinib ko'ring."
+      },
+      "fallback": "Yoki ishingizni to'g'ridan-to'g'ri topikka yuboring:"
+    },
+    "fix": {
+      "title": "Tuzatish",
+      "withdraw": "Bu topshiriq emas",
+      "restore": "Qaytarish",
+      "move": "Boshqa kunga ko'chirish",
+      "moveTo": "{{date}} vazifasiga",
+      "confirmWithdraw": "Bu ish hisobdan chiqariladi (ball olib tashlanadi). Keyin «Qaytarish» mumkin.",
+      "ok": {
+        "move": "Ko'chirildi.",
+        "withdraw": "Hisobdan chiqarildi.",
+        "restore": "Qaytarildi."
+      },
+      "reasons": {
+        "not_owner": "Bu sizning topshirig'ingiz emas.",
+        "closed": "Muddat tugagan — endi o'zgartirib bo'lmaydi.",
+        "rejected_final": "Qabul qilinmagan ishni faqat admin qayta ko'radi.",
+        "too_many_moves": "Ko'chirishlar soni tugadi.",
+        "future_task": "Keyingi kunlar vazifasiga ko'chirib bo'lmaydi.",
+        "slot_taken": "Bu vazifa uchun boshqa ishingiz bor.",
+        "withdrawn_by_admin": "Buni admin bekor qilgan — admin bilan bog'laning.",
+        "attempts_exhausted": "Bu vazifa uchun urinishlar tugadi.",
+        "bad_target": "Bu vazifaga ko'chirib bo'lmaydi.",
+        "same_task": "Ish allaqachon shu vazifada.",
+        "default": "Bajarib bo'lmadi. Qayta urinib ko'ring."
+      }
+    },
+    "notify": {
+      "title": "Eslatmalar",
+      "body": "Bot sizga vazifa va natijalarni shaxsiy xabarda yuborishi uchun ruxsat bering.",
+      "cta": "Ruxsat berish",
+      "done": "Rahmat! Endi bot sizga yozadi."
+    },
+    "ig": {
+      "title": "Instagram profilingiz",
+      "none": "Instagram vazifasi uchun avval profilingiz nomini kiriting.",
+      "have": "Profil: @{{handle}}",
+      "save": "Saqlash",
+      "saved": "Saqlandi."
+    },
+    "dashboard": {
+      "title": "Kunlik vazifa",
+      "action": "Barchasi",
+      "todayNone": "Bugun vazifa yo'q",
+      "cta": "Ochish"
+    }
   }
 }

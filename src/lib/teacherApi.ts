@@ -23,7 +23,8 @@ export interface QueueMedia {
   file_id?: string;
 }
 
-// One row of teacher_pending_submissions() (20260819000000_teacher_pending_submissions.sql).
+// One row of teacher_pending_submissions() (20260819000000_teacher_pending_submissions.sql; course_id and
+// course_title since 20260930182000_grading_queue_course_filter.sql).
 export interface PendingSubmission {
   submission_id: string;
   user_id: string;
@@ -41,63 +42,103 @@ export interface PendingSubmission {
   media: QueueMedia[] | null;
   submitted_image_url: string | null;
   /**
-   * NOT from the RPC: courses.title of the TASK's course (assignment → module → course), attached by
-   * fetchPendingQueue so the card can say "5.0" / "CH6". null when unknown (the card then shows the group alone).
+   * The TASK's course (assignment → module → course), not the course of the student's current group: the
+   * Challenge 6.0 tasks are copies of the 5.0 tasks, and a moved student's old work keeps its own course. From
+   * the RPC since 20260930182000; before that migration is applied fetchPendingQueue attaches them with one
+   * extra read. null when unknown (the card then shows the group alone, and the row is only under "Hammasi").
    */
+  course_id?: string | null;
   course_title?: string | null;
 }
 
 /**
- * The caller's pending grading queue (oldest-first), junction-scoped by the RPC itself
- * (teacher_group_ids(auth.uid())) — co-teachers get the same rows as primaries. The RPC name may
- * not be in the generated Supabase types yet → cast per the frontend-typecheck-verify convention.
- * Throws on a real transport/RPC error so the caller can render the offline/error state; an empty
- * queue is a normal [] (the end-of-queue state), never an error.
+ * The caller's WHOLE pending grading queue (oldest-first), junction-scoped by the RPC itself
+ * (teacher_group_ids(auth.uid())) — co-teachers get the same rows as primaries. Called with no arguments on
+ * purpose: the grading screen filters in the page because its filter bar shows every course's and group's count
+ * (the RPC's p_group_id / p_course_id are for server-side callers). The RPC name may not be in the generated
+ * Supabase types yet → cast per the frontend-typecheck-verify convention. Throws on a real transport/RPC error
+ * so the caller can render the offline/error state; an empty queue is a normal [] (the end-of-queue state).
  */
 export async function fetchPendingQueue(): Promise<PendingSubmission[]> {
   const { data, error } = await supabase.rpc("teacher_pending_submissions" as any);
   if (error) throw error;
   const rows = Array.isArray(data) ? (data as unknown as PendingSubmission[]) : [];
-  return attachCourseTitles(rows);
-}
-
-/** courses.title from one `homework_assignments.select("id, modules(courses(title))")` row; null if absent. */
-export function courseTitleOfAssignmentRow(row: unknown): string | null {
-  // A to-one embed is an object; tolerate an array too.
-  const one = (r: unknown): Record<string, unknown> | null => {
-    const v = Array.isArray(r) ? r[0] : r;
-    return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
-  };
-  const title = one(one(one(row)?.modules)?.courses)?.title;
-  return typeof title === "string" && title.trim() ? title : null;
+  // 20260930182000 returns course_id + course_title; an older RPC (the minutes between a frontend deploy and
+  // the migration) does not, and then one extra read attaches them.
+  if (!rows.length || "course_id" in rows[0]) return rows;
+  return attachCourses(rows);
 }
 
 /**
- * The RPC returns the group but not the course, and the Challenge 6.0 tasks are copies of the 5.0 tasks, so the
- * card could not say which course it is (audit TUI-1 / F3). One extra read — homework_assignments → modules →
- * courses, all readable by a teacher under RLS — attaches the TASK's course. It never fails the queue: on an
- * error every row keeps course_title null (the chip shows the group alone), and a client beacon records it
- * (graceful, not silent).
+ * Why a deep-linked submission (/tg/teacher/grade?sub=<id>, the bot's 🎯 Baholash button) is not in the queue:
+ * "graded" when it has a firm score (usually a co-teacher graded it first), else "unknown" (returned for redo,
+ * not this teacher's group, deleted — or the read failed). A read, never a write; RLS shows a teacher only her
+ * own students' rows ("hws own select": is_teacher_of). Never throws.
  */
-async function attachCourseTitles(rows: PendingSubmission[]): Promise<PendingSubmission[]> {
+export async function fetchSubmissionGradeState(submissionId: string): Promise<"graded" | "unknown"> {
+  try {
+    const { data, error } = await supabase
+      .from("homework_submissions")
+      .select("score, score_is_stale")
+      .eq("id", submissionId)
+      .maybeSingle();
+    if (error || !data) return "unknown";
+    const row = data as { score: number | null; score_is_stale: boolean | null };
+    return row.score != null && !row.score_is_stale ? "graded" : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+// A to-one embed is an object; tolerate an array too.
+const embedOne = (r: unknown): Record<string, unknown> | null => {
+  const v = Array.isArray(r) ? r[0] : r;
+  return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+};
+
+/** courses.title from one `homework_assignments.select("id, modules(course_id, courses(title))")` row; null if absent. */
+export function courseTitleOfAssignmentRow(row: unknown): string | null {
+  const title = embedOne(embedOne(embedOne(row)?.modules)?.courses)?.title;
+  return typeof title === "string" && title.trim() ? title : null;
+}
+
+/** modules.course_id from the same row; null if absent. */
+export function courseIdOfAssignmentRow(row: unknown): string | null {
+  const id = embedOne(embedOne(row)?.modules)?.course_id;
+  return typeof id === "string" && id ? id : null;
+}
+
+/**
+ * Fallback for an RPC without course columns (before 20260930182000 is applied). One extra read —
+ * homework_assignments → modules → courses, all readable by a teacher under RLS — attaches the TASK's course. It
+ * never fails the queue: on an error every row keeps course_id/course_title null (the chip shows the group alone,
+ * the row stays under "Hammasi"), and a client beacon records it (graceful, not silent).
+ */
+async function attachCourses(rows: PendingSubmission[]): Promise<PendingSubmission[]> {
   const ids = Array.from(new Set(rows.map((r) => r.assignment_id).filter(Boolean)));
-  if (!ids.length) return rows;
+  if (!ids.length) return rows.map((r) => ({ ...r, course_id: null, course_title: null }));
   try {
     const { data, error } = await supabase
       .from("homework_assignments")
-      .select("id, modules(courses(title))")
+      .select("id, modules(course_id, courses(title))")
       .in("id", ids);
     if (error) throw error;
-    const byId = new Map<string, string | null>();
-    for (const a of (data ?? []) as unknown as { id: string }[]) byId.set(a.id, courseTitleOfAssignmentRow(a));
-    return rows.map((r) => ({ ...r, course_title: byId.get(r.assignment_id) ?? null }));
+    const byId = new Map<string, { id: string | null; title: string | null }>();
+    for (const a of (data ?? []) as unknown as { id: string }[]) {
+      byId.set(a.id, { id: courseIdOfAssignmentRow(a), title: courseTitleOfAssignmentRow(a) });
+    }
+    return rows.map((r) => ({
+      ...r,
+      course_id: byId.get(r.assignment_id)?.id ?? null,
+      course_title: byId.get(r.assignment_id)?.title ?? null,
+    }));
   } catch (e) {
     reportClientError({
       type: "other",
       message: `hw_label_course_lookup_failed: ${String((e as { message?: string })?.message ?? e)}`.slice(0, 300),
       extra: { assignments: ids.length },
     });
-    return rows.map((r) => ({ ...r, course_title: null }));
+    return rows.map((r) => ({ ...r, course_id: null, course_title: null }));
   }
 }
 
@@ -259,13 +300,23 @@ export function notifyGradeVoice(submissionId: string, opts?: { voiceFresh?: boo
  * recorder always works; the webhook then attaches the note to this submission and delivers it.
  *
  * Unlike notifyGradeVoice this is NOT fire-and-forget: it returns a typed code so the grading screen can
- * tell the teacher exactly what to do (e.g. `no_telegram` / `prompt_failed` → open the bot and press /start).
+ * tell the teacher exactly what to do (e.g. `no_telegram` / `prompt_failed` → open the bot and press /start,
+ * `too_many` → record the pending ones first).
+ *
+ * Each card keeps its OWN pending request (one per submission, never re-pointed to the newest card), and
+ * `pending` says how many are waiting now: with more than one, each recording must reply to its student's
+ * prompt in the bot (or the bot asks "who is this for?" with buttons).
  */
-export async function requestTeacherVoiceInTelegram(submissionId: string): Promise<{ ok: boolean; code?: string }> {
-  const { error } = await supabase.functions.invoke("teacher-voice-request", {
+export async function requestTeacherVoiceInTelegram(
+  submissionId: string,
+): Promise<{ ok: boolean; code?: string; pending?: number }> {
+  const { data, error } = await supabase.functions.invoke("teacher-voice-request", {
     body: { submission_id: submissionId },
   });
-  if (!error) return { ok: true };
+  if (!error) {
+    const pending = Number((data as { pending?: unknown } | null)?.pending);
+    return { ok: true, pending: Number.isFinite(pending) && pending > 0 ? pending : undefined };
+  }
   let code = "";
   try {
     // On an HTTP error supabase-js puts the response body in error.context, not `data`.

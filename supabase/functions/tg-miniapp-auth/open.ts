@@ -11,7 +11,15 @@
 // src with a ref, stamp clicked_at on THAT row of THAT profile only — which keeps detect-and-nudge's rule "a
 // clicked 3-day nudge suppresses the 7-day one" working without a token. The open mode resolves the profile
 // by telegram_id ONLY: it never links a username and never mints a session. NEVER log initData.
-import { isMiniAppSrc, isUuid, type MiniAppSrc } from "../_shared/miniapp-links.ts";
+// The accepted srcs are _shared/miniapp-links.ts MINIAPP_SRCS (bundled at deploy: a new src — e.g. the bot's
+// "bot_start" welcome and "bot_profile" card buttons, or the teacher_* sources below — is only counted once
+// this function is redeployed).
+//
+// A tap on a TEACHER Mini App button (TEACHER_MINIAPP_SRCS) is written as 'teacher_miniapp_open' instead:
+// watch_button_health() reads every 'miniapp_open' row as proof that the STUDENT watch buttons work
+// (opens_missing = many buttons sent, zero opens), so a teacher grading from 🎯 Baholash would mask a broken
+// student sign-in for 48 h. A detector must not be fed by traffic from outside what it watches.
+import { isMiniAppSrc, isTeacherMiniAppSrc, isUuid, type MiniAppSrc } from "../_shared/miniapp-links.ts";
 
 export type OpenSignal = { src: MiniAppSrc; ref: string | null; path: string | null };
 
@@ -24,6 +32,11 @@ export function parseOpen(raw: unknown): OpenSignal | null {
   const ref = isUuid(o.ref) ? (o.ref as string).toLowerCase() : null;
   const path = typeof o.path === "string" && PATH_RE.test(o.path) ? o.path : null;
   return { src: o.src, ref, path };
+}
+
+/** The admin_actions action an open is recorded under: a teacher button's tap never counts as a student open. */
+export function openActionFor(src: MiniAppSrc): "miniapp_open" | "teacher_miniapp_open" {
+  return isTeacherMiniAppSrc(src) ? "teacher_miniapp_open" : "miniapp_open";
 }
 
 /** Which clicked_at table a src's ref points into, if any. */
@@ -64,12 +77,12 @@ export async function recordOpen(admin: any, profileId: string, sig: OpenSignal,
   try {
     await admin.from("admin_actions").insert({
       actor_user_id: null,
-      action: "miniapp_open",
+      action: openActionFor(sig.src),
       target_user_id: profileId,
       details: { profile_id: profileId, src: sig.src, ref: sig.ref, path: sig.path, cold, stamped, at: new Date().toISOString() },
     });
   } catch (e) {
-    console.error("miniapp_open: admin_actions insert threw", String(e));
+    console.error(`${openActionFor(sig.src)}: admin_actions insert threw`, String(e));
   }
   return { stamped };
 }

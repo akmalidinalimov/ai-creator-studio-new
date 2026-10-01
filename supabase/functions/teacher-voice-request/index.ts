@@ -17,11 +17,11 @@
 // identical to hw-image-url, so a teacher can only ever do this for a student in their own group.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json, logHealth } from "../_shared/edge.ts";
-import { sendTelegram } from "../_shared/telegram-send.ts";
+import { sendTelegramResult } from "../_shared/telegram-send.ts";
 import { loadHwLabel } from "../_shared/hw-label-load.ts";
+import { parkVoiceRequest, stampVoicePromptIo, withdrawVoiceRequest } from "../_shared/voice-requests.ts";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const STATE_TTL_MS = 15 * 60_000; // mirrors the grading flow's own conversation TTL
 
 const escHtml = (s = "") => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -35,11 +35,26 @@ function normLocale(code?: string | null): Locale {
 // The ONLY copy of this prompt. The webhook's grade_voice step owns the follow-ups (gvNeedVoice / gvSaved /
 // gvExpired) — keep the wording consistent if either side changes. `label` is the shared hw-label
 // ("5.0 · 1-GURUH PRE · M2 V1 — <title>"): the Challenge tasks are copies of the 5.0 tasks, so the title alone
-// could not tell the teacher which course's card she is voicing (audit BOT-8 / FB-3).
-const ASK: Record<Locale, (student: string, label: string) => string> = {
-  uz: (s, l) => `🎤 <b>${s}</b>\n📌 ${l}\n\nOvozli izohingizni shu yerga yuboring (yoki /cancel):`,
-  ru: (s, l) => `🎤 <b>${s}</b>\n📌 ${l}\n\nОтправьте сюда голосовой комментарий (или /cancel):`,
-  en: (s, l) => `🎤 <b>${s}</b>\n📌 ${l}\n\nSend your voice feedback here (or /cancel):`,
+// could not tell the teacher which course's card she is voicing (audit BOT-8 / FB-3). `pending` = requests now
+// waiting, this one included; `reply` = a recording must REPLY to its student's prompt to be taken without a
+// question — true with more than one pending, and also when this is the only one left of several (the bot's
+// sticky "several were pending" mark, _shared/voice-requests.ts) — so the prompt says so.
+const ASK: Record<Locale, (student: string, label: string, pending: number, reply: boolean) => string> = {
+  uz: (s, l, n, r) => `🎤 <b>${s}</b>\n📌 ${l}\n\n` + (n > 1
+    ? `Sizda <b>${n} ta</b> ovozli so'rov kutilmoqda — ovozni aynan <b>shu xabarga javob (reply)</b> qilib yuboring, shunda u shu talabaga boradi (yoki /cancel).`
+    : r
+    ? `Ovozni aynan <b>shu xabarga javob (reply)</b> qilib yuboring, shunda u shu talabaga boradi (yoki /cancel).`
+    : `Ovozli izohingizni shu yerga yuboring (yoki /cancel):`),
+  ru: (s, l, n, r) => `🎤 <b>${s}</b>\n📌 ${l}\n\n` + (n > 1
+    ? `Ожидает запросов: <b>${n}</b> — отправьте голосовое <b>ответом (reply) на это сообщение</b>, тогда оно уйдёт этому студенту (или /cancel).`
+    : r
+    ? `Отправьте голосовое <b>ответом (reply) на это сообщение</b>, тогда оно уйдёт этому студенту (или /cancel).`
+    : `Отправьте сюда голосовой комментарий (или /cancel):`),
+  en: (s, l, n, r) => `🎤 <b>${s}</b>\n📌 ${l}\n\n` + (n > 1
+    ? `You have <b>${n}</b> pending requests — send the voice note <b>as a reply to this message</b> so it reaches this student (or /cancel).`
+    : r
+    ? `Send the voice note <b>as a reply to this message</b> so it reaches this student (or /cancel).`
+    : `Send your voice feedback here (or /cancel):`),
 };
 
 Deno.serve(async (req) => {
@@ -107,54 +122,57 @@ Deno.serve(async (req) => {
     const studentName = [stu?.name, stu?.last_name].filter(Boolean).join(" ") || "—";
     const locale = normLocale(me?.preferred_locale);
 
-    // --- Park the conversation state the webhook's grade_voice handler consumes — WITHOUT clobbering a flow
-    // she is in the middle of in the bot (the webhook's standing rule: never clobber awaiting_name /
-    // confirm_name / an in-bot grading session). bot_conversation_state is ONE row per telegram_id, so:
-    //   1) a plain INSERT wins when she has no state at all;
-    //   2) otherwise an ATOMIC conditional UPDATE takes the row only if it is a previous grade_voice request
-    //      (re-pointing to the newest card is intended), a non-flow cache row, or already expired.
-    // Anything else is a live flow → 409 `busy`, and the grading screen asks her to finish or /cancel it. ---
-    const nowIso = new Date().toISOString();
-    // `label` (plain text) rides along so the webhook's "saved" confirmation and the student's voice caption
-    // name the same course/group/task without re-reading anything.
-    const parked = {
-      state: "grade_voice",
-      context: { submission_id: submissionId, label: lbl.label || null },
-      updated_at: nowIso,
-      expires_at: new Date(Date.now() + STATE_TTL_MS).toISOString(),
-    };
-    const { error: insErr } = await admin.from("bot_conversation_state").insert({ telegram_id: teacherTg, ...parked });
-    if (insErr) {
-      if ((insErr as any).code !== "23505") throw insErr;
-      // Timestamp is double-quoted: `.` and `:` are reserved characters inside a PostgREST or() filter.
-      const { data: took, error: upErr } = await admin.from("bot_conversation_state")
-        .update(parked)
-        .eq("telegram_id", teacherTg)
-        .or(`state.eq.grade_voice,state.eq.nm_cache,expires_at.lt."${nowIso}"`)
-        .select("telegram_id")
-        .maybeSingle();
-      if (upErr) throw upErr;
-      if (!took) {
-        await logHealth(admin, "teacher_voice_request_busy", { submission_id: submissionId }, { source: "teacher-voice-request", actorUserId: uid, targetResourceId: submissionId });
-        return json({ error: "busy" }, 409);
-      }
+    // --- Park ONE MORE request, keyed by this submission — never re-point one already pending. ---
+    // Until 2026-09-30 a second tap moved the teacher's single pending request to the newer card, so her first
+    // recording went to the SECOND student at once, and the other recording was lost (audit FB-4). Now each
+    // card keeps its own entry (_shared/voice-requests.ts; the same card again refreshes its entry), and the
+    // webhook matches a recording to the prompt it replies to, or asks with per-student buttons.
+    // bot_conversation_state is ONE row per telegram_id: the set lives in its context, written by compare-and-
+    // swap. A live non-voice flow (in-bot grading, name capture, …) is still never clobbered → 409 `busy`.
+    const park = await parkVoiceRequest(admin, teacherTg, {
+      submission_id: submissionId, label: lbl.label || null, student: studentName === "—" ? null : studentName,
+    });
+    if (!park.ok) {
+      // Four compare-and-swap rounds lost in a row (several taps at once), or the row could not be read.
+      if (park.reason === "db_error") throw new Error(park.error || "voice_state_write_failed");
+      await logHealth(admin, "teacher_voice_request_busy", { submission_id: submissionId, reason: "contended" }, { source: "teacher-voice-request", actorUserId: uid, targetResourceId: submissionId });
+      return json({ error: "busy" }, 409);
+    }
+    const parked = park.result;
+    if (parked.kind === "busy") {
+      await logHealth(admin, "teacher_voice_request_busy", { submission_id: submissionId, reason: "flow", state: parked.state }, { source: "teacher-voice-request", actorUserId: uid, targetResourceId: submissionId });
+      return json({ error: "busy" }, 409);
+    }
+    if (parked.kind === "too_many") {
+      await logHealth(admin, "teacher_voice_request_busy", { submission_id: submissionId, reason: "too_many", pending: parked.pending }, { source: "teacher-voice-request", actorUserId: uid, targetResourceId: submissionId });
+      return json({ error: "too_many", pending: parked.pending }, 409);
     }
 
     // --- Prompt them in the bot chat. If this can't be delivered the flow is dead, so surface it. ---
-    const out = await sendTelegram(
+    const { outcome: out, result: sent } = await sendTelegramResult(
       BOT_TOKEN,
       "sendMessage",
-      { chat_id: teacherTg, text: ASK[locale](escHtml(studentName), escHtml(label)), parse_mode: "HTML" },
+      { chat_id: teacherTg, text: ASK[locale](escHtml(studentName), escHtml(label), parked.pending, parked.replyNeeded), parse_mode: "HTML" },
       { admin, purpose: "teacher_voice_prompt", recipientId: teacherTg },
     );
     if (!out.ok) {
-      // Roll the state back — leaving it parked would silently swallow the teacher's NEXT unrelated message.
-      await admin.from("bot_conversation_state").delete().eq("telegram_id", teacherTg).eq("state", "grade_voice");
+      // Withdraw the request this prompt announced — a request she never saw must not capture a recording.
+      // A REFRESHED request keeps its earlier prompt(s), so it stays.
+      if (parked.outcome === "added") await withdrawVoiceRequest(admin, teacherTg, parked.req.rid);
       return json({ error: "prompt_failed", recipient: out.recipient }, 502);
     }
+    // Remember the prompt's message_id on its request: a recording that REPLIES to this prompt goes to this
+    // student. If the stamp is lost (a race won four times) the request still works through the buttons.
+    const mid = Number(sent?.message_id);
+    if (Number.isInteger(mid) && mid > 0) {
+      const st = await stampVoicePromptIo(admin, teacherTg, parked.req.rid, mid);
+      if (!st.ok) {
+        await logHealth(admin, "teacher_voice_prompt_unstamped", { submission_id: submissionId, reason: st.reason }, { source: "teacher-voice-request", actorUserId: uid, targetResourceId: submissionId });
+      }
+    }
 
-    await logHealth(admin, "teacher_voice_requested", { submission_id: submissionId }, { source: "teacher-voice-request", actorUserId: uid, targetUserId: sub.user_id, targetResourceType: "homework_submission", targetResourceId: submissionId });
-    return json({ ok: true });
+    await logHealth(admin, "teacher_voice_requested", { submission_id: submissionId, pending: parked.pending, refreshed: parked.outcome === "refreshed" }, { source: "teacher-voice-request", actorUserId: uid, targetUserId: sub.user_id, targetResourceType: "homework_submission", targetResourceId: submissionId });
+    return json({ ok: true, pending: parked.pending });
   } catch (e) {
     await logHealth(admin, "teacher_voice_request_failed", { submission_id: submissionId, error: String((e as any)?.message ?? e) }, { source: "teacher-voice-request", actorUserId: uid });
     return json({ error: "internal_error" }, 500);

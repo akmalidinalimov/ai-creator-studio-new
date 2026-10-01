@@ -2,10 +2,24 @@
 // student's group — the primary AND the co-teachers (_shared/group-teachers.ts). Up to 3 reminders per
 // submission, 24h apart. Submissions with no reachable teacher go to the admins as ONE message per run
 // (routing + copy in route.ts). Mirrors notify-homework-submission for auth + Telegram send pattern.
+//
+// 2026-09-30: with platform_settings.teacher_miniapp on, 🎯 opens THIS submission in the teacher Mini App
+// (web_app → /tg/teacher/grade?sub=<id>, _shared/teacher-miniapp.ts); the in-chat flow and the web page stay as
+// the second row. Off → today's keyboard, byte-identical. A web_app button Telegram rejects is resent once with
+// today's keyboard (recorded as teacher_miniapp_button_rejected — never the student watch-button alarm's
+// miniapp_button_rejected). The audit row's details.buttons counts both kinds.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { logHealth } from "../_shared/edge.ts";
+import { sendWithWatchFallback } from "../_shared/miniapp-button.ts";
+import {
+  GRADE_APP_LABEL,
+  GRADE_CHAT_LABEL,
+  loadTeacherMiniAppFlag,
+  teacherAppButton,
+  teacherGradePath,
+} from "../_shared/teacher-miniapp.ts";
 import { loadGroupTeachers } from "../_shared/group-teachers.ts";
 import { loadAssignmentLabels, loadGroupNames } from "../_shared/hw-label-load.ts";
 import {
@@ -168,6 +182,8 @@ Deno.serve(async (req) => {
 
   let sent = 0, skipped = 0, teacherDms = 0;
   const adminQueue: { s: Sub; item: AdminItem }[] = [];
+  // Teacher Mini App kill-switch, once per run (cached 60 s; a read error = today's buttons, DB-visible).
+  const teacherFlag = await loadTeacherMiniAppFlag(admin, "cron-ungraded-homework-reminder");
 
   for (const s of eligible) {
     try {
@@ -197,21 +213,39 @@ Deno.serve(async (req) => {
 
       const label = itemLabel(item);
       let delivered = 0;
+      const btn = { web_app: 0, callback: 0, rejected: 0 };
       for (const r of route.recipients) {
-        const out = await sendTelegram(BOT_TOKEN, "sendMessage", {
+        const gradeApp = await teacherAppButton({
+          text: GRADE_APP_LABEL[r.locale], flag: teacherFlag, chatId: r.chatId, path: teacherGradePath(s.id),
+          src: "teacher_hw_reminder", ref: s.id, fn: "cron-ungraded-homework-reminder", admin,
+        });
+        const payload = (app: typeof gradeApp) => ({
           chat_id: r.chatId,
           text: teacherReminderText(r.locale, rawName, label, hours, n),
           parse_mode: "HTML",
-          reply_markup: teacherReminderKeyboard(r.locale, s.id),
-        }, { admin, purpose: "ungraded_homework_reminder", recipientId: r.chatId });
-        if (out.ok) delivered++;
+          reply_markup: teacherReminderKeyboard(r.locale, s.id, app, GRADE_CHAT_LABEL[r.locale]),
+        });
+        const { result: out, retried } = await sendWithWatchFallback(
+          (p) => sendTelegram(BOT_TOKEN, "sendMessage", p, { admin, purpose: "ungraded_homework_reminder", recipientId: r.chatId }),
+          payload(gradeApp),
+          async () => (gradeApp ? payload(null) : null),
+          { fn: "cron-ungraded-homework-reminder", admin },
+        );
+        if (retried) btn.rejected++;
+        if (out.ok) {
+          delivered++;
+          btn[gradeApp && !retried ? "web_app" : "callback"]++;
+        }
       }
       if (!delivered) { skipped++; continue; }
       teacherDms += delivered;
 
       await markReminded([{
         s, n,
-        details: { recipient_kind: "teacher", reminders_sent: n, hours_waiting: hours, teachers_notified: delivered, teachers_reachable: route.recipients.length },
+        details: {
+          recipient_kind: "teacher", reminders_sent: n, hours_waiting: hours, teachers_notified: delivered, teachers_reachable: route.recipients.length,
+          buttons: btn, // which 🎯 went out: web_app (teacher Mini App) / callback (in-chat flow) / rejected (resent)
+        },
       }]);
       sent++;
     } catch (e) {

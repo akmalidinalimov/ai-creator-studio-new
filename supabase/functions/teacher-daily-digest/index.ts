@@ -3,12 +3,18 @@
 // questions/homework still waiting, homework graded, and their weekly standing (🥇🥈🥉). Every metric
 // is an honest proxy (see teacher_daily_report()). A short line tells the teacher the same stats go to
 // admins (accountability). After the teacher loop, admins get one aggregate summary.
+// 2026-09-30: the report's buttons open the teacher Mini App — 📝 Baholash (N) and 👤 Profil (buttons.ts);
+// teacher_miniapp off → today's Profil magic link, byte-identical.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
+import { countLines, rowsByTeacher, type TeacherGroupRow } from "../_shared/teacher-group-lines.ts";
 import { type GroupPrimaryRow, type GroupTeacherRow, mergeGroupTeachers } from "../_shared/group-teachers.ts";
 import { courseShort, scopeTag } from "../_shared/hw-label.ts";
 import { logHealthOnce } from "../_shared/edge.ts";
+import { sendWithWatchFallback } from "../_shared/miniapp-button.ts";
+import { loadTeacherMiniAppFlag, teacherAppButton, TEACHER_GRADE_PATH, TEACHER_HOME_PATH } from "../_shared/teacher-miniapp.ts";
+import { appReportRows, backlogCount, legacyReportRows, REPORT_GRADE_LABEL, REPORT_HOME_LABEL } from "./buttons.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -132,6 +138,21 @@ Deno.serve(async (req) => {
     locById[p.id] = (["uz", "ru", "en"].includes(p.preferred_locale) ? p.preferred_locale : "uz") as Loc;
   }
 
+  // One line per group under "📥 Baholanmagan vazifalar" (teacher audit BOT-6: a teacher of two groups or
+  // courses got one merged number). The rows come from teacher_group_signals(), the per-group engine the
+  // report's backlog is SUMMED from (20260930183000), so the lines add up to the total. A failed read only
+  // drops the lines -- recorded once a day as teacher_group_lines_failed -- and never costs the report.
+  let linesByTeacher = new Map<string, TeacherGroupRow[]>();
+  if (rows.length) {
+    const { data: sig, error: sigErr } = await admin.rpc("teacher_group_signals");
+    if (sigErr) {
+      await logHealthOnce(admin, "teacher_group_lines_failed", "teacher-daily-digest",
+        { part: "teacher_group_signals", error: String(sigErr.message).slice(0, 300) }, { source: "teacher-daily-digest" });
+    } else {
+      linesByTeacher = rowsByTeacher((sig || []) as TeacherGroupRow[]);
+    }
+  }
+
   // --- Group board data (kill-switch: platform_settings.group_board.digest_enabled). If the row is
   // absent the migration hasn't applied yet (RPCs may not exist) → board stays off, digest unchanged.
   let boardEnabled = false;
@@ -146,8 +167,9 @@ Deno.serve(async (req) => {
       // A group's card goes to EVERY teacher of it — primary ∪ co-teachers (_shared/group-teachers.ts),
       // the same groups the "📊 Guruh reytingi" Mini App (tg-group-board) already shows them. Reading
       // only groups.teacher_id left a co-taught group off its co-teacher's digest and dropped a group
-      // whose teachers are all co-teachers from the board entirely. Who GETS a digest is still
-      // teacher_daily_report() (primary-attributed stats), unchanged here.
+      // whose teachers are all co-teachers from the board entirely. Who GETS a digest is
+      // teacher_daily_report() (every teacher); since 20260930183000 its numbers count co-taught groups
+      // too and credit "Bugun baholadingiz" to whoever graded (hs.scored_by), not the group's primary.
       // Each card is headed "<course> · <group>" (shared hw-label scopeTag), e.g. "5.0 · 1-GURUH VIP" /
       // "CH6 · 3-GURUH", so a teacher of both courses can tell the cards apart. The course titles are a
       // SEPARATE read: a failure there only drops the course from the headings (recorded once a day as
@@ -244,6 +266,10 @@ Deno.serve(async (req) => {
   };
 
   let sent = 0, failed = 0, boardSent = 0, boardFailed = 0;
+  // Teacher Mini App kill-switch (buttons.ts): on → 📝 Baholash (N) + 👤 Profil open the app; a read error or
+  // off → today's magic link. `buttons` counts what went out (teacher_daily_report_run.details.buttons).
+  const teacherFlag = await loadTeacherMiniAppFlag(admin, "teacher-daily-digest");
+  const buttons = { web_app: 0, magic_link: 0, rejected: 0 };
   for (const t of rows) {
     if (!t.telegram_id) continue;
     try {
@@ -260,6 +286,9 @@ Deno.serve(async (req) => {
     lines.push(l.open(Number(t.open_questions || 0)));
     lines.push(l.backlog(Number(t.ungraded_backlog || 0),
       t.ungraded_backlog > 0 && t.oldest_pending_hours != null ? l.oldest(Number(t.oldest_pending_hours)) : ""));
+    if (Number(t.ungraded_backlog || 0) > 0) {
+      lines.push(...countLines(linesByTeacher.get(t.teacher_id), (r) => r.pending_homework, { esc: escHtml, loc }));
+    }
     if (Number(t.graded_today || 0) > 0) {
       lines.push(l.graded(Number(t.graded_today), t.avg_score_pct != null ? l.avg(Number(t.avg_score_pct)) : ""));
     }
@@ -267,16 +296,43 @@ Deno.serve(async (req) => {
     if (rk) lines.push("", l.rank(medal(rk), rk));
     lines.push("", l.footer);
 
-    // magic link into the teacher's profile
-    const token = randomToken(32);
-    await admin.from("telegram_magic_links").insert({
-      token, user_id: t.teacher_id, purpose: "login", target_path: "/profile",
-      expires_at: new Date(Date.now() + 2 * 86400_000).toISOString(),
-    }).then(() => {}, () => {});
-    const url = `${SITE_URL}/auth/magic?t=${token}`;
+    // Today's button: a magic link into the teacher's web profile — written only when it is actually sent (the
+    // Mini App is off, or Telegram rejected the app buttons).
+    const legacyRows = async () => {
+      const token = randomToken(32);
+      await admin.from("telegram_magic_links").insert({
+        token, user_id: t.teacher_id, purpose: "login", target_path: "/profile",
+        expires_at: new Date(Date.now() + 2 * 86400_000).toISOString(),
+      }).then(() => {}, () => {});
+      return legacyReportRows(`${SITE_URL}/auth/magic?t=${token}`);
+    };
+    // The app buttons (buttons.ts): the grading queue when something waits, and the teacher Mini App home.
+    const backlog = backlogCount(t.ungraded_backlog);
+    const appBtn = (text: string, path: string) => teacherAppButton({
+      text, flag: teacherFlag, chatId: t.telegram_id, path, src: "teacher_report", fn: "teacher-daily-digest", admin,
+    });
+    const appRows = appReportRows({
+      grade: backlog > 0 ? await appBtn(REPORT_GRADE_LABEL[loc](backlog), TEACHER_GRADE_PATH) : null,
+      home: await appBtn(REPORT_HOME_LABEL[loc], TEACHER_HOME_PATH),
+    });
+    const reportPayload = (kb: unknown[][]) => ({
+      chat_id: Number(t.telegram_id), text: lines.join("\n"), parse_mode: "HTML", disable_web_page_preview: true,
+      reply_markup: { inline_keyboard: kb },
+    });
 
-    // Core report + Profil (url) button only — never at risk from the board's web_app button/length.
-    const ok = await sendTg(Number(t.telegram_id), lines.join("\n"), [[{ text: "👤 Profil / Profile", url }]], "teacher_daily_report", false);
+    // Core report — its own message, never at risk from the board below. A web_app button Telegram rejects is
+    // resent ONCE with today's magic link (recorded as teacher_miniapp_button_rejected — the buttons open
+    // /tg/teacher, so never the student watch-button alarm), so the report itself is never lost.
+    // record:false: a failure writes its own teacher_daily_report_failed row below.
+    const { result: rep, retried } = await sendWithWatchFallback(
+      (p) => sendTelegram(BOT_TOKEN, "sendMessage", p, { admin, purpose: "teacher_daily_report", recipientId: Number(t.telegram_id), record: false }),
+      reportPayload(appRows ?? await legacyRows()),
+      async () => (appRows ? reportPayload(await legacyRows()) : null),
+      { fn: "teacher-daily-digest", admin },
+    );
+    const ok = rep.ok;
+    if (retried) buttons.rejected++;
+    if (ok) buttons[appRows && !retried ? "web_app" : "magic_link"]++;
     if (ok) {
       sent++;
       await admin.from("notifications_log").insert({
@@ -355,7 +411,7 @@ Deno.serve(async (req) => {
 
   await admin.from("admin_actions").insert({
     actor_user_id: null, action: "teacher_daily_report_run",
-    details: { teachers: rows.length, sent, failed, admin_sent: adminSent, board_enabled: boardEnabled, groups: allGroupCards.length, board_sent: boardSent, board_failed: boardFailed, at: new Date().toISOString() },
+    details: { teachers: rows.length, sent, failed, admin_sent: adminSent, board_enabled: boardEnabled, groups: allGroupCards.length, board_sent: boardSent, board_failed: boardFailed, buttons, teacher_miniapp: teacherFlag.on, at: new Date().toISOString() },
   }).then(() => {}, () => {});
 
   return new Response(JSON.stringify({ ok: true, teachers: rows.length, sent, failed, admin_sent: adminSent, board_sent: boardSent, board_failed: boardFailed }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });

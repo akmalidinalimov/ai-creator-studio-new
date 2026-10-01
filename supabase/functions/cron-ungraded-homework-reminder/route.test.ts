@@ -111,6 +111,29 @@ Deno.test("teacher reminder: 🎯 opens THIS submission (gs:open:<id>, ≤ 64 by
   }
 });
 
+Deno.test("teacher reminder: teacher Mini App off → the keyboard is exactly today's (no app button argument = null)", () => {
+  const id = "0b7c2d4e-9f10-4a2b-8c3d-5e6f7a8b9c0d";
+  const today = {
+    inline_keyboard: [
+      [{ text: "🎯 Baholash", callback_data: `gs:open:${id}` }],
+      [{ text: "🌐 Saytda ochish", url: TEACHER_URL }],
+    ],
+  };
+  assertEquals(teacherReminderKeyboard("uz", id), today);
+  assertEquals(teacherReminderKeyboard("uz", id, null, "🎤 Chatda (ovoz bilan)"), today);
+});
+
+Deno.test("teacher reminder: Mini App on → 🎯 opens the app first; in-chat flow + web page share the second row", () => {
+  const id = "0b7c2d4e-9f10-4a2b-8c3d-5e6f7a8b9c0d";
+  const app = { text: "🎯 Оценить", web_app: { url: `https://www.aicreator.academy/tg/teacher/grade?sub=${id}&src=teacher_hw_reminder&ref=${id}` } };
+  assertEquals(teacherReminderKeyboard("ru", id, app, "🎤 В чате (голосом)"), {
+    inline_keyboard: [
+      [app],
+      [{ text: "🎤 В чате (голосом)", callback_data: `gs:open:${id}` }, { text: "🌐 Открыть на сайте", url: TEACHER_URL }],
+    ],
+  });
+});
+
 Deno.test("admin digest: user text is HTML-escaped (a raw < would make Telegram reject the whole message)", () => {
   const t = adminDigestText([item(1, { studentName: "<b>x</b> & y", taskTitle: "a<b", groupName: "g>1" })], "uz");
   assert(t.includes("&lt;b&gt;x&lt;/b&gt; &amp; y"));

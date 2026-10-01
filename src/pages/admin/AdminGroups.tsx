@@ -19,7 +19,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { getSiteUrl } from "@/lib/siteUrl";
 import { mutate, mutateMany } from "@/lib/mutate";
 import { DAILY_TOPIC_MSG, dailyTopicError, dailyTopicSaveMessage, parseTopicUrl } from "@/lib/dailyTaskTopic";
-import { CLEAR_GROUP_WARNING, isEngineFailure, loadGroupMovePlan } from "@/lib/courseMove";
+import { CLEAR_GROUP_WARNING, dbMoveRefusalText, isEngineFailure, loadGroupMovePlan } from "@/lib/courseMove";
 import { toast } from "sonner";
 
 const FN_BASE = `${SB_BASE}/functions/v1`;
@@ -810,7 +810,9 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
           const patch: Record<string, any> = { group_id: group.id };
           if (acct) patch.account_type = acct; // batch choice also applies to moved existing students
           const r = await mutate(() => supabase.from("profiles").update(patch as any).eq("id", existingId));
-          if (!r.ok) { if (r.reason !== "impersonation_readonly") errors.push(`${ident}: ${r.message ?? "saqlanmadi"}`); }
+          // The database guard (20260930181010) may still refuse: homework can arrive after the check above, and it
+          // also judges a student with no group yet (a placement), which the check above does not.
+          if (!r.ok) { if (r.reason !== "impersonation_readonly") errors.push(`${ident}: ${dbMoveRefusalText(r.message) ?? r.message ?? "saqlanmadi"}`); }
           else moved++;
         } else {
           // Queue for creation

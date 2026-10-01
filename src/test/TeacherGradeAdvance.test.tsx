@@ -23,6 +23,10 @@ vi.mock("@/lib/teacherApi", () => ({
   notifyGradeVoice: vi.fn(),
   requestTeacherVoiceInTelegram: vi.fn(),
 }));
+// TeacherGrade reads the teacher's groups for its filter chips (#235); none are needed here.
+vi.mock("@/hooks/useSelectedGroup", () => ({
+  useSelectedGroup: () => ({ groups: [], groupId: null, setGroupId: vi.fn(), loading: false, error: false, reload: vi.fn() }),
+}));
 vi.mock("@/components/teacher/GradePhoto", () => ({ GradePhoto: () => null }));
 vi.mock("@/components/homework/VoiceRecorder", () => ({ VoiceRecorder: () => null }));
 vi.mock("@/lib/homeworkAudio", () => ({ uploadFeedbackVoice: vi.fn(), removeFeedbackVoice: vi.fn() }));

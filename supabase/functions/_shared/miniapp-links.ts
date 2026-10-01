@@ -7,6 +7,7 @@
 //   continuePath(c)          "/continue/<c>"        → the next unfinished lesson in course c
 //   lessonPath(c, l)         "/lesson/<c>/<l>"      → that lesson (the player resumes where they stopped)
 //   coursePath(c)            "/course/<c>"          → the course page (the trial card for a provisional student)
+//   dailyTaskPath(t)         "/challenge/tasks/<t>" → one Challenge daily task (Kunlik vazifalar, Daily Tasks PR-7)
 //
 //   start_param              path
 //   "c"                      /continue
@@ -15,6 +16,9 @@
 //   "hw" | "homework"        /homework
 //   "leaderboard"            /leaderboard
 //   "profile"                /profile
+//   "dt"                     /challenge/tasks                 (Kunlik vazifalar — the Challenge daily tasks)
+//   "dt_<task id>"           /challenge/tasks/<task id>       (one daily task; a positive integer id)
+//   "ig"                     /settings#profile                (where the Instagram handle is set)
 //   any of them + "__<src>"  the same path; <src> is the open-signal source (MINIAPP_SRCS)
 //
 // startParamToPath is WHITELIST-ONLY: every id must be a UUID and every other value is a fixed literal, so no
@@ -25,7 +29,10 @@
 //   src/lib/miniappLinks.ts                       (the web / Mini App bundle, which cannot import supabase/functions)
 // src/test/miniapp-links-parity.test.ts fails if the two copies drift. Edit one, copy it over the other.
 
-/** Where a watch button came from — the open signal (admin_actions 'miniapp_open') is counted per source. */
+/**
+ * Where a watch button came from — the open signal (admin_actions 'miniapp_open', or 'teacher_miniapp_open' for
+ * TEACHER_MINIAPP_SRCS) is counted per source.
+ */
 export const MINIAPP_SRCS = [
   "daily_reminder",
   "streak_warning",
@@ -40,7 +47,14 @@ export const MINIAPP_SRCS = [
   "bot_davom",
   "bot_dars",
   "bot_welcome",
+  "bot_start",
+  "bot_profile",
   "teacher_nudge",
+  // Staff buttons into the TEACHER Mini App (_shared/teacher-miniapp.ts) — see TEACHER_MINIAPP_SRCS:
+  "teacher_hw_dm", //        🎯 Baholash on the new-homework DM (ref = the submission)
+  "teacher_hw_reminder", //  🎯 Baholash on the 24 h ungraded reminder (ref = the submission)
+  "teacher_report", //       the daily report's 📝 Baholash (N) / 👤 Profil
+  "teacher_card", //         the bot's 👤 Profil card (📊 Statistika / 📣 Guruhga xabar)
   "reengagement",
   "broadcast",
   "daily_task",
@@ -51,6 +65,26 @@ const SRC_SET: ReadonlySet<string> = new Set<string>(MINIAPP_SRCS);
 
 export function isMiniAppSrc(s: unknown): s is MiniAppSrc {
   return typeof s === "string" && SRC_SET.has(s);
+}
+
+/**
+ * The sources of buttons into the TEACHER Mini App. Their taps are recorded as 'teacher_miniapp_open', NOT
+ * 'miniapp_open': watch_button_health() counts every 'miniapp_open' row as proof that the STUDENT watch buttons
+ * work, so one teacher tap would hide a broken student sign-in for 48 h. An explicit list, never a 'teacher_'
+ * prefix: 'teacher_nudge' is a STUDENT button (a teacher's nudge, opened by the student).
+ */
+export const TEACHER_MINIAPP_SRCS = [
+  "teacher_hw_dm",
+  "teacher_hw_reminder",
+  "teacher_report",
+  "teacher_card",
+] as const satisfies readonly MiniAppSrc[];
+export type TeacherMiniAppSrc = (typeof TEACHER_MINIAPP_SRCS)[number];
+
+const TEACHER_SRC_SET: ReadonlySet<string> = new Set<string>(TEACHER_MINIAPP_SRCS);
+
+export function isTeacherMiniAppSrc(s: unknown): s is TeacherMiniAppSrc {
+  return typeof s === "string" && TEACHER_SRC_SET.has(s);
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -124,24 +158,39 @@ export function stripTrack(search: string): string {
 
 // ─────────────────────────── start_param (named Mini App direct links) ───────────────────────────
 
-export type NamedStart = "hw" | "homework" | "leaderboard" | "profile";
-export type StartTarget = "continue" | NamedStart | { courseId: string | null | undefined } | { lessonId: string };
+export type NamedStart = "hw" | "homework" | "leaderboard" | "profile" | "dt" | "ig";
+export type StartTarget =
+  | "continue" | NamedStart | { courseId: string | null | undefined } | { lessonId: string } | { taskId: number };
 
 const NAMED: Record<NamedStart, string> = {
   hw: "/homework",
   homework: "/homework",
   leaderboard: "/leaderboard",
   profile: "/profile",
+  dt: "/challenge/tasks",
+  ig: "/settings#profile",
 };
 
+/** A daily-task id as it may appear in a start_param / path: a positive integer of at most 12 digits. */
+const TASK_ID_RE = /^[1-9][0-9]{0,11}$/;
+
+/** "/challenge/tasks/<id>", or the task list when the id is not a valid task id. */
+export function dailyTaskPath(taskId?: number | string | null): string {
+  const s = String(taskId ?? "");
+  return TASK_ID_RE.test(s) ? `/challenge/tasks/${s}` : "/challenge/tasks";
+}
+
 /**
- * The start_param for a t.me/<bot>/app?startapp= link: "c", "c_<course>", "l_<lesson>", "hw", "homework",
- * "leaderboard" or "profile", plus "__<src>" when a known src is given. A non-UUID id degrades to "c".
+ * The start_param for a t.me/<bot>/app?startapp= link: "c", "c_<course>", "l_<lesson>", "dt_<task>", "hw", "homework",
+ * "leaderboard", "profile", "dt" or "ig", plus "__<src>" when a known src is given. A non-UUID id degrades to "c"
+ * (a bad task id to "dt").
  */
 export function encodeStartParam(target: StartTarget, src?: MiniAppSrc | null): string {
   let head = "c";
   if (typeof target === "string") {
     head = target === "continue" ? "c" : (Object.prototype.hasOwnProperty.call(NAMED, target) ? target : "c");
+  } else if (target && "taskId" in target) {
+    head = TASK_ID_RE.test(String(target.taskId)) ? `dt_${target.taskId}` : "dt";
   } else if (target && "lessonId" in target) {
     head = isUuid(target.lessonId) ? `l_${target.lessonId.toLowerCase()}` : "c";
   } else if (target && "courseId" in target) {
@@ -166,6 +215,7 @@ export function startParamToPath(p: string | null | undefined): { path: string; 
   if (Object.prototype.hasOwnProperty.call(NAMED, head)) return { path: NAMED[head as NamedStart], src };
   if (head.startsWith("c_") && isUuid(head.slice(2))) return { path: `/continue/${head.slice(2).toLowerCase()}`, src };
   if (head.startsWith("l_") && isUuid(head.slice(2))) return { path: `/continue?lesson=${head.slice(2).toLowerCase()}`, src };
+  if (head.startsWith("dt_") && TASK_ID_RE.test(head.slice(3))) return { path: dailyTaskPath(head.slice(3)), src };
   return null;
 }
 
