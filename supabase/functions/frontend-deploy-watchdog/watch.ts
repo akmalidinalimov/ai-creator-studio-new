@@ -237,6 +237,15 @@ const minutesSince = (at: string | null, nowMs: number): number => {
 const SITE = "www.aicreator.academy";
 const commitUrl = (sha: string) => `https://github.com/${REPO}/commit/${sha}`;
 
+/** A commit subject for a DM: capped, but a trailing "(#241)" PR reference always survives the cut. */
+export function shortSubject(subject: string, max = 90): string {
+  const s = cleanText(subject, 1000);
+  const m = /\s*(\(#\d{1,6}\))$/.exec(s);
+  if (!m) return cleanText(s, max) || "(no subject)";
+  const head = s.slice(0, m.index);
+  return `${cleanText(head, Math.max(10, max - m[1].length - 1))} ${m[1]}`;
+}
+
 function lagLine(obs: Observation, nowMs: number): string {
   const n = obs.lagCommits;
   const mins = minutesSince(obs.lagSinceAt, nowMs);
@@ -267,17 +276,17 @@ export function alarmText(obs: Observation, cls: FailClass, nowMs: number): stri
   const status = h.vercel.state === "absent"
     ? `Vercel: no status at all, ${minutesSince(h.committedAt, nowMs)} min after the commit.`
     : `Vercel: ${h.vercel.state}${h.vercel.description ? ` — "${h.vercel.description}"` : ""}` +
-      (cls === "stalled" ? ` (${minutesSince(h.committedAt, nowMs)} min after the commit)` : "") + ".";
+      (cls === "stalled" ? ` (${minutesSince(h.committedAt, nowMs)} min after the commit)` : "");
   return [
     title,
     "",
-    `Commit: ${short(h.sha)} — ${cleanText(h.subject, 90) || "(no subject)"}`,
+    `Commit: ${short(h.sha)} — ${shortSubject(h.subject)}`,
     commitUrl(h.sha),
     status,
     ...(h.vercel.targetUrl ? [`Vercel link: ${h.vercel.targetUrl}`] : []),
     lagLine(obs, nowMs),
-    "Supabase (edge functions + migrations) deploys separately from GitHub Actions and IS on the newest main, so " +
-    "frontend and backend are out of step until this clears.",
+    "Supabase (edge functions + migrations) deploys separately, through GitHub Actions, and is not held back by " +
+    "this, so the backend can be ahead of the website until it clears.",
     "",
     HINTS[cls],
   ].join("\n");
@@ -287,7 +296,7 @@ export function recoveredText(obs: Observation, prev: WatchState, nowMs: number)
   const open = minutesSince(prev.alarm_at, nowMs);
   return [
     `✅ Frontend deploy recovered — main ${short(obs.head.sha)} is live on Vercel (${SITE}, Mini App).`,
-    `${cleanText(obs.head.subject, 90)}`,
+    shortSubject(obs.head.subject),
     `The alarm for ${short(prev.alarm_sha)} (${prev.alarm_class ?? "?"}) was open ${open} min.`,
   ].join("\n");
 }
