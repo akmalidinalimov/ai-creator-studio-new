@@ -9,11 +9,23 @@
 // stuck_lesson is RETIRED from the cron run: nudge_candidates_stuck() can never return a row
 // (lesson_progress is unique per user+lesson, so "the same lesson on >= 2 distinct days" is always 1 day),
 // it has never sent one (nudge_log: 0 rows ever), and its link (/lesson/<lesson id>) was a broken route.
+//
+// 2026-09-30 (owner decisions after #228), platform_settings.engagement_targeting (fail-closed = today):
+//   retire_smart_inactive_nudges  the cron run skips inactive_3d / inactive_7d. cron-engagement's drip already
+//                                 sends its own day-3 / day-7 message: in the last 30 days 90 of 133 inactive_3d
+//                                 and 31 of 40 inactive_7d nudges reached a student within 2 days of a drip one.
+//                                 module_complete stays (33 of 127 clicked, the best of the set).
+//   skip_closed_courses           (when the inactive nudges still run) a candidate with no published course is
+//                                 skipped — the same rule as cron-engagement (_shared/engagement-targeting.ts).
+// Test mode (admin preview) is unaffected. A switch read error keeps today's behaviour and is DB-visible
+// (admin_actions 'engagement_targeting_read_failed', once a day).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 import { redactSecrets } from "../_shared/redact.ts";
+import { logHealthOnce } from "../_shared/edge.ts";
 import { loadStudentMiniAppFlag, type WatchFlag } from "../_shared/miniapp-button.ts";
-import { type NudgeType, sendNudgeWith } from "./nudge.ts";
+import { type EngagementTargeting, loadEngagementTargeting, TARGETING_OFF } from "../_shared/engagement-targeting.ts";
+import { closedForNudge, type NudgeType, nudgeRunPlan, retiredResult, sendNudgeWith } from "./nudge.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -85,6 +97,45 @@ async function makeMagicLink(admin: any, userId: string, targetPath: string) {
 
 // The student Mini App kill-switch, read once per invocation (fail-closed → today's magic links).
 let runFlag: WatchFlag = { on: false, watch: false };
+// Who gets a smart nudge (engagement_targeting), read once per invocation (fail-closed → today's behaviour).
+let runTargeting: EngagementTargeting = { ...TARGETING_OFF };
+
+// skip_closed_courses: every course's published bit and every group's course, read once per run (a handful of
+// rows each). null = a read failed → no candidate is skipped (today's behaviour), and the failure is DB-visible.
+type CourseMaps = { published: Map<string, boolean>; groupCourse: Map<string, string | null> } | null;
+
+async function loadCourseMaps(admin: any): Promise<CourseMaps> {
+  try {
+    const [c, g] = await Promise.all([
+      admin.from("courses").select("id, published"),
+      admin.from("groups").select("id, course_id"),
+    ]);
+    const err = c.error || g.error;
+    if (err || !c.data || !g.data) throw new Error(String(err?.message ?? "no data"));
+    return {
+      published: new Map((c.data as any[]).map((r) => [r.id as string, r.published === true])),
+      groupCourse: new Map((g.data as any[]).map((r) => [r.id as string, (r.course_id ?? null) as string | null])),
+    };
+  } catch (e) {
+    await logHealthOnce(admin, "engagement_targeting_read_failed", "detect-and-nudge:courses",
+      { fn: "detect-and-nudge", what: "courses", error: String((e as Error)?.message ?? e).slice(0, 200) },
+      { source: "detect-and-nudge" });
+    return null;
+  }
+}
+
+/** True when skip_closed_courses drops this candidate. Any read failure → false (send, as today). */
+async function isClosedCandidate(admin: any, maps: CourseMaps, profileId: string): Promise<boolean> {
+  if (!maps) return false;
+  const [p, e] = await Promise.all([
+    admin.from("profiles").select("group_id").eq("id", profileId).maybeSingle(),
+    admin.from("enrollments").select("course_id").eq("user_id", profileId),
+  ]);
+  if (p.error || e.error) return false;
+  const groupCourse = p.data?.group_id ? (maps.groupCourse.get(p.data.group_id) ?? null) : null;
+  const enrolled = ((e.data || []) as any[]).map((r) => r.course_id as string).filter(Boolean);
+  return closedForNudge(groupCourse, enrolled, maps.published);
+}
 
 async function sendNudge(
   admin: any,
@@ -158,13 +209,14 @@ async function isEligible(admin: any, profile: any, type: NudgeType): Promise<{ 
   return { ok: true };
 }
 
-async function runInactive3d(admin: any, templates: any) {
+async function runInactive3d(admin: any, templates: any, maps: CourseMaps) {
   const { data: candidates } = await admin.rpc("nudge_candidates_inactive", { _days: 3 });
-  let sent = 0, skipped = 0, failed = 0;
+  let sent = 0, skipped = 0, failed = 0, skipped_closed = 0;
   for (const p of candidates || []) {
     // Skip if any nudge in last 7 days
     const recent = await recentCount(admin, p.id, 7);
     if (recent > 0) { skipped++; continue; }
+    if (await isClosedCandidate(admin, maps, p.id)) { skipped++; skipped_closed++; continue; }
     const elig = await isEligible(admin, p, "inactive_3d");
     if (!elig.ok) { skipped++; continue; }
     // `sent` must mean DELIVERED: a transport failure is now caught inside sendNudge (it writes the
@@ -174,17 +226,18 @@ async function runInactive3d(admin: any, templates: any) {
     if (r.ok) sent++; else failed++;
     await sleep(50);
   }
-  return { sent, failed, skipped, total: candidates?.length || 0 };
+  return { sent, failed, skipped, skipped_closed, total: candidates?.length || 0 };
 }
 
-async function runInactive7d(admin: any, templates: any) {
+async function runInactive7d(admin: any, templates: any, maps: CourseMaps) {
   const { data: candidates } = await admin.rpc("nudge_candidates_inactive", { _days: 7 });
-  let sent = 0, skipped = 0, failed = 0;
+  let sent = 0, skipped = 0, failed = 0, skipped_closed = 0;
   for (const p of candidates || []) {
     const last3 = await lastSentOfType(admin, p.id, "inactive_3d");
     if (last3?.clicked_at) { skipped++; continue; }
     const recent = await recentCount(admin, p.id, 7);
     if (recent > 0) { skipped++; continue; }
+    if (await isClosedCandidate(admin, maps, p.id)) { skipped++; skipped_closed++; continue; }
     const elig = await isEligible(admin, p, "inactive_7d");
     if (!elig.ok) { skipped++; continue; }
     let teacherLine = "";
@@ -198,7 +251,7 @@ async function runInactive7d(admin: any, templates: any) {
     if (r.ok) sent++; else failed++;
     await sleep(50);
   }
-  return { sent, failed, skipped, total: candidates?.length || 0 };
+  return { sent, failed, skipped, skipped_closed, total: candidates?.length || 0 };
 }
 
 async function runModuleComplete(admin: any, templates: any) {
@@ -257,6 +310,13 @@ Deno.serve(async (req) => {
     const { data: settings } = await admin.from("platform_settings").select("value").eq("key", "nudge_templates").maybeSingle();
     const templates = settings?.value || {};
     runFlag = await loadStudentMiniAppFlag(admin);
+    const tg = await loadEngagementTargeting(admin);
+    runTargeting = tg.targeting;
+    if (tg.error) {
+      // Graceful is not silent: this run keeps today's behaviour, and says so where the DB can see it.
+      await logHealthOnce(admin, "engagement_targeting_read_failed", "detect-and-nudge",
+        { fn: "detect-and-nudge", error: tg.error }, { source: "detect-and-nudge" });
+    }
 
     if (mode === "test") {
       // Verify admin
@@ -290,12 +350,14 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ ok: r.ok, status: r.status, data: r.data }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Cron mode
-    const i3 = await runInactive3d(admin, templates);
-    const i7 = await runInactive7d(admin, templates);
+    // Cron mode. engagement_targeting decides whether the inactive nudges still run (see the header).
+    const plan = nudgeRunPlan(runTargeting);
+    const maps = plan.skipClosed ? await loadCourseMaps(admin) : null;
+    const i3 = plan.inactive ? await runInactive3d(admin, templates, maps) : retiredResult();
+    const i7 = plan.inactive ? await runInactive7d(admin, templates, maps) : retiredResult();
     const stuck = { retired: true, sent: 0, failed: 0, skipped: 0, total: 0 }; // see the header
     const mc = await runModuleComplete(admin, templates);
-    return new Response(JSON.stringify({ ok: true, inactive_3d: i3, inactive_7d: i7, stuck_lesson: stuck, module_complete: mc, miniapp: runFlag }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ ok: true, inactive_3d: i3, inactive_7d: i7, stuck_lesson: stuck, module_complete: mc, miniapp: runFlag, targeting: runTargeting }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     return new Response(JSON.stringify({ error: redactSecrets((e as any)?.message ?? e) }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }

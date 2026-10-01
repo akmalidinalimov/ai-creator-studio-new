@@ -36,6 +36,19 @@
 // row is written (one request less per reminder on the heavy 19:30 tick). Flag off → today's magic link,
 // byte-identical. The builder is _shared/miniapp-button.ts; every run reports buttons.{web_app, magic_link,
 // none, rejected, reasons} in engagement_run_done.
+//
+// v5 (2026-09-30) — WHO gets a reminder (owner decisions after #228), each behind its own switch in
+// platform_settings.engagement_targeting (_shared/engagement-targeting.ts; read once per run, fail-closed to
+// today's behaviour, a read error lands in prefetch_failed so engagement_run_watchdog reports it):
+//   skip_closed_courses   a student whose course is closed (courses.published = false — the bit RLS uses to
+//                         hide its lessons) and who has no other published enrollment gets no daily, streak or
+//                         drip message. Measured 2026-09-30: 412 of 572 eligible students (AI CREATORS 4.0),
+//                         389 daily reminders a day (2,723 in 7 days), 116 a day of them undeliverable, 0 lesson
+//                         activity in 30 days. A student with a published enrollment too is re-pointed there.
+//   trial_to_course_page  a trial (provisional) student's button opens /course/<c> (the trial card) instead of
+//                         a lesson they cannot open — on the magic-link fallback as well as in the Mini App.
+// Every run reports targeting.{switches, closed_skipped{daily,streak,drip}, redirected, trial_course_page} in
+// engagement_run_done. With every switch off the run is byte-identical to v4.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";
@@ -44,12 +57,20 @@ import {
   dailyKeyboard,
   dripKeyboard,
   fetchAllKeyset,
+  reminderPaths,
   reminderWindows,
   type Row,
   streakKeyboard,
   type WindowUser,
   ymdInTz,
 } from "./core.ts";
+import {
+  decideReminderCourse,
+  type EngagementTargeting,
+  loadEngagementTargeting,
+  type ReminderCourse,
+  TARGETING_OFF,
+} from "../_shared/engagement-targeting.ts";
 import {
   type ButtonTally,
   FLAG_OFF,
@@ -62,7 +83,7 @@ import {
   watchButton,
   type WatchFlag,
 } from "../_shared/miniapp-button.ts";
-import { continuePath, type MiniAppSrc } from "../_shared/miniapp-links.ts";
+import type { MiniAppSrc } from "../_shared/miniapp-links.ts";
 import type { SendOutcome } from "../_shared/telegram-send.ts";
 
 const corsHeaders = {
@@ -136,6 +157,10 @@ type Ctx = {
   flag: WatchFlag;
   /** How every watch button of this run was built — reported in engagement_run_done. */
   buttons: ButtonTally;
+  /** platform_settings.engagement_targeting, read ONCE per run (fail-closed = today's behaviour). */
+  targeting: EngagementTargeting;
+  /** course id → courses.published, only read when skip_closed_courses is on. */
+  coursesPublished: () => Promise<Map<string, boolean> | null>;
 };
 
 type CourseContent = {
@@ -172,6 +197,7 @@ function newCtx(): Ctx {
     notifBuffer: [] as Row[],
     flag: FLAG_OFF,
     buttons: newButtonTally(),
+    targeting: { ...TARGETING_OFF },
   } as unknown as Ctx;
   const countingFetch: typeof fetch = (input, init) => {
     ctx.requests++;
@@ -186,6 +212,7 @@ function newCtx(): Ctx {
   ctx.streaks = bulkOnce(ctx, "streaks", () => loadStreaks(ctx));
   ctx.groups = bulkOnce(ctx, "groups", () => loadGroups(ctx));
   ctx.enrollments = bulkOnce(ctx, "enrollments", () => loadEnrollments(ctx));
+  ctx.coursesPublished = bulkOnce(ctx, "courses", () => loadCoursesPublished(ctx));
   return ctx;
 }
 
@@ -200,11 +227,11 @@ function tg(ctx: Ctx, method: string, body: any, purpose: string) {
 // The watch button for one reminder (Mini App web_app, or today's magic link when the flag is off) plus a
 // `legacy()` that rebuilds today's magic-link button — used only if Telegram rejects the web_app button.
 async function reminderWatch(
-  ctx: Ctx, userId: string, text: string, miniPath: string, legacyPath: string, src: MiniAppSrc,
+  ctx: Ctx, userId: string, text: string, paths: { miniPath: string; legacyPath: string }, src: MiniAppSrc,
 ) {
   const opts: PrivateWatchOpts = {
     chat: "private", text, flag: ctx.flag, fn: "cron-engagement", admin: ctx.admin,
-    miniPath, legacyPath, track: { src },
+    miniPath: paths.miniPath, legacyPath: paths.legacyPath, track: { src },
     magicLink: (p) => magicLink(ctx.admin, userId, p),
   };
   const r = await watchButton(opts);
@@ -353,6 +380,37 @@ async function loadEnrollments(ctx: Ctx): Promise<Map<string, Row[]> | null> {
     else m.set(x.user_id, [x]);
   }
   return m;
+}
+
+// Every course's published bit (a handful of rows). Only read when skip_closed_courses is on and a user in a
+// reminder window needs it; a failure is recorded and every user keeps today's course (never a wrong skip).
+async function loadCoursesPublished(ctx: Ctx): Promise<Map<string, boolean> | null> {
+  const r = await fetchAllKeyset(ctx.admin, "courses", "id, published", "id", (q) => q);
+  if (r.error) {
+    prefetchFailed(ctx, "courses", r.error);
+    return null;
+  }
+  return new Map(r.rows.map((x) => [x.id as string, x.published === true]));
+}
+
+// A student's enrolled course ids, in the bulk map's order; null when they cannot be read (→ today's course).
+async function enrolledCourseIds(ctx: Ctx, userId: string): Promise<string[] | null> {
+  const enrollments = await ctx.enrollments();
+  if (enrollments) return (enrollments.get(userId) || []).map((e) => e.course_id as string).filter(Boolean);
+  const { data, error } = await ctx.admin.from("enrollments").select("course_id").eq("user_id", userId);
+  if (error || !data) return null;
+  return (data as Row[]).map((e) => e.course_id as string).filter(Boolean);
+}
+
+// The course this user's course-linked reminders point at, after engagement_targeting.skip_closed_courses:
+// today's course (group → enrollment → default), a published enrollment instead of a closed course, or
+// "closed" = no reminder. A pure read; with the switch off it is exactly resolveUserCourseId().
+async function reminderCourse(ctx: Ctx, userId: string, groupId: string | null, fallback: string | null): Promise<ReminderCourse> {
+  const resolved = await resolveUserCourseId(ctx, userId, groupId, fallback);
+  const skip = ctx.targeting.skip_closed_courses;
+  const published = skip && resolved ? await ctx.coursesPublished() : null;
+  const enrolled = published && resolved && published.get(resolved) === false ? await enrolledCourseIds(ctx, userId) : null;
+  return decideReminderCourse(resolved, skip, published, enrolled);
 }
 
 async function getDefaultCourseId(admin: any): Promise<string | null> {
@@ -514,6 +572,15 @@ async function logNotif(ctx: Ctx, stats: Stats, user_id: string, type: string, p
 }
 
 // ─────────────────────────── the run ───────────────────────────
+type TargetingStats = {
+  /** Reminders NOT sent because the student has no published course (skip_closed_courses). */
+  closed_skipped: { daily: number; streak: number; drip: number };
+  /** Course lookups re-pointed from a closed course to the student's published enrollment. */
+  redirected: number;
+  /** Buttons that opened the course page for a trial student (trial_to_course_page). */
+  trial_course_page: number;
+};
+
 type Stats = {
   eligible: number;
   processed: number;
@@ -529,6 +596,7 @@ type Stats = {
   partial: boolean;
   partial_reason: string | null;
   error: string | null;
+  targeting: TargetingStats;
 };
 
 function newStats(): Stats {
@@ -536,6 +604,7 @@ function newStats(): Stats {
     eligible: 0, processed: 0, skipped_quiet_hours: 0, skipped_out_of_window: 0, deferred: 0,
     errors: 0, error_sample: null, sent: { daily: 0, streak: 0, drip: 0 }, drip_resets: 0,
     not_delivered: 0, log_write_failed: 0, partial: false, partial_reason: null, error: null,
+    targeting: { closed_skipped: { daily: 0, streak: 0, drip: 0 }, redirected: 0, trial_course_page: 0 },
   };
 }
 
@@ -563,6 +632,8 @@ function runDetails(ctx: Ctx, s: Stats) {
     // refused a web_app button and the magic link was resent.
     buttons: ctx.buttons,
     miniapp: ctx.flag,
+    // Who was reminded (engagement_targeting): the switches this run used, and what they changed.
+    targeting: { switches: ctx.targeting, ...s.targeting },
     requests: ctx.requests,
     duration_ms: Date.now() - ctx.startedAt,
   };
@@ -592,11 +663,16 @@ async function run(ctx: Ctx, stats: Stats): Promise<Response> {
   const templates = await loadTemplates(admin);
   // The student Mini App kill-switch, once per run: every watch button below follows it (fail-closed).
   ctx.flag = await loadStudentMiniAppFlag(admin);
+  // Who gets a reminder, once per run. A read error means today's behaviour for this run — recorded where
+  // engagement_run_watchdog alarms (prefetch_failed), never a silent change of audience.
+  const targeting = await loadEngagementTargeting(admin);
+  ctx.targeting = targeting.targeting;
+  if (targeting.error) prefetchFailed(ctx, "engagement_targeting", targeting.error);
 
   // Paginated: the old single select silently stopped at PostgREST's 1000-row cap.
   const prof = await fetchAllKeyset(
     admin, "profiles",
-    "id, name, telegram_id, timezone, reminder_time, notifications_enabled, preferred_locale, created_at, group_id, last_daily_reminder_at, last_streak_warning_at, last_inactive_warning_at, last_inactive_warning_day",
+    "id, name, telegram_id, timezone, reminder_time, notifications_enabled, preferred_locale, created_at, group_id, account_type, last_daily_reminder_at, last_streak_warning_at, last_inactive_warning_at, last_inactive_warning_day",
     "id",
     (q) => q.eq("notifications_enabled", true).eq("status", "active").not("telegram_id", "is", null),
   );
@@ -632,10 +708,22 @@ async function run(ctx: Ctx, stats: Stats): Promise<Response> {
       const locale = normLocale(u.preferred_locale);
       const chatId = Number(u.telegram_id);
       const firstName = u.name || "";
-      // Course-aware deep links: resolve THIS user's course (group → enrollment → default). A pure read,
-      // now done only when a message actually needs it.
-      let courseMemo: Promise<string | null> | undefined;
-      const userCourse = () => (courseMemo ??= resolveUserCourseId(ctx, u.id, u.group_id ?? null, courseId));
+      // Course-aware deep links: resolve THIS user's course (group → enrollment → default), then apply
+      // engagement_targeting.skip_closed_courses (closed → a published enrollment, or no reminder). A pure
+      // read, done only when a message actually needs it, and at most once per user per run.
+      let targetMemo: Promise<ReminderCourse> | undefined;
+      const userTarget = () => (targetMemo ??= reminderCourse(ctx, u.id, u.group_id ?? null, courseId).then((t) => {
+        if (t.redirected) stats.targeting.redirected++;
+        return t;
+      }));
+      const userCourse = async () => (await userTarget()).courseId;
+      // trial_to_course_page: a trial account cannot open a lesson, so its button opens the course page.
+      const trialToCourse = ctx.targeting.trial_to_course_page && u.account_type === "provisional";
+      const pathsFor = (c: string, nextId: string | null) => {
+        const p = reminderPaths(c, nextId, trialToCourse);
+        if (p.trial) stats.targeting.trial_course_page++;
+        return p;
+      };
 
       // (old) watchedToday = lastActivity ? ymdInTz(lastActivity) === ymd : false
       // From the 26 h bulk map when it loaded, else the old per-user query. A user with no row in the map
@@ -657,14 +745,16 @@ async function run(ctx: Ctx, stats: Stats): Promise<Response> {
       // (old) withinReminder && !reminderInQuiet && !watchedToday && lastDailyYmd !== ymd && userCourseId
       if (dailyWindow && !(await watchedToday())) {
         const userCourseId = await userCourse();
+        if (!userCourseId && (await userTarget()).closed) stats.targeting.closed_skipped.daily++;
         if (userCourseId) {
           const tpl = pickTemplate(templates, "daily_reminder", locale);
           const text = interpolate(tpl.body, { first_name: firstName || "👋" });
           const nextId = await getNextIncompleteLesson(ctx, u.id, userCourseId);
           // (old) a button only when nextId && button_label; "Bugun emas" always. The Mini App button opens
-          // /continue/<course>, which resolves the next lesson when TAPPED (never a stale one).
+          // /continue/<course>, which resolves the next lesson when TAPPED (never a stale one); a trial
+          // student's opens the course page (trial_to_course_page).
           const w = nextId && tpl.button_label
-            ? await reminderWatch(ctx, u.id, tpl.button_label, continuePath(userCourseId), `/lesson/${userCourseId}/${nextId}`, "daily_reminder")
+            ? await reminderWatch(ctx, u.id, tpl.button_label, pathsFor(userCourseId, nextId), "daily_reminder")
             : null;
           const payload = { chat_id: chatId, text, reply_markup: dailyKeyboard(w?.button ?? null, locale) };
           const out = await sendReminder(ctx, payload,
@@ -685,12 +775,13 @@ async function run(ctx: Ctx, stats: Stats): Promise<Response> {
         const cs = await streakFor(ctx, u.id);
         if (cs >= 1 && !(await watchedToday())) {
           const userCourseId = await userCourse();
+          if (!userCourseId && (await userTarget()).closed) stats.targeting.closed_skipped.streak++;
           if (userCourseId) {
             const tpl = pickTemplate(templates, "streak_warning", locale);
             const text = interpolate(tpl.body, { first_name: firstName, streak_days: cs });
             const nextId = await getNextIncompleteLesson(ctx, u.id, userCourseId);
             const w = nextId && tpl.button_label
-              ? await reminderWatch(ctx, u.id, tpl.button_label, continuePath(userCourseId), `/lesson/${userCourseId}/${nextId}`, "streak_warning")
+              ? await reminderWatch(ctx, u.id, tpl.button_label, pathsFor(userCourseId, nextId), "streak_warning")
               : null;
             const payload = { chat_id: chatId, text, reply_markup: streakKeyboard(w?.button ?? null) };
             const out = await sendReminder(ctx, payload,
@@ -732,6 +823,12 @@ async function run(ctx: Ctx, stats: Stats): Promise<Response> {
         else if (daysSinceActivity >= 7 && daysSinceActivity < 14 && u.last_inactive_warning_day !== 7) stage = 7;
         else if (daysSinceActivity >= 3 && daysSinceActivity < 7 && u.last_inactive_warning_day !== 3) stage = 3;
         const lastInactiveYmd = u.last_inactive_warning_at ? ymdInTz(tz, new Date(u.last_inactive_warning_at)) : null;
+        // skip_closed_courses: no drip stage (not even the day-14 dashboard one) for a student with no published
+        // course. Not stamped, so it resumes by itself if they enrol in an open course; the reset above still runs.
+        if (stage && lastInactiveYmd !== ymd && ctx.targeting.skip_closed_courses && (await userTarget()).closed) {
+          stats.targeting.closed_skipped.drip++;
+          continue;
+        }
         if (stage && lastInactiveYmd !== ymd) {
           const key = `inactive_${stage}`;
           const tpl = pickTemplate(templates, key, locale);
@@ -741,13 +838,15 @@ async function run(ctx: Ctx, stats: Stats): Promise<Response> {
           if (stage !== 14) {
             const userCourseId = await userCourse();
             if (userCourseId) {
-              miniPath = continuePath(userCourseId);
-              const nextId = await getNextIncompleteLesson(ctx, u.id, userCourseId);
-              if (nextId) path = `/lesson/${userCourseId}/${nextId}`;
+              // (old) /continue/<c> + a magic link to the next lesson (none → /dashboard); trial → the course page.
+              const nextId = trialToCourse ? null : await getNextIncompleteLesson(ctx, u.id, userCourseId);
+              const p = pathsFor(userCourseId, nextId);
+              miniPath = p.miniPath;
+              path = p.legacyPath;
             }
           }
           const w = tpl.button_label
-            ? await reminderWatch(ctx, u.id, tpl.button_label, miniPath, path, `drip_${stage}` as MiniAppSrc)
+            ? await reminderWatch(ctx, u.id, tpl.button_label, { miniPath, legacyPath: path }, `drip_${stage}` as MiniAppSrc)
             : null;
           const payload = { chat_id: chatId, text, reply_markup: dripKeyboard(w?.button ?? null) };
           const out = await sendReminder(ctx, payload,
