@@ -12,8 +12,8 @@ import {
 import { useMiniApp } from "@/lib/telegram/MiniAppContext";
 import { impersonatingReadonly } from "@/lib/mutate";
 import {
-  correctSubmission, formatTaskDate, loadMyTasks, prepareTask, statusTone, tashkentDateOf, type CorrectionOp,
-  type MyTasks, type Prepare,
+  correctSubmission, DT_OPEN_TIME, formatTaskDate, loadMyTasks, prepareTask, scopeEmptyKeys, scopeOf, statusTone,
+  tashkentDateOf, type CorrectionOp, type MyTasksResult, type Prepare,
 } from "@/lib/dailyTasks";
 import { TaskPostText } from "@/components/challenge/TaskPostText";
 import { InstagramHandleInline } from "@/components/challenge/InstagramHandleInline";
@@ -34,7 +34,7 @@ export default function ChallengeTask() {
   const { t, i18n } = useTranslation();
   const { webApp } = useMiniApp();
   const [prep, setPrep] = useState<Prepare | { error: string } | null>(null);
-  const [mine, setMine] = useState<MyTasks | null>(null);
+  const [mineRes, setMineRes] = useState<MyTasksResult | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [busy, setBusy] = useState(false);
   const [confirmWithdraw, setConfirmWithdraw] = useState(false);
@@ -47,7 +47,7 @@ export default function ChallengeTask() {
     void Promise.all([prepareTask(taskId), loadMyTasks()]).then(([p, m]) => {
       if (!alive) return;
       setPrep(p);
-      setMine(m.ok ? m : null);
+      setMineRes(m);
     });
     return () => { alive = false; };
   }, [taskId, reloadKey]);
@@ -66,6 +66,10 @@ export default function ChallengeTask() {
     return <PageShell><div className="mx-auto max-w-2xl space-y-4">{back}<EmptyState icon="🔎" title={t("dailyTasks.task.notFound")} body="" /></div></PageShell>;
   }
 
+  const mine = mineRes?.ok ? mineRes : null;
+  // Not a challenge student (a 5.0 student, no group, staff, an inactive profile): the same empty state as the list —
+  // never "Vazifa topilmadi." over a «contact an admin» note about a challenge they are not in.
+  const scope = prep === null ? null : scopeOf(mineRes, prep);
   const mt = mine?.tasks.find((x) => x.id === taskId) ?? null;
   const p = prep && !("error" in prep) ? prep : null;
   const hidden = mine !== null && (!mine.enabled || !mine.miniapp);
@@ -117,6 +121,8 @@ export default function ChallengeTask() {
             <Skeleton className="h-40 w-full rounded-md" />
             <Skeleton className="h-24 w-full rounded-md" />
           </>
+        ) : scope && scope !== "student" ? (
+          <EmptyState icon="📅" title={t(`dailyTasks.${scopeEmptyKeys(scope).title}`)} body={t(`dailyTasks.${scopeEmptyKeys(scope).body}`)} />
         ) : "error" in prep && !mt ? (
           <EmptyState icon="⚠️" title={t("common.errorTitle")} body={t("dailyTasks.loadError")}
             cta={<Button variant="secondary" size="sm" onClick={reload}>{t("common.retry")}</Button>} />
@@ -183,7 +189,7 @@ export default function ChallengeTask() {
             ) : p && p.reason ? (
               <Card className="space-y-3 p-4">
                 <p className="text-sm font-semibold text-foreground">
-                  {t(`dailyTasks.reasons.${p.reason}`, { defaultValue: t("dailyTasks.submit.errors.generic") })}
+                  {t(`dailyTasks.reasons.${p.reason}`, { defaultValue: t("dailyTasks.submit.errors.generic"), time: DT_OPEN_TIME })}
                 </p>
                 {topicLink}
               </Card>

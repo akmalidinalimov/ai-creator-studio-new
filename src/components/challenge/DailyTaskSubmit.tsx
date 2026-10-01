@@ -6,8 +6,8 @@ import { useMiniApp } from "@/lib/telegram/MiniAppContext";
 import { Button } from "@/components/ui-kit";
 import { impersonatingReadonly } from "@/lib/mutate";
 import {
-  acceptsFile, effectiveKind, fileKindOf, maxFilesFor, newRequestId, pickerAccept, pickKinds, requiresHint, submitDailyTask,
-  type FileKind, type PrepareTask, type SubmitAnswer,
+  acceptsFile, DT_OPEN_TIME, effectiveKind, fileKindOf, maxFilesFor, newRequestId, pickerAccept, pickKinds, requiresHint,
+  submitDailyTask, type FileKind, type PrepareTask, type SubmitAnswer,
 } from "@/lib/dailyTasks";
 
 /* The «Ilovadan topshirish» form of one daily task (Daily Tasks PR-7, spec §12).
@@ -167,7 +167,7 @@ export default function DailyTaskSubmit({ task, topicUrl, captionTextMax, onDone
       return;
     }
     if (a.code === "not_allowed") {
-      toast.error(t(`dailyTasks.reasons.${a.reason ?? "closed"}`, { defaultValue: t("dailyTasks.submit.errors.generic") }));
+      toast.error(t(`dailyTasks.reasons.${a.reason ?? "closed"}`, { defaultValue: t("dailyTasks.submit.errors.generic"), time: DT_OPEN_TIME }));
       return;
     }
     if (a.code === "telegram_post_failed" && a.retryAfter) {

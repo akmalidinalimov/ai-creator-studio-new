@@ -258,12 +258,67 @@ export function parsePostHtml(s: string | null | undefined): { text: string; bol
 
 export type Tone = "ok" | "wait" | "redo" | "none";
 
-/** A submission status → the chip colour. */
+/** A status (a submission's, or a row's from taskStatus) → the chip colour. */
 export function statusTone(status: string | null | undefined): Tone {
   if (status === "accepted") return "ok";
-  if (status === "checking") return "wait";
+  if (status === "checking" || status === "open") return "wait";
   if (status === "needs_more" || status === "rejected") return "redo";
   return "none";
+}
+
+/**
+ * When a task opens: platform_settings.challenge_tasks.post_time (live "09:00", Tashkent). The engine's open_at is that
+ * time on the task's date, or EARLIER when the bot or staff posted it earlier that day — never later — so "opens at
+ * 09:00" is a promise the engine keeps. (A 'retro' task opens at 00:00 and is never shown as not_open on its day.)
+ */
+export const DT_OPEN_TIME = "09:00";
+
+/**
+ * The ONE status rule for a task row — the Dashboard card, the /challenge/tasks list and the task page all use this, so
+ * they never disagree. The student's submission wins; else closed → "missed", open → "open", neither → "not_open".
+ * my_challenge_tasks lists today's task from 00:00 Tashkent, before it opens: that is "not open yet · 09:00", never
+ * "Topshirilmagan" (not submitted) for a task nobody could submit yet.
+ */
+export function taskStatus(task: Pick<MyTask, "open" | "closed" | "submission">): string {
+  return task.submission?.status ?? (task.closed ? "missed" : task.open ? "open" : "not_open");
+}
+
+/**
+ * Who the daily-task views are for — one rule for the card, the list and the task page.
+ *   student   my_challenge_tasks answered ok (and prepare, when asked, did not refuse the account)
+ *   outside   not a challenge student: no group, or a group outside the challenge (a 5.0 student) — my_challenge_tasks
+ *             'not_in_challenge', prepare_miniapp held_sender/no_group|sender_out_of_scope, or no_profile
+ *   staff     an admin / teacher (prepare_miniapp 'staff'; my_challenge_tasks 'staff' once fix/daily-tasks-pre-monday lands)
+ *   inactive  an archived / not-active profile (prepare held_sender/inactive; my_challenge_tasks 'inactive', same PR)
+ *   null      not known (a load error, the RPC not deployed): the caller keeps its own error / fallback handling.
+ * my_challenge_tasks' explicit verdict wins; prepare's refusal of the ACCOUNT (never of the task) comes next.
+ */
+export type DtScope = "student" | "outside" | "staff" | "inactive";
+
+const MY_SCOPE: Record<string, DtScope> = {
+  not_in_challenge: "outside", not_signed_in: "outside", staff: "staff", inactive: "inactive",
+};
+
+export function scopeOf(mine: MyTasksResult | null, prep?: Prepare | { error: string } | null): DtScope | null {
+  if (mine && !mine.ok && MY_SCOPE[mine.reason]) return MY_SCOPE[mine.reason];
+  const p = prep && !("error" in prep) ? prep : null;
+  if (p && !p.ok) {
+    if (p.reason === "staff") return "staff";
+    if (p.reason === "no_profile") return "outside";
+    if (p.reason === "held_sender") {
+      if (p.detail === "no_group" || p.detail === "sender_out_of_scope") return "outside";
+      if (p.detail === "inactive") return "inactive";
+    }
+  }
+  return mine?.ok ? "student" : null;
+}
+
+/** The empty state a page shows for an account that is not a challenge student (i18n keys under dailyTasks). Anything
+ *  but staff / inactive gets the plain "this is for challenge-group students" note. */
+export function scopeEmptyKeys(scope: DtScope | null): { title: string; body: string } {
+  if (scope === "staff") return { title: "notInChallengeTitle", body: "reasons.staff" };
+  if (scope === "inactive") return { title: "notInChallengeTitle", body: "reasons.inactive" };
+  return { title: "notInChallengeTitle", body: "notInChallengeBody" };
 }
 
 /** An idempotency key for one submission form (kept across retries of the same form). */

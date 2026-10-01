@@ -1468,7 +1468,8 @@
       "voided": "Voided",
       "expired": "Expired",
       "open": "Open",
-      "missed": "Missed"
+      "missed": "Missed",
+      "not_open": "Opens at {{time}}"
     },
     "labels": {
       "screenshot": "screenshot",
@@ -1495,9 +1496,10 @@
       "no_profile": "This section is for students.",
       "staff": "This section is for students.",
       "held_sender": "Your profile is not linked to this group yet. Contact an admin — your topic messages are kept.",
+      "inactive": "Your profile is not active right now. Contact an admin.",
       "no_task": "Task not found.",
       "wrong_course": "This task is not from your course.",
-      "not_open": "This task is not open yet.",
+      "not_open": "This task is not open yet — it opens at {{time}}.",
       "closed": "This task has closed.",
       "done": "This task is already accepted.",
       "attempts_exhausted": "No attempts left for this task. Good luck tomorrow!"
@@ -1589,7 +1591,9 @@
       "title": "Daily task",
       "action": "All",
       "todayNone": "No task today",
-      "cta": "Open"
+      "cta": "Open",
+      "taskStreak": "Task streak: {{days}}",
+      "taskPoints": "Task points: {{points}}"
     }
   }
 }

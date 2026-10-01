@@ -1468,7 +1468,8 @@
       "voided": "Bekor qilingan",
       "expired": "Muddati o'tdi",
       "open": "Ochiq",
-      "missed": "O'tkazib yuborildi"
+      "missed": "O'tkazib yuborildi",
+      "not_open": "Hali ochilmagan · {{time}} da"
     },
     "labels": {
       "screenshot": "skrinshot",
@@ -1495,9 +1496,10 @@
       "no_profile": "Bu bo'lim o'quvchilar uchun.",
       "staff": "Bu bo'lim o'quvchilar uchun.",
       "held_sender": "Profilingiz hali bu guruhga biriktirilmagan. Admin bilan bog'laning — topikdagi xabarlaringiz saqlanib qoladi.",
+      "inactive": "Profilingiz hozir faol emas. Admin bilan bog'laning.",
       "no_task": "Bu vazifa topilmadi.",
       "wrong_course": "Bu vazifa sizning kursingizga tegishli emas.",
-      "not_open": "Bu vazifa hali ochilmagan.",
+      "not_open": "Bu vazifa hali ochilmagan — soat {{time}} da ochiladi.",
       "closed": "Bu vazifaning muddati tugagan.",
       "done": "Bu vazifa allaqachon qabul qilingan.",
       "attempts_exhausted": "Bu vazifa uchun urinishlar tugadi. Ertangi vazifada omad!"
@@ -1589,7 +1591,9 @@
       "title": "Kunlik vazifa",
       "action": "Barchasi",
       "todayNone": "Bugun vazifa yo'q",
-      "cta": "Ochish"
+      "cta": "Ochish",
+      "taskStreak": "Vazifa seriyasi: {{days}} kun",
+      "taskPoints": "Vazifa bali: {{points}}"
     }
   }
 }

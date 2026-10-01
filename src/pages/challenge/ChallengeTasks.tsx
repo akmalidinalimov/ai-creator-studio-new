@@ -6,7 +6,10 @@ import { PageShell } from "@/components/Layout";
 import { Button, Card, EmptyState, Skeleton, StatusChip } from "@/components/ui-kit";
 import { useMiniApp } from "@/lib/telegram/MiniAppContext";
 import { dailyTaskPath } from "@/lib/miniappLinks";
-import { formatTaskDate, loadMyTasks, statusTone, tashkentToday, type MyTask, type MyTasksResult } from "@/lib/dailyTasks";
+import {
+  DT_OPEN_TIME, formatTaskDate, loadMyTasks, scopeEmptyKeys, scopeOf, statusTone, taskStatus, tashkentToday, type MyTask,
+  type MyTasksResult,
+} from "@/lib/dailyTasks";
 import { WriteAccessCard } from "@/components/challenge/WriteAccessCard";
 
 /**
@@ -39,9 +42,10 @@ export default function ChallengeTasks() {
 
   const today = tashkentToday();
   const lng = i18n.language || "uz";
+  const emptyKeys = scopeEmptyKeys(scopeOf(data));
 
   const row = (task: MyTask) => {
-    const st = task.submission?.status ?? (task.closed ? "missed" : task.open ? "open" : "none");
+    const st = taskStatus(task);
     const pts = task.submission?.status === "accepted" ? Number(task.submission.points ?? 0) : 0;
     return (
       <Link key={task.id} to={dailyTaskPath(task.id)} className="block">
@@ -61,7 +65,7 @@ export default function ChallengeTasks() {
               {task.submission?.late_days ? ` · ${t("dailyTasks.late", { days: task.submission.late_days })}` : ""}
             </div>
           </div>
-          <StatusChip kind={st === "open" ? "wait" : statusTone(st)} label={t(`dailyTasks.status.${st}`, { defaultValue: st })} />
+          <StatusChip kind={statusTone(st)} label={t(`dailyTasks.status.${st}`, { defaultValue: st, time: DT_OPEN_TIME })} />
           <ChevronRight className="size-[18px] flex-none text-muted-foreground" />
         </Card>
       </Link>
@@ -83,7 +87,8 @@ export default function ChallengeTasks() {
             <EmptyState icon="⚠️" title={t("common.errorTitle")} body={t("dailyTasks.loadError")}
               cta={<Button variant="secondary" size="sm" onClick={() => setReloadKey((k) => k + 1)}>{t("common.retry")}</Button>} />
           ) : (
-            <EmptyState icon="📅" title={t("dailyTasks.notInChallengeTitle")} body={t("dailyTasks.notInChallengeBody")} />
+            // not_in_challenge (e.g. a 5.0 student) / staff / inactive — the same rule as the card and the task page
+            <EmptyState icon="📅" title={t(`dailyTasks.${emptyKeys.title}`)} body={t(`dailyTasks.${emptyKeys.body}`)} />
           )
         ) : !data.enabled || !data.miniapp ? (
           <EmptyState icon="📅" title={t("dailyTasks.topicOnlyTitle")} body={t("dailyTasks.topicOnlyBody")} cta={topicButton(data.topic_url)} />
