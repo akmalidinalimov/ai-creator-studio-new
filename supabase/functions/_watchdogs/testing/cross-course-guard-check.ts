@@ -107,7 +107,7 @@ create table public.modules (id uuid primary key, course_id uuid, title text, po
 create table public.homework_assignments (id uuid primary key, module_id uuid, title text, task_number integer, sap_number integer);
 create table public.profiles (id uuid primary key, name text, last_name text, email text, telegram_username text,
   telegram_id bigint, group_id uuid references public.groups(id) on delete set null, status text not null default 'active',
-  archived_at timestamptz, updated_at timestamptz);
+  archived_at timestamptz, updated_at timestamptz, instagram_username text);
 create table public.user_roles (id uuid primary key default gen_random_uuid(), user_id uuid not null, role public.app_role not null);
 create table public.homework_submissions (id uuid primary key default gen_random_uuid(), assignment_id uuid not null,
   user_id uuid not null, submitted_at timestamptz not null default now(), score smallint,
@@ -132,7 +132,9 @@ create table public.platform_settings (key text primary key, value jsonb not nul
 create function public.has_role(_user_id uuid, _role public.app_role) returns boolean language sql stable as $$
   select exists (select 1 from public.user_roles where user_id = _user_id and role = _role) $$;
 
--- Stand-ins for the live profiles triggers whose ORDER matters (names and timing are production's).
+-- Stand-ins for the live profiles triggers whose ORDER matters (names and timing are production's). Every
+-- BEFORE ROW trigger production has, as of 20261001060000: the fixture used to omit #232's
+-- trg_profiles_zz_ig_handle_lock, so it "proved" the column guard was last while production was violating it.
 create table public.test_enrolled (user_id uuid, group_id uuid, at timestamptz default clock_timestamp());
 create function public.test_sync_enrollment() returns trigger language plpgsql as $$
 begin insert into public.test_enrolled (user_id, group_id) values (new.id, new.group_id); return new; end $$;
@@ -140,8 +142,13 @@ create trigger trg_profiles_sync_group_enrollment after insert or update of grou
   for each row when (new.group_id is not null) execute function public.test_sync_enrollment();
 create function public.test_touch() returns trigger language plpgsql as $$ begin new.updated_at := now(); return new; end $$;
 create trigger trg_profiles_updated before update on public.profiles for each row execute function public.test_touch();
+create function public.test_passthrough() returns trigger language plpgsql as $$ begin return new; end $$;
+create trigger trg_profiles_normalize_instagram before insert or update of instagram_username on public.profiles
+  for each row execute function public.test_passthrough();
+create trigger trg_profiles_zz_ig_handle_lock before update of instagram_username on public.profiles
+  for each row execute function public.test_passthrough();
 create function public.test_column_guard() returns trigger language plpgsql as $$ begin return new; end $$;
-create trigger trg_profiles_zz_column_guard before insert or update on public.profiles for each row
+create trigger trg_profiles_zzz_column_guard before insert or update on public.profiles for each row
   execute function public.test_column_guard();
 
 -- ops_net_post stub (same name and parameter names as production): records the call, or raises on demand.
@@ -261,6 +268,10 @@ console.log("B. migration: applies, pinned, replay-safe, grants");
   const db = await freshDb();
   const before = (await q(db, `select coalesce(array_to_string(proacl, ','), '') a, proowner::int o, prosecdef s
                                  from pg_proc where proname = 'hw_dm_health_stats'`))[0];
+  const beforeRowTriggers = async () => (await q(db, `select t.tgname::text n from pg_trigger t
+      where t.tgrelid = 'public.profiles'::regclass and not t.tgisinternal and (t.tgtype & 1) = 1 and (t.tgtype & 2) = 2
+      order by t.tgname collate "C"`)).map((r) => r.n);
+  const beforeSet = await beforeRowTriggers();
   const err = await applyMigration(db);
   ok("applies on the live definitions", err === null, err);
   const after = (await q(db, `select coalesce(array_to_string(proacl, ','), '') a, proowner::int o, prosecdef s, prosrc
@@ -297,9 +308,13 @@ console.log("B. migration: applies, pinned, replay-safe, grants");
   const g = tg.find((t) => t.tgname === "trg_profiles_aa_course_move_guard");
   ok("trigger: AFTER UPDATE OF group_id, FOR EACH ROW, WHEN the group changes to a set group (old may be NULL)",
     !!g && /AFTER UPDATE OF group_id ON public\.profiles FOR EACH ROW WHEN \(\(\(old\.group_id IS DISTINCT FROM new\.group_id\) AND \(new\.group_id IS NOT NULL\)\)\)/.test(g.d), g?.d);
+  ok("this migration adds no BEFORE ROW trigger to profiles (its guard is AFTER, so it cannot run after the column guard)",
+    JSON.stringify(await beforeRowTriggers()) === JSON.stringify(beforeSet), { before: beforeSet, after: await beforeRowTriggers() });
   const lastBefore = (await q(db, `select t.tgname from pg_trigger t where t.tgrelid = 'public.profiles'::regclass
-      and not t.tgisinternal and t.tgenabled <> 'D' and (t.tgtype & 1) = 1 and (t.tgtype & 2) = 2 order by t.tgname desc limit 1`))[0].tgname;
-  ok("#222's rule holds: trg_profiles_zz_column_guard is still the LAST before-row trigger", lastBefore === "trg_profiles_zz_column_guard", lastBefore);
+      and not t.tgisinternal and t.tgenabled <> 'D' and (t.tgtype & 1) = 1 and (t.tgtype & 2) = 2
+      order by t.tgname collate "C" desc limit 1`))[0].tgname;
+  ok("#222's rule holds on production's BEFORE trigger set: the column guard (trg_profiles_zzz_column_guard since " +
+    "20261001060000) is still the LAST before-row trigger", lastBefore === "trg_profiles_zzz_column_guard", lastBefore);
   const job = await q(db, "select schedule, command from cron.job where jobname = 'cross-course-watchdog'");
   ok("cron 'cross-course-watchdog' hourly at :49", job.length === 1 && job[0].schedule === "49 * * * *" &&
     job[0].command.includes("public.cross_course_watchdog()"), job);
