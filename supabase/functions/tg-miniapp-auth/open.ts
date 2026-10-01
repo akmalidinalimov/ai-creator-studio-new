@@ -11,6 +11,8 @@
 // src with a ref, stamp clicked_at on THAT row of THAT profile only — which keeps detect-and-nudge's rule "a
 // clicked 3-day nudge suppresses the 7-day one" working without a token. The open mode resolves the profile
 // by telegram_id ONLY: it never links a username and never mints a session. NEVER log initData.
+// The accepted srcs are _shared/miniapp-links.ts MINIAPP_SRCS (bundled at deploy: a new src — e.g. the bot's
+// "bot_start" welcome and "bot_profile" card buttons — is only counted once this function is redeployed).
 import { isMiniAppSrc, isUuid, type MiniAppSrc } from "../_shared/miniapp-links.ts";
 
 export type OpenSignal = { src: MiniAppSrc; ref: string | null; path: string | null };
