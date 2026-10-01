@@ -799,7 +799,7 @@ function GroupStudentsDialog({ group, onClose }: { group: Group; onClose: () => 
               const plan = await loadGroupMovePlan(supabase, [existingId], group.id);
               const c = plan.cross[0];
               if (c) {
-                errors.push(`${ident}: boshqa kursda ("${c.fromGroupName || "—"}", ${c.fromCourseTitle || "boshqa kurs"}) — o'tkazilmadi. Yangi kurs faqat yangi o'quvchilar uchun.`);
+                errors.push(`${ident}: boshqa kursda ("${c.fromGroupName || "—"}", ${c.fromCourseTitle || "boshqa kurs"}) — ro'yxat bilan o'tkazilmaydi. Bittalab ko'chirish uchun: guruh sahifasi → «Talaba qo'shish».`);
                 continue;
               }
             } catch (e: any) {
