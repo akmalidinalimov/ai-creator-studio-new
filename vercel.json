@@ -1,4 +1,10 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "main": true,
+      "**": false
+    }
+  },
   "rewrites": [
     { "source": "/sb/:path*", "destination": "https://cdyidatkegxwhtuoqxly.supabase.co/:path*" },
     { "source": "/(.*)", "destination": "/index.html" }
