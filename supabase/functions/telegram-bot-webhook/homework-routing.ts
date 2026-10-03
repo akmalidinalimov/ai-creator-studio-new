@@ -76,3 +76,41 @@ export function pickNextLeaf(
   });
   return next ?? leaves[leaves.length - 1];
 }
+
+/**
+ * The auto-tag guess for a bare post in a shared homework topic (the picker's expiry sweep and the
+ * no-picker auto path), restricted to the modules the student can open.
+ *
+ * It used to guess across EVERY module. On a tiered course that guess lands on a locked module as
+ * soon as the student's open work is graded — on the Challenge 6.0 ladder (module 1 only, one task)
+ * that is every student whose module-1 homework has been graded — and finalize then dropped the
+ * post as tier_locked with no reaction and no message (7 posts on 2026-10-02/03). Now:
+ *   1. an ungraded leaf in the student's current module (last watched / last submitted), else
+ *   2. one in the module right after it, else
+ *   3. pickNextLeaf over the open leaves (first ungraded; all graded → the last one, which the
+ *      caller then treats as "already graded" and asks about a resubmission).
+ * Only when the student can open NO module with a task does it fall back to the unfiltered list
+ * (the old behaviour), so the caller's tier gate still decides and says so.
+ */
+export function chooseGuessLeaf<L extends AssignmentRow & { module_id: string }>(o: {
+  leaves: L[];                  // computeLeaves() of the whole course
+  moduleOrder: string[];        // module ids by position
+  blocked: Set<string>;         // modules beyond the student's tier
+  subs: SubmissionRow[];
+  currentModuleId: string | null;
+}): L | null {
+  const open = o.leaves.filter((l) => !o.blocked.has(l.module_id));
+  const pool = open.length ? open : o.leaves;
+  if (!pool.length) return null;
+  const subMap = new Map(o.subs.map((s) => [s.assignment_id, s]));
+  const ungradedIn = (mid: string | undefined) =>
+    mid ? pool.find((l) => l.module_id === mid && (subMap.get(l.id)?.score ?? null) == null) : undefined;
+  if (o.currentModuleId) {
+    const here = ungradedIn(o.currentModuleId);
+    if (here) return here;
+    const idx = o.moduleOrder.indexOf(o.currentModuleId);
+    const after = idx >= 0 ? ungradedIn(o.moduleOrder[idx + 1]) : undefined;
+    if (after) return after;
+  }
+  return pickNextLeaf(pool, o.subs) as L | null;
+}
