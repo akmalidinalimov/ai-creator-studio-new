@@ -1,4 +1,4 @@
--- Daily tasks: module 1 gets two days, module 2 starts Wednesday (owner request, 2026-10-03).
+-- Daily tasks: module 1 gets two days, module 2 starts Wednesday and is approved (owner request, 2026-10-03).
 --
 -- THE OWNER'S PLAN
 --   Module 1 (ChatGPT, four short lessons) is too short for a whole week of tasks:
@@ -15,19 +15,21 @@
 --   #1 "ChatGPTʼni oʻzingizga moslang" (10-05)   #3 "Brendingiz uchun Project" (10-07)
 --   #5 "Tanishuv posti: captionʼni Project yozadi" (10-09, built on the Project)
 --
--- MODULE 2: the five drafted image tasks, re-dated into lesson order, plus one new task. All stay DRAFT, and the
--- owner approves them (Admin -> Challenge -> Kunlik vazifalar, or ✅ in the bot) before Wednesday 09:00.
+-- MODULE 2: the five drafted image tasks, re-dated into lesson order, plus one new task. The owner asked for the two
+-- Instagram tasks on Friday and Monday (Tuesday's moved to Monday) and asked for all of module 2 to be APPROVED
+-- here (2026-10-03). The guard re-checks every approval rule (scope, window, requires, post length); approved_by
+-- is NULL because a migration has no signed-in user, and the audit row names the owner's request.
 --   Wed 10-07  #6  Yorugʻlik mashqi            (lesson 2.8)                 was 10-12
 --   Thu 10-08  #8  Obyektiv va fon 35/85mm      (lessons 2.9-2.11)           was 10-14
 --   Fri 10-09  #7  Kamera burchagi karusel (IG) (lessons 2.9-2.11)           was 10-13
 --   Sat 10-10  #9  Plastikdan haqiqiy suratga   (lesson 2.8)                 was 10-15
---   Mon 10-12  NEW Personaj varaqasi            (lesson 2.6, character sheet)
---   Tue 10-13  #10 Telefon suratidan reklama (IG, the module's final task)   was 10-16
+--   Mon 10-12  #10 Telefon suratidan reklama (IG)                           was 10-16
+--   Tue 10-13  NEW Personaj varaqasi            (lesson 2.6, character sheet)
 --   Two wording fixes: #6 names Syntx too (the course teaches Higgsfield and Syntx), and #10 says "2-moduldagi"
---   recipes instead of "shu haftadagi", because by Tuesday those recipes are from the previous week.
+--   recipes instead of "shu haftadagi", because by Monday those recipes are from the previous week.
 --
 -- SATURDAY: challenge_task_is_task_day() counts any date that carries an APPROVED task, and posting selects the
--- approved task of the day without a weekday filter. So Saturday 10-10 posts once #9 is approved, and
+-- approved task of the day without a weekday filter. So Saturday 10-10 posts (#9 is approved below), and
 -- task_weekdays stays [1..5] (adding 6 would make every future Saturday a "task day" that alarms when empty).
 --
 -- NOT DONE HERE: 10-14 .. 10-16 now have no task. Module 3 (video) needs scheduling from Wednesday 10-14; its
@@ -89,7 +91,7 @@ begin
   update public.challenge_tasks set task_date = date '2026-10-08' where id = 8;   -- lens
   update public.challenge_tasks set task_date = date '2026-10-09' where id = 7;   -- angle carousel (IG)
   update public.challenge_tasks set task_date = date '2026-10-10' where id = 9;   -- realism (Saturday)
-  update public.challenge_tasks set task_date = date '2026-10-13' where id = 10;  -- phone photo -> ad (IG)
+  update public.challenge_tasks set task_date = date '2026-10-12' where id = 10;  -- phone photo -> ad (IG), Monday
 
   -- wording: name the course's own tools, and point Tuesday at the module's recipes, not "this week's"
   update public.challenge_tasks
@@ -108,7 +110,7 @@ begin
   -- 3. module 2, new: the character-sheet lesson (2.6) had no task
   insert into public.challenge_tasks (course_id, task_date, type, title, body, learn_line, submit_hint, accepts, requires,
                                       minutes, check_rubric, status, source, plan_ref, plan_format)
-  values (_course, date '2026-10-12', 'general',
+  values (_course, date '2026-10-13', 'general',
     'Personaj varaqasi: bitta qahramon, 2 ta sahna',
     'Brendingiz yoki kontentingiz uchun bitta doimiy qahramon oʻylab toping (masalan, kafe uchun “barista Aziz” yoki doʻkoningiz uchun model). '
     || 'Darsdagi usul bilan Higgsfield, Syntx yoki Nano Bananaʼda uning personaj varaqasini (character sheet) yarating: old, yon va orqa koʻrinish hamda 2–3 xil yuz ifodasi bitta rasmda. '
@@ -122,7 +124,13 @@ begin
     'Three parts: (1) a character sheet image showing one character from several angles (front/side/back) and/or several facial expressions; (2) two scene images in which the same character (same face, hair and outfit) appears in different settings; (3) the prompt text used. Reject if the character sheet is missing, only one scene is sent, the face or outfit clearly changes between images, or no prompt is written. Quality is not graded strictly; watermarks are fine.',
     'draft', 'manual', 'M2-character', 'image (3) + text');
 
-  -- 4. the end state the owner asked for
+  -- 4. approve module 2 (owner's request). The guard validates each row and raises on any problem.
+  update public.challenge_tasks set status = 'approved'
+   where course_id = _course and status = 'draft'
+     and task_date in (date '2026-10-07', date '2026-10-08', date '2026-10-09', date '2026-10-10',
+                       date '2026-10-12', date '2026-10-13');
+
+  -- 5. the end state the owner asked for
   select count(*) into _n from public.challenge_tasks
    where course_id = _course and status <> 'cancelled'
      and task_date in (date '2026-10-05', date '2026-10-06', date '2026-10-07', date '2026-10-08', date '2026-10-09',
@@ -131,8 +139,15 @@ begin
     raise exception 'ABORT: expected 8 scheduled tasks on 10-05..10-13 (Sunday off), found %', _n;
   end if;
   if (select count(*) from public.challenge_tasks where course_id = _course and status = 'approved'
-       and task_date in (date '2026-10-05', date '2026-10-06')) <> 2 then
-    raise exception 'ABORT: module 1 tasks are not both approved';
+       and task_date in (date '2026-10-05', date '2026-10-06', date '2026-10-07', date '2026-10-08', date '2026-10-09',
+                         date '2026-10-10', date '2026-10-12', date '2026-10-13')) <> 8 then
+    raise exception 'ABORT: not all 8 tasks of 10-05..10-13 are approved';
+  end if;
+  -- Instagram on Friday and Monday, as the owner asked
+  if (select string_agg(to_char(task_date, 'MM-DD'), ',' order by task_date) from public.challenge_tasks
+       where course_id = _course and status = 'approved' and type = 'instagram'
+         and task_date between date '2026-10-05' and date '2026-10-13') is distinct from '10-09,10-12' then
+    raise exception 'ABORT: module 2 Instagram tasks are not on Friday 10-09 and Monday 10-12';
   end if;
 
   insert into public.admin_actions (actor_user_id, action, details)
@@ -140,6 +155,8 @@ begin
     'migration', '20261003190000', 'at', now(),
     'module_1', jsonb_build_object('kept', jsonb_build_array(2, 4), 'cancelled', jsonb_build_array(1, 3, 5)),
     'module_2', jsonb_build_object('redated', jsonb_build_array(6, 8, 7, 9, 10),
-                                   'new', (select id from public.challenge_tasks where course_id = _course and task_date = date '2026-10-12' and status <> 'cancelled')),
-    'why', 'owner: module 1 on Mon-Tue only, module 2 from Wednesday (Wed-Sat + Mon-Tue); students already built a Project'));
+                                   'new', (select id from public.challenge_tasks where course_id = _course and task_date = date '2026-10-13' and status <> 'cancelled'),
+                                   'instagram_days', jsonb_build_array('2026-10-09', '2026-10-12'),
+                                   'approved_on_owner_request', true),
+    'why', 'owner: module 1 on Mon-Tue only, module 2 from Wednesday (Wed-Sat + Mon-Tue), Instagram on Fri and Mon, approve module 2; students already built a Project'));
 end $$;
