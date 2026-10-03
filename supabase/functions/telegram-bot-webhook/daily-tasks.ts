@@ -56,6 +56,17 @@ export interface DailyTasksDeps {
 }
 
 const TOPIC_MISSING = "challenge_task_topic_missing";
+
+/**
+ * Today's 00:00 in Tashkent, as a UTC ISO timestamp. Tashkent is UTC+5 all year (no DST), so "today" there
+ * begins at 19:00 UTC the previous evening. Pure; the clock is injectable for tests.
+ */
+export function tashkentMidnightUtcIso(now: Date = new Date()): string {
+  const OFFSET = 5 * 3600_000;
+  const wall = new Date(now.getTime() + OFFSET);                                         // Tashkent wall clock, read as UTC
+  const midnight = Date.UTC(wall.getUTCFullYear(), wall.getUTCMonth(), wall.getUTCDate());
+  return new Date(midnight - OFFSET).toISOString();
+}
 const GROUP_LOCALE: Locale = "uz"; // a group chat is shared: receipts and hints are in Uzbek (§7.2)
 
 function errCode(e: { code?: string; message?: string } | null | undefined): string {
@@ -486,6 +497,17 @@ export function createDailyTasks(deps: DailyTasksDeps) {
       if (!gid) return;
       const res = await snapshot(admin);
       if (!res.ok || !res.snap.config?.active || !res.snap.groups.has(gid)) return;
+      // Only meaningful while a daily task is actually OPEN in this group: a task post went out here today
+      // (Tashkent). Without that there is nothing to misplace, and every ignored picker is plain homework.
+      // Found 2026-10-03: before the first task day (Mon 10-05) the module ladder opened module 1, 162
+      // students started handing in real module-1 homework, many ignored the picker, and each auto-tag
+      // was counted as "misplaced daily work" — 22 rows and a false 'misplaced_homework' alarm, every
+      // one of them a correct homework submission. A failed read is not counted (no false alarm).
+      const { count, error: postsErr } = await admin.from("challenge_task_posts")
+        .select("task_id", { count: "exact", head: true })
+        .eq("group_id", gid).eq("kind", "task").in("state", ["sent", "sent_via_sql"])
+        .gte("sent_at", tashkentMidnightUtcIso());
+      if (postsErr || !count) return;
       await logHealth(admin, "challenge_task_misplaced_homework", {
         pending_id: pending.id ?? null, group_id: gid, chat_id: Number(pending.telegram_chat_id) || null,
         thread_id: Number(pending.telegram_thread_id) || null, message_id: Number(pending.first_message_id) || null,

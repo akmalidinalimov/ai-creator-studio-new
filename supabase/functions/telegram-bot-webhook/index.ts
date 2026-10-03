@@ -6434,7 +6434,9 @@ async function handleTaskCardCallback(
   const msgId = cq.message?.message_id;
 
   const card = async (id: number) => {
-    const { data } = await admin.rpc("challenge_task_card", { _task_id: id });
+    // challenge_task_admin_card, NOT challenge_task_card: the engine owns challenge_task_card(bigint, bigint
+    // DEFAULT NULL), and a _task_id-only call to a same-named function is ambiguous (20261003040000).
+    const { data } = await admin.rpc("challenge_task_admin_card", { _task_id: id });
     return (data && (data as any).ok) ? data as any : null;
   };
   const show = async (id: number, opts: { editing?: boolean; note?: string | null } = {}) => {
