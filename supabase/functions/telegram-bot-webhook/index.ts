@@ -1,7 +1,7 @@
 // Telegram bot webhook. Receives Updates from api.telegram.org via setWebhook.
 // Verifies X-Telegram-Bot-Api-Secret-Token, then dispatches commands.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { computeLeaves, displayStepNumber, pickNextLeaf } from "./homework-routing.ts";
+import { chooseGuessLeaf, computeLeaves, displayStepNumber, pickNextLeaf } from "./homework-routing.ts";
 import { effectiveLeafGrades, summarizeHomework } from "./homework-stats.ts";
 import { fanOutBroadcast } from "./broadcast-fanout.ts";
 import { isContentError, isRecipientError, isTerminal, tgResult } from "../_shared/telegram-classify.ts";
@@ -434,6 +434,12 @@ const T = {
     pkAddFiles: "➕ Fayl qo'shish (avvalgisiga)",
     pkAppended: (lbl: string, n: number) => `✅ <b>${lbl}</b> — fayl qo'shildi (jami ${n} ta).`,
     pkCapDropped: (n: number) => `⚠️ ${n} ta fayl qo'shilmadi: bitta vazifaga jami 10 tagacha fayl qabul qilinadi.`,
+    pkAutoResubAsk: (lbl: string, sc: number, mx: number) => `⏳ Vazifa tanlanmadi. <b>${lbl}</b> allaqachon baholangan: <b>${sc}/${mx}</b>.
+Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski baho bekor qilinadi). Boshqa vazifa bo'lsa — «📋 Boshqa vazifa» ni bosing.
+<i>15 daqiqada tanlanmasa, bu post hech qaysi vazifaga qo'shilmaydi.</i>`,
+    pkPickOther: "📋 Boshqa vazifa",
+    pkAutoNotFiledGraded: (lbl: string) => `ℹ️ Bu post hech qaysi vazifaga qo'shilmadi: <b>${lbl}</b> allaqachon baholangan. Qayta topshirish uchun postni qayta yuboring va vazifani tanlang.`,
+    pkAutoNotFiledLocked: "ℹ️ Bu post hech qaysi vazifaga qo'shilmadi: bu modul hali siz uchun ochilmagan. Ochiq moduldagi vazifa bo'lsa, postni qayta yuboring va vazifani tanlang.",
     pkWelcome: (name: string) => `👋 <b>${name}</b>, siz AI Creators platformasiga qo'shildingiz (sinov hisobi). Vazifalaringiz qabul qilinadi, ball va statistika yuritiladi. Darsliklar to'liq to'lovdan so'ng ochiladi — administrator bilan bog'laning.`,
     pkWelcomeBtn: "🤖 Botga ulanish",
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ hammasi" : `${n} vazifa baholanmagan`}`,
@@ -753,6 +759,12 @@ const T = {
     pkAddFiles: "➕ Добавить файл (к прежней сдаче)",
     pkAppended: (lbl: string, n: number) => `✅ <b>${lbl}</b> — файл добавлен (всего ${n}).`,
     pkCapDropped: (n: number) => `⚠️ Не добавлено файлов: ${n} — к одному заданию принимается не больше 10 файлов.`,
+    pkAutoResubAsk: (lbl: string, sc: number, mx: number) => `⏳ Задание не выбрано. <b>${lbl}</b> уже оценено: <b>${sc}/${mx}</b>.
+Если это новая версия — нажмите «🔄 Да, пересдать» (старая оценка сбросится). Если это другое задание — нажмите «📋 Другое задание».
+<i>Если ничего не выбрать за 15 минут, пост не будет прикреплён ни к одному заданию.</i>`,
+    pkPickOther: "📋 Другое задание",
+    pkAutoNotFiledGraded: (lbl: string) => `ℹ️ Этот пост не прикреплён ни к одному заданию: <b>${lbl}</b> уже оценено. Чтобы пересдать, отправьте пост заново и выберите задание.`,
+    pkAutoNotFiledLocked: "ℹ️ Этот пост не прикреплён ни к одному заданию: этот модуль для вас ещё не открыт. Если это задание открытого модуля — отправьте пост заново и выберите задание.",
     pkWelcome: (name: string) => `👋 <b>${name}</b>, вы добавлены на платформу AI Creators (пробный аккаунт). Ваши работы принимаются, баллы и статистика ведутся. Уроки откроются после полной оплаты — свяжитесь с администратором.`,
     pkWelcomeBtn: "🤖 Подключить бота",
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ всё" : `${n} не оценено`}`,
@@ -1064,6 +1076,12 @@ const T = {
     pkAddFiles: "➕ Add file (to the existing one)",
     pkAppended: (lbl: string, n: number) => `✅ <b>${lbl}</b> — file added (${n} total).`,
     pkCapDropped: (n: number) => `⚠️ ${n} file(s) not added: one task accepts at most 10 files.`,
+    pkAutoResubAsk: (lbl: string, sc: number, mx: number) => `⏳ No task was picked. <b>${lbl}</b> is already graded: <b>${sc}/${mx}</b>.
+If this is a new version, tap «🔄 Yes, resubmit» (the old score is reset). If it's a different task, tap «📋 Another task».
+<i>If nothing is picked within 15 minutes, this post won't be attached to any task.</i>`,
+    pkPickOther: "📋 Another task",
+    pkAutoNotFiledGraded: (lbl: string) => `ℹ️ This post wasn't attached to any task: <b>${lbl}</b> is already graded. To resubmit, post it again and choose the task.`,
+    pkAutoNotFiledLocked: "ℹ️ This post wasn't attached to any task: that module isn't open for you yet. If it belongs to an open module, post it again and choose the task.",
     pkWelcome: (name: string) => `👋 <b>${name}</b>, you've been added to the AI Creators platform (trial account). Your homework is accepted and your points/statistics are tracked. Lessons unlock after full payment — contact the administrator.`,
     pkWelcomeBtn: "🤖 Connect the bot",
     gradeStudentRow: (name: string, n: number) => `${csvEscapeHtml(name)} — ${n === 0 ? "✓ all done" : `${n} ungraded`}`,
@@ -5802,7 +5820,11 @@ async function resolveAssignmentForTopic(
     // Bias the guess to the student's CURRENT module — where they most recently watched a lesson
     // or submitted homework — then its successor (just-finished-a-module case). If neither has an
     // open task (or the student has no history), fall back to exactly the old global behavior.
-    let asg: any = null;
+    // TIER-AWARE (2026-10-03): only modules the student can open are guessed (chooseGuessLeaf). A read
+    // failure leaves the set empty, i.e. the old untiered guess, and finalize's tier gate still applies.
+    let blocked = new Set<string>();
+    try { blocked = await getBlockedModuleIds(admin, profileId); } catch (e) { console.error("hw:group:blocked-read-err", String(e)); }
+    let currentModuleId: string | null = null;
     try {
       const [lpRes, hwRes] = await Promise.all([
         admin.from("lesson_progress")
@@ -5818,32 +5840,18 @@ async function resolveAssignmentForTopic(
       const hw = (hwRes.data || [])[0] as any;
       const lpTs = lp?.updated_at ? Date.parse(lp.updated_at) : 0;
       const hwTs = hw?.submitted_at ? Date.parse(hw.submitted_at) : 0;
-      const currentModuleId: string | null =
+      currentModuleId =
         lpTs || hwTs
           ? (lpTs >= hwTs ? (lp?.lessons?.module_id ?? null) : (hw?.homework_assignments?.module_id ?? null))
           : null;
-      if (currentModuleId) {
-        const subMap = new Map(((existingSubs || []) as any[]).map((s: any) => [s.assignment_id, s]));
-        const openLeafIn = (mid: string) =>
-          (leaves as any[]).find((l: any) => l.module_id === mid && (() => { const s = subMap.get(l.id); return !s || s.score == null; })());
-        asg = openLeafIn(currentModuleId) || null;
-        if (!asg) {
-          const idx = modIds.indexOf(currentModuleId);
-          const nextModId = idx >= 0 ? modIds[idx + 1] : undefined;
-          if (nextModId) asg = openLeafIn(nextModId) || null;
-        }
-        if (asg) console.log("hw:group:smart-tag", JSON.stringify({ profile_id: profileId, module_id: asg.module_id, assignment_id: asg.id }));
-      }
     } catch (e) {
       console.error("hw:group:smart-tag-err", String(e)); // heuristic is best-effort — never block capture
     }
-    if (!asg) {
-      asg =
-        pickNextLeaf(leaves as any, (existingSubs || []) as any) ||
-        // All graded: fall back to the most recent leaf so a resubmission still attaches somewhere.
-        [...leaves].sort((a: any, b: any) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
-    }
+    const asg: any = chooseGuessLeaf({
+      leaves: leaves as any, moduleOrder: modIds, blocked, subs: (existingSubs || []) as any, currentModuleId,
+    });
     if (!asg) return null;
+    console.log("hw:group:smart-tag", JSON.stringify({ profile_id: profileId, module_id: asg.module_id, assignment_id: asg.id, current: currentModuleId, blocked: blocked.size }));
     return { moduleId: asg.module_id, assignment: asg, resolvedVia: "shared_topic" };
   }
   // Path B: legacy per-module topic mapping (matched in the topic's own chat by findOwnHomeworkTopic).
@@ -5878,6 +5886,103 @@ async function resolveAssignmentForTopic(
 // task. No pick in ~10 min → the smart auto-tag fallback files it anyway (sweep below),
 // so work is NEVER lost. Explicit /vazifalar intents bypass the picker entirely.
 
+// The sweep's second ask stays open this long; a "not filed" note stays in the thread this long.
+const AUTO_ASK_MS = 15 * 60_000;
+const NOT_FILED_NOTE_MS = 6 * 3600_000;
+
+// "M1 · V2" for one assignment (the same label the picker and receipts use).
+async function assignmentLabel(admin: any, assignmentId: string): Promise<string> {
+  const { data: a } = await admin.from("homework_assignments")
+    .select("task_number, sap_number, parent_id, modules:module_id(position)").eq("id", assignmentId).maybeSingle();
+  return `M${(((a as any)?.modules?.position ?? 0) as number) + 1} · V${a ? displayStepNumber(a as any) : 1}`;
+}
+
+// Put a short note on the student's post: edit the picker if it is still there, else reply to the post.
+// The message id is kept on the row so the done-row pass removes the note after its expires_at.
+async function showNotFiledNote(admin: any, pending: any, text: string): Promise<void> {
+  const chatId = Number(pending.telegram_chat_id);
+  try {
+    if (pending.picker_message_id) {
+      const r = await tgApi("editMessageText", {
+        chat_id: chatId, message_id: Number(pending.picker_message_id), text, parse_mode: "HTML", disable_web_page_preview: true,
+      });
+      const b: any = await r.json().catch(() => null);
+      if (r.ok && b?.ok) return;
+    }
+    const r = await tgApi("sendMessage", {
+      chat_id: chatId, message_thread_id: Number(pending.telegram_thread_id), reply_to_message_id: Number(pending.first_message_id),
+      allow_sending_without_reply: true, text, parse_mode: "HTML", disable_web_page_preview: true,
+    });
+    const b: any = await r.json().catch(() => null);
+    const mid = b?.result?.message_id;
+    await admin.from("hw_pending_posts").update({ picker_message_id: mid ?? null }).eq("id", pending.id);
+    if (!mid) console.log("pk:not-filed-note-unsent", JSON.stringify({ pending_id: pending.id, desc: b?.description ?? r.status }));
+  } catch (e) { console.error("pk:not-filed-note-err", String(e)); /* the skip row is the record */ }
+}
+
+// The sweep's guess hit a GRADED task: keep the post pending for AUTO_ASK_MS and ask, in the thread,
+// whether it is a new version. The buttons are the picker's own (hwpk:<id>:r:<mod>:<leaf> = the
+// resubmit confirmation, hwpk:<id>:back = the module list), so a tap goes through the normal pick path.
+// false = could not ask (the caller consumes the post with a note instead).
+async function askResubmitOnce(admin: any, pending: any, assignmentId: string, moduleId: string, score: number, t: any): Promise<boolean> {
+  let claimedAsk = false;
+  try {
+    const { data: mods } = await admin.from("modules").select("id, position").eq("course_id", pending.course_id).order("position");
+    const ordered = (mods || []) as any[];
+    const mi = ordered.findIndex((m: any) => m.id === moduleId);
+    if (mi < 0) return false;
+    // Same query as the picker's task step, so the leaf index resolves to the same task on the tap.
+    const { data: asgs } = await admin.from("homework_assignments")
+      .select("id, title, task_number, sap_number, parent_id, is_active, created_at, max_score")
+      .eq("module_id", moduleId).eq("is_active", true);
+    const leaves = computeLeaves((asgs || []) as any) as any[];
+    const li = leaves.findIndex((l: any) => l.id === assignmentId);
+    if (li < 0) return false;
+    const now = Date.now();
+    // Claim the second ask (reminder_at too, so the reminder backstop leaves it alone). A missing column
+    // (the seconds between the function deploy and its migration) errors here and falls back to the note.
+    const { data: claimed, error } = await admin.from("hw_pending_posts")
+      .update({ auto_asked_at: new Date(now).toISOString(), expires_at: new Date(now + AUTO_ASK_MS).toISOString(), reminder_at: new Date(now).toISOString() })
+      .eq("id", pending.id).eq("state", "pending").is("auto_asked_at", null).select("id");
+    if (error || !claimed || !claimed.length) return false;
+    claimedAsk = true;
+    const lbl = `M${(ordered[mi].position ?? 0) + 1} · V${displayStepNumber(leaves[li])}`;
+    const text = t.pkAutoResubAsk(lbl, score, (leaves[li].max_score ?? 10) as number);
+    const kb = [
+      [{ text: t.pkResubYes, callback_data: `hwpk:${pending.id}:r:${mi}:${li}` }],
+      [{ text: t.pkPickOther, callback_data: `hwpk:${pending.id}:back` }],
+    ];
+    const chatId = Number(pending.telegram_chat_id);
+    let shown = false;
+    if (pending.picker_message_id) {
+      const r = await tgApi("editMessageText", {
+        chat_id: chatId, message_id: Number(pending.picker_message_id), text, parse_mode: "HTML",
+        disable_web_page_preview: true, reply_markup: { inline_keyboard: kb },
+      });
+      const b: any = await r.json().catch(() => null);
+      shown = !!(r.ok && b?.ok);
+    }
+    if (!shown) {
+      const r = await tgApi("sendMessage", {
+        chat_id: chatId, message_thread_id: Number(pending.telegram_thread_id), reply_to_message_id: Number(pending.first_message_id),
+        allow_sending_without_reply: true, text, parse_mode: "HTML", disable_web_page_preview: true,
+        reply_markup: { inline_keyboard: kb },
+      });
+      const b: any = await r.json().catch(() => null);
+      if (b?.result?.message_id) {
+        await admin.from("hw_pending_posts").update({ picker_message_id: b.result.message_id }).eq("id", pending.id);
+      } else {
+        console.log("pk:auto-ask-unsent", JSON.stringify({ pending_id: pending.id, desc: b?.description ?? r.status }));
+      }
+    }
+    console.log("pk:auto-ask", JSON.stringify({ pending_id: pending.id, assignment_id: assignmentId }));
+    return true; // claimed: even if the message failed, the next expiry consumes it with a note
+  } catch (e) {
+    console.error("pk:auto-ask-err", String(e));
+    return claimedAsk; // once claimed the row is the ask's; its next expiry consumes it with a note
+  }
+}
+
 // Turn a pending post into a real submission (shared by the pick tap and the expiry sweep).
 async function finalizePendingPost(
   admin: any,
@@ -5890,7 +5995,7 @@ async function finalizePendingPost(
   // student explicitly confirmed. Back-to-back different-homework posts each get their own
   // picker (the old 5-min post-finalize append window is gone — it hijacked the next post).
   action: "fresh" | "append" | "replace" = "fresh",
-): Promise<"created" | "appended" | "already_graded" | "tier_locked" | "course_mismatch" | "error"> {
+): Promise<"created" | "appended" | "already_graded" | "asked" | "tier_locked" | "course_mismatch" | "error"> {
   // Coordinates for the capture-drop signals below (plain reads of the row, so the catch can use them too).
   const dropAt = {
     chatId: Number(pending.telegram_chat_id), threadId: Number(pending.telegram_thread_id),
@@ -5938,21 +6043,33 @@ async function finalizePendingPost(
     const prevScore: number | null = prior && prior.score != null ? prior.score : ((prior as any)?.previous_score ?? null);
     if (prior && prior.score != null && !prior.score_is_stale && action !== "replace") {
       if (!guessed) return "already_graded"; // picker stays open; nothing consumed
-      // Sweep fallback: mirror the legacy auto path (acknowledge, inform, consume).
-      await admin.from("hw_pending_posts").update({ state: "done" }).eq("id", pending.id);
-      await deletePicker();
-      try { await setMessageReaction(chatId, firstMsgId, "✅"); } catch (_e) { /* ignore */ }
+      // Sweep fallback. Every open task is graded, so the guess is a graded one (on the 6.0 ladder that
+      // is every graded student, because module 1 has one task). The post is most likely a new version,
+      // so ask ONCE, in the thread, with the same resubmit button the picker shows; the post stays
+      // pending for AUTO_ASK_MS. Only an unanswered second ask consumes it, and then it says so in the
+      // thread. It used to consume at once behind a ✅ reaction, which read as "accepted".
+      if (!pending.auto_asked_at && await askResubmitOnce(admin, pending, assignmentId, moduleId, prior.score as number, t)) {
+        return "asked";
+      }
+      const { data: gone } = await admin.from("hw_pending_posts")
+        .update({ state: "done", expires_at: new Date(Date.now() + NOT_FILED_NOTE_MS).toISOString() })
+        .eq("id", pending.id).eq("state", "pending").select("id");
+      if (!gone || !gone.length) return "error"; // a tap or another sweep got there first
+      await showNotFiledNote(admin, pending, t.pkAutoNotFiledGraded(await assignmentLabel(admin, assignmentId)));
       if (profile?.telegram_id) { try { await sendMessage(Number(profile.telegram_id), t.hwIntentAlreadyScored); } catch (_e) { /* ignore */ } }
-      // The row now reads state='done' like a filed post, but its media is in no submission (the guess
-      // falls back to the most recent leaf when every task is graded). Say so.
+      // The row now reads state='done' like a filed post, but its media is in no submission. Say so.
       await recordCaptureSkipped(admin, "guess_already_graded", dropAt);
       return "already_graded";
     }
-    // Tier gate (defense-in-depth).
+    // Tier gate (defense-in-depth). The guess no longer picks a locked module (chooseGuessLeaf), so this
+    // is reached only by a per-module topic of a locked module or a student who can open nothing; the
+    // post is not filed, and the thread is told so instead of the picker silently vanishing.
     if (await isModuleBlocked(admin, pending.user_id, moduleId)) {
       if (!guessed) return "tier_locked"; // explicit pick: picker stays open, pick another module
-      await admin.from("hw_pending_posts").update({ state: "expired" }).eq("id", pending.id);
-      await deletePicker();
+      const { data: gone } = await admin.from("hw_pending_posts").update({ state: "expired" })
+        .eq("id", pending.id).eq("state", "pending").select("id");
+      if (!gone || !gone.length) return "error";
+      await showNotFiledNote(admin, pending, t.pkAutoNotFiledLocked);
       await recordCaptureSkipped(admin, "guess_tier_locked", dropAt);
       return "tier_locked";
     }

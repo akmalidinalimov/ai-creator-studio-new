@@ -1,6 +1,7 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   type AssignmentRow,
+  chooseGuessLeaf,
   computeLeaves,
   displayStepNumber,
   pickNextLeaf,
@@ -165,4 +166,63 @@ Deno.test("computeLeaves: stable id tiebreak when (task_number, sap_number) coll
   const reverse = computeLeaves([sap("b", "v1", 1, 1), sap("a", "v1", 1, 1)]);
   assertEquals(forward.map((l) => l.id), ["a", "b"]);
   assertEquals(reverse.map((l) => l.id), ["a", "b"]);
+});
+
+// chooseGuessLeaf — the auto-tag guess, restricted to the modules the student can open ---------------
+// Shapes from the 2026-10-02 drops: AI CREATORS CHALLENGE 6.0 has ONE task in its first module
+// (position 0) and the ladder tier opens only that module, so module 2 (position 1) is locked.
+type ML = AssignmentRow & { module_id: string };
+const ml = (id: string, mod: string, tn: number): ML => ({ id, module_id: mod, task_number: tn, sap_number: null, parent_id: null, is_active: true });
+const M1 = "mod-1", M2 = "mod-2", M3 = "mod-3";
+const course: ML[] = [ml("m1t1", M1, 1), ml("m2t1", M2, 1), ml("m2t2", M2, 2), ml("m3t1", M3, 1)];
+const order = [M1, M2, M3];
+
+Deno.test("chooseGuessLeaf: module-1 graded, module 2 locked → the graded module-1 task, never the locked module", () => {
+  const g = chooseGuessLeaf({ leaves: course, moduleOrder: order, blocked: new Set([M2, M3]),
+    subs: [{ assignment_id: "m1t1", score: 10 }], currentModuleId: M1 });
+  assertEquals(g?.id, "m1t1"); // the caller asks "resubmit?" instead of dropping the post as tier-locked
+});
+
+Deno.test("chooseGuessLeaf: the same student with no history at all → still the open module", () => {
+  const g = chooseGuessLeaf({ leaves: course, moduleOrder: order, blocked: new Set([M2, M3]),
+    subs: [{ assignment_id: "m1t1", score: 7 }], currentModuleId: null });
+  assertEquals(g?.id, "m1t1");
+});
+
+Deno.test("chooseGuessLeaf: a current module the student cannot open (preview progress) is never chosen", () => {
+  const g = chooseGuessLeaf({ leaves: course, moduleOrder: order, blocked: new Set([M2, M3]),
+    subs: [], currentModuleId: M2 });
+  assertEquals(g?.id, "m1t1");
+});
+
+Deno.test("chooseGuessLeaf: no tier (nothing blocked) → exactly the old guess", () => {
+  const subs = [{ assignment_id: "m1t1", score: 10 }];
+  const g = chooseGuessLeaf({ leaves: course, moduleOrder: order, blocked: new Set(), subs, currentModuleId: M1 });
+  assertEquals(g?.id, "m2t1"); // just finished module 1 → its successor, as before
+  const g2 = chooseGuessLeaf({ leaves: course, moduleOrder: order, blocked: new Set(), subs, currentModuleId: null });
+  assertEquals(g2?.id, pickNextLeaf(course, subs)?.id);
+});
+
+Deno.test("chooseGuessLeaf: an ungraded task in the current open module wins", () => {
+  const g = chooseGuessLeaf({ leaves: course, moduleOrder: order, blocked: new Set([M3]),
+    subs: [{ assignment_id: "m1t1", score: 10 }, { assignment_id: "m2t1", score: 9 }], currentModuleId: M2 });
+  assertEquals(g?.id, "m2t2");
+});
+
+Deno.test("chooseGuessLeaf: the module after the current one is locked → stays in the open modules", () => {
+  const g = chooseGuessLeaf({ leaves: course, moduleOrder: order, blocked: new Set([M3]),
+    subs: [{ assignment_id: "m1t1", score: 10 }, { assignment_id: "m2t1", score: 9 }, { assignment_id: "m2t2", score: 8 }],
+    currentModuleId: M2 });
+  assertEquals(g?.module_id === M3, false);
+  assertEquals(g?.id, "m2t2"); // all open work graded → the last open task (caller asks about a resubmission)
+});
+
+Deno.test("chooseGuessLeaf: every module with a task is locked → the unfiltered guess (the tier gate then decides)", () => {
+  const g = chooseGuessLeaf({ leaves: course, moduleOrder: order, blocked: new Set([M1, M2, M3]),
+    subs: [], currentModuleId: null });
+  assertEquals(g?.id, "m1t1");
+});
+
+Deno.test("chooseGuessLeaf: no leaves → null", () => {
+  assertEquals(chooseGuessLeaf({ leaves: [], moduleOrder: order, blocked: new Set(), subs: [], currentModuleId: M1 }), null);
 });
