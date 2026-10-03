@@ -51,6 +51,10 @@ import { normalizeVoiceState, restoreVoiceRequest, type VoiceRequest } from "../
 import { createDailyTasks } from "./daily-tasks.ts";
 import { DAILY_COPY } from "../_shared/daily-task-render.ts";
 import { createWeekApproval } from "./week-approval.ts";
+import {
+  type Locale as TaskLocale, parseTaskCardCb, refusalText, renderTaskCard, TASK_BODY_STATE,
+  TASK_BODY_TTL_MS, taskCardTexts,
+} from "./task-cards.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6411,6 +6415,129 @@ const weekApproval = createWeekApproval({
   isAdmin: async (admin, userId) => (await getPersona(admin, userId)) === "admin",
 });
 
+// ── One task at a time (dtt:): the owner walks a week task by task in the DM ──────────────────────
+// ADMIN ONLY, checked here on the REAL clicker (impersonation is already refused above); each RPC
+// re-checks the actor, so a forged callback cannot approve anything. Every refusal the RPCs report as
+// data (past day, cancelled, too long, the approval guard) becomes a toast, never an exception.
+async function handleTaskCardCallback(
+  admin: any,
+  cq: any,
+  chatId: number,
+  clicker: { id: string; preferred_locale?: string | null } | null,
+): Promise<void> {
+  if (!clicker) { await answerCallback(cq.id); return; }
+  if ((await getPersona(admin, clicker.id)) !== "admin") { await answerCallback(cq.id, "⛔"); return; }
+  const cb = parseTaskCardCb(String(cq.data || ""));
+  if (!cb) { await answerCallback(cq.id); return; }
+  const locale = normLocale(clicker.preferred_locale) as TaskLocale;
+  const t = taskCardTexts(locale);
+  const msgId = cq.message?.message_id;
+
+  const card = async (id: number) => {
+    const { data } = await admin.rpc("challenge_task_card", { _task_id: id });
+    return (data && (data as any).ok) ? data as any : null;
+  };
+  const show = async (id: number, opts: { editing?: boolean; note?: string | null } = {}) => {
+    const c = await card(id);
+    if (!c) { await answerCallback(cq.id, t.notFound); return; }
+    const v = renderTaskCard(c, locale, opts);
+    await tgApi("editMessageText", {
+      chat_id: chatId, message_id: msgId, text: v.text, parse_mode: "HTML",
+      disable_web_page_preview: true, reply_markup: v.keyboard,
+    });
+  };
+
+  try {
+    if (cb.kind === "list") {
+      await answerCallback(cq.id);
+      const { data: view } = await admin.rpc("challenge_task_week_view", { _week_start: cb.week, _course_id: null });
+      const tasks: any[] = Array.isArray((view as any)?.tasks) ? (view as any).tasks : [];
+      if (!tasks.length) { await sendMessage(chatId, t.noTasks); return; }
+      await sendMessage(chatId, t.header(tasks.length, cb.week));
+      for (const row of tasks) {
+        const c = await card(Number(row.task_id ?? row.id));
+        if (!c) continue;
+        const v = renderTaskCard(c, locale);
+        await tgApi("sendMessage", {
+          chat_id: chatId, text: v.text, parse_mode: "HTML",
+          disable_web_page_preview: true, reply_markup: v.keyboard,
+        });
+      }
+      return;
+    }
+
+    if (cb.kind === "approve") {
+      const { data, error } = await admin.rpc("challenge_tasks_approve_task", { _task_id: cb.taskId, _actor: clicker.id });
+      if (error) { await answerCallback(cq.id, t.refused); return; }
+      const r = data as any;
+      if (r?.ok) {
+        await answerCallback(cq.id, r.already ? t.alreadyApproved : t.approvedOk);
+        await show(cb.taskId);
+      } else {
+        await answerCallback(cq.id, refusalText(r?.reason, locale, { error: r?.error }));
+        await show(cb.taskId, { note: refusalText(r?.reason, locale, { error: r?.error }) });
+      }
+      return;
+    }
+
+    if (cb.kind === "change") {
+      await admin.from("bot_conversation_state").upsert({
+        telegram_id: cq.from?.id,
+        state: TASK_BODY_STATE,
+        context: { task_id: cb.taskId, chat_id: chatId, message_id: msgId },
+        updated_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + TASK_BODY_TTL_MS).toISOString(),
+      });
+      await answerCallback(cq.id);
+      await show(cb.taskId, { editing: true });
+      return;
+    }
+
+    // cancel
+    await admin.from("bot_conversation_state").delete().eq("telegram_id", cq.from?.id).eq("state", TASK_BODY_STATE);
+    await answerCallback(cq.id, t.changeCancelled);
+    await show(cb.taskId);
+  } catch (e: any) {
+    console.error("[bot:dtt] failed", redactSecrets(e).slice(0, 200));
+    try { await answerCallback(cq.id, "⚠️ Xato — qayta urinib ko'ring"); } catch (_e) { /* best-effort */ }
+  }
+}
+
+/**
+ * The ✏️ reply capture: an admin's plain message while TASK_BODY_STATE is live replaces that task's
+ * body. Returns true when it consumed the message. An expired state is cleared and told, never acted
+ * on silently.
+ */
+async function captureTaskBodyReply(admin: any, msg: any, clicker: { id: string; preferred_locale?: string | null }, text: string): Promise<boolean> {
+  const { data: st } = await admin.from("bot_conversation_state")
+    .select("state, context, expires_at").eq("telegram_id", msg.from.id).maybeSingle();
+  if (!st || st.state !== TASK_BODY_STATE) return false;
+  const locale = normLocale(clicker.preferred_locale) as TaskLocale;
+  const t = taskCardTexts(locale);
+  const taskId = Number((st.context as any)?.task_id);
+  await admin.from("bot_conversation_state").delete().eq("telegram_id", msg.from.id).eq("state", TASK_BODY_STATE);
+  if (!st.expires_at || new Date(st.expires_at).getTime() <= Date.now() || !Number.isSafeInteger(taskId)) {
+    await sendMessage(msg.chat.id, t.expired);
+    return true;
+  }
+  const { data, error } = await admin.rpc("challenge_tasks_set_task_body", {
+    _task_id: taskId, _body: text, _actor: clicker.id,
+  });
+  const r = data as any;
+  if (error || !r?.ok) {
+    await sendMessage(msg.chat.id, error ? t.refused : refusalText(r?.reason, locale, { error: r?.error }));
+    return true;
+  }
+  const c = r.card && (r.card as any).ok ? r.card : null;
+  if (!c) { await sendMessage(msg.chat.id, t.savedBody); return true; }
+  const v = renderTaskCard(c, locale, { note: t.savedBody });
+  await tgApi("sendMessage", {
+    chat_id: msg.chat.id, text: v.text, parse_mode: "HTML",
+    disable_web_page_preview: true, reply_markup: v.keyboard,
+  });
+  return true;
+}
+
 // Server-to-server into the proven creation engine (same pattern as staff-intake). Shared by
 // the in-topic auto-register and the DM /start membership path — one engine, all dedupe/role
 // rules apply in one place. CRITICAL: account_type is NOT passed to the engine — an existing
@@ -7337,7 +7464,8 @@ async function handleCallback(admin: any, cq: any) {
   // Daily Tasks PR-4 (§7.5): the dt: correction buttons (move / "Bu topshiriq emas" / undo) are WRITES — denied
   // under impersonation like the list above (kept as its own line so the shared regex stays untouched).
   // PR-9: ^dtw: (the weekly approval, an admin write) is refused here too.
-  if (_isImp && /^(dt|dtw):/.test(data)) {
+  // ^dtt: (walking a week task by task: approve one / rewrite its text) is an admin write too.
+  if (_isImp && /^(dt|dtw|dtt):/.test(data)) {
     await answerCallback(cq.id, "👁 Faqat o'qish — /admin");
     return;
   }
@@ -7350,6 +7478,11 @@ async function handleCallback(admin: any, cq: any) {
   // --- Daily Tasks PR-9: weekly approval dtw:a|y|b:<yyyymmdd> — ADMIN ONLY (the real clicker; SQL re-checks) ---
   if (data.startsWith("dtw:")) {
     await weekApproval.onCallback(admin, cq, { clicker: _clicker, impersonating: _isImp });
+    return;
+  }
+  // --- One task at a time: dtt:l|a|c|x — ADMIN ONLY (the real clicker; every RPC re-checks) ---
+  if (data.startsWith("dtt:") && chatId) {
+    await handleTaskCardCallback(admin, cq, chatId, _clicker);
     return;
   }
 
@@ -8693,6 +8826,12 @@ Deno.serve(async (req) => {
         }
         if (!consumed && persona === "teacher" && profileForLocale) {
           consumed = await handleTeacherSession(admin, msg, profileForLocale.id, locale);
+        }
+        // ✏️ O'zgartirish: an admin's plain reply replaces that task's text (dtt: flow)
+        if (!consumed && persona === "admin" && profileForLocale && isPrivateChat) {
+          try {
+            consumed = await captureTaskBodyReply(admin, msg, profileForLocale, text);
+          } catch (_e) { /* a failed capture must not swallow the message */ }
         }
         if (!consumed && profileForLocale && persona === "student") {
           // "Confirm your name" text capture (awaiting_name → confirm_name)
