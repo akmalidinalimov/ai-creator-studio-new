@@ -71,6 +71,7 @@ Deno.test("renderAsk: every day with weekday, date, type, points and the require
   assertEquals(r.keyboard, {
     inline_keyboard: [
       [{ text: BTN.approve, callback_data: "dtw:a:20261005" }],
+      [{ text: BTN.oneByOne, callback_data: "dtt:l:20261005" }],
       [{ text: BTN.review, url: "https://www.aicreator.academy/admin/challenge/tasks?week=2026-10-05" }],
     ],
   });
@@ -79,8 +80,15 @@ Deno.test("renderAsk: every day with weekday, date, type, points and the require
   assert(rem.text.includes("09:00 da guruhlarga vazifa chiqmaydi"));
 });
 
-Deno.test("renderAsk: no draft left -> the review button only", () => {
+Deno.test("renderAsk: no draft left -> no approve button, but the week can still be walked task by task", () => {
   const kb = askKeyboard(week([task(1, "2026-10-05", { status: "approved" })]));
+  assertEquals(kb.inline_keyboard.length, 2);
+  assertEquals(kb.inline_keyboard[0][0].text, BTN.oneByOne, "✏️ changing an approved task's text is still allowed");
+  assertEquals(kb.inline_keyboard[1][0].text, BTN.review);
+});
+
+Deno.test("askKeyboard: an EMPTY week has nothing to walk through", () => {
+  const kb = askKeyboard(week([], { missing: ["2026-10-05"] }));
   assertEquals(kb.inline_keyboard.length, 1);
   assertEquals(kb.inline_keyboard[0][0].text, BTN.review);
 });
@@ -104,7 +112,8 @@ Deno.test("renderResult: N/M with the admin's name, failures listed with the rev
   assertEquals(r.keyboard?.inline_keyboard[0][0].callback_data, "dtw:a:20261005", "a draft remains: approve again after the fix");
   const ok = renderResult(week([task(1, "2026-10-05", { status: "approved" })]), { approved: 5, already_approved: 0, failed: [] }, "Admin");
   assert(ok.text.startsWith("✅ <b>Keyingi hafta vazifalari: 5/5 tasdiqlandi</b>"), ok.text);
-  assertEquals(ok.keyboard?.inline_keyboard.length, 1, "nothing left: the review link only");
+  assertEquals(ok.keyboard?.inline_keyboard.length, 2, "nothing left to approve: the task-by-task walk + the review link");
+  assertEquals(ok.keyboard?.inline_keyboard[1][0].text, BTN.review);
   const again = renderResult(week([task(1, "2026-10-05", { status: "approved" })]), { approved: 0, already_approved: 5, failed: [] }, "Admin");
   assert(again.text.startsWith("ℹ️ <b>Bu hafta allaqachon tasdiqlangan"), again.text);
   assert(again.text.includes("Tasdiqlangan: 5 ta vazifa"));
@@ -165,10 +174,11 @@ Deno.test("past days: the phase of the week, past tasks marked and left out of N
   assert(l.text.includes("Jami: 2 ta qoralama, 1 ta tasdiqlangan, 2 ta o‘tgan kun qoralamasi."), l.text);
   assertEquals(l.keyboard?.inline_keyboard[0][0].callback_data, "dtw:a:20261005", "today + Friday can still be approved");
 
-  // only past drafts left: no approve button, the calendar link only
+  // only past drafts left: no approve button (the walk and the calendar link remain)
   const onlyPast = week([task(1, "2026-10-05"), task(2, "2026-10-06", { status: "approved" })], { today: "2026-10-07" });
-  assertEquals(askKeyboard(onlyPast).inline_keyboard.length, 1);
-  assertEquals(askKeyboard(onlyPast).inline_keyboard[0][0].text, BTN.review);
+  assertEquals(askKeyboard(onlyPast).inline_keyboard.length, 2);
+  assertEquals(askKeyboard(onlyPast).inline_keyboard.some((row) => row[0].text === BTN.approve), false, "a past draft is never approved from here");
+  assertEquals(askKeyboard(onlyPast).inline_keyboard[1][0].text, BTN.review);
 
   // the week is over
   const over = renderAsk(week(tasks, { today: "2026-10-12" }), "ask");

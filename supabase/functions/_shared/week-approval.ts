@@ -75,6 +75,8 @@ export const BTN = {
   review: "👀 Ko‘rib chiqish",
   yes: "✅ Ha, tasdiqlash",
   back: "↩️ Orqaga",
+  /** Walk the week task by task in the chat: each task its own message with ✅ / ✏️ (dtt:, task-cards.ts). */
+  oneByOne: "📋 Bitta-bitta ko‘rish",
 } as const;
 
 /** Why a past day is not approved here (the owner-facing words; the SQL's skipped_past reason says the same). */
@@ -258,10 +260,19 @@ function reviewButton(v: WeekView): InlineButton {
   return { text: BTN.review, url: v.admin_url && /^https:\/\//.test(v.admin_url) ? v.admin_url : reviewUrl(v.week_start) };
 }
 
-/** [✅ Haftani tasdiqlash] (only while a draft of today or later remains) + [👀 Ko‘rib chiqish]. */
+/**
+ * [✅ Haftani tasdiqlash] (only while a draft of today or later remains), then
+ * [📋 Bitta-bitta ko‘rish] — the task-by-task walk in the chat (dtt:l:<yyyymmdd>, task-cards.ts) —
+ * and [👀 Ko‘rib chiqish], the full editor on the web.
+ */
 export function askKeyboard(v: WeekView): Keyboard {
   const rows: InlineButton[][] = [];
   if (counts(v).drafts > 0) rows.push([{ text: BTN.approve, callback_data: dtwData("a", v.week_start) }]);
+  // Only when the week HAS tasks: on an empty week there is nothing to walk through, and the
+  // «no tasks» message carries its own single review button.
+  if ((v.tasks?.length ?? 0) > 0) {
+    rows.push([{ text: BTN.oneByOne, callback_data: `dtt:l:${v.week_start.replace(/-/g, "")}` }]);
+  }
   rows.push([reviewButton(v)]);
   return { inline_keyboard: rows };
 }
