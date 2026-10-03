@@ -1,7 +1,7 @@
 // Flow tests for the bot's daily-task I/O (Daily Tasks PR-4) over a fake service-role client and a recording
 // Bot API sender — no network, no database. Run: deno test supabase/functions/telegram-bot-webhook/daily-tasks.test.ts
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { createDailyTasks, type SendFn } from "./daily-tasks.ts";
+import { createDailyTasks, type SendFn, tashkentMidnightUtcIso } from "./daily-tasks.ts";
 import type { SendResultOutcome } from "../_shared/telegram-send.ts";
 
 const COURSE = "f502f631-2104-4834-b6c2-702cd3080e27";
@@ -11,7 +11,7 @@ const ACTIVE = { active: true, enabled: true, auto_register: true, receipts: tru
 const PAUSED = { active: false, enabled: false, auto_register: true, receipts: true };
 
 type Call = { table: string; op: string; filters: unknown[][]; payload?: any; select?: string };
-type Res = { data?: unknown; error?: { code?: string; message?: string } | null };
+type Res = { data?: unknown; count?: number | null; error?: { code?: string; message?: string } | null };
 
 function fakeDb(h: { rpc?: Record<string, (args: any) => Res>; table?: (c: Call) => Res | undefined }) {
   const rpcCalls: { name: string; args: any }[] = [];
@@ -26,7 +26,7 @@ function fakeDb(h: { rpc?: Record<string, (args: any) => Res>; table?: (c: Call)
       }
       reads.push(c);
       const r = h.table?.(c) ?? {};
-      return Promise.resolve({ data: r.data ?? null, error: r.error ?? null });
+      return Promise.resolve({ data: r.data ?? null, count: r.count ?? null, error: r.error ?? null });
     };
     const f = (k: string) => (...a: unknown[]) => { c.filters.push([k, ...a]); return q; };
     const q: any = {
@@ -444,7 +444,11 @@ Deno.test("/start dt_<id>: the card in DM with the topic button; an RPC failure 
 });
 
 Deno.test("U1 daily-topic link and the misplaced-homework counter: only while active and only for scope groups", async () => {
-  const f = fakeDb({ rpc: baseRpc(ACTIVE), table: (c) => c.table === "groups" ? { data: { daily_task_topic_url: "https://t.me/c/4440955972/144" } } : undefined });
+  // A task post went out in this group today, so an ignored homework picker may really be misplaced daily work.
+  const f = fakeDb({ rpc: baseRpc(ACTIVE), table: (c) =>
+    c.table === "groups" ? { data: { daily_task_topic_url: "https://t.me/c/4440955972/144" } }
+    : c.table === "challenge_task_posts" ? { count: 1 }
+    : undefined });
   const t = tasks(recorder().send).dt;
   assertEquals(await t.dailyTopicUrlFor(f.db, "g1"), "https://t.me/c/4440955972/144");
   assertEquals(await t.dailyTopicUrlFor(f.db, "other"), null);
@@ -456,4 +460,39 @@ Deno.test("U1 daily-topic link and the misplaced-homework counter: only while ac
   assertEquals(await tp.dailyTopicUrlFor(p.db, "g1"), null);
   await tp.noteMisplacedHomework(p.db, { id: "p1", group_id: "g1" }, "created");
   assertEquals(p.inserts.length, 0);
+});
+
+Deno.test("misplaced-homework counter: NO task posted today means an ignored picker is plain homework, not misplaced daily work", async () => {
+  // The 2026-10-03 false alarm, reproduced: tasks active and the group in scope, but the first task day has
+  // not come yet (no task post today). Module 1 is open, so real homework flows in and many students ignore
+  // the picker. Every one of those auto-tags used to be counted as "misplaced daily work".
+  const noPostToday = fakeDb({ rpc: baseRpc(ACTIVE), table: (c) => c.table === "challenge_task_posts" ? { count: 0 } : undefined });
+  const t = tasks(recorder().send).dt;
+  await t.noteMisplacedHomework(noPostToday.db, { id: "p1", group_id: "g1", user_id: "u1" }, "created");
+  await t.noteMisplacedHomework(noPostToday.db, { id: "p2", group_id: "g1", user_id: "u2" }, "appended");
+  assertEquals(noPostToday.inserts.length, 0, "no daily task open today: nothing is misplaced");
+
+  // It asks about THIS group, today's task posts, actually delivered ones only.
+  const q = noPostToday.reads.find((c) => c.table === "challenge_task_posts");
+  assert(q, "the open-task check ran");
+  assert(q!.filters.some((f) => f[0] === "eq" && f[1] === "group_id" && f[2] === "g1"));
+  assert(q!.filters.some((f) => f[0] === "eq" && f[1] === "kind" && f[2] === "task"));
+  assert(q!.filters.some((f) => f[0] === "in" && f[1] === "state"));
+  assert(q!.filters.some((f) => f[0] === "gte" && f[1] === "sent_at"));
+
+  // A failed read never raises the alarm either (a counter must not invent a fault).
+  const broken = fakeDb({ rpc: baseRpc(ACTIVE), table: (c) => c.table === "challenge_task_posts" ? { error: { code: "XX000", message: "boom" } } : undefined });
+  await t.noteMisplacedHomework(broken.db, { id: "p3", group_id: "g1" }, "created");
+  assertEquals(broken.inserts.length, 0);
+});
+
+Deno.test("tashkentMidnightUtcIso: today in Tashkent starts at 19:00 UTC the evening before", () => {
+  // 03:00 UTC on 10-03 is 08:00 in Tashkent on 10-03 -> its midnight is 10-02 19:00 UTC
+  assertEquals(tashkentMidnightUtcIso(new Date("2026-10-03T03:00:00Z")), "2026-10-02T19:00:00.000Z");
+  // 20:30 UTC on 10-03 is already 01:30 on 10-04 in Tashkent -> its midnight is 10-03 19:00 UTC
+  assertEquals(tashkentMidnightUtcIso(new Date("2026-10-03T20:30:00Z")), "2026-10-03T19:00:00.000Z");
+  // exactly midnight Tashkent maps to itself
+  assertEquals(tashkentMidnightUtcIso(new Date("2026-10-04T19:00:00Z")), "2026-10-04T19:00:00.000Z");
+  // a month boundary
+  assertEquals(tashkentMidnightUtcIso(new Date("2026-11-01T00:30:00Z")), "2026-10-31T19:00:00.000Z");
 });
