@@ -38,6 +38,7 @@ import { flagSig, liveFresh, syncMenuLive } from "./menu-button.ts";
 import { runMenuSweepTick, scheduleMenuSweepTick } from "./menu-sweep.ts";
 import { handleNotToday } from "./reminder-snooze.ts";
 import { typedIntent } from "./typed-intents.ts";
+import { captureIgReply, IG_CALLBACK, igCopy, startIgFlow } from "./ig-handle.ts";
 import { langChooserKeyboard, parseProfAction, profileRows, profileWebCells, showProfileView } from "./profile-tabs.ts";
 import { sendStudentWelcome } from "./student-welcome.ts";
 import {
@@ -1172,6 +1173,14 @@ async function tgApi(method: string, body: unknown): Promise<Response> {
   }
 }
 
+// 📸 ig-handle.ts deps: send as HTML; a reply-keyboard button or a typed intent is never taken as a username.
+function igDeps() {
+  return {
+    send: (chatId: number, html: string) => sendMessage(chatId, html),
+    isMenuButton: (text: string) => !!buttonTextToCommand(text) || !!typedIntent(text),
+  };
+}
+
 async function sendMessage(chatId: number, text: string, reply_markup?: unknown) {
   return tgApi("sendMessage", {
     chat_id: chatId,
@@ -1333,7 +1342,7 @@ async function profileViewRows(admin: any, chatId: number, userId: string, local
   });
   return profileRows(view, {
     card: p.kbProfil, stats: p.btnProfStats, badges: p.btnProfBadges, group: p.btnProfGroup,
-    settings: p.btnProfSettings, editName: p.btnEditName, lang: T[locale].kbLang,
+    settings: p.btnProfSettings, editName: p.btnEditName, lang: T[locale].kbLang, instagram: igCopy(locale).button,
   }, web);
 }
 
@@ -5262,6 +5271,13 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
     return;
   }
 
+  // 📸 /instagram: set the Instagram username from the bot (ig-handle.ts). Never under impersonation (a write).
+  if (cmd === "/instagram" || cmd === "/ig") {
+    if (effectivePersona) { await sendMessage(chatId, igCopy(locale).readOnly); return; }
+    await startIgFlow(admin, chatId, tgId, profile.id, locale, igDeps());
+    return;
+  }
+
   if (cmd === "/profil" || cmd === "/profile") {
     console.time(`bot:profile:${profile.id}`);
     // Teachers/admins get the mentor card with per-group stats + group switching;
@@ -7778,6 +7794,15 @@ async function handleCallback(admin: any, cq: any) {
   }
 
   // --- "Confirm your name" flow callbacks (also the profile card's ✏️ Edit name button) ---
+  // 📸 the profile card's Instagram button (ig-handle.ts)
+  if (data === IG_CALLBACK && chatId) {
+    if (!_clicker) { await answerCallback(cq.id); return; }
+    if (_isImp) { await answerCallback(cq.id, "👁 Faqat o'qish — /admin"); return; }
+    await answerCallback(cq.id);
+    await startIgFlow(admin, chatId, tgId, _clicker.id, normLocale(_clicker.preferred_locale), igDeps());
+    return;
+  }
+
   if (data.startsWith("name:") && chatId) {
     if (!_clicker) { await answerCallback(cq.id); return; }
     if (_isImp) { await answerCallback(cq.id, "👁 Faqat o'qish — /admin"); return; }
@@ -8893,6 +8918,10 @@ Deno.serve(async (req) => {
         if (arg.startsWith("login_")) {
           const tok = arg.slice(6);
           await handleStartLogin(admin, msg, tok, locale);
+        } else if (arg === "ig" && profileForLocale && isPrivateChat) {
+          // ?start=ig (the daily Instagram card, the reminder DM): ask for the username right here (ig-handle.ts)
+          // instead of only linking to the website's Sozlamalar.
+          await startIgFlow(admin, msg.chat.id, msg.from.id, profileForLocale.id, locale, igDeps());
         } else if (/^(dt_[0-9]+|ig)$/.test(arg)) {
           // Daily Tasks PR-4 (§10.5): t.me/<bot>?start=dt_<id> from the group post → the task card with a
           // button to the student's OWN group's daily topic (G14); ?start=ig → where to set the Instagram handle.
@@ -8950,6 +8979,12 @@ Deno.serve(async (req) => {
         if (!consumed && persona === "admin" && profileForLocale && isPrivateChat) {
           try {
             consumed = await captureTaskBodyReply(admin, msg, profileForLocale, text);
+          } catch (_e) { /* a failed capture must not swallow the message */ }
+        }
+        // 📸 the Instagram username the bot asked for (ig-handle.ts)
+        if (!consumed && profileForLocale && isPrivateChat) {
+          try {
+            consumed = await captureIgReply(admin, msg, profileForLocale.id, locale, text, igDeps());
           } catch (_e) { /* a failed capture must not swallow the message */ }
         }
         if (!consumed && profileForLocale && persona === "student") {

@@ -133,3 +133,15 @@ Deno.test("prof:card (edit=false) posts a new card; the language chooser is the 
   assertEquals([s.edits.length, s.sends.length], [0, 1]);
   assertEquals(langChooserKeyboard().inline_keyboard[0].map((b) => b.callback_data), ["setlang:uz", "setlang:ru", "setlang:en"]);
 });
+
+Deno.test("profileRows: the card gets a 📸 Instagram row (ig:set) when the label is given; tabs never do", () => {
+  const web: [Cell, Cell] = [{ text: "r", callback_data: "x" }, { text: "o", callback_data: "y" }];
+  const card = profileRows("card", { ...L, instagram: "📸 Instagram" }, web);
+  const last = card[card.length - 1] as Array<{ text: string; callback_data?: string }>;
+  assertEquals(last, [{ text: "📸 Instagram", callback_data: "ig:set" }]);
+  // without the label the card is exactly the old layout
+  assertEquals(profileRows("card", L, web).length, card.length - 1);
+  // a tab view never carries it
+  const tab = profileRows("stats", { ...L, instagram: "📸 Instagram" }, web);
+  assert(!JSON.stringify(tab).includes("ig:set"));
+});
