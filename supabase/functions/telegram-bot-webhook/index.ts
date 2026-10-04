@@ -1615,7 +1615,6 @@ async function runMigrationBroadcast(admin: any, mode: "test" | "all") {
 
 function getMainKeyboard(locale: Locale) {
   const t = T[locale];
-  const p = PROF_T[locale];
   // 👤 Profil replaced 📊 Statistikam — all stats now live inside the profile
   // web app. The old kbStreak button (cached keyboards) still routes to /galaba.
   // Student Mini App entry (kill-switch platform_settings.student_miniapp, default OFF): when enabled
@@ -1628,7 +1627,9 @@ function getMainKeyboard(locale: Locale) {
   }
   rows.push(
     [{ text: t.kbDavom }],
-    [{ text: p.kbProfil }, { text: t.kbHomework }],
+    // 📸 Instagram qo‘shish replaced 👤 Profil (owner, 2026-10-04): every student must add their Instagram username
+    // for the Instagram tasks / portfolio. 👤 Profil stays at /profil, and cached keyboards' Profil still works.
+    [{ text: igCopy(locale).kbButton }, { text: t.kbHomework }],
     [{ text: t.kbCert }, { text: t.kbLang }],
     [{ text: t.kbHelp }],
   );
@@ -1882,6 +1883,7 @@ function buttonTextToCommand(text: string): string | null {
     const t = T[loc] as any;
     if (trimmed === t.kbDavom) return "/davom";
     if (trimmed === PROF_T[loc].kbProfil) return "/profil";
+    if (trimmed === igCopy(loc).kbButton) return "/instagram";
     if (trimmed === t.kbStreak) return "/galaba";
     if (t.kbStreakOld && trimmed === t.kbStreakOld) return "/galaba";
     if (t.kbHomework && trimmed === t.kbHomework) return "/vazifalar";
@@ -5067,7 +5069,7 @@ async function handleTeacherSession(admin: any, msg: any, profileId: string, loc
 async function studentWelcome(admin: any, chatId: number, profile: any, locale: Locale) {
   await sendStudentWelcome(admin, {
     chatId, locale, profile,
-    labels: { davom: T[locale].kbDavom, homework: T[locale].kbHomework, profil: PROF_T[locale].kbProfil },
+    labels: { davom: T[locale].kbDavom, homework: T[locale].kbHomework, profil: PROF_T[locale].kbProfil, instagram: igCopy(locale).kbButton },
     appOn: __studentMiniAppEnabled?.on === true,
     sendWithKeyboard: (text) => sendWithKeyboard(chatId, text, locale, false, "student"),
     primaryCourseId: () => getPrimaryCourseIdForUser(admin, profile.id),

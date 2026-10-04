@@ -49,11 +49,14 @@ const IG_T: Record<Locale, {
   error: string;
   readOnly: string;
   button: string;
+  kbButton: string; // the reply keyboard's button (index.ts getMainKeyboard), maps to /instagram
   reasons: Record<ParseReason, string>;
 }> = {
   uz: {
     ask: "📸 <b>Instagram username’ingizni yozib yuboring</b> (masalan: @ismingiz).\n\n" +
-      "Instagram vazifalari uchun ball aynan shu nom orqali beriladi — skrinshotdagi username bilan solishtiriladi.",
+      "🔎 Qayerdan topasiz: Instagram ilovasi → pastki o‘ngdagi profil belgisi → tepada yozilgan nom.\n\n" +
+      "Instagram vazifalari uchun ball aynan shu nom orqali beriladi — skrinshotdagi username bilan solishtiriladi. " +
+      "Kurs davomida Instagram’ingiz portfoliongizga aylanadi.",
     askHave: (h) => `📸 Hozirgi Instagram username’ingiz: <b>@${h}</b>\n\n` +
       "O‘zgartirmoqchi bo‘lsangiz — yangi username’ni yozib yuboring (masalan: @ismingiz). O‘zgartirish shart bo‘lmasa, hech narsa yozmang.",
     saved: (h) => `✅ Saqlandi: <b>@${h}</b>\n\nEndi Instagram vazifalarini topshirsangiz bo‘ladi. ` +
@@ -65,6 +68,7 @@ const IG_T: Record<Locale, {
     error: "⚠️ Hozir saqlab bo‘lmadi. Birozdan keyin /instagram ni qayta yuboring.",
     readOnly: "👁 Faqat o‘qish rejimi — saqlanmaydi.",
     button: "📸 Instagram",
+    kbButton: "📸 Instagram qo‘shish",
     reasons: {
       empty: "Instagram nomini yozing, masalan: @ismingiz",
       not_profile_link: "Bu post yoki reel havolasi, profil emas. Instagram nomingizni yozing, masalan: @ismingiz",
@@ -75,7 +79,9 @@ const IG_T: Record<Locale, {
   },
   ru: {
     ask: "📸 <b>Напишите ваш Instagram username</b> (например: @vashe_imya).\n\n" +
-      "Баллы за Instagram-задания начисляются именно по этому имени — оно сверяется с username на скриншоте.",
+      "🔎 Где найти: приложение Instagram → значок профиля справа внизу → имя вверху.\n\n" +
+      "Баллы за Instagram-задания начисляются именно по этому имени — оно сверяется с username на скриншоте. " +
+      "За время курса ваш Instagram станет вашим портфолио.",
     askHave: (h) => `📸 Ваш текущий Instagram username: <b>@${h}</b>\n\n` +
       "Чтобы изменить — напишите новый username (например: @vashe_imya). Если менять не нужно, ничего не пишите.",
     saved: (h) => `✅ Сохранено: <b>@${h}</b>\n\nТеперь можно сдавать Instagram-задания. ` +
@@ -87,6 +93,7 @@ const IG_T: Record<Locale, {
     error: "⚠️ Сейчас не удалось сохранить. Отправьте /instagram чуть позже.",
     readOnly: "👁 Режим просмотра — не сохраняется.",
     button: "📸 Instagram",
+    kbButton: "📸 Добавить Instagram",
     reasons: {
       empty: "Напишите Instagram username, например: @vashe_imya",
       not_profile_link: "Это ссылка на пост или reel, а не на профиль. Напишите ваш username, например: @vashe_imya",
@@ -97,7 +104,9 @@ const IG_T: Record<Locale, {
   },
   en: {
     ask: "📸 <b>Send me your Instagram username</b> (for example: @yourname).\n\n" +
-      "Instagram task points are given by this name — it is matched against the username on your screenshot.",
+      "🔎 Where to find it: the Instagram app → the profile icon at the bottom right → the name at the top.\n\n" +
+      "Instagram task points are given by this name — it is matched against the username on your screenshot. " +
+      "Over the course your Instagram becomes your portfolio.",
     askHave: (h) => `📸 Your current Instagram username: <b>@${h}</b>\n\n` +
       "To change it, send the new username (for example: @yourname). If nothing needs to change, just don't reply.",
     saved: (h) => `✅ Saved: <b>@${h}</b>\n\nYou can submit Instagram tasks now. ` +
@@ -109,6 +118,7 @@ const IG_T: Record<Locale, {
     error: "⚠️ Couldn't save right now. Send /instagram again in a moment.",
     readOnly: "👁 Read-only view — not saved.",
     button: "📸 Instagram",
+    kbButton: "📸 Add Instagram",
     reasons: {
       empty: "Send your Instagram username, for example: @yourname",
       not_profile_link: "That's a post or reel link, not a profile. Send your username, for example: @yourname",

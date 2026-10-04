@@ -37,6 +37,7 @@ export const WELCOME_T: Record<Locale, {
   davom: string;
   homework: string;
   profil: string;
+  instagram: string;
   app: string;
   trial: string;
   topic: string;
@@ -52,6 +53,7 @@ export const WELCOME_T: Record<Locale, {
     davom: "keyingi darsingiz",
     homework: "nima topshirildi, nima qoldi",
     profil: "ballaringiz va guruhdagi o'rningiz",
+    instagram: "Instagram username’ingizni qo‘shish yoki o‘zgartirish (Instagram vazifalari uchun)",
     app: "🚀 Hammasi bitta ilovada — pastda chapdagi ☰ «Ilovani ochish» tugmasi.",
     trial: "🔒 Darsliklar sinov hisobida yopiq — vazifa va ballar ishlaydi.",
     topic: "📥 Uy vazifasini (video, rasm, fayl) guruhdagi «UYGA VAZIFA» topigiga yuborasiz.",
@@ -67,6 +69,7 @@ export const WELCOME_T: Record<Locale, {
     davom: "ваш следующий урок",
     homework: "что сдано и что осталось",
     profil: "ваши баллы и место в группе",
+    instagram: "добавить или изменить Instagram username (для Instagram-заданий)",
     app: "🚀 Всё в одном приложении — кнопка ☰ «Открыть приложение» слева внизу.",
     trial: "🔒 На пробном аккаунте уроки закрыты — задания и баллы работают.",
     topic: "📥 Домашние задания (видео, фото, файлы) отправляйте в топик «UYGA VAZIFA» вашей группы.",
@@ -82,6 +85,7 @@ export const WELCOME_T: Record<Locale, {
     davom: "your next lesson",
     homework: "what you've handed in and what's left",
     profil: "your points and your place in the group",
+    instagram: "add or change your Instagram username (for Instagram tasks)",
     app: "🚀 Everything in one app — the ☰ «Open the app» button at the bottom left.",
     trial: "🔒 Lessons are locked on a trial account — homework and points work.",
     topic: "📥 Send homework (video, photo, file) to your group's «UYGA VAZIFA» topic.",
@@ -100,7 +104,7 @@ export type WelcomeFacts = {
   appOn: boolean;
   trial: boolean;
   /** The keyboard's own labels (T.kbDavom, T.kbHomework, PROF_T.kbProfil). */
-  labels: { davom: string; homework: string; profil: string };
+  labels: { davom: string; homework: string; profil: string; instagram?: string };
 };
 
 /** Message 1. Pure — pinned by student-welcome.test.ts. */
@@ -113,7 +117,8 @@ export function welcomeText(locale: Locale, f: WelcomeFacts): string {
   lines.push("");
   if (!f.trial) lines.push(`${f.labels.davom} — ${t.davom}`);
   lines.push(`${f.labels.homework} — ${t.homework}`);
-  lines.push(`${f.labels.profil} — ${t.profil}`);
+  // The keyboard's third button: 📸 Instagram qo‘shish since 2026-10-04 (it replaced 👤 Profil, still at /profil).
+  lines.push(f.labels.instagram ? `${f.labels.instagram} — ${t.instagram}` : `${f.labels.profil} — ${t.profil}`);
   if (f.appOn) lines.push(t.app);
   if (f.trial) lines.push(t.trial);
   lines.push("", t.topic);
