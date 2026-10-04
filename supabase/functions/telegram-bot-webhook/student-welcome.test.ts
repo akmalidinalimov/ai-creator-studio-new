@@ -96,3 +96,15 @@ Deno.test("no group and no course: the welcome only (no empty button message); a
   const r2 = await run({ group: { homework_topic_url: "javascript:alert(1)" } });
   assertEquals(r2.sends[0].rows.length, 1);
 });
+
+Deno.test("welcomeText: with the 📸 Instagram qo‘shish button the third line describes it instead of 👤 Profil", () => {
+  const t = welcomeText("uz", {
+    name: "Aziza", course: "C", group: "G", appOn: false, trial: false,
+    labels: { ...LABELS, instagram: "📸 Instagram qo‘shish" },
+  });
+  assert(t.includes("📸 Instagram qo‘shish — Instagram username’ingizni qo‘shish yoki o‘zgartirish"));
+  assert(!t.includes(`${LABELS.profil} —`));
+  // without it: the old line, unchanged
+  const old = welcomeText("uz", { name: "Aziza", course: "C", group: "G", appOn: false, trial: false, labels: LABELS });
+  assert(old.includes(`${LABELS.profil} — ${WELCOME_T.uz.profil}`));
+});
