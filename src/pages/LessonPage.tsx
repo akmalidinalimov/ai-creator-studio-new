@@ -7,6 +7,7 @@ import { reportClientError } from "@/lib/beacon";
 import { trackVideoProgress } from "@/lib/videoProgress";
 import { SB_BASE } from "@/lib/supabaseBase";
 import { watchedEnough } from "@/lib/watchGate";
+import { videoFetchOutcome, videoFetchStatus } from "@/lib/lessonVideoState";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { Input } from "@/components/ui/input";
@@ -127,8 +128,9 @@ export default function LessonPage() {
   // lessons table anymore (those columns are revoked from students — M05); the
   // only way to get a playable URL is the lesson-video-url edge function, which
   // enforces has_module_access + published + enrollment server-side.
-  type VideoData = { url?: string; kind?: string; provider?: string; bunny?: { lib: string; guid: string }; locked?: boolean };
+  type VideoData = { url?: string; kind?: string; provider?: string; bunny?: { lib: string; guid: string }; locked?: boolean; failed?: boolean };
   const [videoData, setVideoData] = useState<VideoData | null>(null);
+  const [videoAttempt, setVideoAttempt] = useState(0);
 
   useEffect(() => {
     if (!lessonId) return;
@@ -137,12 +139,23 @@ export default function LessonPage() {
     (async () => {
       const { data, error } = await supabase.functions.invoke("lesson-video-url", { body: { lessonId } });
       if (cancelled) return;
-      // A 403 (module_locked / forbidden) or any error → treat as locked/unavailable.
-      if (error || !data) { setVideoData({ locked: true }); return; }
+      // Only a 403 is "not in your plan"; no network / 5xx / 401 / empty is a load failure with a retry
+      // (lessonVideoState.ts: a flaky connection used to be told the lesson was outside their plan).
+      const outcome = videoFetchOutcome(error, data);
+      if (outcome === "locked") { setVideoData({ locked: true }); return; }
+      if (outcome === "failed") {
+        reportClientError({
+          type: "video_error",
+          message: "lesson_video_url_failed",
+          extra: { lessonId, status: videoFetchStatus(error), attempt: videoAttempt },
+        });
+        setVideoData({ failed: true });
+        return;
+      }
       setVideoData(data as VideoData);
     })();
     return () => { cancelled = true; };
-  }, [lessonId]);
+  }, [lessonId, videoAttempt]);
 
 
   // Load protection settings
@@ -293,11 +306,12 @@ export default function LessonPage() {
   // nothing to watch, and the render skips the player card. Decide only once
   // videoData has RESOLVED (null = still loading) and it isn't a tier-locked video.
   const hasPlayableVideo =
-    !!videoData && !videoData.locked && (
+    !!videoData && !videoData.locked && !videoData.failed && (
       (videoData.provider === "bunny" && !!videoData.bunny?.lib && !!videoData.bunny?.guid) ||
       (!!videoData.url && (videoData.kind === "iframe" || videoData.kind === "hls" || videoData.kind === "mp4"))
     );
-  const isTextLesson = !!videoData && !videoData.locked && !hasPlayableVideo;
+  // A FAILED load is not a text lesson: nothing may be marked done before the video could be loaded.
+  const isTextLesson = !!videoData && !videoData.locked && !videoData.failed && !hasPlayableVideo;
 
   // Gate manual completion on GENUINELY watching the lesson — this guards BOTH the
   // "Mark complete" button and the silent completion in `goNext` ("Next" button).
@@ -504,6 +518,16 @@ export default function LessonPage() {
   }
 
   const renderPlayer = () => {
+    if (videoData?.failed) {
+      return (
+        <div className="aspect-video w-full bg-black flex flex-col items-center justify-center gap-3 p-6 text-center text-white/80 text-sm">
+          <span>{t("lesson.video.loadFailed", "Videoni yuklab bo‘lmadi. Internet aloqasini tekshirib, qayta urinib ko‘ring.")}</span>
+          <Button size="sm" onClick={() => setVideoAttempt((n) => n + 1)}>
+            {t("lesson.video.retry", "Qayta urinish")}
+          </Button>
+        </div>
+      );
+    }
     if (videoData?.locked) {
       return (
         <div className="aspect-video w-full bg-black flex items-center justify-center p-6 text-center text-white/80 text-sm">
