@@ -225,7 +225,7 @@ const UZ: Copy = {
   welcome: (name) => `👋 <b>${name || "Do‘stim"}</b>, siz AI Creators platformasiga qo‘shildingiz (sinov hisobi). Kunlik vazifalardagi ishlaringiz shu yerda hisoblanadi.`,
   missing: {
     screenshot: "skrinshot", video: "video", file: "fayl", text: "qisqa matn (izoh)", link: "havola",
-    ig_link: "Instagram post havolasi", voice: "ovozli xabar", instagram_handle: "ilovadagi profilingizga Instagram username",
+    ig_link: "Instagram post havolasi", voice: "ovozli xabar", instagram_handle: "Instagram username (botga /instagram deb yozing)",
   },
   reasons: {
     image_seen_before: "bu rasm boshqa o‘quvchining ishida bor",
@@ -335,7 +335,7 @@ const RU: Copy = {
   welcome: (name) => `👋 <b>${name || "Друг"}</b>, вы добавлены на платформу AI Creators (пробный аккаунт). Ваши работы в «Kunlik vazifalar» засчитываются здесь.`,
   missing: {
     screenshot: "скриншот", video: "видео", file: "файл", text: "короткий текст (пояснение)", link: "ссылка",
-    ig_link: "ссылка на пост в Instagram", voice: "голосовое сообщение", instagram_handle: "Instagram-username в профиле приложения",
+    ig_link: "ссылка на пост в Instagram", voice: "голосовое сообщение", instagram_handle: "Instagram-username (напишите боту /instagram)",
   },
   reasons: {
     image_seen_before: "это изображение уже есть в работе другого студента",
@@ -435,7 +435,7 @@ const EN: Copy = {
   welcome: (name) => `👋 <b>${name || "Friend"}</b>, you've been added to the AI Creators platform (trial account). Your daily-task work counts right here.`,
   missing: {
     screenshot: "a screenshot", video: "a video", file: "a file", text: "a short text (caption)", link: "a link",
-    ig_link: "the Instagram post link", voice: "a voice message", instagram_handle: "your Instagram username in the app profile",
+    ig_link: "the Instagram post link", voice: "a voice message", instagram_handle: "your Instagram username (send /instagram to the bot)",
   },
   reasons: {
     image_seen_before: "this image is already in another student's work",

@@ -58,6 +58,7 @@ export type ProfLabels = {
   settings: string; // ⚙️ Sozlamalar
   editName: string; // ✏️ Ismni o'zgartirish
   lang: string; // 🌐 Til
+  instagram?: string; // 📸 Instagram (ig-handle.ts: ig:set) — the card only
 };
 
 /** New strings of this module. */
@@ -80,6 +81,7 @@ export function profileRows(view: ProfView, l: ProfLabels, web: [Cell, Cell]): C
       [tab("group"), { text: l.settings, callback_data: "prof:settings" }],
       [web[0], web[1]],
       [{ text: l.editName, callback_data: "name:edit" }, { text: l.lang, callback_data: "prof:lang" }],
+      ...(l.instagram ? [[{ text: l.instagram, callback_data: "ig:set" }]] : []),
     ];
   }
   const others = (["stats", "badges", "group"] as const).filter((v) => v !== view).map(tab);
