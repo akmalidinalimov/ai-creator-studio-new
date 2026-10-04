@@ -216,12 +216,14 @@ const T = {
     // the Instagram @mention bonus (needs the Meta app).
     nmWelcomeChallenge: (name: string, open: number) =>
       `🎉 <b>${name}</b>, <b>AI CREATORS CHALLENGE 6.0</b>ga xush kelibsiz!\n\n` +
-      `Hisobingiz ochildi. Quyida 4 ta muhim narsa — bir daqiqada o'qib chiqing.\n\n` +
+      `Hisobingiz ochildi. Quyida 5 ta muhim narsa — bir daqiqada o'qib chiqing.\n\n` +
       `<b>1) Darslar 📚</b>\n` +
       `Hozir ${open === 1 ? "<b>1-modul</b>" : `<b>1–${open}-modullar</b>`} ochiq — «📚 Davom etish» tugmasini bosing. Keyingi modullar har hafta navbati bilan ochiladi.\n\n` +
-      `<b>2) Ismingizni to'g'rilang ✏️</b>\n` +
+      `<b>2) Instagram username’ingizni qo‘shing 📸</b>\n` +
+      `Pastdagi «📸 Instagram qo‘shish» tugmasini bosing va username’ingizni yuboring (masalan: @ismingiz). Instagram vazifalari uchun ball aynan shu nom orqali beriladi — kurs davomida Instagram’ingiz portfoliongizga aylanadi.\n\n` +
+      `<b>3) Ismingizni to'g'rilang ✏️</b>\n` +
       `/profil → «✏️ Ismni o'zgartirish». Reyting va sertifikatda aynan shu ism chiqadi.\n\n` +
-      `<b>3) Ball jadvali ⭐️</b>\n` +
+      `<b>4) Ball jadvali ⭐️</b>\n` +
       `• Dars tugatish — <b>+20</b>\n` +
       `• Uyga vazifa topshirish — <b>+15</b> (guruhdagi «UYGA VAZIFA» mavzusiga yuboring)\n` +
       `• Vazifaga 9–10 baho — <b>+25</b>\n` +
@@ -231,8 +233,8 @@ const T = {
       `• O'z ishingizni guruhga tashlasangiz (rasm/video) — <b>+5</b> (kuniga 3 martagacha)\n` +
       `• Har kuni platformaga kirish — <b>+5</b>\n` +
       `Kechikkan kunlik vazifa — yarim ball; 2 kundan keyin yopiladi.\n\n` +
-      `<b>4) Reytingni ko'rish 📊</b>\n` +
-      `«📊 Statistikam» — o'z ballaringiz. /profil → «👥 Guruh reytingi» — guruhingizdagi o'rningiz.\n\n` +
+      `<b>5) Reytingni ko'rish 📊</b>\n` +
+      `/profil → «📊 Statistika» — o'z ballaringiz, «👥 Guruh reytingi» — guruhingizdagi o'rningiz.\n\n` +
       `Savol bo'lsa — «❓ Yordam». Omad! 🚀`,
     noNextLesson: "Yangi dars yo'q. Keyinroq qayta urinib ko'ring.",
     noCourse: "Kurs topilmadi.",
@@ -545,12 +547,14 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
     nmWelcome: (name: string) => `👋 <b>${name}</b>, добро пожаловать! Ваш аккаунт создан (пробный) — задания принимаются, баллы и статистика ведутся. Уроки откроются после полной оплаты. Пользуйтесь меню ниже 👇`,
     nmWelcomeChallenge: (name: string, open: number) =>
       `🎉 <b>${name}</b>, добро пожаловать в <b>AI CREATORS CHALLENGE 6.0</b>!\n\n` +
-      `Аккаунт открыт. Ниже 4 главных вещи — прочитайте за минуту.\n\n` +
+      `Аккаунт открыт. Ниже 5 главных вещей — прочитайте за минуту.\n\n` +
       `<b>1) Уроки 📚</b>\n` +
       `Сейчас открыт ${open === 1 ? "<b>1-й модуль</b>" : `<b>1–${open}-й модули</b>`} — нажмите «📚 Продолжить». Следующие модули открываются каждую неделю по очереди.\n\n` +
-      `<b>2) Исправьте своё имя ✏️</b>\n` +
+      `<b>2) Добавьте свой Instagram 📸</b>\n` +
+      `Нажмите внизу «📸 Добавить Instagram» и отправьте свой username (например: @vashe_imya). Баллы за Instagram-задания начисляются именно по этому имени — за время курса ваш Instagram станет вашим портфолио.\n\n` +
+      `<b>3) Исправьте своё имя ✏️</b>\n` +
       `/profil → «✏️ Изменить имя». Именно это имя попадёт в рейтинг и сертификат.\n\n` +
-      `<b>3) Как начисляются баллы ⭐️</b>\n` +
+      `<b>4) Как начисляются баллы ⭐️</b>\n` +
       `• Завершить урок — <b>+20</b>\n` +
       `• Сдать домашнее задание — <b>+15</b> (в тему «UYGA VAZIFA» вашей группы)\n` +
       `• Оценка 9–10 за задание — <b>+25</b>\n` +
@@ -560,8 +564,8 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
       `• Своя работа в группе (фото/видео) — <b>+5</b> (до 3 раз в день)\n` +
       `• Ежедневный вход на платформу — <b>+5</b>\n` +
       `Опоздали с ежедневным заданием — половина баллов; через 2 дня оно закрывается.\n\n` +
-      `<b>4) Рейтинг 📊</b>\n` +
-      `«📊 Моя статистика» — ваши баллы. /profil → «👥 Рейтинг группы» — ваше место в группе.\n\n` +
+      `<b>5) Рейтинг 📊</b>\n` +
+      `/profil → «📊 Статистика» — ваши баллы, «👥 Рейтинг группы» — ваше место в группе.\n\n` +
       `Вопросы — «❓ Помощь». Удачи! 🚀`,
     noNextLesson: "Новых уроков нет. Попробуйте позже.",
     noCourse: "Курс не найден.",
@@ -862,12 +866,14 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
     nmWelcome: (name: string) => `👋 <b>${name}</b>, welcome! Your account has been created (trial) — homework is accepted, points and stats are tracked. Lessons unlock after full payment. Use the menu below 👇`,
     nmWelcomeChallenge: (name: string, open: number) =>
       `🎉 <b>${name}</b>, welcome to <b>AI CREATORS CHALLENGE 6.0</b>!\n\n` +
-      `Your account is open. Four things to know — one minute to read.\n\n` +
+      `Your account is open. Five things to know — one minute to read.\n\n` +
       `<b>1) Lessons 📚</b>\n` +
       `${open === 1 ? "<b>Module 1</b> is" : `<b>Modules 1–${open}</b> are`} open now — tap «📚 Continue». The next modules open one per week.\n\n` +
-      `<b>2) Fix your name ✏️</b>\n` +
+      `<b>2) Add your Instagram 📸</b>\n` +
+      `Tap «📸 Add Instagram» below and send your username (for example: @yourname). Instagram task points are given by this name — over the course your Instagram becomes your portfolio.\n\n` +
+      `<b>3) Fix your name ✏️</b>\n` +
       `/profil → «✏️ Edit name». This is the name that appears in the rating and on your certificate.\n\n` +
-      `<b>3) How points work ⭐️</b>\n` +
+      `<b>4) How points work ⭐️</b>\n` +
       `• Finish a lesson — <b>+20</b>\n` +
       `• Submit homework — <b>+15</b> (into your group's «UYGA VAZIFA» topic)\n` +
       `• A score of 9–10 — <b>+25</b>\n` +
@@ -877,8 +883,8 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
       `• Sharing your own work in the group (photo/video) — <b>+5</b> (up to 3 a day)\n` +
       `• Opening the platform each day — <b>+5</b>\n` +
       `A late daily task pays half; after 2 days it closes.\n\n` +
-      `<b>4) Your rating 📊</b>\n` +
-      `«📊 My stats» — your points. /profil → «👥 Group rating» — your place in the group.\n\n` +
+      `<b>5) Your rating 📊</b>\n` +
+      `/profil → «📊 Statistics» — your points, «👥 Group rating» — your place in the group.\n\n` +
       `Questions — «❓ Help». Good luck! 🚀`,
     noNextLesson: "No new lesson. Check back later.",
     noCourse: "Course not found.",
