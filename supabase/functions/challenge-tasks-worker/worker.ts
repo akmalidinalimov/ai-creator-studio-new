@@ -26,7 +26,7 @@ import { type DtPayload, type Locale, type Rendered, renderReceipt } from "../_s
 import { redactSecrets } from "../_shared/redact.ts";
 import type { SendResultOutcome } from "../_shared/telegram-send.ts";
 import {
-  postKeyboard, renderBackfillDm, renderEveningDm, renderMorningDm, renderResultDm, renderSummary, toLocale,
+  renderBackfillDm, renderEveningDm, renderMorningDm, renderResultDm, renderSummary, toLocale,
 } from "./render.ts";
 import { registerDailyTaskPoster, type RegisterInput, type SendFn } from "./registrar.ts";
 import { sendWeekApprovals } from "./week-approval.ts";
@@ -307,14 +307,15 @@ export async function runWorker(env: WorkerEnv, io: WorkerIO, req: WorkerRequest
         inc(posts, "failed");
         continue;
       }
-      const kb = postKeyboard(Number(it.task_id), env.botUsername, it.miniapp_link);
+      // NO button on group posts (owner, 2026-10-05): students submit IN the «KUNLIK VAZIFALAR» topic, and a
+      // «📲 Vazifani botda ochish» button under the task sent them to the bot instead. postKeyboard() stays for the
+      // harness, unused here; the SQL fallback poster dropped it too (migration 20261005050000).
       const { outcome, result } = await io.send("sendMessage", {
         chat_id: chat,
         ...(Number(it.thread_id) > 1 ? { message_thread_id: Number(it.thread_id) } : {}),
         text,
         parse_mode: "HTML",
         disable_web_page_preview: true,
-        ...(kb ? { reply_markup: kb } : {}),
       }, { admin, purpose: `challenge_task_post_${it.kind}`, recipientId: chat, topicMissingAction: TOPIC_MISSING });
       const mid = Number(result?.message_id);
       if (outcome.ok && Number.isSafeInteger(mid) && mid > 0) {
