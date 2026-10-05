@@ -1179,6 +1179,30 @@ async function tgApi(method: string, body: unknown): Promise<Response> {
   }
 }
 
+// A private message from a registered user means the bot may DM them: stamp profiles.telegram_write_access_at once
+// (2026-10-05). It used to be stamped only by the Mini App sign-in (tg-miniapp-auth/write-access.ts), so 18 Challenge
+// students who had pressed Start were treated as unreachable by every flag-based audience (reminders, broadcasts).
+// Only for the profile whose telegram_id IS the sender (never a username-matched one); once per isolate per profile;
+// a failed write is DB-visible.
+const __writeAccessStamped = new Set<string>();
+async function stampBotWriteAccess(admin: any, profile: any, fromId: number) {
+  const id = String(profile?.id ?? "");
+  if (!id || __writeAccessStamped.has(id)) return;
+  if (Number(profile?.telegram_id) !== Number(fromId)) return;
+  __writeAccessStamped.add(id);
+  if (__writeAccessStamped.size > 5000) __writeAccessStamped.clear();
+  try {
+    const { error } = await admin.from("profiles")
+      .update({ telegram_write_access_at: new Date().toISOString() })
+      .eq("id", id).is("telegram_write_access_at", null);
+    if (error) {
+      __writeAccessStamped.delete(id);
+      await logHealth(admin, "bot_write_access_stamp_failed", { profile_id: id, code: error.code ?? null },
+        { source: "telegram-bot-webhook", targetUserId: id });
+    }
+  } catch (_e) { __writeAccessStamped.delete(id); }
+}
+
 // 📸 ig-handle.ts deps: send as HTML; a reply-keyboard button or a typed intent is never taken as a username.
 function igDeps() {
   return {
@@ -8849,6 +8873,7 @@ Deno.serve(async (req) => {
       let profileForLocale: any = null;
       if (!isStartLogin) {
         profileForLocale = await resolveProfileForTelegramUser(admin, msg.from.id, tgUsername, "bot");
+        if (isPrivateChat && profileForLocale) await stampBotWriteAccess(admin, profileForLocale, msg.from.id);
         if (!profileForLocale) {
           if (!isPrivateChat) {
             // Non-private and unregistered: silently ignore (no rate-limited reply).
