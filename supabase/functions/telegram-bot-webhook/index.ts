@@ -229,8 +229,8 @@ const T = {
       `• Vazifaga 9–10 baho — <b>+25</b>\n` +
       `• Kunlik vazifa — <b>+5</b>, Instagram vazifasi — <b>+8</b> (5-oktabrdan, har kuni 09:00da «KUNLIK VAZIFALAR» mavzusida)\n` +
       `• 5 kun ketma-ket o'z vaqtida bajarsangiz — <b>+10 bonus</b>\n` +
-      `• Guruhda faollik — har xabar uchun <b>+1</b> (kuniga 5 ballgacha)\n` +
-      `• O'z ishingizni guruhga tashlasangiz (rasm/video) — <b>+5</b> (kuniga 3 martagacha)\n` +
+      `• Guruhdoshingizning savoliga foydali javob — <b>+3</b>, javob olgan haqiqiy savolingiz — <b>+2</b> (AI tekshiradi; jami kuniga 10 ballgacha)\n` +
+      `• O'z ishingizni guruhga tashlasangiz (rasm/video) — <b>+5</b> (kuniga 2 martagacha)\n` +
       `• Har kuni platformaga kirish — <b>+5</b>\n` +
       `Kechikkan kunlik vazifa — yarim ball; 2 kundan keyin yopiladi.\n\n` +
       `<b>5) Reytingni ko'rish 📊</b>\n` +
@@ -560,8 +560,8 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
       `• Оценка 9–10 за задание — <b>+25</b>\n` +
       `• Ежедневное задание — <b>+5</b>, задание с Instagram — <b>+8</b> (с 5 октября, каждый день в 09:00 в теме «KUNLIK VAZIFALAR»)\n` +
       `• 5 дней подряд вовремя — <b>+10 бонус</b>\n` +
-      `• Активность в группе — <b>+1</b> за сообщение (до 5 баллов в день)\n` +
-      `• Своя работа в группе (фото/видео) — <b>+5</b> (до 3 раз в день)\n` +
+      `• Полезный ответ на вопрос однокурсника — <b>+3</b>, ваш настоящий вопрос, получивший ответ — <b>+2</b> (проверяет AI; всего до 10 баллов в день)\n` +
+      `• Своя работа в группе (фото/видео) — <b>+5</b> (до 2 раз в день)\n` +
       `• Ежедневный вход на платформу — <b>+5</b>\n` +
       `Опоздали с ежедневным заданием — половина баллов; через 2 дня оно закрывается.\n\n` +
       `<b>5) Рейтинг 📊</b>\n` +
@@ -879,8 +879,8 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
       `• A score of 9–10 — <b>+25</b>\n` +
       `• Daily task — <b>+5</b>, Instagram task — <b>+8</b> (from 5 October, every day at 09:00 in «KUNLIK VAZIFALAR»)\n` +
       `• 5 days in a row on time — <b>+10 bonus</b>\n` +
-      `• Being active in the group — <b>+1</b> per message (up to 5 a day)\n` +
-      `• Sharing your own work in the group (photo/video) — <b>+5</b> (up to 3 a day)\n` +
+      `• A helpful answer to a classmate's question — <b>+3</b>, your real question that gets answered — <b>+2</b> (checked by AI; up to 10 a day in total)\n` +
+      `• Sharing your own work in the group (photo/video) — <b>+5</b> (up to 2 a day)\n` +
       `• Opening the platform each day — <b>+5</b>\n` +
       `A late daily task pays half; after 2 days it closes.\n\n` +
       `<b>5) Your rating 📊</b>\n` +
