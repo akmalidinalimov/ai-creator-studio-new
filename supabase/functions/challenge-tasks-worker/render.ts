@@ -10,6 +10,21 @@ import {
   type Rendered, safeName,
 } from "../_shared/daily-task-render.ts";
 
+/** Telegram's limit for a photo caption, in UTF-16 units of the VISIBLE text (after HTML parsing). */
+export const CAPTION_MAX = 1024;
+
+/**
+ * The visible length of a Telegram-HTML text: tags removed, the entities the renderers produce decoded, counted in
+ * UTF-16 units (a JS string's length) — the way Telegram counts a caption. A task post longer than CAPTION_MAX cannot
+ * ride under its day image, so the worker posts it as plain text instead (and says so in admin_actions).
+ */
+export function captionLength(html: string): number {
+  return String(html ?? "")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&")
+    .length;
+}
+
 /** The task post's button text. The SQL fallback poster (migration 20260930152010) posts the SAME text. */
 export const POST_BUTTON_TEXT = "📲 Vazifani botda ochish";
 

@@ -122,6 +122,53 @@ Deno.test("config RPC failing → 'crashed' (the watchdog's worker_errors alarm 
   assertEquals(f.inserts[0]?.row.details.status, "crashed");
 });
 
+Deno.test("posts: a task with image_url goes out as ONE photo with the task as its caption; the summary stays text", async () => {
+  const items = [
+    { task_id: 7, group_id: "g1", kind: "task", token: "t1", chat_id: -1001, thread_id: 144, text: "📅 <b>2-KUN VAZIFASI</b>\n<b>Vazifa</b>" },
+    { task_id: 7, group_id: "g2", kind: "summary", token: "t2", chat_id: -1002, thread_id: 10, summary: { done: 1, on_time: 1 } },
+  ];
+  const f = fake({ ...cfgOnly(ACTIVE), challenge_task_post_claim: once(items), challenge_task_post_record: () => ({ data: { ok: true }, error: null }) },
+    { challenge_tasks: [{ id: 7, image_url: "https://www.aicreator.academy/challenge/days/day-2.jpg" }] });
+  const r = recorder((m) => m === "sendPhoto" ? { outcome: out(), result: { message_id: 900 } } : null);
+  await runWorker(ENV, io(f.admin, r.send).io, {});
+  assertEquals(r.sent[0].method, "sendPhoto");
+  assertEquals(r.sent[0].payload.photo, "https://www.aicreator.academy/challenge/days/day-2.jpg");
+  assertEquals(r.sent[0].payload.caption, "📅 <b>2-KUN VAZIFASI</b>\n<b>Vazifa</b>");
+  assertEquals(r.sent[0].payload.parse_mode, "HTML");
+  assertEquals(r.sent[0].payload.message_thread_id, 144);
+  assertEquals(r.sent[0].payload.reply_markup, undefined);
+  assertEquals(r.sent[1].method, "sendMessage", "the 20:00 summary is never a photo");
+  assertEquals(f.named("challenge_task_post_record")[0].args._message_id, 900);
+});
+
+Deno.test("posts: a photo Telegram refuses falls back to the text post in the same run, DB-visibly", async () => {
+  const items = [{ task_id: 7, group_id: "g1", kind: "task", token: "t1", chat_id: -1001, thread_id: 144, text: "<b>Vazifa</b>" }];
+  const f = fake({ ...cfgOnly(ACTIVE), challenge_task_post_claim: once(items), challenge_task_post_record: () => ({ data: { ok: true }, error: null }) },
+    { challenge_tasks: [{ id: 7, image_url: "https://www.aicreator.academy/challenge/days/day-2.jpg" }] });
+  const r = recorder((m) => m === "sendPhoto" ? { outcome: out("content"), result: null } : null);
+  await runWorker(ENV, io(f.admin, r.send).io, {});
+  assertEquals(r.sent.map((s) => s.method), ["sendPhoto", "sendMessage"]);
+  assertEquals(r.sent[1].payload.text, "<b>Vazifa</b>");
+  assert(f.inserts.some((i) => i.row.action === "challenge_task_post_photo_failed"));
+  assertEquals(f.named("challenge_task_post_record")[0].args._error, null);
+});
+
+Deno.test("posts: a caption over 1024 visible characters is posted as text, DB-visibly; rate limit on the photo is not retried as text", async () => {
+  const long = "<b>Vazifa</b>\n" + "x".repeat(1100);
+  const items = [
+    { task_id: 7, group_id: "g1", kind: "task", token: "t1", chat_id: -1001, thread_id: 144, text: long },
+    { task_id: 8, group_id: "g2", kind: "task", token: "t2", chat_id: -1002, thread_id: 99, text: "<b>Qisqa</b>" },
+  ];
+  const f = fake({ ...cfgOnly(ACTIVE), challenge_task_post_claim: once(items), challenge_task_post_record: () => ({ data: { ok: true }, error: null }) },
+    { challenge_tasks: [{ id: 7, image_url: "https://www.aicreator.academy/challenge/days/day-2.jpg" },
+                        { id: 8, image_url: "https://www.aicreator.academy/challenge/days/day-3.jpg" }] });
+  const r = recorder((m, p) => m === "sendPhoto" && p.chat_id === -1002 ? { outcome: out("rate_limited", { retryAfterSec: 5 }), result: null } : null);
+  await runWorker(ENV, io(f.admin, r.send).io, {});
+  assertEquals(r.sent.filter((s) => s.payload.chat_id === -1001).map((s) => s.method), ["sendMessage"]);
+  assert(f.inserts.some((i) => i.row.action === "challenge_task_post_caption_too_long"));
+  assertEquals(r.sent.filter((s) => s.payload.chat_id === -1002).map((s) => s.method), ["sendPhoto"], "429 waits for the next run");
+});
+
 Deno.test("posts: sent → recorded with the message id; 429 → left leased (no record); refused → recorded with the class", async () => {
   const items = [
     { task_id: 1, group_id: "g1", kind: "task", token: "t1", chat_id: -1001, thread_id: 144, text: "<b>Vazifa</b>" },
