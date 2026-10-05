@@ -227,7 +227,7 @@ const T = {
       `• Dars tugatish — <b>+20</b>\n` +
       `• Uyga vazifa topshirish — <b>+15</b> (guruhdagi «UYGA VAZIFA» mavzusiga yuboring)\n` +
       `• Vazifaga 9–10 baho — <b>+25</b>\n` +
-      `• Qo'shimcha vazifa — <b>+5</b>, Instagram vazifasi — <b>+8</b> (dushanba, chorshanba, juma 09:00da «QO'SHIMCHA VAZIFALAR» mavzusida; ertasi kuni 23:59 gacha)\n` +
+      `• Qo'shimcha vazifa — <b>+8</b>: Instagram'ga post yoki Reels joylaysiz (dushanba, chorshanba, juma 09:00da «QO'SHIMCHA VAZIFALAR» mavzusida; ertasi kuni 23:59 gacha)\n` +
       `• 5 ta vazifani ketma-ket o'z vaqtida bajarsangiz — <b>+10 bonus</b>\n` +
       `• Guruhdoshingizning savoliga foydali javob — <b>+3</b>, javob olgan haqiqiy savolingiz — <b>+2</b> (AI tekshiradi; jami kuniga 10 ballgacha)\n` +
       `• O'z ishingizni guruhga tashlasangiz (rasm/video) — <b>+5</b> (kuniga 2 martagacha)\n` +
@@ -558,7 +558,7 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
       `• Завершить урок — <b>+20</b>\n` +
       `• Сдать домашнее задание — <b>+15</b> (в тему «UYGA VAZIFA» вашей группы)\n` +
       `• Оценка 9–10 за задание — <b>+25</b>\n` +
-      `• Дополнительное задание — <b>+5</b>, задание с Instagram — <b>+8</b> (понедельник, среда, пятница в 09:00 в теме «QO'SHIMCHA VAZIFALAR»; до 23:59 следующего дня)\n` +
+      `• Дополнительное задание — <b>+8</b>: пост или Reels в Instagram (понедельник, среда, пятница в 09:00 в теме «QO'SHIMCHA VAZIFALAR»; до 23:59 следующего дня)\n` +
       `• 5 заданий подряд вовремя — <b>+10 бонус</b>\n` +
       `• Полезный ответ на вопрос однокурсника — <b>+3</b>, ваш настоящий вопрос, получивший ответ — <b>+2</b> (проверяет AI; всего до 10 баллов в день)\n` +
       `• Своя работа в группе (фото/видео) — <b>+5</b> (до 2 раз в день)\n` +
@@ -877,7 +877,7 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
       `• Finish a lesson — <b>+20</b>\n` +
       `• Submit homework — <b>+15</b> (into your group's «UYGA VAZIFA» topic)\n` +
       `• A score of 9–10 — <b>+25</b>\n` +
-      `• Extra task — <b>+5</b>, Instagram task — <b>+8</b> (Monday, Wednesday, Friday at 09:00 in «QO'SHIMCHA VAZIFALAR»; due 23:59 the next day)\n` +
+      `• Extra task — <b>+8</b>: an Instagram post or Reels (Monday, Wednesday, Friday at 09:00 in «QO'SHIMCHA VAZIFALAR»; due 23:59 the next day)\n` +
       `• 5 tasks in a row on time — <b>+10 bonus</b>\n` +
       `• A helpful answer to a classmate's question — <b>+3</b>, your real question that gets answered — <b>+2</b> (checked by AI; up to 10 a day in total)\n` +
       `• Sharing your own work in the group (photo/video) — <b>+5</b> (up to 2 a day)\n` +
