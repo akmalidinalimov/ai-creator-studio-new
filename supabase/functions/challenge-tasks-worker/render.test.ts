@@ -31,13 +31,17 @@ Deno.test("postKeyboard: a Mini App link only when the config parser let one thr
 
 Deno.test("renderSummary: anonymous counts, the zero case, the late-rule footer", () => {
   const s = renderSummary({ done: 12, on_time: 10, checking: 3, needs_more: 2, task_date: "2026-10-05" });
-  assert(s.startsWith("📊 <b>Bugungi vazifa natijasi</b> (5-oktabr)"));
+  assert(s.startsWith("📊 <b>Vazifa natijasi</b> (5-oktabr)"));
   assert(s.includes("✅ Topshirdi: 12 (o‘z vaqtida: 10)"));
   assert(s.includes("👀 Tekshirilmoqda: 3"));
   assert(s.includes("✍️ To‘ldirish kerak: 2"));
-  assert(s.includes("23:59 gacha"));
+  assert(s.includes("⏰ Ulgurmaganlar — bugun 23:59 gacha vaqt bor."), "no due_date → the same-day rule");
+  assert(!s.includes("yarim ball"), "no late window is promised any more");
+  // 2026-10-05: a task every other day, on time until 23:59 of the next day
+  const g = renderSummary({ done: 1, on_time: 1, task_date: "2026-10-05", due_date: "2026-10-06" });
+  assert(g.includes("⏰ Ulgurmaganlar — ertaga 23:59 gacha vaqt bor."), g);
   const z = renderSummary({ done: 0, on_time: 0, checking: 0, needs_more: 0 });
-  assert(z.includes("📭 Bugun hali hech kim topshirmadi."));
+  assert(z.includes("📭 Hali hech kim topshirmadi."));
   assert(!z.includes("Topshirdi"));
   assert(renderSummary(null).includes("📭"), "a missing summary object never throws");
 });
@@ -45,11 +49,18 @@ Deno.test("renderSummary: anonymous counts, the zero case, the late-rule footer"
 Deno.test("renderMorningDm: title escaped, points, where to post, topic + task-card buttons", () => {
   const r = renderMorningDm({ task_id: 5, day_no: 3, title: "<AI> & rasm", points: 5, topic_url: "https://t.me/c/4440955972/144" },
     { locale: "uz", name: "Ali <Vali>", botUsername: BOT });
-  assertEquals(r.text.split("\n")[0], "☀️ Ali, xayrli tong! 3-kun vazifasi e’lon qilindi:");
+  assertEquals(r.text.split("\n")[0], "☀️ Ali, xayrli tong! 3-qo‘shimcha vazifa e’lon qilindi:");
   assert(r.text.includes("<b>&lt;AI&gt; &amp; rasm</b>"));
-  assert(r.text.includes("🏆 +5 ball — bugun 23:59 gacha."));
+  assert(r.text.includes("🏆 +5 ball — bugun 23:59 gacha."), "no due_date → today");
+  const g = renderMorningDm({ task_id: 5, task_date: "2026-10-07", due_date: "2026-10-08", title: "T", points: 5 },
+    { locale: "uz", botUsername: BOT });
+  assert(g.text.includes("🏆 +5 ball — ertaga 23:59 gacha."), g.text);
+  assert(renderMorningDm({ task_id: 5, task_date: "2026-10-09", due_date: "2026-10-10", title: "T", points: 8 },
+    { locale: "ru", botUsername: BOT }).text.includes("🏆 +8 — до 23:59 завтра."));
+  assert(renderMorningDm({ task_id: 5, task_date: "2026-10-09", due_date: "2026-10-10", title: "T", points: 8 },
+    { locale: "en", botUsername: BOT }).text.includes("🏆 +8 pts — by 23:59 tomorrow."));
   assertEquals(r.keyboard, {
-    inline_keyboard: [[{ text: "📅 Kunlik vazifalar topigi", url: "https://t.me/c/4440955972/144" },
+    inline_keyboard: [[{ text: "📌 Qo‘shimcha vazifalar topigi", url: "https://t.me/c/4440955972/144" },
                        { text: "📋 Vazifa matni", url: `https://t.me/${BOT}?start=dt_5` }]],
   });
   const ru = renderMorningDm({ task_id: 5, title: "T", points: 8 }, { locale: "ru", name: "", botUsername: BOT });
@@ -68,15 +79,22 @@ Deno.test("renderEveningDm: '📅 vazifa seriyasi', today's line + missed lines;
   };
   const r = renderEveningDm(p, { locale: "uz", name: "Madina", botUsername: BOT })!;
   const lines = r.text.split("\n");
-  assertEquals(lines[0], "📅 Vazifa seriyasi: 4 kun ketma-ket 🔥");
-  assertEquals(lines[1], "Madina, bugungi vazifa hali topshirilmagan: <b>Bugun</b> — 23:59 gacha +5 ball.");
-  assertEquals(lines[2], "🔥 Bugun ham topshirsangiz, seriyangiz 5 kunga yetadi.");
+  assertEquals(lines[0], "📅 Vazifa seriyasi: 4 ta vazifa ketma-ket 🔥");
+  assertEquals(lines[1], "Madina, vazifa hali topshirilmagan: <b>Bugun</b> — bugun 23:59 gacha +5 ball.");
+  assertEquals(lines[2], "🔥 Topshirsangiz, seriyangiz 5 taga yetadi.");
   assertEquals(lines[3], "↩️ 5-oktabr vazifasi ham ochiq (kechikkan — +3 ball): <b>Kecha</b>");
   assertEquals(r.keyboard?.inline_keyboard[0][1].url, `https://t.me/${BOT}?start=dt_9`, "the card button opens TODAY's task");
   const missedOnly = renderEveningDm({ streak_days: 0, pending: [{ task_id: 8, date: "2026-10-05", title: "K", late_days: 1, points: 3 }] },
     { locale: "uz", name: "", botUsername: BOT })!;
   assertEquals(missedOnly.text.split("\n")[0], "📅 Vazifa seriyasi");
-  assert(!missedOnly.text.includes("ugungi vazifa hali"));
+  assert(!missedOnly.text.includes("vazifa hali topshirilmagan"));
+  // Monday's task, reminded on Monday evening (due Tuesday) and on Tuesday evening (due today)
+  const mon = renderEveningDm({ date: "2026-10-05", pending: [{ task_id: 2, date: "2026-10-05", title: "P", late_days: 0, points: 5, due_date: "2026-10-06" }] },
+    { locale: "uz", name: "", botUsername: BOT })!;
+  assert(mon.text.includes("Vazifa hali topshirilmagan: <b>P</b> — ertaga 23:59 gacha +5 ball."), mon.text);
+  const tue = renderEveningDm({ date: "2026-10-06", pending: [{ task_id: 2, date: "2026-10-05", title: "P", late_days: 0, points: 5, due_date: "2026-10-06" }] },
+    { locale: "uz", name: "", botUsername: BOT })!;
+  assert(tue.text.includes("Vazifa hali topshirilmagan: <b>P</b> — bugun 23:59 gacha +5 ball."), tue.text);
   assertEquals(renderEveningDm({ pending: [] }, { locale: "uz" }), null);
   assertEquals(renderEveningDm({}, { locale: "uz" }), null);
 });
@@ -92,7 +110,7 @@ Deno.test("renderResultDm: the current state — accepted (on time / late), reje
   assertEquals(renderResultDm({ ...base, status: "rejected", reason: "ig_tag_missing", tag_handle: "@aicreators.students" }, { locale: "uz" })?.text,
     "🤔 «Rasm» (5-oktabr) qabul qilinmadi: postda @aicreators.students belgilanmagan.");
   assertEquals(renderResultDm({ ...base, status: "rejected", reason: "ig_post_old" }, { locale: "uz" })?.text,
-    "🤔 «Rasm» (5-oktabr) qabul qilinmadi: Bu post bugun joylanganga o‘xshamaydi. Shu vazifa uchun yangi post joylang.");
+    "🤔 «Rasm» (5-oktabr) qabul qilinmadi: Bu post yaqinda joylanganga o‘xshamaydi. Shu vazifa uchun yangi post joylang.");
   assertEquals(renderResultDm({ ...base, status: "rejected", reason: "???" }, { locale: "uz" })?.text,
     "🤔 «Rasm» (5-oktabr) qabul qilinmadi: vazifa talablariga mos kelmadi.");
   for (const st of ["withdrawn", "merged", "checking", "needs_more", "voided"]) {
@@ -103,7 +121,7 @@ Deno.test("renderResultDm: the current state — accepted (on time / late), reje
 
 Deno.test("renderBackfillDm and toLocale", () => {
   assertEquals(renderBackfillDm({ submissions: 3, points: 13 }, { locale: "uz", name: "Aziz" })?.text,
-    "🎉 Aziz, kunlik vazifalardagi avvalgi ishlaringiz hisoblandi: 3 ta ish, jami +13 ball.");
+    "🎉 Aziz, qo‘shimcha vazifalardagi avvalgi ishlaringiz hisoblandi: 3 ta ish, jami +13 ball.");
   assertEquals(renderBackfillDm({ submissions: 0, points: 0 }, { locale: "uz" }), null);
   assertEquals(toLocale("ru-RU"), "ru");
   assertEquals(toLocale("en"), "en");

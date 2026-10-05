@@ -267,7 +267,7 @@ export function ChallengeTaskDrawer({
             {preview && <Badge variant="outline">{preview.day_no}-kun</Badge>}
           </SheetTitle>
           <SheetDescription>
-            Tasdiqlangan vazifa shu kuni 09:00 da guruhlarning «Kunlik vazifalar» topikiga e’lon qilinadi
+            Tasdiqlangan vazifa shu kuni 09:00 da guruhlarning «Qo‘shimcha vazifalar» topikiga e’lon qilinadi
             {cfg.enabled ? "." : " (tizim hali yoqilmagan — hozircha hech narsa e’lon qilinmaydi)."}
           </SheetDescription>
         </SheetHeader>
@@ -462,11 +462,11 @@ export function ChallengeTaskDrawer({
               <div>
                 <p className="text-sm font-medium flex items-center gap-1.5"><Link2 className="h-4 w-4" /> Qo‘lda e’lon qilingan xabar havolasi (har guruh uchun)</p>
                 <p className="text-[11px] text-muted-foreground">
-                  Vazifani bot emas, xodim e’lon qilgan bo‘lsa: «Kunlik vazifalar» topikidagi o‘sha xabar ustida «Havolani nusxalash» → shu yerga.
+                  Vazifani bot emas, xodim e’lon qilgan bo‘lsa: «Qo‘shimcha vazifalar» topikidagi o‘sha xabar ustida «Havolani nusxalash» → shu yerga.
                   Talabalarning shu xabarga javoblari shu vazifaga bog‘lanadi.
                 </p>
               </div>
-              {groups.length === 0 && <p className="text-xs text-muted-foreground">Bu kursda «Kunlik vazifalar» topiki sozlangan guruh yo‘q (Admin → Guruhlar).</p>}
+              {groups.length === 0 && <p className="text-xs text-muted-foreground">Bu kursda «Qo‘shimcha vazifalar» topiki sozlangan guruh yo‘q (Admin → Guruhlar).</p>}
               {groups.map((g) => {
                 const p = groupPosts(g.id)[0];
                 const link = p ? postLink(p) : null;

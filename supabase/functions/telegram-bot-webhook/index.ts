@@ -227,12 +227,12 @@ const T = {
       `• Dars tugatish — <b>+20</b>\n` +
       `• Uyga vazifa topshirish — <b>+15</b> (guruhdagi «UYGA VAZIFA» mavzusiga yuboring)\n` +
       `• Vazifaga 9–10 baho — <b>+25</b>\n` +
-      `• Kunlik vazifa — <b>+5</b>, Instagram vazifasi — <b>+8</b> (5-oktabrdan, har kuni 09:00da «KUNLIK VAZIFALAR» mavzusida)\n` +
-      `• 5 kun ketma-ket o'z vaqtida bajarsangiz — <b>+10 bonus</b>\n` +
+      `• Qo'shimcha vazifa — <b>+5</b>, Instagram vazifasi — <b>+8</b> (dushanba, chorshanba, juma 09:00da «QO'SHIMCHA VAZIFALAR» mavzusida; ertasi kuni 23:59 gacha)\n` +
+      `• 5 ta vazifani ketma-ket o'z vaqtida bajarsangiz — <b>+10 bonus</b>\n` +
       `• Guruhdoshingizning savoliga foydali javob — <b>+3</b>, javob olgan haqiqiy savolingiz — <b>+2</b> (AI tekshiradi; jami kuniga 10 ballgacha)\n` +
       `• O'z ishingizni guruhga tashlasangiz (rasm/video) — <b>+5</b> (kuniga 2 martagacha)\n` +
       `• Har kuni platformaga kirish — <b>+5</b>\n` +
-      `Kechikkan kunlik vazifa — yarim ball; 2 kundan keyin yopiladi.\n\n` +
+      `Qo'shimcha vazifa muddati o'tgach yopiladi.\n\n` +
       `<b>5) Reytingni ko'rish 📊</b>\n` +
       `/profil → «📊 Statistika» — o'z ballaringiz, «👥 Guruh reytingi» — guruhingizdagi o'rningiz.\n\n` +
       `Savol bo'lsa — «❓ Yordam». Omad! 🚀`,
@@ -558,12 +558,12 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
       `• Завершить урок — <b>+20</b>\n` +
       `• Сдать домашнее задание — <b>+15</b> (в тему «UYGA VAZIFA» вашей группы)\n` +
       `• Оценка 9–10 за задание — <b>+25</b>\n` +
-      `• Ежедневное задание — <b>+5</b>, задание с Instagram — <b>+8</b> (с 5 октября, каждый день в 09:00 в теме «KUNLIK VAZIFALAR»)\n` +
-      `• 5 дней подряд вовремя — <b>+10 бонус</b>\n` +
+      `• Дополнительное задание — <b>+5</b>, задание с Instagram — <b>+8</b> (понедельник, среда, пятница в 09:00 в теме «QO'SHIMCHA VAZIFALAR»; до 23:59 следующего дня)\n` +
+      `• 5 заданий подряд вовремя — <b>+10 бонус</b>\n` +
       `• Полезный ответ на вопрос однокурсника — <b>+3</b>, ваш настоящий вопрос, получивший ответ — <b>+2</b> (проверяет AI; всего до 10 баллов в день)\n` +
       `• Своя работа в группе (фото/видео) — <b>+5</b> (до 2 раз в день)\n` +
       `• Ежедневный вход на платформу — <b>+5</b>\n` +
-      `Опоздали с ежедневным заданием — половина баллов; через 2 дня оно закрывается.\n\n` +
+      `После срока дополнительное задание закрывается.\n\n` +
       `<b>5) Рейтинг 📊</b>\n` +
       `/profil → «📊 Статистика» — ваши баллы, «👥 Рейтинг группы» — ваше место в группе.\n\n` +
       `Вопросы — «❓ Помощь». Удачи! 🚀`,
@@ -877,12 +877,12 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
       `• Finish a lesson — <b>+20</b>\n` +
       `• Submit homework — <b>+15</b> (into your group's «UYGA VAZIFA» topic)\n` +
       `• A score of 9–10 — <b>+25</b>\n` +
-      `• Daily task — <b>+5</b>, Instagram task — <b>+8</b> (from 5 October, every day at 09:00 in «KUNLIK VAZIFALAR»)\n` +
-      `• 5 days in a row on time — <b>+10 bonus</b>\n` +
+      `• Extra task — <b>+5</b>, Instagram task — <b>+8</b> (Monday, Wednesday, Friday at 09:00 in «QO'SHIMCHA VAZIFALAR»; due 23:59 the next day)\n` +
+      `• 5 tasks in a row on time — <b>+10 bonus</b>\n` +
       `• A helpful answer to a classmate's question — <b>+3</b>, your real question that gets answered — <b>+2</b> (checked by AI; up to 10 a day in total)\n` +
       `• Sharing your own work in the group (photo/video) — <b>+5</b> (up to 2 a day)\n` +
       `• Opening the platform each day — <b>+5</b>\n` +
-      `A late daily task pays half; after 2 days it closes.\n\n` +
+      `An extra task closes after its deadline.\n\n` +
       `<b>5) Your rating 📊</b>\n` +
       `/profil → «📊 Statistics» — your points, «👥 Group rating» — your place in the group.\n\n` +
       `Questions — «❓ Help». Good luck! 🚀`,

@@ -1,5 +1,5 @@
 /**
- * Client-side mirror of the «KUNLIK VAZIFALAR» topic-link rules enforced in SQL by
+ * Client-side mirror of the «QO‘SHIMCHA VAZIFALAR» topic-link rules enforced in SQL by
  * public.challenge_task_parse_topic_url() and trg_groups_extract_daily_task_topic
  * (migration 20260930121000). The DATABASE is the authority -- this only gives the admin an instant,
  * identical message before the save round-trip. Module-topic collisions and the one-group-per-topic
@@ -45,14 +45,14 @@ export function parseTopicUrl(url: string | null | undefined): TopicRef | null {
 }
 
 export const DAILY_TOPIC_MSG = {
-  badFormat: "Kunlik vazifalar topiki havolasi noto‘g‘ri. Namuna: https://t.me/c/4440955972/144",
-  general: "Kunlik vazifalar topiki General bo‘la olmaydi",
+  badFormat: "Qo‘shimcha vazifalar topiki havolasi noto‘g‘ri. Namuna: https://t.me/c/4440955972/144",
+  general: "Qo‘shimcha vazifalar topiki General bo‘la olmaydi",
   homeworkMissing: "Avval «Vazifalar topiki URL»ni kiriting",
   homeworkNotC: "Avval «Vazifalar topiki URL»ni https://t.me/c/… ko‘rinishida kiriting",
-  otherChat: "Kunlik vazifalar topiki boshqa guruhga tegishli",
-  sameAsHomework: "Kunlik vazifalar topiki uy vazifasi topigi bilan bir xil bo‘lmasin",
-  sameAsModule: "Kunlik vazifalar topiki modul topigi bilan bir xil bo‘lmasin",
-  takenByOtherGroup: "Bu topik boshqa guruhning «Kunlik vazifalar» topigi sifatida saqlangan",
+  otherChat: "Qo‘shimcha vazifalar topiki boshqa guruhga tegishli",
+  sameAsHomework: "Qo‘shimcha vazifalar topiki uy vazifasi topigi bilan bir xil bo‘lmasin",
+  sameAsModule: "Qo‘shimcha vazifalar topiki modul topigi bilan bir xil bo‘lmasin",
+  takenByOtherGroup: "Bu topik boshqa guruhning «Qo‘shimcha vazifalar» topigi sifatida saqlangan",
 } as const;
 
 /**

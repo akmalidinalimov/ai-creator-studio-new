@@ -1440,18 +1440,18 @@
     "loading": "Opening your lesson…"
   },
   "dailyTasks": {
-    "title": "Daily tasks",
+    "title": "Extra tasks",
     "subtitle": "One task every task day. Do it to earn points and keep your streak.",
     "streak": "{{days}}-day streak",
     "points": "{{points}} points",
-    "openTopic": "Open the «Kunlik vazifalar» topic",
+    "openTopic": "Open the «Qo'shimcha vazifalar» topic",
     "emptyTitle": "No tasks yet",
     "emptyBody": "The first task appears here once it is posted.",
     "loadError": "Could not load the tasks.",
-    "notInChallengeTitle": "No daily tasks",
+    "notInChallengeTitle": "No extra tasks",
     "notInChallengeBody": "This section is for challenge group students.",
     "topicOnlyTitle": "Tasks live in your group",
-    "topicOnlyBody": "Post each daily task in your group's «Kunlik vazifalar» topic — the bot accepts and counts it.",
+    "topicOnlyBody": "Post each extra task in your group's «Qo'shimcha vazifalar» topic — the bot accepts and counts it.",
     "today": "Today",
     "dayNo": "Day {{n}}",
     "instagram": "Instagram",
@@ -1486,12 +1486,12 @@
       "yourWork": "Your work",
       "pointsEarned": "+{{n}} points",
       "pointsWorth": "{{n}} points",
-      "whereBody": "Your work is posted in your group's «Kunlik vazifalar» topic under your name — your classmates will see it.",
+      "whereBody": "Your work is posted in your group's «Qo'shimcha vazifalar» topic under your name — your classmates will see it.",
       "notFound": "Task not found."
     },
     "reasons": {
-      "disabled": "Daily tasks are paused right now.",
-      "miniapp_off": "Submitting from the app is not on yet. Post your work in the group's «Kunlik vazifalar» topic.",
+      "disabled": "Extra tasks are paused right now.",
+      "miniapp_off": "Submitting from the app is not on yet. Post your work in the group's «Qo'shimcha vazifalar» topic.",
       "no_profile": "This section is for students.",
       "staff": "This section is for students.",
       "held_sender": "Your profile is not linked to this group yet. Contact an admin — your topic messages are kept.",
@@ -1540,7 +1540,7 @@
         "expired": "The request expired — submit again.",
         "refused": "This work cannot be accepted. Contact an admin.",
         "capture_rejected": "Your work was posted in the topic but not counted. Contact an admin.",
-        "topic_not_configured": "Your group's «Kunlik vazifalar» topic is not set up. Contact an admin.",
+        "topic_not_configured": "Your group's «Qo'shimcha vazifalar» topic is not set up. Contact an admin.",
         "network": "Check your connection and try again.",
         "generic": "Something went wrong. Try again."
       },
@@ -1586,7 +1586,7 @@
       "saved": "Saved."
     },
     "dashboard": {
-      "title": "Daily task",
+      "title": "Extra task",
       "action": "All",
       "todayNone": "No task today",
       "cta": "Open"

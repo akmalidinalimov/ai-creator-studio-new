@@ -213,7 +213,7 @@ export default function AdminGroups() {
                       <div className="flex flex-wrap items-center gap-1">
                         {hw}
                         <span
-                          title={g.daily_task_topic_url ? `Kunlik vazifalar topiki: ${g.daily_task_topic_url}` : "Kunlik vazifalar topiki sozlanmagan"}
+                          title={g.daily_task_topic_url ? `Qo‘shimcha vazifalar topiki: ${g.daily_task_topic_url}` : "Qo‘shimcha vazifalar topiki sozlanmagan"}
                           className={`inline-block px-2 py-0.5 rounded text-xs border ${g.daily_task_topic_url
                             ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-400"
                             : "border-amber-500/40 text-amber-700 dark:text-amber-400"}`}
@@ -342,7 +342,7 @@ function GroupFormDialog({
   const [tgGroupErr, setTgGroupErr] = useState<string>("");
   const [hwTopicUrl, setHwTopicUrl] = useState<string>("");
   const [hwTopicErr, setHwTopicErr] = useState<string>("");
-  // «KUNLIK VAZIFALAR» topic (6.0 challenge daily tasks). The DB trigger is the authority; dailyTopicError()
+  // «QO‘SHIMCHA VAZIFALAR» topic (6.0 challenge daily tasks). The DB trigger is the authority; dailyTopicError()
   // mirrors it so the admin sees the same message before saving.
   const [dailyUrl, setDailyUrl] = useState<string>("");
   const [dailyErr, setDailyErr] = useState<string>("");
@@ -632,7 +632,7 @@ function GroupFormDialog({
               )}
             </div>
             <div>
-              <Label className="text-xs">Kunlik vazifalar topiki URL</Label>
+              <Label className="text-xs">Qo‘shimcha vazifalar topiki URL</Label>
               <Input
                 value={dailyUrl}
                 onChange={(e) => { setDailyUrl(e.target.value); setDailyErr(""); }}
@@ -640,7 +640,7 @@ function GroupFormDialog({
                 disabled={dailySupported !== true}
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Challenge guruhi uchun «KUNLIK VAZIFALAR» topigi. Shu topikdagi xabarlar faqat kunlik vazifa ballarini oladi
+                Challenge guruhi uchun «QO‘SHIMCHA VAZIFALAR» topigi. Shu topikdagi xabarlar faqat qo‘shimcha vazifa ballarini oladi
                 (chat, media va javob ballari berilmaydi). Bo'sh qoldirilsa — o'chiriladi.
               </p>
               {dailySupported === false && (

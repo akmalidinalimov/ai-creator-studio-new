@@ -188,7 +188,7 @@ export function buildHeader(p: Profile | null, task: TaskRef): string {
   const who = uname && /^[A-Za-z0-9_]{3,32}$/.test(uname) ? `${name} (@${uname})` : name;
   const date = task.date ? formatTaskDate(task.date, "uz") : "";
   const title = clip(String(task.title ?? "").trim(), 120);
-  return `📱 ${who} — ilova orqali\n📅 ${[date, title].filter(Boolean).join(" · ") || "Kunlik vazifa"}`;
+  return `📱 ${who} — ilova orqali\n📅 ${[date, title].filter(Boolean).join(" · ") || "Qo‘shimcha vazifa"}`;
 }
 
 export type Part =

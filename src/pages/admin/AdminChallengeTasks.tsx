@@ -42,7 +42,7 @@ const isMissingRelation = (msg: string | undefined, code?: string) =>
   code === "42P01" || code === "PGRST205" || /does not exist|could not find the table/i.test(msg ?? "");
 
 /**
- * Admin → Kunlik vazifalar (Challenge 6.0 daily tasks, PR-2). The task calendar: a month grid on Tashkent dates
+ * Admin → Qo‘shimcha vazifalar (Challenge 6.0 daily tasks, PR-2). The task calendar: a month grid on Tashkent dates
  * (rest days greyed), a week list, the day drawer (edit / approve / cancel, requires, live post preview, manual
  * post links) and the plan importer. Writes go through mutate() (table, RLS admin-only) or the admin RPCs.
  * Nothing here posts: the engine and the worker (later PRs) read this calendar.
@@ -187,10 +187,10 @@ export default function AdminChallengeTasks() {
       <div className="space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">📅 Kunlik vazifalar</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">📌 Qo‘shimcha vazifalar</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Challenge kunlik vazifalari kalendari (Toshkent vaqti). Faqat tasdiqlangan vazifa e’lon qilinadi — shu kuni 09:00 da
-              guruhlarning «Kunlik vazifalar» topikiga.
+              Challenge qo‘shimcha vazifalari kalendari (Toshkent vaqti). Faqat tasdiqlangan vazifa e’lon qilinadi — shu kuni 09:00 da
+              guruhlarning «Qo‘shimcha vazifalar» topikiga.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -242,7 +242,7 @@ export default function AdminChallengeTasks() {
                 Keyingi {nextTaskDays.length} vazifa kunidan tasdiqlangan: {nextApproved}
               </Badge>
               <Badge variant="outline">Vazifa kunlari: {cfg.weekdays.map((d) => WEEKDAY_SHORT_UZ[d - 1]).join(", ")}</Badge>
-              <Badge variant="outline">«Kunlik vazifalar» topiki bor guruhlar: {topicGroups.length}/{groups.length}</Badge>
+              <Badge variant="outline">«Qo‘shimcha vazifalar» topiki bor guruhlar: {topicGroups.length}/{groups.length}</Badge>
               {cfg.windowStart && <Badge variant="outline">Challenge: {cfg.windowStart}{cfg.windowEnd ? ` — ${cfg.windowEnd}` : " dan"}</Badge>}
             </div>
 

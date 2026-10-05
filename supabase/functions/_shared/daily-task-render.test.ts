@@ -39,7 +39,7 @@ Deno.test("receipt: accepted on time = the owner's copy, streak line from 2 days
   const r = renderReceipt(payload({ }), { name: "Ali" });
   assertEquals(r.text, "✅ Bugungi vazifa qabul qilindi: +5 ball.");
   const r2 = renderReceipt(payload({ streak: { days: 4, milestone_bonus: null } }));
-  assertEquals(r2.text, "✅ Bugungi vazifa qabul qilindi: +5 ball.\n🔥 4 kun ketma-ket");
+  assertEquals(r2.text, "✅ Bugungi vazifa qabul qilindi: +5 ball.\n🔥 4 ta vazifa ketma-ket");
   const r3 = renderReceipt(payload({ streak: { days: 5, milestone_bonus: 10 } }));
   assert(r3.text.endsWith("🎉 Seriya bonusi: +10 ball!"));
 });
@@ -74,7 +74,7 @@ Deno.test("receipt: rejected — reason text, attempts left, IG-old / IG-invalid
   assertEquals(renderReceipt(payload({ status: "rejected", reason: "image_seen_before", attempts_left: 2 })).text,
     "🤔 Bugungi vazifa qabul qilinmadi: bu rasm boshqa o‘quvchining ishida bor.\nTuzatib, yana 2 marta yuborishingiz mumkin.");
   assertEquals(renderReceipt(payload({ status: "rejected", reason: "ig_post_old", attempts_left: 0 })).text,
-    "🤔 Bu post bugun joylanganga o‘xshamaydi. Shu vazifa uchun yangi post joylang.\nBu vazifa uchun urinishlar tugadi. Ertangi vazifada omad!");
+    "🤔 Bu post yaqinda joylanganga o‘xshamaydi. Shu vazifa uchun yangi post joylang.\nBu vazifa uchun urinishlar tugadi. Keyingi vazifada omad!");
   assert(renderReceipt(payload({ status: "rejected", reason: "ig_tag_missing" }), { tagHandle: "aicreators.students" }).text
     .includes("postda @aicreators.students belgilanmagan"));
   assert(renderReceipt(payload({ status: "rejected", reason: "Rasm <xira> ko'rinadi" })).text.includes("Rasm &lt;xira&gt; ko'rinadi"));
@@ -157,7 +157,7 @@ Deno.test("hints: held has NO button; wrong_group links the own topic (t.me only
   assert(renderHint({ hint: { kind: "no_slot_no_open_task" } })!.text.startsWith("📭"));
   assert(renderHint({ hint: { kind: "no_slot_target_closed" } })!.text.startsWith("🔒"));
   assertEquals(renderHint({ hint: { kind: "attempts_exhausted" } }, { maxAttempts: 3 })!.text,
-    "🤔 Bu vazifa uchun urinishlar tugadi (3/3). Ertangi vazifada omad!");
+    "🤔 Bu vazifa uchun urinishlar tugadi (3/3). Keyingi vazifada omad!");
   assertEquals(renderHint({ hint: null }), null);
   assertEquals(renderHint({ hint: { kind: "something_else" } }), null);
 });
@@ -178,8 +178,8 @@ Deno.test("correction toasts: ok per op; every engine refusal is a friendly line
 Deno.test("card (/start dt_<id>): post text + status + where-to-submit + topic button; missing / closed / other group / paused", () => {
   const [one] = renderCard({ ok: true, enabled: true, text: "📅 <b>1-kun vazifasi</b>", topic_url: "https://t.me/c/4440955972/144", closed: false,
     submission: { id: 1, status: "accepted", points: 5 } });
-  assertEquals(one.text, "📅 <b>1-kun vazifasi</b>\n\n✅ Sizning ishingiz qabul qilingan: +5 ball.\n📍 Ishingizni guruhingizdagi «Kunlik vazifalar» topigiga yuboring (uy vazifasi topigiga emas).");
-  assertEquals(one.keyboard, { inline_keyboard: [[{ text: "📅 Kunlik vazifalar topigi", url: "https://t.me/c/4440955972/144" }]] });
+  assertEquals(one.text, "📅 <b>1-kun vazifasi</b>\n\n✅ Sizning ishingiz qabul qilingan: +5 ball.\n📍 Ishingizni guruhingizdagi «Qo‘shimcha vazifalar» topigiga yuboring (uy vazifasi topigiga emas).");
+  assertEquals(one.keyboard, { inline_keyboard: [[{ text: "📌 Qo‘shimcha vazifalar topigi", url: "https://t.me/c/4440955972/144" }]] });
   assertEquals(renderCard({ ok: false, reason: "no_task" })[0].text, DAILY_COPY.uz.cardMissing);
   const closed = renderCard({ ok: true, text: "x", topic_url: "https://t.me/c/1/2", closed: true })[0];
   assert(closed.text.includes("🔒") && closed.keyboard === null);
@@ -212,4 +212,12 @@ Deno.test("names, labels and the three locales stay complete", () => {
     const r = renderReceipt(payload({ status: "needs_more", missing: ["screenshot"] }), { locale: loc });
     assert(r.text.startsWith("✍️"), loc);
   }
+});
+
+Deno.test("taskLabel: with grace_days a next-day ON-TIME submission (late_days 0) is labelled by rel_days, not as today's", () => {
+  const task = { id: 2, date: "2026-10-05" };
+  assertEquals(taskLabel({ id: 1, status: "accepted", late_days: 0, task: { ...task, rel_days: 0 } }), "Bugungi vazifa");
+  assertEquals(taskLabel({ id: 1, status: "accepted", late_days: 0, task: { ...task, rel_days: 1 } }), "Kechagi vazifa (5-oktabr)");
+  assertEquals(taskLabel({ id: 1, status: "accepted", late_days: 0, task: { ...task, rel_days: 3 } }), "5-oktabr vazifasi");
+  assertEquals(taskLabel({ id: 1, status: "accepted", late_days: 1, task }), "Kechagi vazifa (5-oktabr)", "an older payload: late_days");
 });
