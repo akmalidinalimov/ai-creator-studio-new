@@ -21,6 +21,12 @@
 -- deadline ("ertaga, 6-oktabr (seshanba) 23:59 gacha"), the late line only while a late window exists, and the
 -- «QOʻSHIMCHA VAZIFALAR» topic name. It now reads the settings, so it is STABLE instead of IMMUTABLE.
 --
+-- 20261005193000 is 20261005112000 again, which the pipeline REFUSED on 2026-10-05 19:26 UTC (nothing applied — one
+-- transaction): its caption check counted the HTML (tags included) and task #11 measured 1058 > 980. Now: the four
+-- long bodies (#11 #12 #15 #17) are rewritten as short numbered steps, the check counts what Telegram counts (the
+-- VISIBLE text in UTF-16 units, limit 1024, 1000 kept), and a task still over it posts as text (image_url NULL,
+-- listed in the audit row) instead of aborting the deploy. The refused file is removed in the same PR.
+--
 -- SCHEDULE: three practical tasks a week, Mon/Wed/Fri, all set to DRAFT for the owner to approve (Admin → Qoʻshimcha
 -- vazifalar). Monday 10-05 (#2) is already posted and stays. Cancelled (never posted): #4 #7 #8 #9 #13 #14 #19 #20 #22
 -- #24. Two bodies reworded where they pointed at a dropped task (#10, #23). Each task gets its image
@@ -33,7 +39,7 @@ language sql
 immutable
 set search_path = public
 as $fn$
-  -- 20261005112000: days after task_date that still count as ON TIME (0..6; absent / invalid = 0, the old rule)
+  -- 20261005193000: days after task_date that still count as ON TIME (0..6; absent / invalid = 0, the old rule)
   select least(greatest(coalesce(case when (_cfg->>'grace_days') ~ '^[0-9]{1,2}$' then (_cfg->>'grace_days')::int end, 0), 0), 6)
 $fn$;
 
@@ -43,7 +49,7 @@ language sql
 immutable
 set search_path = public
 as $fn$
-  -- 20261005112000: how many days after task_date a task still accepts work (on time + late)
+  -- 20261005193000: how many days after task_date a task still accepts work (on time + late)
   select public.challenge_task_grace_days(_cfg) + coalesce((_cfg->>'late_days')::int, 2)
 $fn$;
 
@@ -53,7 +59,7 @@ language sql
 immutable
 set search_path = public
 as $fn$
-  -- 20261005112000: days PAST THE DEADLINE (task_date + grace_days). 0 = on time. A day before task_date stays negative
+  -- 20261005193000: days PAST THE DEADLINE (task_date + grace_days). 0 = on time. A day before task_date stays negative
   -- (callers treat that as "not open yet"), exactly as the old "_d - task_date".
   select case when _d is null or _task_date is null then null
               when _d - _task_date <= 0 then _d - _task_date
@@ -73,7 +79,7 @@ returns void
 language plpgsql
 as $fn$
 declare
-  _marker constant text := '20261005112000';
+  _marker constant text := '20261005193000';
   _oid oid := to_regprocedure(_sig);
   _src text; _acl text; _owner oid; _secdef boolean; _def text; _n int; i int;
 begin
@@ -112,14 +118,14 @@ begin
   -- the config validator: accept grace_days (0..6, default 0)
   perform pg_temp.dt_patch('public.challenge_tasks_config()', 'd40ab1725851c424bcde075fef3c574e',
     array['_ints constant jsonb := ''{"late_days":[2,0,7],'],
-    array['_ints constant jsonb := /* 20261005112000: + grace_days */ ''{"late_days":[2,0,7],"grace_days":[0,0,6],'],
+    array['_ints constant jsonb := /* 20261005193000: + grace_days */ ''{"late_days":[2,0,7],"grace_days":[0,0,6],'],
     array[1]);
 
   -- close_at = task_date + grace_days + late_days + 1 (Tashkent midnight)
   perform pg_temp.dt_patch('public.challenge_task_close_at(public.challenge_tasks, jsonb)', 'c70dff14c1e0f75ae0fff84d1d6bd35b',
     array['On time = by 23:59 of task_date.',
           '(_t.task_date + coalesce((_cfg->>''late_days'')::int, 2) + 1)'],
-    array['On time = by 23:59 of task_date + grace_days (20261005112000).',
+    array['On time = by 23:59 of task_date + grace_days (20261005193000).',
           '(_t.task_date + public.challenge_task_window_days(_cfg) + 1)'],
     array[1, 1]);
 
@@ -129,21 +135,21 @@ begin
           'and t.task_date between _d - coalesce((_cfg->>''late_days'')::int, 2) and _d',
           '(t.task_date = _d) as is_today,'],
     array['public.challenge_task_late_days(_create_task.task_date, _d, _cfg),',
-          'and t.task_date between _d - public.challenge_task_window_days(_cfg) and _d  -- 20261005112000: + grace_days',
-          '(public.challenge_task_late_days(t.task_date, _d, _cfg) = 0) as is_today,  -- 20261005112000: on time = today''s slot'],
+          'and t.task_date between _d - public.challenge_task_window_days(_cfg) and _d  -- 20261005193000: + grace_days',
+          '(public.challenge_task_late_days(t.task_date, _d, _cfg) = 0) as is_today,  -- 20261005193000: on time = today''s slot'],
     array[1, 1, 1]);
 
   perform pg_temp.dt_patch('public.challenge_task_capture_miniapp(uuid, bigint, text, timestamp with time zone, jsonb)',
     'd5c4fd21e6da3a7f60c9dd9979350a12',
     array['public.challenge_task_local_date(_ts) - _t.task_date, 1 + _rej'],
-    array['public.challenge_task_late_days(_t.task_date, public.challenge_task_local_date(_ts), _cfg) /* 20261005112000 */, 1 + _rej'],
+    array['public.challenge_task_late_days(_t.task_date, public.challenge_task_local_date(_ts), _cfg) /* 20261005193000 */, 1 + _rej'],
     array[1]);
 
   perform pg_temp.dt_patch((select p.oid::regprocedure::text from pg_proc p where p.proname = 'challenge_task_move_core' and p.pronamespace = 'public'::regnamespace),
     '1c57363484560cf69d586a848059408d',
     array['_late := _d0 - _to.task_date;',
           'late_days = public.challenge_task_local_date(least(submitted_at, _s.submitted_at)) - _to.task_date,'],
-    array['_late := public.challenge_task_late_days(_to.task_date, _d0, _cfg);  -- 20261005112000: days past the deadline',
+    array['_late := public.challenge_task_late_days(_to.task_date, _d0, _cfg);  -- 20261005193000: days past the deadline',
           'late_days = public.challenge_task_late_days(_to.task_date, public.challenge_task_local_date(least(submitted_at, _s.submitted_at)), _cfg),'],
     array[1, 1]);
 
@@ -152,7 +158,7 @@ begin
     '379c13ea13adb69feadbc25a8d69c9e5',
     array['and x.task_date >= _d0 - coalesce((_cfg->>''late_days'')::int, 2);',
           '''type'', _t.type, ''title'', _t.title)),'],
-    array['and x.task_date >= _d0 - public.challenge_task_window_days(_cfg);  -- 20261005112000: + grace_days',
+    array['and x.task_date >= _d0 - public.challenge_task_window_days(_cfg);  -- 20261005193000: + grace_days',
           '''type'', _t.type, ''title'', _t.title,' || E'\n'
           || '                                 ''rel_days'', public.challenge_task_local_date(_s.submitted_at) - _t.task_date)),'],
     array[1, 1]);
@@ -161,7 +167,7 @@ begin
     '86fbda0f5da09b2c4fba455db2fb0573',
     array['public.challenge_task_local_date(_now) - _t.task_date',
           '''late'', t.task_date < public.challenge_task_local_date(_now))'],
-    array['public.challenge_task_late_days(_t.task_date, public.challenge_task_local_date(_now), _cfg) /* 20261005112000 */',
+    array['public.challenge_task_late_days(_t.task_date, public.challenge_task_local_date(_now), _cfg) /* 20261005193000 */',
           '''late'', public.challenge_task_late_days(t.task_date, public.challenge_task_local_date(_now), _cfg) > 0)'],
     array[2, 1]);
 
@@ -171,7 +177,7 @@ begin
           'public.challenge_task_points_for(t, _today - t.task_date, _cfg) as points',
           '''type'', x.type, ''late_days'', _today - x.task_date,',
           '''title'', tt.title, ''points'', tt.points, ''late_points'', tt.late_points,'],
-    array['_late int := public.challenge_task_window_days(_cfg);  -- 20261005112000: grace_days + late_days',
+    array['_late int := public.challenge_task_window_days(_cfg);  -- 20261005193000: grace_days + late_days',
           'public.challenge_task_points_for(t, public.challenge_task_late_days(t.task_date, _today, _cfg), _cfg) as points',
           '''type'', x.type, ''late_days'', public.challenge_task_late_days(x.task_date, _today, _cfg),' || E'\n'
           || '                                                                        ''due_date'', x.task_date + public.challenge_task_grace_days(_cfg),',
@@ -184,7 +190,7 @@ begin
     '3f27978c0361778ef5dc78896f829e83',
     array['''task_date'', (select t.task_date from public.challenge_tasks t where t.id = _r.task_id))'],
     array['''task_date'', (select t.task_date from public.challenge_tasks t where t.id = _r.task_id),' || E'\n'
-          || '                 ''due_date'', (select t.task_date + public.challenge_task_grace_days(_cfg) /* 20261005112000 */'
+          || '                 ''due_date'', (select t.task_date + public.challenge_task_grace_days(_cfg) /* 20261005193000 */'
           || ' from public.challenge_tasks t where t.id = _r.task_id))'],
     array[1]);
 end $$;
@@ -212,7 +218,7 @@ language sql
 stable
 set search_path to 'public'
 as $function$
-  -- The task post as Telegram HTML (parse_mode HTML). 20261005112000: «QOʻSHIMCHA VAZIFALAR» (was KUNLIK VAZIFALAR), a
+  -- The task post as Telegram HTML (parse_mode HTML). 20261005193000: «QOʻSHIMCHA VAZIFALAR» (was KUNLIK VAZIFALAR), a
   -- task every other day: the deadline is task_date + grace_days 23:59 ("ertaga, 6-oktabr (seshanba) 23:59 gacha"),
   -- and the late line shows only while a late window exists. Reads the settings, hence STABLE. Only <b>, <blockquote>
   -- and the three entities &amp; &lt; &gt; are produced; every user text is escaped. challenge_tasks_guard measures
@@ -266,14 +272,14 @@ update public.platform_settings
    set value = value || jsonb_build_object('task_weekdays', jsonb_build_array(1, 3, 5), 'grace_days', 1, 'late_days', 0)
  where key = 'challenge_tasks'
    and not exists (select 1 from public.admin_actions where action = 'challenge_tasks_rescheduled'
-                    and details->>'marker' = '20261005112000');
+                    and details->>'marker' = '20261005193000');
 
 do $$
 declare
   _c jsonb := public.challenge_tasks_config();
 begin
   if exists (select 1 from public.admin_actions where action = 'challenge_tasks_rescheduled'
-              and details->>'marker' = '20261005112000') then
+              and details->>'marker' = '20261005193000') then
     return;
   end if;
   if (_c->>'grace_days')::int is distinct from 1 or (_c->>'late_days')::int is distinct from 0
@@ -294,9 +300,11 @@ do $$
 declare
   _course constant uuid := 'f502f631-2104-4834-b6c2-702cd3080e27';
   _r record;
+  _txt text;
   _len int;
+  _no_image jsonb := '[]'::jsonb;
 begin
-  if exists (select 1 from public.admin_actions where action = 'challenge_tasks_rescheduled' and details->>'marker' = '20261005112000') then
+  if exists (select 1 from public.admin_actions where action = 'challenge_tasks_rescheduled' and details->>'marker' = '20261005193000') then
     raise notice 'schedule already applied';
     return;
   end if;
@@ -321,6 +329,37 @@ begin
              || E'2️⃣ Uni ChatGPT yoki Nano Bananaʼga yuklang. Promptga eng yaxshi yorugʻlik retseptingizni (chorshanbadagi vazifadan) qoʻshing va yozing: «shakli, rangi va yozuvlarini oʻzgartirma».\n'
              || '3️⃣ «Telefon surati → AI reklama» karuselini Instagramʼga joylang. Captionʼda ishlatgan promptingizni yozing.'
    where id = 10 and course_id = _course;
+  -- the four long bodies of the original plan, as short numbered steps (they must fit under the task image)
+  update public.challenge_tasks
+     set body = E'1️⃣ Darsdagi formula boʻyicha video prompt yozing, har bir qismini alohida qatorga: kim/nima + nima qilyapti + kamera harakati + joy va yorugʻlik + uslub (masalan, «5 seconds, realistic, cinematic»).\n'
+             || E'2️⃣ Seedance, Kling yoki Omni Flashʼda (qaysi birida bepul kredit boʻlsa) bitta 5 soniyalik video yarating — koʻpi bilan 2 ta urinish yetadi.\n'
+             || E'3️⃣ Formulani [qavsli] shablon qilib Retseptlar kitobingizga saqlang.\n\n'
+             || 'Inglizcha yozish qiyin boʻlsa, Projectʼingizga tarjima qildiring.'
+   where id = 11 and course_id = _course;
+  update public.challenge_tasks
+     set body = E'1️⃣ Eng yaxshi rasmingizni (masalan, reklama suratingizni) image-to-video orqali videoga aylantiring.
+'
+             || E'2️⃣ Promptda rasmni qayta tasvirlamang — faqat harakat va kamerani yozing, masalan: «steam slowly rises from the cup, slow push-in».
+'
+             || E'3️⃣ Odam yuzi oʻrniga mahsulot yoki AI-qahramon rasmini oling.
+'
+             || '4️⃣ Reelsʼni Instagramʼga joylang, captionʼga harakat promptingizni yozing.'
+   where id = 12 and course_id = _course;
+  update public.challenge_tasks
+     set body = E'1️⃣ Shu haftadagi videolaringizdan 3 ta kadr tanlang: hook (birinchi soniyada eʼtibor tortadi) → tafsilot (close-up) → yakun (mahsulot va qisqa yozuv).\n'
+             || E'2️⃣ Har bir kadrni 2–3 soniyagacha qisqartiring va harakat davom etayotgan joyda kesing — CapCut yoki Instagram muharririda.\n'
+             || E'3️⃣ Yangi video yaratish shart emas (kerak boʻlsa, koʻpi bilan 1 ta).\n'
+             || '4️⃣ Reels qilib joylang, captionʼga 3 kadrlik rejangizni yozing.'
+   where id = 15 and course_id = _course;
+  update public.challenge_tasks
+     set body = E'Skill — Claudeʼga bir marta oʻrgatiladigan va istalgan chatda ishlaydigan usul.
+'
+             || E'1️⃣ Claudeʼga yozing: «Menga skill yarat: men mahsulot nomini yozaman, sen mening formulam boʻyicha 1 ta rasm prompti va 1 ta 5 soniyalik video prompti berasan.»
+'
+             || E'2️⃣ Skillʼni saqlang va yangi chatda boshqa mahsulot bilan sinab koʻring.
+'
+             || '3️⃣ Skills boʻlimi koʻrinmasa, Claude bergan SKILL.md faylini saqlang.'
+   where id = 17 and course_id = _course;
   update public.challenge_tasks
      set body = replace(body, '1-kundagi paketlardan birini', 'paketlaringizdan birini'),
          learn_line = replace(learn_line, '5-kundagi xabarlaringizda', 'keyingi vazifadagi xabarlaringizda')
@@ -343,17 +382,23 @@ begin
     if not found then
       raise exception 'ABORT: task #% is not a course-6.0 task', _r.id;
     end if;
-    select public.challenge_task_post_length(public.challenge_task_render_post(t)) into _len
-      from public.challenge_tasks t where t.id = _r.id;
-    if _len > 980 then
-      raise exception 'ABORT: task #% post is % characters — too long for a photo caption (<= 980 kept as margin)', _r.id, _len;
+    -- what Telegram counts for a caption: the VISIBLE text (tags out, entities decoded), in UTF-16 units
+    select replace(replace(replace(regexp_replace(public.challenge_task_render_post(t), '<[^>]*>', '', 'g'),
+                                   '&lt;', '<'), '&gt;', '>'), '&amp;', '&')
+      into _txt from public.challenge_tasks t where t.id = _r.id;
+    _len := char_length(_txt) + (select count(*)::int from regexp_split_to_table(_txt, '') c where ascii(c) > 65535);
+    if _len > 1000 then
+      -- too long to ride under the image: posted as text instead (the worker's own fallback), never a failed deploy
+      update public.challenge_tasks set image_url = null where id = _r.id;
+      _no_image := _no_image || jsonb_build_object('task_id', _r.id, 'caption_len', _len);
     end if;
   end loop;
 
   insert into public.admin_actions (actor_user_id, action, details)
   values (null, 'challenge_tasks_rescheduled', jsonb_build_object(
-    'marker', '20261005112000', 'rule', 'Mon/Wed/Fri 09:00, on time until next day 23:59, no late window',
+    'marker', '20261005193000', 'rule', 'Mon/Wed/Fri 09:00, on time until next day 23:59, no late window',
     'kept_posted', jsonb_build_array(2),
     'cancelled', jsonb_build_array(4, 7, 8, 9, 13, 14, 19, 20, 22, 24),
-    'drafts_for_approval', jsonb_build_array(6, 10, 26, 11, 12, 15, 16, 17, 18, 21, 23, 25), 'at', now()));
+    'drafts_for_approval', jsonb_build_array(6, 10, 26, 11, 12, 15, 16, 17, 18, 21, 23, 25),
+    'posted_as_text_caption_too_long', _no_image, 'at', now()));
 end $$;
