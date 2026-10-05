@@ -134,7 +134,9 @@ Deno.test("posts: sent → recorded with the message id; 429 → left leased (no
   const res = await runWorker(ENV, io(f.admin, r.send).io, {});
   assertEquals(r.sent.length, 3);
   assertEquals(r.sent[0].payload.message_thread_id, 144);
-  assertEquals(r.sent[0].payload.reply_markup.inline_keyboard[0][0].url, "https://t.me/aicreatorsdarsliklari_bot?start=dt_1");
+  // no «open in the bot» button under a group post: students submit in the topic (owner, 2026-10-05)
+  assertEquals(r.sent[0].payload.reply_markup, undefined);
+  assertEquals(r.sent[2].payload.reply_markup, undefined);
   assertEquals(r.sent[0].opts.topicMissingAction, "challenge_task_topic_missing");
   assert(String(r.sent[2].payload.text).startsWith("📊 <b>Bugungi vazifa natijasi</b>"), "a summary item is rendered here");
   const rec = f.named("challenge_task_post_record").map((c) => c.args);
