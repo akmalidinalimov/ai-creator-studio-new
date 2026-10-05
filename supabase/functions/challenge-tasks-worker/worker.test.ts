@@ -185,7 +185,7 @@ Deno.test("posts: sent → recorded with the message id; 429 → left leased (no
   assertEquals(r.sent[0].payload.reply_markup, undefined);
   assertEquals(r.sent[2].payload.reply_markup, undefined);
   assertEquals(r.sent[0].opts.topicMissingAction, "challenge_task_topic_missing");
-  assert(String(r.sent[2].payload.text).startsWith("📊 <b>Bugungi vazifa natijasi</b>"), "a summary item is rendered here");
+  assert(String(r.sent[2].payload.text).startsWith("📊 <b>Vazifa natijasi</b>"), "a summary item is rendered here");
   const rec = f.named("challenge_task_post_record").map((c) => c.args);
   assertEquals(rec.length, 2, "the rate-limited post is NOT recorded (its lease expires; the next run retries)");
   assertEquals(rec[0], { _task_id: 1, _group_id: "g1", _kind: "task", _token: "t1", _message_id: 500, _error: null });

@@ -182,7 +182,7 @@ export function ChallengeTaskResults({ tasks, groups, today }: { tasks: TaskRow[
           {[...byGroup.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([g, v]) => (
             <Badge key={g} variant="secondary">{g}: {v.accepted}/{v.total} ✓</Badge>
           ))}
-          <Badge variant="outline">«Kunlik vazifalar» topikli guruhlar: {groups.filter((g) => g.daily_task_topic_id).length}</Badge>
+          <Badge variant="outline">«Qo‘shimcha vazifalar» topikli guruhlar: {groups.filter((g) => g.daily_task_topic_id).length}</Badge>
         </div>
       )}
 

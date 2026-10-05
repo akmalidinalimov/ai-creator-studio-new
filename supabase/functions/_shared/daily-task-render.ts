@@ -1,4 +1,4 @@
-// KUNLIK VAZIFALAR (Challenge 6.0 daily tasks): the ONE renderer for everything the bot (PR-4) and the worker
+// QO‘SHIMCHA VAZIFALAR (Challenge 6.0 extra tasks; «KUNLIK VAZIFALAR» until 2026-10-05): the ONE renderer for everything the bot (PR-4) and the worker
 // (PR-5) show about a daily-task submission. PURE: no I/O, no clock, no env. The SQL engine decides everything
 // (status, points, attribution, which buttons make sense — spec I1); this module only turns the engine's
 // payload (challenge_task_payload / challenge_task_card) into Telegram HTML + inline keyboards, so a receipt the
@@ -18,6 +18,9 @@ export interface DtTaskRef {
   day_no?: number | null;
   type?: string | null;
   title?: string | null;
+  /** Calendar days from task_date to the day the work was first posted (20261005111000). With grace_days a task can
+   *  be ON TIME (late_days 0) on the next day, so the label reads this, not late_days. */
+  rel_days?: number | null;
 }
 
 export interface DtSubmission {
@@ -205,7 +208,7 @@ const UZ: Copy = {
   acceptedOnTime: (label, pts) => `✅ ${label} qabul qilindi${pts ? `: ${pts}` : ""}.`,
   acceptedLate: (label, pts) => `✅ ${label} uchun qabul qilindi${pts ? `, ${pts} (kechikkan — yarim ball)` : ""}.`,
   points: (n) => `+${n} ball`,
-  streak: (n) => `🔥 ${n} kun ketma-ket`,
+  streak: (n) => `🔥 ${n} ta vazifa ketma-ket`,
   milestone: (n) => `🎉 Seriya bonusi: +${n} ball!`,
   heldAiOff: (name) => `👀 ${name ? `${name}, q` : "Q"}abul qilindi — tekshiruvdan so‘ng ball qo‘shiladi.`,
   heldIg: (name) => `👀 ${name ? `${name}, I` : "I"}nstagram ishingiz qabul qilindi — tekshiruvdan so‘ng ball qo‘shiladi.`,
@@ -213,16 +216,16 @@ const UZ: Copy = {
   needsMore: (label, list) => `✍️ ${label} uchun yana kerak: ${list}. Shu topikka yuboring — o‘zi qo‘shiladi.`,
   igShare: "✍️ Bu «share» havolasi. Postni oching → ⋯ → «Havolani nusxalash» orqali olingan havolani yuboring.",
   igReused: "✍️ Bu post havolasi avval ishlatilgan. Shu vazifa uchun yangi post havolasini yuboring.",
-  igOld: "🤔 Bu post bugun joylanganga o‘xshamaydi. Shu vazifa uchun yangi post joylang.",
+  igOld: "🤔 Bu post yaqinda joylanganga o‘xshamaydi. Shu vazifa uchun yangi post joylang.",
   igInvalid: "🤔 Bu Instagram havolasi ochilmadi. Havolani qayta nusxalab yuboring.",
   rejected: (label, why) => `🤔 ${label} qabul qilinmadi: ${why}.`,
   attemptsLeft: (n) => `Tuzatib, yana ${n} marta yuborishingiz mumkin.`,
-  attemptsNone: "Bu vazifa uchun urinishlar tugadi. Ertangi vazifada omad!",
+  attemptsNone: "Bu vazifa uchun urinishlar tugadi. Keyingi vazifada omad!",
   withdrawn: "❌ Bu xabar topshiriq sifatida hisoblanmaydi. Adashib bosgan bo‘lsangiz — «↩️ Qaytarish».",
   merged: "🔗 Bu ish siz tanlagan vazifadagi ishingizga qo‘shildi.",
   expired: (label) => `⌛ ${label} muddati tugadi — ish to‘liq bo‘lmagani uchun hisoblanmadi.`,
   voided: "Bu ish hisobdan chiqarilgan.",
-  welcome: (name) => `👋 <b>${name || "Do‘stim"}</b>, siz AI Creators platformasiga qo‘shildingiz (sinov hisobi). Kunlik vazifalardagi ishlaringiz shu yerda hisoblanadi.`,
+  welcome: (name) => `👋 <b>${name || "Do‘stim"}</b>, siz AI Creators platformasiga qo‘shildingiz (sinov hisobi). Qo‘shimcha vazifalardagi ishlaringiz shu yerda hisoblanadi.`,
   missing: {
     screenshot: "skrinshot", video: "video", file: "fayl", text: "qisqa matn (izoh)", link: "havola",
     ig_link: "Instagram post havolasi", voice: "ovozli xabar", instagram_handle: "Instagram username (botga /instagram deb yozing)",
@@ -252,12 +255,12 @@ const UZ: Copy = {
   btnIg: "📸 Instagram profil",
   btnBot: "🤖 Botga ulanish",
   held: (name) => `📌 ${name ? `${name}, i` : "I"}shingizni hisoblash uchun profilingiz bu guruhga biriktirilishi kerak. Admin bilan bog‘laning — xabaringiz saqlanib qoladi (24 soat).`,
-  wrongGroup: (name) => `📍 ${name ? `${name}, b` : "B"}u boshqa guruhning «Kunlik vazifalar» topigi. Ishingizni o‘z guruhingiz topigiga yuboring.`,
+  wrongGroup: (name) => `📍 ${name ? `${name}, b` : "B"}u boshqa guruhning «Qo‘shimcha vazifalar» topigi. Ishingizni o‘z guruhingiz topigiga yuboring.`,
   btnOwnTopic: "📅 Mening topigim",
   beforeOpen: "⏰ Bugungi vazifa hali e’lon qilinmagan (09:00). Vazifa chiqqach ishingizni shu topikka qayta yuboring.",
   noOpenTask: "📭 Hozir ochiq vazifa yo‘q — bu xabar hisobga olinmadi.",
   targetClosed: "🔒 Bu vazifa yopilgan — muddati o‘tgan vazifaga ish qabul qilinmaydi.",
-  attemptsExhausted: (max) => `🤔 Bu vazifa uchun urinishlar tugadi (${max}/${max}). Ertangi vazifada omad!`,
+  attemptsExhausted: (max) => `🤔 Bu vazifa uchun urinishlar tugadi (${max}/${max}). Keyingi vazifada omad!`,
   okMove: "✅ Ko‘chirildi",
   okWithdraw: "❌ Hisobdan chiqarildi. Qaytarish uchun «↩️ Qaytarish».",
   okRestore: "↩️ Qaytarildi",
@@ -278,7 +281,7 @@ const UZ: Copy = {
     closed: "Vazifa yopilgan — endi o‘zgartirib bo‘lmaydi.",
   },
   corrDefault: "Hozircha bo‘lmadi — birozdan so‘ng qayta urinib ko‘ring.",
-  cardWhere: "📍 Ishingizni guruhingizdagi «Kunlik vazifalar» topigiga yuboring (uy vazifasi topigiga emas).",
+  cardWhere: "📍 Ishingizni guruhingizdagi «Qo‘shimcha vazifalar» topigiga yuboring (uy vazifasi topigiga emas).",
   cardNotYourGroup: "ℹ️ Bu vazifa sizning guruhingiz uchun emas.",
   cardClosed: "🔒 Bu vazifa yopilgan.",
   cardPaused: "⏳ Ballar hisobi hali yoqilmagan.",
@@ -287,15 +290,15 @@ const UZ: Copy = {
     checking: "👀 Ishingiz tekshirilmoqda",
     needs_more: "✍️ Ishingiz to‘liq emas",
   },
-  btnTopic: "📅 Kunlik vazifalar topigi",
+  btnTopic: "📌 Qo‘shimcha vazifalar topigi",
   cardMissing: "🤔 Bu vazifa topilmadi yoki hali tasdiqlanmagan.",
   cardUnavailable: "Hozircha ochib bo‘lmadi — birozdan so‘ng qayta urinib ko‘ring.",
   igHave: (h) => `📸 Instagram profilingiz: <b>@${h}</b>. O‘zgartirish kerak bo‘lsa — Sozlamalar.`,
   igNone: "📸 Instagram vazifalari uchun Instagram username’ingizni profilingizga qo‘shing: Sozlamalar → Instagram.",
   btnSettings: "⚙️ Sozlamalarni ochish",
-  u1Daily: "📅 Kunlik vazifalar esa guruhdagi <b>KUNLIK VAZIFALAR</b> topigiga yuboriladi.",
+  u1Daily: "📌 Qo‘shimcha vazifalar esa guruhdagi <b>QO‘SHIMCHA VAZIFALAR</b> topigiga yuboriladi.",
   btnHwTopic: "📚 Uy vazifasi topigi",
-  btnDailyTopic: "📅 Kunlik vazifalar topigi",
+  btnDailyTopic: "📌 Qo‘shimcha vazifalar topigi",
 };
 
 /** 1 балл · 2–4 балла · 5+ баллов (11–14 → баллов). */
@@ -315,7 +318,7 @@ const RU: Copy = {
   acceptedOnTime: (label, pts) => `✅ ${label} принято${pts ? `: ${pts}` : ""}.`,
   acceptedLate: (label, pts) => `✅ ${label} принято${pts ? `, ${pts} (с опозданием — половина баллов)` : ""}.`,
   points: (n) => `+${n} ${ruBall(n)}`,
-  streak: (n) => `🔥 ${n} дн. подряд`,
+  streak: (n) => `🔥 ${n} подряд`,
   milestone: (n) => `🎉 Бонус за серию: +${n} ${ruBall(n)}!`,
   heldAiOff: (name) => `👀 ${name ? `${name}, п` : "П"}ринято — баллы добавятся после проверки.`,
   heldIg: (name) => `👀 ${name ? `${name}, в` : "В"}аша работа в Instagram принята — баллы добавятся после проверки.`,
@@ -323,16 +326,16 @@ const RU: Copy = {
   needsMore: (label, list) => `✍️ Для «${label}» ещё нужно: ${list}. Отправьте сюда — добавится само.`,
   igShare: "✍️ Это ссылка «share». Откройте пост → ⋯ → «Копировать ссылку» и отправьте её.",
   igReused: "✍️ Эта ссылка на пост уже использовалась. Отправьте ссылку на новый пост для этого задания.",
-  igOld: "🤔 Похоже, этот пост опубликован не сегодня. Опубликуйте новый пост для этого задания.",
+  igOld: "🤔 Похоже, этот пост опубликован не недавно. Опубликуйте новый пост для этого задания.",
   igInvalid: "🤔 Ссылка на Instagram не открылась. Скопируйте её заново и отправьте.",
   rejected: (label, why) => `🤔 ${label} не принято: ${why}.`,
   attemptsLeft: (n) => `Исправьте и отправьте ещё раз (осталось попыток: ${n}).`,
-  attemptsNone: "Попытки для этого задания закончились. Удачи с завтрашним!",
+  attemptsNone: "Попытки для этого задания закончились. Удачи со следующим!",
   withdrawn: "❌ Это сообщение не считается сдачей. Нажали по ошибке — «↩️ Вернуть».",
   merged: "🔗 Эта работа добавлена к вашей работе в выбранном задании.",
   expired: (label) => `⌛ ${label}: срок истёк — работа была неполной и не засчитана.`,
   voided: "Эта работа аннулирована.",
-  welcome: (name) => `👋 <b>${name || "Друг"}</b>, вы добавлены на платформу AI Creators (пробный аккаунт). Ваши работы в «Kunlik vazifalar» засчитываются здесь.`,
+  welcome: (name) => `👋 <b>${name || "Друг"}</b>, вы добавлены на платформу AI Creators (пробный аккаунт). Ваши работы в «Qo‘shimcha vazifalar» засчитываются здесь.`,
   missing: {
     screenshot: "скриншот", video: "видео", file: "файл", text: "короткий текст (пояснение)", link: "ссылка",
     ig_link: "ссылка на пост в Instagram", voice: "голосовое сообщение", instagram_handle: "Instagram-username (напишите боту /instagram)",
@@ -362,12 +365,12 @@ const RU: Copy = {
   btnIg: "📸 Профиль Instagram",
   btnBot: "🤖 Подключить бота",
   held: (name) => `📌 ${name ? `${name}, ч` : "Ч"}тобы засчитать работу, ваш профиль должен быть привязан к этой группе. Свяжитесь с администратором — сообщение сохранится (24 часа).`,
-  wrongGroup: (name) => `📍 ${name ? `${name}, э` : "Э"}то топик «Kunlik vazifalar» другой группы. Отправьте работу в топик своей группы.`,
+  wrongGroup: (name) => `📍 ${name ? `${name}, э` : "Э"}то топик «Qo‘shimcha vazifalar» другой группы. Отправьте работу в топик своей группы.`,
   btnOwnTopic: "📅 Мой топик",
   beforeOpen: "⏰ Сегодняшнее задание ещё не опубликовано (09:00). После публикации отправьте работу сюда снова.",
   noOpenTask: "📭 Сейчас нет открытого задания — сообщение не засчитано.",
   targetClosed: "🔒 Это задание закрыто — работы по просроченным заданиям не принимаются.",
-  attemptsExhausted: (max) => `🤔 Попытки для этого задания закончились (${max}/${max}). Удачи с завтрашним!`,
+  attemptsExhausted: (max) => `🤔 Попытки для этого задания закончились (${max}/${max}). Удачи со следующим!`,
   okMove: "✅ Перенесено",
   okWithdraw: "❌ Не засчитывается. Чтобы вернуть — «↩️ Вернуть».",
   okRestore: "↩️ Возвращено",
@@ -388,7 +391,7 @@ const RU: Copy = {
     closed: "Задание закрыто — изменить уже нельзя.",
   },
   corrDefault: "Пока не получилось — попробуйте чуть позже.",
-  cardWhere: "📍 Отправьте работу в топик «Kunlik vazifalar» вашей группы (не в топик домашних заданий).",
+  cardWhere: "📍 Отправьте работу в топик «Qo‘shimcha vazifalar» вашей группы (не в топик домашних заданий).",
   cardNotYourGroup: "ℹ️ Это задание не для вашей группы.",
   cardClosed: "🔒 Это задание закрыто.",
   cardPaused: "⏳ Подсчёт баллов ещё не включён.",
@@ -397,15 +400,15 @@ const RU: Copy = {
     checking: "👀 Ваша работа проверяется",
     needs_more: "✍️ Ваша работа неполная",
   },
-  btnTopic: "📅 Топик «Kunlik vazifalar»",
+  btnTopic: "📌 Топик «Qo‘shimcha vazifalar»",
   cardMissing: "🤔 Задание не найдено или ещё не утверждено.",
   cardUnavailable: "Пока не удалось открыть — попробуйте чуть позже.",
   igHave: (h) => `📸 Ваш профиль Instagram: <b>@${h}</b>. Изменить — в Настройках.`,
   igNone: "📸 Для заданий в Instagram добавьте свой username в профиль: Настройки → Instagram.",
   btnSettings: "⚙️ Открыть настройки",
-  u1Daily: "📅 А ежедневные задания отправляются в топик <b>KUNLIK VAZIFALAR</b> группы.",
+  u1Daily: "📌 А дополнительные задания отправляются в топик <b>QO‘SHIMCHA VAZIFALAR</b> группы.",
   btnHwTopic: "📚 Топик домашних заданий",
-  btnDailyTopic: "📅 Топик ежедневных заданий",
+  btnDailyTopic: "📌 Топик дополнительных заданий",
 };
 
 const EN: Copy = {
@@ -415,7 +418,7 @@ const EN: Copy = {
   acceptedOnTime: (label, pts) => `✅ ${label} accepted${pts ? `: ${pts}` : ""}.`,
   acceptedLate: (label, pts) => `✅ ${label} accepted${pts ? `, ${pts} (late — half points)` : ""}.`,
   points: (n) => `+${n} pts`,
-  streak: (n) => `🔥 ${n} days in a row`,
+  streak: (n) => `🔥 ${n} in a row`,
   milestone: (n) => `🎉 Streak bonus: +${n} pts!`,
   heldAiOff: (name) => `👀 ${name ? `${name}, r` : "R"}eceived — points are added after the check.`,
   heldIg: (name) => `👀 ${name ? `${name}, y` : "Y"}our Instagram work was received — points are added after the check.`,
@@ -423,16 +426,16 @@ const EN: Copy = {
   needsMore: (label, list) => `✍️ ${label} still needs: ${list}. Send it here — it attaches by itself.`,
   igShare: "✍️ That's a «share» link. Open the post → ⋯ → «Copy link» and send that link.",
   igReused: "✍️ That post link was already used. Send the link to a new post for this task.",
-  igOld: "🤔 This post doesn't look like it was published today. Publish a new post for this task.",
+  igOld: "🤔 This post doesn't look recent. Publish a new post for this task.",
   igInvalid: "🤔 That Instagram link didn't open. Copy it again and send it.",
   rejected: (label, why) => `🤔 ${label} was not accepted: ${why}.`,
   attemptsLeft: (n) => `Fix it and send again (${n} attempts left).`,
-  attemptsNone: "No attempts left for this task. Good luck with tomorrow's!",
+  attemptsNone: "No attempts left for this task. Good luck with the next one!",
   withdrawn: "❌ This message doesn't count as a submission. Tapped by mistake? «↩️ Undo».",
   merged: "🔗 This work was added to your submission for the task you chose.",
   expired: (label) => `⌛ ${label} closed — the work was incomplete and didn't count.`,
   voided: "This work was voided.",
-  welcome: (name) => `👋 <b>${name || "Friend"}</b>, you've been added to the AI Creators platform (trial account). Your daily-task work counts right here.`,
+  welcome: (name) => `👋 <b>${name || "Friend"}</b>, you've been added to the AI Creators platform (trial account). Your extra-task work counts right here.`,
   missing: {
     screenshot: "a screenshot", video: "a video", file: "a file", text: "a short text (caption)", link: "a link",
     ig_link: "the Instagram post link", voice: "a voice message", instagram_handle: "your Instagram username (send /instagram to the bot)",
@@ -462,12 +465,12 @@ const EN: Copy = {
   btnIg: "📸 Instagram profile",
   btnBot: "🤖 Connect the bot",
   held: (name) => `📌 ${name ? `${name}, t` : "T"}o count your work, your profile must be attached to this group. Please contact an admin — your message is kept (24 hours).`,
-  wrongGroup: (name) => `📍 ${name ? `${name}, t` : "T"}his is another group's «Kunlik vazifalar» topic. Please post your work in your own group's topic.`,
+  wrongGroup: (name) => `📍 ${name ? `${name}, t` : "T"}his is another group's «Qo‘shimcha vazifalar» topic. Please post your work in your own group's topic.`,
   btnOwnTopic: "📅 My topic",
   beforeOpen: "⏰ Today's task isn't posted yet (09:00). Once it is, send your work here again.",
   noOpenTask: "📭 There's no open task right now — this message didn't count.",
   targetClosed: "🔒 That task is closed — work for past-due tasks isn't accepted.",
-  attemptsExhausted: (max) => `🤔 No attempts left for this task (${max}/${max}). Good luck with tomorrow's!`,
+  attemptsExhausted: (max) => `🤔 No attempts left for this task (${max}/${max}). Good luck with the next one!`,
   okMove: "✅ Moved",
   okWithdraw: "❌ Doesn't count now. To undo, tap «↩️ Undo».",
   okRestore: "↩️ Restored",
@@ -488,7 +491,7 @@ const EN: Copy = {
     closed: "The task is closed — it can't be changed now.",
   },
   corrDefault: "That didn't work right now — please try again shortly.",
-  cardWhere: "📍 Post your work in your group's «Kunlik vazifalar» topic (not the homework topic).",
+  cardWhere: "📍 Post your work in your group's «Qo‘shimcha vazifalar» topic (not the homework topic).",
   cardNotYourGroup: "ℹ️ This task isn't for your group.",
   cardClosed: "🔒 This task is closed.",
   cardPaused: "⏳ Points aren't being counted yet.",
@@ -497,15 +500,15 @@ const EN: Copy = {
     checking: "👀 Your work is being checked",
     needs_more: "✍️ Your work is incomplete",
   },
-  btnTopic: "📅 Daily tasks topic",
+  btnTopic: "📌 Extra tasks topic",
   cardMissing: "🤔 That task wasn't found or isn't approved yet.",
   cardUnavailable: "Couldn't open it right now — please try again shortly.",
   igHave: (h) => `📸 Your Instagram profile: <b>@${h}</b>. To change it, open Settings.`,
   igNone: "📸 For Instagram tasks, add your Instagram username to your profile: Settings → Instagram.",
   btnSettings: "⚙️ Open settings",
-  u1Daily: "📅 Daily tasks go to the group's <b>KUNLIK VAZIFALAR</b> topic.",
+  u1Daily: "📌 Extra tasks go to the group's <b>QO‘SHIMCHA VAZIFALAR</b> topic.",
   btnHwTopic: "📚 Homework topic",
-  btnDailyTopic: "📅 Daily tasks topic",
+  btnDailyTopic: "📌 Extra tasks topic",
 };
 
 export const DAILY_COPY: Record<Locale, Copy> = { uz: UZ, ru: RU, en: EN };
@@ -522,7 +525,9 @@ function num(v: unknown): number | null {
 /** "Bugungi vazifa" / "Kechagi vazifa (30-sentabr)" / "28-sentabr vazifasi" — relative to the day the work was POSTED. */
 export function taskLabel(sub: DtSubmission | null | undefined, locale: Locale = "uz"): string {
   const c = copyFor(locale);
-  const late = num(sub?.late_days) ?? 0;
+  // rel_days (calendar) when the engine sends it; late_days (days past the deadline) is only a fallback for an older
+  // payload — with grace_days a next-day submission is late_days 0 but is not "today's" task.
+  const late = num(sub?.task?.rel_days) ?? num(sub?.late_days) ?? 0;
   const d = formatTaskDate(sub?.task?.date ?? "", locale);
   if (late <= 0) return c.todayTask;
   if (late === 1) return c.yesterdayTask(d);

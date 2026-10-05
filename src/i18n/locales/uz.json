@@ -1440,18 +1440,18 @@
     "loading": "Darsingiz ochilmoqda…"
   },
   "dailyTasks": {
-    "title": "Kunlik vazifalar",
+    "title": "Qo'shimcha vazifalar",
     "subtitle": "Har vazifa kuni bitta vazifa. Bajaring — ball va seriya oling.",
     "streak": "{{days}} kun ketma-ket",
     "points": "{{points}} ball",
-    "openTopic": "«Kunlik vazifalar» topikini ochish",
+    "openTopic": "«Qo'shimcha vazifalar» topikini ochish",
     "emptyTitle": "Hali vazifa yo'q",
     "emptyBody": "Birinchi vazifa e'lon qilinganda shu yerda ko'rinadi.",
     "loadError": "Vazifalarni yuklab bo'lmadi.",
-    "notInChallengeTitle": "Kunlik vazifalar yo'q",
+    "notInChallengeTitle": "Qo'shimcha vazifalar yo'q",
     "notInChallengeBody": "Bu bo'lim challenge guruhlari o'quvchilari uchun.",
     "topicOnlyTitle": "Vazifalar guruhingizda",
-    "topicOnlyBody": "Kunlik vazifani guruhingizdagi «Kunlik vazifalar» topikiga yuboring — bot o'zi qabul qiladi va hisoblaydi.",
+    "topicOnlyBody": "Qo'shimcha vazifani guruhingizdagi «Qo'shimcha vazifalar» topikiga yuboring — bot o'zi qabul qiladi va hisoblaydi.",
     "today": "Bugun",
     "dayNo": "{{n}}-kun",
     "instagram": "Instagram",
@@ -1486,12 +1486,12 @@
       "yourWork": "Sizning ishingiz",
       "pointsEarned": "+{{n}} ball",
       "pointsWorth": "{{n}} ball",
-      "whereBody": "Ishingiz guruhingizdagi «Kunlik vazifalar» topikiga sizning ismingiz bilan joylanadi — sinfdoshlaringiz ko'radi.",
+      "whereBody": "Ishingiz guruhingizdagi «Qo'shimcha vazifalar» topikiga sizning ismingiz bilan joylanadi — sinfdoshlaringiz ko'radi.",
       "notFound": "Vazifa topilmadi."
     },
     "reasons": {
-      "disabled": "Kunlik vazifalar hozir to'xtatilgan.",
-      "miniapp_off": "Ilovadan topshirish hali yoqilmagan. Ishingizni guruhdagi «Kunlik vazifalar» topikiga yuboring.",
+      "disabled": "Qo'shimcha vazifalar hozir to'xtatilgan.",
+      "miniapp_off": "Ilovadan topshirish hali yoqilmagan. Ishingizni guruhdagi «Qo'shimcha vazifalar» topikiga yuboring.",
       "no_profile": "Bu bo'lim o'quvchilar uchun.",
       "staff": "Bu bo'lim o'quvchilar uchun.",
       "held_sender": "Profilingiz hali bu guruhga biriktirilmagan. Admin bilan bog'laning — topikdagi xabarlaringiz saqlanib qoladi.",
@@ -1540,7 +1540,7 @@
         "expired": "So'rov eskirdi — qayta yuboring.",
         "refused": "Bu ishni qabul qilib bo'lmadi. Admin bilan bog'laning.",
         "capture_rejected": "Ishingiz topikka joylandi, lekin hisobga olinmadi. Admin bilan bog'laning.",
-        "topic_not_configured": "Guruhingizning «Kunlik vazifalar» topiki sozlanmagan. Admin bilan bog'laning.",
+        "topic_not_configured": "Guruhingizning «Qo'shimcha vazifalar» topiki sozlanmagan. Admin bilan bog'laning.",
         "network": "Internet aloqasini tekshiring va qayta urinib ko'ring.",
         "generic": "Xatolik yuz berdi. Qayta urinib ko'ring."
       },
@@ -1586,7 +1586,7 @@
       "saved": "Saqlandi."
     },
     "dashboard": {
-      "title": "Kunlik vazifa",
+      "title": "Qo'shimcha vazifa",
       "action": "Barchasi",
       "todayNone": "Bugun vazifa yo'q",
       "cta": "Ochish"

@@ -57,7 +57,7 @@ describe("hidden while miniapp=false", () => {
     render(<MemoryRouter><ChallengeTasks /></MemoryRouter>);
     expect(await screen.findByText(i18n.t("dailyTasks.topicOnlyTitle"))).toBeInTheDocument();
     expect(screen.queryByText("Bugungi vazifa")).toBeNull();
-    expect(screen.getByRole("link", { name: /Kunlik vazifalar» topikini ochish/ })).toHaveAttribute("href", "https://t.me/c/4440955972/144");
+    expect(screen.getByRole("link", { name: /Qo'shimcha vazifalar» topikini ochish/ })).toHaveAttribute("href", "https://t.me/c/4440955972/144");
   });
 
   it("outside the challenge: nothing on the Dashboard, a plain note on the page", async () => {
