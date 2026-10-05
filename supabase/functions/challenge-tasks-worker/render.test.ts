@@ -2,10 +2,17 @@
 // text) is asserted equal to POST_BUTTON_TEXT by the PGlite harness (_challenge/testing/daily-tasks-worker-check.ts).
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
-  POST_BUTTON_TEXT, postKeyboard, renderBackfillDm, renderEveningDm, renderMorningDm, renderResultDm, renderSummary, toLocale,
+  CAPTION_MAX, captionLength, POST_BUTTON_TEXT, postKeyboard, renderBackfillDm, renderEveningDm, renderMorningDm, renderResultDm, renderSummary, toLocale,
 } from "./render.ts";
 
 const BOT = "aicreatorsdarsliklari_bot";
+
+Deno.test("captionLength: tags out, entities decoded, UTF-16 units — the way Telegram counts a caption", () => {
+  assertEquals(captionLength("<b>Salom</b> &amp; <i>dunyo</i>"), "Salom & dunyo".length);
+  assertEquals(captionLength("<blockquote>💡 a &lt; b</blockquote>"), "💡 a < b".length);
+  assertEquals(captionLength("📅"), 2, "an emoji outside the BMP is 2 UTF-16 units");
+  assertEquals(CAPTION_MAX, 1024);
+});
 
 Deno.test("postKeyboard: the group-safe t.me/<bot>?start=dt_<id> button (C10)", () => {
   assertEquals(postKeyboard(12, BOT), { inline_keyboard: [[{ text: POST_BUTTON_TEXT, url: `https://t.me/${BOT}?start=dt_12` }]] });

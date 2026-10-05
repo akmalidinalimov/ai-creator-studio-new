@@ -26,7 +26,7 @@ import { type DtPayload, type Locale, type Rendered, renderReceipt } from "../_s
 import { redactSecrets } from "../_shared/redact.ts";
 import type { SendResultOutcome } from "../_shared/telegram-send.ts";
 import {
-  renderBackfillDm, renderEveningDm, renderMorningDm, renderResultDm, renderSummary, toLocale,
+  CAPTION_MAX, captionLength, renderBackfillDm, renderEveningDm, renderMorningDm, renderResultDm, renderSummary, toLocale,
 } from "./render.ts";
 import { registerDailyTaskPoster, type RegisterInput, type SendFn } from "./registrar.ts";
 import { sendWeekApprovals } from "./week-approval.ts";
@@ -290,6 +290,17 @@ export async function runWorker(env: WorkerEnv, io: WorkerIO, req: WorkerRequest
     if (e) errors.push(`post_record: ${errCode(e)}`);
     else if (data?.ok !== true) inc(posts, "stale");
   };
+  // challenge_tasks.image_url (migration 20261005060000): the day image a task is posted with, https only; a failed
+  // read is "no image" (the text post), never a skipped post.
+  const taskImage = async (taskId: number): Promise<string | null> => {
+    try {
+      const { data } = await admin.from("challenge_tasks").select("image_url").eq("id", taskId).maybeSingle();
+      const u = typeof data?.image_url === "string" ? data.image_url.trim() : "";
+      return /^https:\/\/[^\s]{4,490}$/.test(u) ? u : null;
+    } catch (_e) {
+      return null;
+    }
+  };
   if (cfg.post !== false) {
     const { data, error } = await admin.rpc("challenge_task_post_claim", { _limit: POST_LIMIT });
     if (error) errors.push(`post_claim: ${errCode(error)}`);
@@ -310,13 +321,40 @@ export async function runWorker(env: WorkerEnv, io: WorkerIO, req: WorkerRequest
       // NO button on group posts (owner, 2026-10-05): students submit IN the «KUNLIK VAZIFALAR» topic, and a
       // «📲 Vazifani botda ochish» button under the task sent them to the bot instead. postKeyboard() stays for the
       // harness, unused here; the SQL fallback poster dropped it too (migration 20261005050000).
-      const { outcome, result } = await io.send("sendMessage", {
+      //
+      // THE DAY IMAGE (owner, 2026-10-05): a task with challenge_tasks.image_url is posted as that photo with the task
+      // as its caption — one message, so replies and the recorded message id work as before. The caption limit is
+      // 1024 visible characters: a longer post, or a photo Telegram refuses (an unreachable URL, …), falls back to the
+      // plain text post in the same run, and each fallback leaves a DB-visible row. Rate limits and a missing topic
+      // are NOT retried as text (the text would hit the same wall).
+      const thread = Number(it.thread_id) > 1 ? { message_thread_id: Number(it.thread_id) } : {};
+      const sendOpts = { admin, purpose: `challenge_task_post_${it.kind}`, recipientId: chat, topicMissingAction: TOPIC_MISSING };
+      let sent: { outcome: SendResultOutcome; result: any } | null = null;
+      const photo = it.kind === "task" ? await taskImage(Number(it.task_id)) : null;
+      if (photo) {
+        const len = captionLength(text);
+        if (len <= CAPTION_MAX) {
+          const r = await io.send("sendPhoto", { chat_id: chat, ...thread, photo, caption: text, parse_mode: "HTML" }, sendOpts);
+          if (r.outcome.ok || r.outcome.klass === "rate_limited" || r.outcome.klass === "topic_missing") {
+            sent = r;
+          } else {
+            await logHealth(admin, "challenge_task_post_photo_failed", {
+              task_id: Number(it.task_id), group_id: String(it.group_id), klass: r.outcome.klass, error: r.outcome.error, photo,
+            }, { source: "challenge-tasks-worker" });
+          }
+        } else {
+          await logHealth(admin, "challenge_task_post_caption_too_long", {
+            task_id: Number(it.task_id), group_id: String(it.group_id), length: len, max: CAPTION_MAX,
+          }, { source: "challenge-tasks-worker" });
+        }
+      }
+      const { outcome, result } = sent ?? await io.send("sendMessage", {
         chat_id: chat,
-        ...(Number(it.thread_id) > 1 ? { message_thread_id: Number(it.thread_id) } : {}),
+        ...thread,
         text,
         parse_mode: "HTML",
         disable_web_page_preview: true,
-      }, { admin, purpose: `challenge_task_post_${it.kind}`, recipientId: chat, topicMissingAction: TOPIC_MISSING });
+      }, sendOpts);
       const mid = Number(result?.message_id);
       if (outcome.ok && Number.isSafeInteger(mid) && mid > 0) {
         await postRecord(it, mid, null);
