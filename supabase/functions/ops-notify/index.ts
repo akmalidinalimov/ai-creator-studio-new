@@ -11,15 +11,13 @@
 // Body: { text: string, pr?: number } — when pr is present, the message carries the approve
 // keyboard (ops:a:<pr> / ops:reject:<pr>, handled admin-only by the bot webhook) + a PR link.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { sendTelegram } from "../_shared/telegram-send.ts";
+import { sendOpsCard } from "../_shared/ops-card.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-ops-notify-secret",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
-
-const REPO_URL = "https://github.com/akmalidinalimov/ai-creator-studio-new";
 
 const ctEq = (a: string, b: string) => {
   if (a.length !== b.length) return false;
@@ -58,40 +56,13 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Recipients: platform admins with a linked Telegram (same rule as platform_anomaly_digest).
-    const { data: roles } = await admin.from("user_roles").select("user_id").in("role", ["admin", "superadmin"] as any);
-    const ids = Array.from(new Set((roles || []).map((r: any) => r.user_id)));
-    const { data: profs } = ids.length
-      ? await admin.from("profiles").select("id, telegram_id").in("id", ids).not("telegram_id", "is", null).limit(3)
-      : { data: [] as any[] };
-
-    const reply_markup = pr
-      ? {
-        inline_keyboard: [
-          [{ text: "✅ Ko'rib tasdiqlash", callback_data: `ops:a:${pr}` },
-           { text: "❌ Rad etish", callback_data: `ops:reject:${pr}` }],
-          [{ text: `🔍 PR #${pr} ni ochish`, url: `${REPO_URL}/pull/${pr}` }],
-        ],
-      }
-      : undefined;
-
-    let sent = 0;
-    for (const p of (profs || []) as any[]) {
-      // sendTelegram never throws (transport error → transient outcome) and records any
-      // non-delivery of this ops DM to admin_actions by construction (record defaults true).
-      const out = await sendTelegram(
-        botToken,
-        "sendMessage",
-        {
-          chat_id: Number(p.telegram_id),
-          text,
-          parse_mode: "HTML",
-          disable_web_page_preview: true,
-          ...(reply_markup ? { reply_markup } : {}),
-        },
-        { admin, purpose: "ops_notify", recipientId: p.telegram_id },
-      );
-      if (out.ok) sent++;
+    // Recipients + card: _shared/ops-card.ts (the same card ops-agent-log sends when an ops-agent PR opens).
+    // Every non-delivery is recorded by sendTelegram; a failed admin lookup is returned, never "sent to nobody".
+    const { sent, error: recipientsError } = await sendOpsCard(admin, botToken, text, pr, "ops_notify");
+    if (recipientsError) {
+      return new Response(JSON.stringify({ ok: false, sent, error: recipientsError }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     return new Response(JSON.stringify({ ok: true, sent }), {
