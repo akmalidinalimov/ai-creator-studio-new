@@ -1,5 +1,6 @@
 // Resolves the URL for any lesson video source (upload | youtube | vimeo | mux | bunny).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { logHealthOnce } from "../_shared/edge.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -66,18 +67,30 @@ Deno.serve(async (req) => {
     }
     const isStaff = isAdmin || isTeacherOfCourse;
 
+    // Every refusal is DB-visible (2026-10-06, support auto-resolver): the support agent's snapshot reads
+    // video_access_denied to explain "the video won't open" — a 403 that lives only in the browser was invisible.
+    // One row per (user, lesson, reason) per Tashkent day: a student retrying the player never floods the log.
+    // The RESPONSE keeps its original code (TeacherLessons / lessonVideoState read "forbidden" / "module_locked" /
+    // "provisional_locked"); only the logged reason is finer.
+    const denied = async (reason: string, code: string = reason) => {
+      await logHealthOnce(admin, "video_access_denied", `${userId}:${lessonId}:${reason}`,
+        { reason, lesson_id: lessonId, module_id: (lesson as any).module_id ?? null, course_id: courseId },
+        { source: "lesson-video-url", targetUserId: userId });
+      return new Response(JSON.stringify({ error: code }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    };
+
     // has_module_access (tier/module-limit gate): enforced for students only. Admins and
     // teachers-of-course review the whole course, not their students' tier/module limit.
     if (!isStaff) {
       const { data: __allowed } = await admin.rpc("has_module_access", { _user_id: userId, _module_id: (lesson as any).module_id });
       if (!__allowed) {
-        return new Response(JSON.stringify({ error: "module_locked" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return await denied("module_locked");
       }
     }
 
     // Published: required for every non-admin caller, including a teacher-of-course.
     if (!isAdmin && !lesson.published) {
-      return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return await denied("unpublished", "forbidden");
     }
 
     if (!isStaff) {
@@ -85,10 +98,10 @@ Deno.serve(async (req) => {
       // Paid accounts (default) pass through. Admins/teachers-of-course already bypassed above.
       const { data: prof } = await admin.from("profiles").select("account_type").eq("id", userId).maybeSingle();
       if ((prof as any)?.account_type === "provisional") {
-        return new Response(JSON.stringify({ error: "provisional_locked" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return await denied("provisional_locked");
       }
       if (!courseId) {
-        return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return await denied("no_course", "forbidden");
       }
       const { data: enr } = await admin
         .from("enrollments")
@@ -97,7 +110,7 @@ Deno.serve(async (req) => {
         .eq("course_id", courseId)
         .maybeSingle();
       if (!enr) {
-        return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return await denied("not_enrolled", "forbidden");
       }
     }
 
