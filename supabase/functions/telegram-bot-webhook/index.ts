@@ -2414,8 +2414,17 @@ async function resolveProfileForTelegramUser(
     } catch (_e) { /* ignore */ }
   }
   if (tgUsername && (profile.telegram_username || "").toLowerCase() !== tgUsername) {
-    await admin.from("profiles").update({ telegram_username: tgUsername }).eq("id", profile.id);
-    profile.telegram_username = tgUsername;
+    const { error: unameErr } = await admin.from("profiles").update({ telegram_username: tgUsername }).eq("id", profile.id);
+    if (!unameErr) {
+      profile.telegram_username = tgUsername;
+    } else {
+      // 2026-10-06 (@lawyer_rahimov): another profile already owns this username — almost always a second account
+      // made for the same person by the sales intake (it finds people by username only). This failed SILENTLY and
+      // the duplicate stayed invisible; now it is DB-visible and identity_split_watchdog() reports the pair.
+      await logHealth(admin, "telegram_username_conflict", {
+        profile_id: profile.id, telegram_id: tgId, username: tgUsername, code: unameErr.code ?? null, source,
+      }, { source: "telegram-bot-webhook", targetUserId: profile.id });
+    }
   }
   return profile;
 }
