@@ -5,7 +5,7 @@ import { chooseGuessLeaf, computeLeaves, displayStepNumber, pickNextLeaf } from 
 import { effectiveLeafGrades, summarizeHomework } from "./homework-stats.ts";
 import { fanOutBroadcast } from "./broadcast-fanout.ts";
 import { isContentError, isRecipientError, isTerminal, tgResult } from "../_shared/telegram-classify.ts";
-import { sendTelegram } from "../_shared/telegram-send.ts";
+import { sendTelegram, sendTelegramResult } from "../_shared/telegram-send.ts";
 import { logHealth, logHealthOnce } from "../_shared/edge.ts";
 import { taughtScope } from "./teacher-scope.ts";
 import { botVoiceKey, recordGradeCardSkipped, recordGradeVoiceSkipped } from "../_shared/grade-card-signals.ts";
@@ -39,6 +39,7 @@ import { runMenuSweepTick, scheduleMenuSweepTick } from "./menu-sweep.ts";
 import { handleNotToday } from "./reminder-snooze.ts";
 import { typedIntent } from "./typed-intents.ts";
 import { captureIgReply, IG_CALLBACK, igCopy, startIgFlow } from "./ig-handle.ts";
+import { cancelSupport, captureSupport, markSolved, parseSupportCallback, startAdminReply, startSupport, SUPPORT_CANCEL } from "./support.ts";
 import { langChooserKeyboard, parseProfAction, profileRows, profileWebCells, showProfileView } from "./profile-tabs.ts";
 import { sendStudentWelcome } from "./student-welcome.ts";
 import {
@@ -1201,6 +1202,18 @@ async function stampBotWriteAccess(admin: any, profile: any, fromId: number) {
         { source: "telegram-bot-webhook", targetUserId: id });
     }
   } catch (_e) { __writeAccessStamped.delete(id); }
+}
+
+// 🆘 support.ts deps: every Bot API call through sendTelegramResult (non-delivery is DB-visible); a reply-keyboard
+// button or a typed intent is never taken as a description / an answer.
+function supportDeps(admin: any) {
+  return {
+    call: async (method: string, payload: Record<string, unknown>) => {
+      const { outcome, result } = await sendTelegramResult(BOT_TOKEN, method, payload, { admin, purpose: `support_${method}` });
+      return { ok: outcome.ok, result, error: outcome.error };
+    },
+    isMenuButton: (text: string) => !!buttonTextToCommand(text) || !!typedIntent(text),
+  };
 }
 
 // 📸 ig-handle.ts deps: send as HTML; a reply-keyboard button or a typed intent is never taken as a username.
@@ -5393,13 +5406,9 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   }
 
   if (cmd === "/yordam") {
-    if (SUPPORT_HANDLE) {
-      await sendMessage(chatId, t.helpReply, {
-        inline_keyboard: [[{ text: t.btnHelp, url: `https://t.me/${SUPPORT_HANDLE}` }]],
-      });
-    } else {
-      await sendWithKeyboard(chatId, t.helpReply, locale);
-    }
+    // 🆘 support inside the bot (support.ts, 2026-10-06): describe the problem → the admins get it → the answer
+    // comes back here. (The old reply only showed a link when TELEGRAM_SUPPORT_HANDLE was set — it never was.)
+    await startSupport(admin, chatId, tgId, profile.id, locale, supportDeps(admin));
     return;
   }
 
@@ -7835,6 +7844,23 @@ async function handleCallback(admin: any, cq: any) {
   }
 
   // --- "Confirm your name" flow callbacks (also the profile card's ✏️ Edit name button) ---
+  // 🆘 support (support.ts): the student's ↩️ cancel; an admin's ✍️ Javob yozish / ✅ Hal boʻldi (real clicker only)
+  if (data === SUPPORT_CANCEL && chatId) {
+    await answerCallback(cq.id);
+    await cancelSupport(admin, chatId, tgId, normLocale(_clicker?.preferred_locale), supportDeps(admin));
+    return;
+  }
+  if (data.startsWith("sup:") && chatId) {
+    const sc = parseSupportCallback(data);
+    if (!sc || !_clicker) { await answerCallback(cq.id); return; }
+    if (_isImp) { await answerCallback(cq.id, "👁 Faqat o'qish — /admin"); return; }
+    if ((await getPersona(admin, _clicker.id)) !== "admin") { await answerCallback(cq.id, "⛔"); return; }
+    await answerCallback(cq.id);
+    if (sc.action === "reply") await startAdminReply(admin, chatId, tgId, sc.id, supportDeps(admin));
+    else await markSolved(admin, sc.id, _clicker.id, chatId, supportDeps(admin));
+    return;
+  }
+
   // 📸 the profile card's Instagram button (ig-handle.ts)
   if (data === IG_CALLBACK && chatId) {
     if (!_clicker) { await answerCallback(cq.id); return; }
@@ -8910,6 +8936,23 @@ Deno.serve(async (req) => {
       // that flag is off. Throttled 1h/chat; can never block or break the actual interaction (menu-button.ts).
       if (isPrivateChat && profileForLocale) {
         try { await syncMenuLive(admin, msg.chat.id, menuSyncOpts(persona, locale)); } catch (_e) { /* best-effort */ }
+      }
+
+      // 🆘 support (support.ts): a pending description (text or screenshot), an admin's pending answer, or an admin's
+      // REPLY to a ticket card. Runs before the media hint, so a screenshot sent for «❓ Yordam» is not taken as homework.
+      if (isPrivateChat && profileForLocale) {
+        try {
+          const consumedSupport = await captureSupport(admin, msg, {
+            id: profileForLocale.id,
+            name: [profileForLocale.name, profileForLocale.last_name].filter(Boolean).join(" ") || (msg.from.first_name ?? ""),
+            username: profileForLocale.telegram_username ?? msg.from.username ?? null,
+            groupId: profileForLocale.group_id ?? null,
+          }, persona === "admin", locale, supportDeps(admin));
+          if (consumedSupport) return new Response("ok", { status: 200, headers: corsHeaders });
+        } catch (e) {
+          await logHealth(admin, "support_capture_failed", { error: String((e as any)?.message ?? e).slice(0, 200) },
+            { source: "telegram-bot-webhook", targetUserId: profileForLocale.id });
+        }
       }
 
       // U1: students WILL try DMing homework media to the bot. Point them to their group's
