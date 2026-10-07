@@ -10,6 +10,7 @@ import { formatXp } from "@/lib/xp";
 import { getHomeworkStateChip, type AssignableItem } from "@/lib/homeworkAssignable";
 import { Button, Card, EmptyState, Skeleton, StatusChip } from "@/components/ui-kit";
 import HomeworkSubmit from "@/components/homework/HomeworkSubmit";
+import { useTelegramBackOverride } from "@/lib/telegram/useTelegramBackButton";
 import { fetchHomeworkBriefs, HomeworkBriefText } from "@/components/homework/HomeworkBrief";
 
 /* Module-end homework screen (module-homework feature, 2026-08-18). Reached by tapping a
@@ -50,6 +51,8 @@ export default function ModuleHomework() {
   // mid-upload. No work is actually lost either way (HomeworkSubmit keeps its own state until
   // unmounted), this is purely about not letting the student interrupt their own upload.
   const [submitting, setSubmitting] = useState(false);
+  // Telegram's native ← must not leave the page in the middle of an upload (the on-screen back is disabled too)
+  useTelegramBackOverride(submitting, () => {});
 
   useEffect(() => {
     if (!user || !moduleId) return;
@@ -100,7 +103,7 @@ export default function ModuleHomework() {
       type="button"
       onClick={() => navigate("/lessons")}
       disabled={submitting}
-      className="inline-flex items-center gap-1 text-[12.5px] font-bold text-muted-foreground disabled:pointer-events-none disabled:opacity-50"
+      className="-ml-2 inline-flex min-h-[44px] items-center gap-1 px-2 text-[12.5px] font-bold text-muted-foreground disabled:pointer-events-none disabled:opacity-50"
     >
       <ArrowLeft className="size-3.5" />
       {t("moduleHomework.backToLessons")}
@@ -176,12 +179,14 @@ export default function ModuleHomework() {
                       <ClipboardCheck className="size-5" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-[14px] font-bold text-foreground">{item.title}</div>
+                      <div className="line-clamp-2 break-words text-[14px] font-bold text-foreground">{item.title}</div>
                       <div className="text-xs font-semibold text-muted-foreground">
                         {t("homework.picker.maxScoreLabel", { max: formatXp(item.max_score, i18n.language) })}
                       </div>
+                      <div className="mt-1.5">
+                        <StatusChip kind={chip.kind} label={chip.label} />
+                      </div>
                     </div>
-                    <StatusChip kind={chip.kind} label={chip.label} />
                     {!isSingle &&
                       (isExpanded ? (
                         <ChevronDown className="size-4 flex-none text-muted-foreground" />

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { ArrowLeft, CheckCircle2, ChevronRight, ClipboardCheck, Clock, Plus, Star } from "lucide-react";
+import { ArrowLeft, CheckCircle2, ChevronRight, ClipboardCheck, Clock, Plus, Star, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
@@ -10,7 +10,8 @@ import { formatXp } from "@/lib/xp";
 import { effectiveLeafGrades } from "@/lib/homeworkStats";
 import { getHomeworkStateChip, type AssignableItem } from "@/lib/homeworkAssignable";
 import { Card, SectionHeader, StatTile, StatusChip, XpPill, Button, EmptyState, Skeleton } from "@/components/ui-kit";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { useTelegramBackOverride } from "@/lib/telegram/useTelegramBackButton";
 import HomeworkSubmit from "@/components/homework/HomeworkSubmit";
 import HomeworkBrief from "@/components/homework/HomeworkBrief";
 import { FeedbackVoicePlayer } from "@/components/homework/FeedbackVoicePlayer";
@@ -278,6 +279,8 @@ export default function Homework() {
   }, [items, filter]);
 
   const selected = selectedId ? (items.find((i) => i.id === selectedId) ?? null) : null;
+  // Telegram's native ← from the graded-homework detail goes back to the list, not off the page
+  useTelegramBackOverride(!!selectedId && !pickerOpen, () => setSelectedId(null));
 
   // Lazy image resolution — only when a graded row is opened (never for the whole list).
   useEffect(() => {
@@ -358,6 +361,14 @@ export default function Homework() {
     }
     setPickerOpen(open);
   };
+
+  // Telegram's native ← inside the sheet: the upload step goes back to the list, the list closes the sheet — never
+  // leaves the page (and never while a submit is in flight).
+  useTelegramBackOverride(pickerOpen, () => {
+    if (submitting) return;
+    if (stage === "upload") setStage("list");
+    else handlePickerOpenChange(false);
+  });
 
   const selectPickerItem = (item: AssignableItem) => {
     setPickedItem(item);
@@ -450,7 +461,7 @@ export default function Homework() {
 
           <SectionHeader title={t("homework.yourWorkTitle")} />
           {selected.submittedText && (
-            <p className="whitespace-pre-wrap text-sm text-muted-foreground">{selected.submittedText}</p>
+            <p className="whitespace-pre-wrap text-sm text-muted-foreground [overflow-wrap:anywhere]">{selected.submittedText}</p>
           )}
           {imagesLoading ? (
             <div className="flex gap-2">
@@ -481,7 +492,7 @@ export default function Homework() {
                 </div>
               </div>
               {selected.effectiveFeedback && (
-                <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-foreground/90">
+                <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-foreground/90 [overflow-wrap:anywhere]">
                   {selected.effectiveFeedback}
                 </p>
               )}
@@ -584,15 +595,47 @@ export default function Homework() {
       </div>
 
       <Dialog open={pickerOpen} onOpenChange={handlePickerOpenChange}>
-        <DialogContent className="max-w-md gap-4 border-border bg-card p-5 text-foreground">
-          <DialogHeader>
-            <DialogTitle className="text-foreground">
+        {/* Phones: a bottom sheet (full width, up to 92% of the screen, one scroll); sm+: the centered dialog. The
+            sticky header keeps ← (upload step) and ✕ in reach whatever the scroll. */}
+        <DialogContent
+          hideClose
+          className={cn(
+            "max-w-md gap-0 border-border bg-card p-0 text-foreground",
+            "max-sm:inset-x-0 max-sm:bottom-0 max-sm:left-0 max-sm:top-auto max-sm:w-full max-sm:max-w-none",
+            "max-sm:translate-x-0 max-sm:translate-y-0 max-sm:max-h-[92dvh] max-sm:rounded-t-2xl max-sm:border-x-0 max-sm:border-b-0",
+            "max-sm:data-[state=open]:animate-none max-sm:data-[state=closed]:animate-none",
+          )}
+        >
+          <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-card px-3 py-2.5">
+            {stage === "upload" ? (
+              <button
+                type="button"
+                onClick={() => setStage("list")}
+                disabled={submitting}
+                aria-label={t("homework.picker.backToPicker")}
+                title={t("homework.picker.backToPicker")}
+                className="inline-flex size-10 flex-none items-center justify-center rounded-full bg-tint text-foreground transition-colors hover:bg-tint/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              >
+                <ArrowLeft className="size-5" />
+              </button>
+            ) : (
+              <span className="size-10 flex-none" aria-hidden />
+            )}
+            <DialogTitle className="min-w-0 flex-1 truncate text-center text-base font-bold text-foreground">
               {stage === "list" ? t("homework.picker.title") : t("homework.picker.uploadTitle")}
             </DialogTitle>
-          </DialogHeader>
+            <DialogClose
+              disabled={submitting}
+              aria-label={t("common.close")}
+              className="inline-flex size-10 flex-none items-center justify-center rounded-full bg-tint text-foreground transition-colors hover:bg-tint/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            >
+              <X className="size-5" />
+            </DialogClose>
+          </div>
 
+          <div className="space-y-4 px-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-4">
           {stage === "list" ? (
-            <div className="-mx-1 max-h-[65vh] overflow-y-auto px-1">
+            <div>
               {pickerLoading ? (
                 <div className="space-y-2">
                   <Skeleton className="h-16 w-full rounded-md" />
@@ -618,22 +661,12 @@ export default function Homework() {
             </div>
           ) : (
             <div className="space-y-4">
-              <button
-                type="button"
-                onClick={() => setStage("list")}
-                disabled={submitting}
-                className="inline-flex items-center gap-1 text-[12.5px] font-bold text-muted-foreground disabled:pointer-events-none disabled:opacity-50"
-              >
-                <ArrowLeft className="size-3.5" />
-                {t("homework.picker.backToPicker")}
-              </button>
-
               <Card className="flex items-center gap-3">
                 <div className="grid size-[42px] flex-none place-items-center rounded-md bg-primary text-primary-foreground">
                   <ClipboardCheck className="size-5" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13.5px] font-bold text-foreground">{pickedItem?.title}</div>
+                  <div className="line-clamp-2 break-words text-[13.5px] font-bold text-foreground">{pickedItem?.title}</div>
                   <div className="truncate text-xs font-semibold text-muted-foreground">
                     {pickedItem?.module_title}
                     {pickedItem
@@ -656,6 +689,7 @@ export default function Homework() {
               )}
             </div>
           )}
+          </div>
         </DialogContent>
       </Dialog>
     </PageShell>
@@ -700,7 +734,7 @@ function HwListRow({
         <ClipboardCheck className="size-5" />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[13.5px] font-bold text-foreground">{item.title}</div>
+        <div className="line-clamp-2 break-words text-[13.5px] font-bold text-foreground">{item.title}</div>
         <div className="truncate text-[11.5px] font-semibold text-muted-foreground">
           {item.moduleTitle} · {relativeTime(item.submittedAt, t)}
         </div>
@@ -777,7 +811,7 @@ function PickerList({
                 V{item.step_number}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="truncate text-[13.5px] font-bold text-foreground">{item.title}</div>
+                <div className="line-clamp-2 break-words text-[13.5px] font-bold text-foreground">{item.title}</div>
                 <div className="truncate text-[11.5px] font-semibold text-muted-foreground">{item.module_title}</div>
               </div>
               {renderPickerStateChip(item, t, locale)}

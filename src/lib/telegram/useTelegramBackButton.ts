@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { TgWebApp } from "./types";
 import { parentOf } from "./landing";
@@ -19,6 +19,34 @@ export function backTarget(pathname: string, historyState: unknown): number | st
   return parentOf(pathname) ?? -1;
 }
 
+// An open overlay (a dialog / sheet with its own steps) takes over the native ← while it is open: the newest one wins.
+// Without it, Telegram's ← left the whole page from inside the homework upload sheet (2026-10-07).
+const overrides: Array<() => void> = [];
+
+/** Register a handler for the native ←; returns the unregister function. Exported for the unit test. */
+export function pushTelegramBackOverride(fn: () => void): () => void {
+  overrides.push(fn);
+  return () => {
+    const i = overrides.lastIndexOf(fn);
+    if (i >= 0) overrides.splice(i, 1);
+  };
+}
+
+/** The handler that runs on the native ←, if an overlay holds it. Exported for the unit test. */
+export function activeTelegramBackOverride(): (() => void) | null {
+  return overrides.length ? overrides[overrides.length - 1] : null;
+}
+
+/** While `active`, the native ← calls `handler` (the latest one) instead of navigating. No-op on the web. */
+export function useTelegramBackOverride(active: boolean, handler: () => void): void {
+  const ref = useRef(handler);
+  ref.current = handler;
+  useEffect(() => {
+    if (!active) return;
+    return pushTelegramBackOverride(() => ref.current());
+  }, [active]);
+}
+
 /**
  * Wire Telegram's native header BackButton to the router: show it on any non-root screen and
  * go back when tapped; hide it on the roots. No-op in web mode (`webApp === null`).
@@ -34,6 +62,8 @@ export function useTelegramBackButton(webApp: TgWebApp | null): void {
     if (!bb) return;
 
     const onClick = () => {
+      const override = activeTelegramBackOverride();
+      if (override) { override(); return; }
       const target = backTarget(location.pathname, typeof window !== "undefined" ? window.history.state : null);
       if (typeof target === "number") navigate(target);
       else navigate(target, { replace: true });

@@ -35,14 +35,18 @@ export function DailyTasksCard() {
             <CalendarCheck className="size-[22px]" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[14.5px] font-extrabold text-foreground">
+            <div className="line-clamp-2 break-words text-[14.5px] font-extrabold text-foreground">
               {task ? `${task.type === "instagram" ? "📸 " : ""}${task.title}` : t("dailyTasks.dashboard.todayNone")}
             </div>
             <div className="text-xs font-semibold text-muted-foreground">
               {t("dailyTasks.streak", { days: data.streak })} · {t("dailyTasks.points", { points: data.points })}
             </div>
+            {status && (
+              <div className="mt-1.5">
+                <StatusChip kind={statusTone(status)} label={t(`dailyTasks.status.${status}`, { defaultValue: status })} />
+              </div>
+            )}
           </div>
-          {status && <StatusChip kind={statusTone(status)} label={t(`dailyTasks.status.${status}`, { defaultValue: status })} />}
           <ChevronRight className="size-[18px] flex-none text-muted-foreground" />
         </Card>
       </Link>

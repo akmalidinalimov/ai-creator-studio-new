@@ -48,7 +48,7 @@ export function HomeworkBriefText({ text }: { text: string }) {
   return (
     <div className="space-y-2">
       {text && (
-        <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-foreground/90">{renderBold(text)}</p>
+        <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-foreground/90 [overflow-wrap:anywhere]">{renderBold(text)}</p>
       )}
       <p className="text-[12px] font-semibold text-muted-foreground">{t("homework.picker.acceptedTypes")}</p>
     </div>

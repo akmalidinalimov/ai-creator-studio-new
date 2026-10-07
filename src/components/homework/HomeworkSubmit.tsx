@@ -364,7 +364,7 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
                 onClick={() => removeItem(it.id)}
                 disabled={submitting}
                 aria-label={t("homework.picker.removeImage")}
-                className="absolute -right-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full bg-card text-foreground shadow-soft ring-1 ring-border disabled:pointer-events-none disabled:opacity-50"
+                className="absolute -right-2 -top-2 flex size-8 items-center justify-center rounded-full bg-card text-foreground shadow-soft ring-1 ring-border disabled:pointer-events-none disabled:opacity-50"
               >
                 <X className="size-3.5" />
               </button>
@@ -427,8 +427,10 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
             href={topicUrl}
             target="_blank"
             rel="noopener noreferrer"
-            onClick={() => {
-              try { webApp?.openTelegramLink?.(topicUrl); } catch { /* native <a> is the fallback */ }
+            onClick={(e) => {
+              // in Telegram: open in-app and stop the <a> (it used to open the topic twice); on the web the <a> opens it
+              if (!webApp?.openTelegramLink) return;
+              try { webApp.openTelegramLink(topicUrl); e.preventDefault(); } catch { /* native <a> is the fallback */ }
             }}
             className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-4 py-2.5 text-sm font-bold text-foreground"
           >
@@ -451,7 +453,7 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
           placeholder={t("homework.picker.notePlaceholder")}
           rows={3}
           disabled={submitting}
-          className="w-full resize-none rounded-lg border border-border bg-card p-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+          className="w-full resize-none rounded-lg border border-border bg-card p-3 text-base text-foreground sm:text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
         />
       </div>
 

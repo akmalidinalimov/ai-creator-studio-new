@@ -352,7 +352,7 @@ export default function Leaderboard() {
       </div>
 
       {!loading && !error && !noActivity && stickyMe && (
-        <div className="sticky bottom-[76px] z-20 mx-auto mt-3 max-w-2xl md:bottom-4">
+        <div className="sticky bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-20 mx-auto mt-3 max-w-2xl md:bottom-4">
           <LeaderboardRow
             row={stickyMe}
             locale={locale}

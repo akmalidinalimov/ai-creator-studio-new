@@ -66,7 +66,7 @@ export const TopNav = () => {
 
   return (
     <header className="sticky top-0 z-30 w-full border-b border-border bg-background/80 backdrop-blur-md">
-      <div className="container flex h-14 items-center justify-between gap-4">
+      <div className="container flex h-14 items-center justify-between gap-4 px-4 sm:px-8">
         <div className="flex items-center gap-3 min-w-0">
           {showAdminNav && <AdminMobileNav />}
           <Logo to={isStaff ? "/admin/dashboard" : "/dashboard"} />
@@ -141,7 +141,7 @@ export const PageShell = ({ children }: { children: React.ReactNode }) => {
           // StudentBottomNav (now always rendered, incl. on lesson pages — Fix 3) so it never
           // covers a screen's final CTA. Safe-area-aware (matches the nav's own env() padding);
           // purely additive vs. the old flat 6rem, so no other student screen's spacing shrinks.
-          <main className={`container py-6 md:py-10 animate-fade-in ${isStudent ? "pb-[calc(6rem_+_env(safe-area-inset-bottom))] md:pb-10" : ""}`}>{children}</main>
+          <main className={`container px-4 py-6 sm:px-8 md:py-10 animate-fade-in ${isStudent ? "pb-[calc(6rem_+_env(safe-area-inset-bottom))] md:pb-10" : ""}`}>{children}</main>
         )}
         {isStudent && <StudentBottomNav />}
       </div>

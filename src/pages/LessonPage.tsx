@@ -706,7 +706,7 @@ export default function LessonPage() {
             )}
             {chatHistory.map((m, i) => (
               <div key={i} className={`text-sm rounded-lg px-3 py-2 ${m.role === "user" ? "bg-foreground text-background ml-6" : "bg-tint text-foreground mr-6"}`}>
-                <div className="prose-tight whitespace-pre-wrap">{m.content || (chatLoading && i === chatHistory.length - 1 ? "…" : "")}</div>
+                <div className="prose-tight whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{m.content || (chatLoading && i === chatHistory.length - 1 ? "…" : "")}</div>
               </div>
             ))}
           </div>
