@@ -90,7 +90,12 @@ export default function DailyTaskSubmit({ task, topicUrl, captionTextMax, onDone
   const maxItems = maxFilesFor(text, captionTextMax);
   const overCap = items.length > maxItems;
   const hint = useMemo(
-    () => requiresHint(task.requires ?? [], { kinds: items.flatMap((i) => pickKinds(i.kind, i.mime)), text }),
+    // The Instagram post link is optional (2026-10-07, owner: a screenshot is enough — challenge_tasks.ig.require_link
+    // = false), so it is not listed as something to send; the frozen requires of older tasks still name it.
+    () => requiresHint(
+      (task.requires ?? []).filter((g) => !(g.any ?? []).every((k) => k === "ig_link")),
+      { kinds: items.flatMap((i) => pickKinds(i.kind, i.mime)), text },
+    ),
     [task.requires, items, text],
   );
 
