@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { ImagePlus, Loader2, Upload, X, Play } from "lucide-react";
+import { FileText, ImagePlus, Loader2, Paperclip, Upload, X, Play } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { reportClientError } from "@/lib/beacon";
@@ -19,6 +19,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import type { AssignableItem } from "@/lib/homeworkAssignable";
+import {
+  formatFileSize, HW_MAX_ITEMS, HW_MAX_PHOTO_BYTES, HW_MAX_VIDEO_BYTES, homeworkMaxBytes, pickedKind,
+  type HomeworkFileKind,
+} from "@/lib/homeworkFiles";
 
 /* Reusable "submit for a KNOWN assignment" widget. Mounted by Homework.tsx (after a picker selection) and
  * ModuleHomework.tsx (preselected) — one code path, never duplicated.
@@ -29,19 +33,22 @@ import type { AssignableItem } from "@/lib/homeworkAssignable";
  * submission exactly like a bot-captured post. Nothing is stored in Supabase — no storage cost, and every
  * existing teacher grading surface already resolves Telegram-captured media.
  *
- * Telegram's BOT upload ceilings are hard limits (photo 10MB, video 50MB), so oversize files are rejected
- * client-side with a clear message + the "post it in your group topic yourself" fallback.
+ * Telegram's BOT upload ceilings are hard limits (photo 10MB, video 50MB, file 50MB), so oversize files are
+ * rejected client-side with a clear message + the "post it in your group topic yourself" fallback.
+ *
+ * 2026-10-07 — FILES TOO (owner: module 2's first task is a PDF). A second picker ("📄 Fayl yuklash") opens all
+ * files; anything that isn't a photo / video goes to the topic as a document (src/lib/homeworkFiles.ts mirrors
+ * submit-homework/media.ts). The photo/video picker stays separate so phones still open the gallery for it.
  *
  * Mount with `key={assignment.assignment_id}` when the assignment can change under the same parent —
  * remounting is what gives a fresh form per assignment.
  */
 
-const MAX_ITEMS = 10; // mirrors submit-homework's MAX_ITEMS
-const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
-const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+const MAX_ITEMS = HW_MAX_ITEMS; // mirrors submit-homework's MAX_ITEMS
 const mb = (n: number) => Math.round(n / (1024 * 1024));
 
-type PickedItem = { id: string; file: File; previewUrl: string; kind: "photo" | "video" };
+// previewUrl only for photos / videos ("" for a document: it's shown as a name + size tile)
+type PickedItem = { id: string; file: File; previewUrl: string; kind: HomeworkFileKind };
 
 // Client-side downscale before upload — keeps mobile uploads fast and photos comfortably under Telegram's
 // 10MB photo ceiling. Any failure falls back to the original file: compression is a nice-to-have, never a
@@ -96,7 +103,7 @@ function submitErrorMessage(code: string, t: TFunction): string {
     case "too_many_images":
       return t("homework.picker.tooManyImages", { max: MAX_ITEMS });
     case "file_too_large":
-      return t("homework.picker.errTooLarge", { photo: mb(MAX_PHOTO_BYTES), video: mb(MAX_VIDEO_BYTES) });
+      return t("homework.picker.errTooLarge", { photo: mb(HW_MAX_PHOTO_BYTES), video: mb(HW_MAX_VIDEO_BYTES) });
     case "batch_too_large":
       return t("homework.picker.errBatchTooLarge");
     case "submit_in_progress":
@@ -155,7 +162,8 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
   const [submitting, setSubmitting] = useState(false);
   const [needTopicFallback, setNeedTopicFallback] = useState(false); // a file was too big for the bot
   const [confirmResubmitOpen, setConfirmResubmitOpen] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);   // photos / videos (opens the gallery)
+  const docInputRef = useRef<HTMLInputElement | null>(null);    // any file (PDF, Word, …)
 
   const itemsRef = useRef<PickedItem[]>([]);
   itemsRef.current = items;
@@ -170,7 +178,7 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
 
   // Revoke outstanding object URLs on unmount (abandoned form / navigation).
   useEffect(() => {
-    return () => { for (const it of itemsRef.current) URL.revokeObjectURL(it.previewUrl); };
+    return () => { for (const it of itemsRef.current) if (it.previewUrl) URL.revokeObjectURL(it.previewUrl); };
   }, []);
 
   // Scaling safety net (graceful ≠ silent): if the fallback is needed but the group has no topic link
@@ -191,7 +199,7 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
   const setSubmittingTracked = (v: boolean) => { setSubmitting(v); onSubmittingChange?.(v); };
 
   const resetForm = () => {
-    setItems((prev) => { for (const it of prev) URL.revokeObjectURL(it.previewUrl); return []; });
+    setItems((prev) => { for (const it of prev) if (it.previewUrl) URL.revokeObjectURL(it.previewUrl); return []; });
     setNote("");
     setNeedTopicFallback(false);
   };
@@ -200,7 +208,7 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
     if (submitting) return;
     setItems((prev) => {
       const target = prev.find((x) => x.id === id);
-      if (target) URL.revokeObjectURL(target.previewUrl);
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
       return prev.filter((x) => x.id !== id);
     });
   };
@@ -212,19 +220,19 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
 
     const picked: PickedItem[] = [];
     let tooBig = false;
-    let unsupported = false;
 
     for (const f of list) {
-      const isVideo = (f.type || "").startsWith("video/");
-      const isImage = (f.type || "").startsWith("image/");
-      if (!isVideo && !isImage) { unsupported = true; continue; }
-      // Telegram's bot ceilings are hard — reject here with a clear message instead of failing mid-upload.
-      if (f.size > (isVideo ? MAX_VIDEO_BYTES : MAX_PHOTO_BYTES)) { tooBig = true; continue; }
+      // Any file is accepted: a photo / video is sent as one, everything else as a document (PDF, Word, …).
+      const kind = pickedKind(f.type);
+      // Telegram's bot ceilings are hard — reject here with a clear message instead of failing mid-upload. A big
+      // photo is downscaled before upload (and if that fails, the server sends it as a file, up to 50 MB).
+      const cap = kind === "photo" ? homeworkMaxBytes("document") : homeworkMaxBytes(kind);
+      if (f.size > cap) { tooBig = true; continue; }
       picked.push({
         id: crypto.randomUUID(),
         file: f,
-        previewUrl: URL.createObjectURL(f),
-        kind: isVideo ? "video" : "photo",
+        previewUrl: kind === "document" ? "" : URL.createObjectURL(f),
+        kind,
       });
     }
 
@@ -232,21 +240,19 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
       setItems((prev) => {
         const room = MAX_ITEMS - prev.length;
         if (room <= 0) {
-          for (const it of picked) URL.revokeObjectURL(it.previewUrl);
+          for (const it of picked) if (it.previewUrl) URL.revokeObjectURL(it.previewUrl);
           toast.error(t("homework.picker.tooManyImages", { max: MAX_ITEMS }));
           return prev;
         }
         const kept = picked.slice(0, room);
-        for (const it of picked.slice(room)) URL.revokeObjectURL(it.previewUrl);
+        for (const it of picked.slice(room)) if (it.previewUrl) URL.revokeObjectURL(it.previewUrl);
         if (picked.length > room) toast.error(t("homework.picker.tooManyImages", { max: MAX_ITEMS }));
         return [...prev, ...kept];
       });
     }
     if (tooBig) {
       setNeedTopicFallback(true); // surface the "post it in your topic" card for the oversize file
-      toast.error(t("homework.picker.errTooLarge", { photo: mb(MAX_PHOTO_BYTES), video: mb(MAX_VIDEO_BYTES) }));
-    } else if (unsupported && !picked.length) {
-      toast.error(t("homework.picker.invalidFile"));
+      toast.error(t("homework.picker.errTooLarge", { photo: mb(HW_MAX_PHOTO_BYTES), video: mb(HW_MAX_VIDEO_BYTES) }));
     }
   };
 
@@ -267,7 +273,7 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
           const ext = extForBlob(blob, it.file.name);
           fd.append("files", new File([blob], `homework.${ext}`, { type: blob.type || it.file.type || "image/jpeg" }));
         } else {
-          fd.append("files", it.file, it.file.name || "homework.mp4");
+          fd.append("files", it.file, it.file.name || (it.kind === "video" ? "homework.mp4" : "homework.pdf"));
         }
       }
 
@@ -325,12 +331,19 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
         className="hidden"
         onChange={onFileChange}
       />
+      <input ref={docInputRef} type="file" accept="*/*" multiple className="hidden" onChange={onFileChange} />
 
       {items.length > 0 ? (
         <div className="grid grid-cols-3 gap-2">
           {items.map((it) => (
             <div key={it.id} className="relative aspect-square">
-              {it.kind === "video" ? (
+              {it.kind === "document" ? (
+                <div className="flex h-full w-full flex-col items-center justify-center gap-1 rounded-lg border border-border bg-surface-2 p-2 text-center">
+                  <FileText className="size-6 text-muted-foreground" />
+                  <span className="line-clamp-2 break-all text-[10.5px] font-bold leading-tight text-foreground">{it.file.name}</span>
+                  <span className="text-[10px] font-semibold text-muted-foreground">{formatFileSize(it.file.size)}</span>
+                </div>
+              ) : it.kind === "video" ? (
                 <>
                   <video
                     src={it.previewUrl}
@@ -368,17 +381,38 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
               <span className="text-[11px] font-bold">{t("homework.picker.addMore")}</span>
             </button>
           )}
+          {canAddMore && (
+            <button
+              type="button"
+              onClick={() => docInputRef.current?.click()}
+              disabled={submitting}
+              className="flex aspect-square flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-border bg-surface-2 text-muted-foreground disabled:opacity-50"
+            >
+              <Paperclip className="size-5" />
+              <span className="text-[11px] font-bold">{t("homework.picker.addFile")}</span>
+            </button>
+          )}
         </div>
       ) : (
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          className="flex w-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border bg-surface-2 py-8 text-center"
-        >
-          <ImagePlus className="size-6 text-muted-foreground" />
-          <span className="text-[13px] font-bold text-foreground">{t("homework.picker.pickPhoto")}</span>
-          <span className="text-[11.5px] font-semibold text-muted-foreground">{t("homework.picker.pickPhotoHint")}</span>
-        </button>
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="flex w-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border bg-surface-2 py-8 text-center"
+          >
+            <ImagePlus className="size-6 text-muted-foreground" />
+            <span className="text-[13px] font-bold text-foreground">{t("homework.picker.pickPhoto")}</span>
+            <span className="text-[11.5px] font-semibold text-muted-foreground">{t("homework.picker.pickPhotoHint")}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => docInputRef.current?.click()}
+            className="flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-[13px] font-bold text-foreground"
+          >
+            <Paperclip className="size-4 text-muted-foreground" />
+            {t("homework.picker.pickFile")}
+          </button>
+        </div>
       )}
 
       {/* Oversize / no-topic fallback — deliberately placed IMMEDIATELY under the picker (not below the

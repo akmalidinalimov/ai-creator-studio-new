@@ -32,6 +32,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegramMultipart } from "../_shared/telegram-send.ts";
 
+import {
+  defaultFilename, homeworkFileKind, maxBytesFor, MAX_ITEMS, MAX_TOTAL_BYTES, sendSpec, sentFileId,
+  type HomeworkFileKind,
+} from "./media.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -42,12 +46,9 @@ const BUCKET = "homework_images";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Telegram-topic upload path (2026-09-10 owner decision: homework media lives in TELEGRAM, not Supabase
-// storage). These ceilings are Telegram's own BOT limits and cannot be raised — a bigger file is rejected
+// storage). The ceilings are Telegram's own BOT limits and cannot be raised — a bigger file is rejected
 // up-front with a clear code so the client can offer the "post it in your topic yourself" fallback.
-const MAX_ITEMS = 10;
-const MAX_PHOTO_BYTES = 10 * 1024 * 1024; // sendPhoto
-const MAX_VIDEO_BYTES = 50 * 1024 * 1024; // sendVideo (multipart upload by a bot)
-const MAX_TOTAL_BYTES = 150 * 1024 * 1024; // aggregate per request — bounds what the edge runtime buffers
+// 2026-10-07: files too (PDF, DOCX, …) — see media.ts.
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -436,35 +437,37 @@ async function postHomeworkToTopic(
   let failed = 0;
   let captionUsed = false;
 
-  for (let i = 0; i < files.length; i++) {
-    const f = files[i];
-    const isVideo = (f.type || "").startsWith("video/");
+  const send = (kind: HomeworkFileKind, f: File) => {
     const fields: Record<string, string | number> = { chat_id: chatId, message_thread_id: threadId };
     if (!captionUsed) fields.caption = caption;
-    if (isVideo) fields.supports_streaming = "true";
-
-    const { outcome, result } = await sendTelegramMultipart(
-      botToken,
-      isVideo ? "sendVideo" : "sendPhoto",
-      fields,
-      { field: isVideo ? "video" : "photo", blob: f, filename: f.name || (isVideo ? "homework.mp4" : "homework.jpg") },
+    if (kind === "video") fields.supports_streaming = "true";
+    const spec = sendSpec(kind);
+    return sendTelegramMultipart(
+      botToken, spec.method, fields,
+      { field: spec.field, blob: f, filename: f.name || defaultFilename(kind) },
       { admin, purpose: "homework_topic_post", recipientId: chatId },
     );
+  };
+
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    let kind = homeworkFileKind(f.type, f.size);
+    let { outcome, result } = await send(kind, f);
+    // A photo / video Telegram refuses to render (odd dimensions, codec) still carries the work: send it as a file.
+    if ((!outcome.ok || !result) && kind !== "document" && outcome.content) {
+      kind = "document";
+      ({ outcome, result } = await send(kind, f));
+    }
     if (!outcome.ok || !result) { failed++; continue; }
 
     const msgId: number | null = typeof (result as any).message_id === "number" ? (result as any).message_id : null;
-    // sendPhoto returns an array of sizes (largest last); sendVideo returns a single video object.
-    const fileId: string | null = isVideo
-      ? ((result as any)?.video?.file_id ?? null)
-      : (Array.isArray((result as any)?.photo) && (result as any).photo.length
-          ? (result as any).photo[(result as any).photo.length - 1].file_id
-          : null);
+    const fileId = sentFileId(kind, result);
     if (!fileId) { failed++; continue; }
 
     const msgUrl = msgId ? `${linkBase}/${msgId}` : null;
-    mediaItems.push({ kind: isVideo ? "video" : "photo", file_id: fileId, ...(msgUrl ? { msg_url: msgUrl } : {}) });
+    mediaItems.push({ kind, file_id: fileId, ...(msgUrl ? { msg_url: msgUrl } : {}) });
     captionUsed = true; // only after a REAL success, so the caption isn't lost with a failed first item
-    if (firstMsgId === null) { firstMsgId = msgId; firstFileId = fileId; firstKind = isVideo ? "video" : "photo"; }
+    if (firstMsgId === null) { firstMsgId = msgId; firstFileId = fileId; firstKind = kind; }
   }
 
   if (!mediaItems.length) {
@@ -566,16 +569,12 @@ Deno.serve(async (req) => {
     // Reject oversize BEFORE posting anything: Telegram's bot ceilings are hard, and a partial album in a
     // shared class topic would be worse than a clean up-front error the client can explain.
     for (const f of files) {
-      const isVideo = (f.type || "").startsWith("video/");
-      const isImage = (f.type || "").startsWith("image/");
-      if (!isVideo && !isImage) {
-        await logOutcome(admin, false, userId, { reason: "unsupported_media", assignment_id: assignmentId, type: f.type || "unknown" });
-        return json({ error: "unsupported_media" }, 400);
-      }
-      const cap = isVideo ? MAX_VIDEO_BYTES : MAX_PHOTO_BYTES;
+      // any file is accepted (a non-photo / non-video goes as a document); only Telegram's size ceilings refuse
+      const kind = homeworkFileKind(f.type, f.size);
+      const cap = maxBytesFor(kind);
       if (f.size > cap) {
-        await logOutcome(admin, false, userId, { reason: "file_too_large", assignment_id: assignmentId, kind: isVideo ? "video" : "photo", size: f.size });
-        return json({ error: "file_too_large", kind: isVideo ? "video" : "photo", max_bytes: cap }, 413);
+        await logOutcome(admin, false, userId, { reason: "file_too_large", assignment_id: assignmentId, kind, size: f.size });
+        return json({ error: "file_too_large", kind, max_bytes: cap }, 413);
       }
     }
     // Aggregate ceiling too: 10 near-limit videos would be ~500MB buffered by req.formData() and then
