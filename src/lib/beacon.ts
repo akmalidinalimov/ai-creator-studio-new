@@ -92,7 +92,7 @@ export function reportClientError(opts: {
       message,
       route: (opts.route ?? window.location?.pathname ?? "").slice(0, 300),
       session_id: sessionId(),
-      app_version: (import.meta.env.VITE_APP_VERSION as string) || undefined,
+      app_version: appVersion(),
       extra: { ...(opts.extra || {}), miniapp },
     });
 
@@ -120,4 +120,14 @@ export function installGlobalBeacons(): void {
     if (!msg) return;
     reportClientError({ type: "unhandled_rejection", message: msg.slice(0, 500) });
   });
+}
+
+/** The deployed commit, from <meta name="app-version"> (vite.config.ts writes it into index.html, not into the JS). */
+function appVersion(): string | undefined {
+  try {
+    const v = document.querySelector<HTMLMetaElement>('meta[name="app-version"]')?.content;
+    return v && v !== "dev" ? v : undefined;
+  } catch {
+    return undefined;
+  }
 }

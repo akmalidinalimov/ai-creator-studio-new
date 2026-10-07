@@ -3,6 +3,18 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
 
+// The deployed commit, for the client-error beacon (Vercel sets VERCEL_GIT_COMMIT_SHA at build; "dev" locally).
+// Written into index.html (<meta name="app-version">), NOT into the JS: a value compiled into the entry chunk changed
+// its hash on EVERY deploy — even a migration-only one — and with it every lazy chunk that imports it, so every open
+// Mini App lost its route chunks after each merge (2026-10-07 incident). src/lib/beacon.ts reads the meta tag.
+const APP_VERSION = process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || "dev";
+const appVersionMeta = {
+  name: "app-version-meta",
+  transformIndexHtml(html: string) {
+    return html.replace("</head>", `  <meta name="app-version" content="${APP_VERSION}" />\n  </head>`);
+  },
+};
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   server: {
@@ -12,15 +24,7 @@ export default defineConfig(({ mode }) => ({
       overlay: false,
     },
   },
-  // Stamp the deployed commit into the bundle so the client-error beacon can tag
-  // each event with the exact build it came from (Vercel sets VERCEL_GIT_COMMIT_SHA
-  // at build; falls back to "dev" for local builds). Read via import.meta.env.VITE_APP_VERSION.
-  define: {
-    "import.meta.env.VITE_APP_VERSION": JSON.stringify(
-      process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || "dev",
-    ),
-  },
-  plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
+  plugins: [react(), appVersionMeta, mode === "development" && componentTagger()].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
