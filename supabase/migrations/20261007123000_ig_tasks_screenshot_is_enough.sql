@@ -54,7 +54,7 @@ begin
         _missing := _missing || 'ig_link'::text;
       end if;
     else
-      -- 20261007122000 (owner): the screenshot is enough — the post link is optional (a story has none)
+      -- 20261007123000 (owner): the screenshot is enough — the post link is optional (a story has none)
       _missing := array_remove(_missing, 'ig_link');
     end if;$n$),
          jsonb_build_array(
@@ -73,7 +73,7 @@ begin
       ('public.challenge_task_check_record(bigint, uuid, integer, jsonb, jsonb)', 'ce9548ed40f164ce45bfca3063e0965e', jsonb_build_array(
          jsonb_build_array(
            $o$public.challenge_task_edit_distance(_seen, coalesce($o$,
-           -- 20261007122000: compared without dots / underscores (the same account written two ways)
+           -- 20261007123000: compared without dots / underscores (the same account written two ways)
            $n$public.challenge_task_edit_distance(translate(_seen, '._', ''), translate(coalesce($n$),
          jsonb_build_array(
            $o$where p.id = _s.user_id)))$o$,
@@ -116,46 +116,88 @@ begin
   end if;
 end $t$;
 
--- 3. what the model is told and what students read, for the upcoming Instagram tasks (wording stays editable)
-update public.challenge_tasks
-   set check_rubric = format('Screenshot of the student''s own Instagram content for the task «%s»: a story, a feed post, a carousel or a Reel — all count. The student''s @username must be visible (story: top-left next to the profile picture; post / Reel: the header). A post link and a tag of @aicreators.students are welcome but not required.', title),
-       submit_hint = 'Topshirish: Instagram story, post yoki Reels skrinshoti — username koʻrinib tursin. Havola va teg ixtiyoriy.',
-       updated_at = now()
- where type = 'instagram' and status <> 'cancelled' and task_date >= date '2026-10-07';
+-- 3. what the model is told and what students read, for the upcoming Instagram tasks (wording stays editable).
+--    One task at a time: an approved task re-checked by trg_challenge_tasks_guard that fails some unrelated check
+--    keeps its old wording (counted below) instead of aborting the whole fix.
+do $w$
+declare
+  _t record;
+  _ok int := 0;
+  _failed jsonb := '[]'::jsonb;
+begin
+  for _t in
+    select id, title from public.challenge_tasks
+     where type = 'instagram' and status <> 'cancelled' and task_date >= date '2026-10-07' order by id
+  loop
+    begin
+      update public.challenge_tasks
+         set check_rubric = format('Screenshot of the student''s own Instagram content for the task «%s»: a story, a feed post, a carousel or a Reel — all count. The student''s @username must be visible (story: top-left next to the profile picture; post / Reel: the header). A post link and a tag of @aicreators.students are welcome but not required.', _t.title),
+             submit_hint = 'Topshirish: Instagram story, post yoki Reels skrinshoti — username koʻrinib tursin. Havola va teg ixtiyoriy.',
+             updated_at = now()
+       where id = _t.id;
+      _ok := _ok + 1;
+    exception when others then
+      _failed := _failed || jsonb_build_object('task_id', _t.id, 'error', left(sqlerrm, 200));
+    end;
+  end loop;
+  insert into public.admin_actions (actor_user_id, action, details)
+  values (null, 'challenge_ig_task_wording_updated', jsonb_build_object('migration', '20261007123000', 'updated', _ok, 'failed', _failed));
+end $w$;
 
--- 4. heal: checked again with the new rules and the new prompt (task-v2 is deployed before migrations run)
+-- 4. heal: checked again with the new rules and the new prompt (task-v2 is deployed before migrations run).
+--    (a) needs_more only for the link → re-evaluated (the link is optional now).
+--    (b) rejected for a rule that no longer applies → reopened ONLY when the student has no live attempt for that task
+--        (uq_ctask_sub_live: one needs_more / checking / accepted row per student and task — most students already
+--        retried and were accepted), and only their NEWEST such row. Every row in its own sub-block: one row can never
+--        abort the fix.
 do $h$
 declare
   _cfg jsonb := public.challenge_tasks_config();
   _r record;
   _links int := 0;
   _reopened int := 0;
+  _skipped jsonb := '[]'::jsonb;
   _ids bigint[] := '{}';
 begin
   for _r in
     select s.id from public.challenge_task_submissions s join public.challenge_tasks t on t.id = s.task_id
      where t.type = 'instagram' and t.status <> 'cancelled' and s.status = 'needs_more' and 'ig_link' = any(s.missing)
+     order by s.id
   loop
-    perform public.challenge_task_evaluate(_r.id, _cfg, true);
-    _links := _links + 1;
-    _ids := _ids || _r.id;
+    begin
+      perform public.challenge_task_evaluate(_r.id, _cfg, true);
+      _links := _links + 1;
+      _ids := _ids || _r.id;
+    exception when others then
+      _skipped := _skipped || jsonb_build_object('id', _r.id, 'error', left(sqlerrm, 200));
+    end;
   end loop;
 
   for _r in
-    update public.challenge_task_submissions s
-       set status = 'needs_more', reason = null, missing = '{}', updated_at = now()
-      from public.challenge_tasks t
-     where t.id = s.task_id and t.type = 'instagram' and t.status <> 'cancelled' and s.status = 'rejected'
+    select distinct on (s.user_id, s.task_id) s.id
+      from public.challenge_task_submissions s join public.challenge_tasks t on t.id = s.task_id
+     where t.type = 'instagram' and t.status <> 'cancelled' and s.status = 'rejected'
        and s.reason in ('ig_tag_missing', 'ig_handle_mismatch', 'ig_handle_not_visible', 'not_instagram', 'ig_unclear')
-    returning s.id
+       and not exists (select 1 from public.challenge_task_submissions l
+                        where l.user_id = s.user_id and l.task_id = s.task_id
+                          and l.status in ('needs_more', 'checking', 'accepted'))
+     order by s.user_id, s.task_id, s.attempt_no desc, s.id desc
   loop
-    perform public.challenge_task_evaluate(_r.id, _cfg, true);
-    _reopened := _reopened + 1;
-    _ids := _ids || _r.id;
+    begin
+      update public.challenge_task_submissions
+         set status = 'needs_more', reason = null, missing = '{}', updated_at = now()
+       where id = _r.id and status = 'rejected';
+      perform public.challenge_task_evaluate(_r.id, _cfg, true);
+      _reopened := _reopened + 1;
+      _ids := _ids || _r.id;
+    exception when others then
+      _skipped := _skipped || jsonb_build_object('id', _r.id, 'error', left(sqlerrm, 200));
+    end;
   end loop;
 
   insert into public.admin_actions (actor_user_id, action, details)
   values (null, 'challenge_ig_rules_relaxed', jsonb_build_object(
-    'migration', '20261007122000', 'require_link', false, 'require_tag', false, 'handle_compare', 'without dots/underscores',
-    'prompt_version', 'task-v2', 'rechecked_link_only', _links, 'rechecked_rejected', _reopened, 'submission_ids', to_jsonb(_ids)));
+    'migration', '20261007123000', 'require_link', false, 'require_tag', false, 'handle_compare', 'without dots/underscores',
+    'prompt_version', 'task-v2', 'rechecked_link_only', _links, 'rechecked_rejected', _reopened, 'submission_ids', to_jsonb(_ids),
+    'skipped', _skipped));
 end $h$;
