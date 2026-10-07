@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
 import "./i18n";
-import { reloadForChunkError, stripChunkReloadParam } from "./lib/chunkReload";
+import { stripChunkReloadParam } from "./lib/chunkReload";
 import { installGlobalBeacons, reportClientError } from "./lib/beacon";
 import { installDomTranslateGuard } from "./lib/domTranslateGuard";
 import { installStaleBuildCheck } from "./lib/staleBuild";
@@ -19,13 +19,12 @@ installDomTranslateGuard();
 // DB-visible + alertable before a student complains (see src/lib/beacon.ts).
 installGlobalBeacons();
 
-// Stale-deploy recovery. Vite fires `vite:preloadError` on window BEFORE the
-// failed dynamic import rethrows into React, so we can force a single cache-
-// busting reload to pick up the freshly deployed index + chunk manifest instead
-// of white-screening a long-open tab. Guarded against loops (see chunkReload.ts).
+// Stale-deploy recovery lives in lazyRoute (src/lib/lazyRoute.ts): a failed route chunk is re-fetched with
+// cache: "reload" (heals a poisoned cache entry) and ONE guarded cache-busting reload pulls the current build, while the
+// Suspense fallback stays up. This handler only REPORTS: it must not preventDefault — that makes the import resolve to
+// undefined and React.lazy crash on `.default` (2026-10-07: "Cannot read properties of undefined (reading 'default')").
 window.addEventListener("vite:preloadError" as any, (e: Event) => {
   reportClientError({ type: "chunk_load", message: String((e as any)?.payload?.message || "vite:preloadError") });
-  if (reloadForChunkError()) e.preventDefault();
 });
 
 // Stale-build recovery for the Telegram Mini App: the webview is kept alive / cached across our (several
