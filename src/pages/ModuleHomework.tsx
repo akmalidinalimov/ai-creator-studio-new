@@ -10,6 +10,7 @@ import { formatXp } from "@/lib/xp";
 import { getHomeworkStateChip, type AssignableItem } from "@/lib/homeworkAssignable";
 import { Button, Card, EmptyState, Skeleton, StatusChip } from "@/components/ui-kit";
 import HomeworkSubmit from "@/components/homework/HomeworkSubmit";
+import { fetchHomeworkBriefs, HomeworkBriefText } from "@/components/homework/HomeworkBrief";
 
 /* Module-end homework screen (module-homework feature, 2026-08-18). Reached by tapping a
  * module's "Uy vazifasi" step row in Darslar (src/pages/Lessons.tsx) — this REPLACES the video
@@ -18,10 +19,9 @@ import HomeworkSubmit from "@/components/homework/HomeworkSubmit";
  * It is purely additive: does not gate module completion or lesson progression, and reuses the
  * already-shipped student_assignable_homework() RPC + submit-homework edge fn (no new backend).
  *
- * Prompt text: homework_assignments columns prompt_uz/prompt_ru/prompt_en (RLS: "hwa read
- * auth" — any authenticated SELECT), picked by the current i18n language with a uz fallback,
- * then description, then empty — same precedence HomeworkSection.tsx already uses for the
- * (now-superseded) in-lesson homework panel.
+ * Prompt text: the shared HomeworkBrief (src/components/homework/HomeworkBrief.tsx) — the SAME
+ * description + "what you can upload" the Vazifa tab's picker shows (prompt_<lang> → … →
+ * description; a step without text shows its parent's).
  *
  * Coral discipline: Button variant="primary" is the ONE coral CTA per screen (see
  * ui-kit/Button.tsx's own comment). When a module has multiple homework tasks, only ONE can be
@@ -29,23 +29,6 @@ import HomeworkSubmit from "@/components/homework/HomeworkSubmit";
  * — and therefore at most one coral submit button — is ever visible together. A module with a
  * single task skips the accordion entirely and shows it directly, per the brief.
  */
-
-interface PromptRow {
-  id: string;
-  title: string;
-  description: string | null;
-  max_score: number;
-  prompt_uz: string | null;
-  prompt_ru: string | null;
-  prompt_en: string | null;
-}
-
-function pickPrompt(row: PromptRow | undefined, lang: string): string {
-  if (!row) return "";
-  const lng = (lang || "uz").slice(0, 2);
-  const byLang = lng === "ru" ? row.prompt_ru : lng === "en" ? row.prompt_en : row.prompt_uz;
-  return byLang || row.prompt_uz || row.prompt_ru || row.prompt_en || row.description || "";
-}
 
 export default function ModuleHomework() {
   const { moduleId } = useParams<{ moduleId: string }>();
@@ -57,7 +40,7 @@ export default function ModuleHomework() {
   const [error, setError] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [items, setItems] = useState<AssignableItem[]>([]);
-  const [prompts, setPrompts] = useState<Record<string, PromptRow>>({});
+  const [prompts, setPrompts] = useState<Record<string, string>>({});
   const [moduleTitle, setModuleTitle] = useState("");
   const [moduleNumber, setModuleNumber] = useState<number | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -88,17 +71,8 @@ export default function ModuleHomework() {
           setModuleNumber(rows[0].module_number);
           setExpandedId(rows.length === 1 ? rows[0].assignment_id : null);
 
-          const ids = rows.map((r) => r.assignment_id);
-          const { data: hwRows, error: hwErr } = await supabase
-            .from("homework_assignments")
-            .select("id, title, description, max_score, prompt_uz, prompt_ru, prompt_en")
-            .in("id", ids);
-          if (hwErr) throw hwErr;
+          const map = await fetchHomeworkBriefs(rows.map((r) => r.assignment_id), i18n.language);
           if (cancelled) return;
-          const map: Record<string, PromptRow> = {};
-          ((hwRows as any[]) || []).forEach((r) => {
-            map[r.id as string] = r as PromptRow;
-          });
           setPrompts(map);
         }
       } catch (e) {
@@ -113,7 +87,7 @@ export default function ModuleHomework() {
     return () => {
       cancelled = true;
     };
-  }, [user, moduleId, reloadKey]);
+  }, [user, moduleId, reloadKey, i18n.language]);
 
   const toggleExpanded = (id: string) => {
     if (submitting) return; // never drop an in-flight submit by collapsing/switching accordion
@@ -173,7 +147,7 @@ export default function ModuleHomework() {
               const isSingle = items.length === 1;
               const isExpanded = isSingle || expandedId === item.assignment_id;
               const chip = getHomeworkStateChip(item.state, item.score, item.max_score, t, i18n.language);
-              const prompt = pickPrompt(prompts[item.assignment_id], i18n.language);
+              const prompt = prompts[item.assignment_id] ?? "";
 
               return (
                 <Card key={item.assignment_id} className="space-y-3 p-4">
@@ -218,11 +192,7 @@ export default function ModuleHomework() {
 
                   {isExpanded && (
                     <div className="space-y-3 border-t border-border pt-3">
-                      {prompt && (
-                        <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-foreground/90">
-                          {prompt}
-                        </p>
-                      )}
+                      <HomeworkBriefText text={prompt} />
                       <HomeworkSubmit
                         key={item.assignment_id}
                         assignment={item}

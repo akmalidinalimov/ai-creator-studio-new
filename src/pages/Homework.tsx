@@ -12,6 +12,7 @@ import { getHomeworkStateChip, type AssignableItem } from "@/lib/homeworkAssigna
 import { Card, SectionHeader, StatTile, StatusChip, XpPill, Button, EmptyState, Skeleton } from "@/components/ui-kit";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import HomeworkSubmit from "@/components/homework/HomeworkSubmit";
+import HomeworkBrief from "@/components/homework/HomeworkBrief";
 import { FeedbackVoicePlayer } from "@/components/homework/FeedbackVoicePlayer";
 
 /* Vazifa (homework) hub. Mockup: data-screen="homework" + "hw-detail" + "upload".
@@ -641,6 +642,9 @@ export default function Homework() {
                   </div>
                 </div>
               </Card>
+
+              {/* the homework's description + what can be uploaded — the same block ModuleHomework shows */}
+              {pickedItem && <HomeworkBrief assignmentId={pickedItem.assignment_id} />}
 
               {pickedItem && (
                 <HomeworkSubmit
