@@ -16,7 +16,9 @@
 -- task, and rightly so):
 --   1. challenge_tasks.ig.require_link / ig.require_tag (new config keys, default TRUE = old behaviour), set FALSE here:
 --      challenge_tasks_config parses them; challenge_task_evaluate drops the link requirement (and the link-reuse
---      reasons) when require_link is off; challenge_task_check_record skips the tag check when require_tag is off.
+--      reasons) when require_link is off; challenge_task_check_record skips the tag check when require_tag is off, and
+--      while links are optional an included link that cannot be found (ig_link_invalid) no longer rejects either:
+--      NO LINK IS EVER NEEDED for the points (owner: "the screenshot is good enough — it is the habit we want").
 --   2. Handles are compared without dots and underscores (benzol.avto_ehtiyot ≈ benzol_avto.extiyot), still within
 --      ig.handle_edit_distance (1). Everything else stays: Instagram-or-not, the visible username must match the
 --      saved handle, no near-duplicate / reused image, no manipulation, not an old post, an unsure verdict never pays.
@@ -54,7 +56,7 @@ begin
         _missing := _missing || 'ig_link'::text;
       end if;
     else
-      -- 20261007123000 (owner): the screenshot is enough — the post link is optional (a story has none)
+      -- 20261007124000 (owner): the screenshot is enough — the post link is optional (a story has none)
       _missing := array_remove(_missing, 'ig_link');
     end if;$n$),
          jsonb_build_array(
@@ -73,11 +75,15 @@ begin
       ('public.challenge_task_check_record(bigint, uuid, integer, jsonb, jsonb)', 'ce9548ed40f164ce45bfca3063e0965e', jsonb_build_array(
          jsonb_build_array(
            $o$public.challenge_task_edit_distance(_seen, coalesce($o$,
-           -- 20261007123000: compared without dots / underscores (the same account written two ways)
+           -- 20261007124000: compared without dots / underscores (the same account written two ways)
            $n$public.challenge_task_edit_distance(translate(_seen, '._', ''), translate(coalesce($n$),
          jsonb_build_array(
            $o$where p.id = _s.user_id)))$o$,
            $n$where p.id = _s.user_id)), '._', ''))$n$),
+         jsonb_build_array(
+           $o$elsif _result->>'link_status' = 'not_found' then _decision := 'rejected'; _reason := 'ig_link_invalid';$o$,
+           -- 20261007124000: the link is optional — an included link that cannot be found never costs the screenshot
+           $n$elsif coalesce((_cfg->'ig'->>'require_link')::boolean, true) and _result->>'link_status' = 'not_found' then _decision := 'rejected'; _reason := 'ig_link_invalid';$n$),
          jsonb_build_array(
            $o$elsif coalesce(_t.requires_tag, true) and not (_v->>'tag_seen')::boolean$o$,
            $n$elsif coalesce(_t.requires_tag, true) and coalesce((_cfg->'ig'->>'require_tag')::boolean, true)
@@ -141,7 +147,7 @@ begin
     end;
   end loop;
   insert into public.admin_actions (actor_user_id, action, details)
-  values (null, 'challenge_ig_task_wording_updated', jsonb_build_object('migration', '20261007123000', 'updated', _ok, 'failed', _failed));
+  values (null, 'challenge_ig_task_wording_updated', jsonb_build_object('migration', '20261007124000', 'updated', _ok, 'failed', _failed));
 end $w$;
 
 -- 4. heal: checked again with the new rules and the new prompt (task-v2 is deployed before migrations run).
@@ -177,7 +183,8 @@ begin
     select distinct on (s.user_id, s.task_id) s.id
       from public.challenge_task_submissions s join public.challenge_tasks t on t.id = s.task_id
      where t.type = 'instagram' and t.status <> 'cancelled' and s.status = 'rejected'
-       and s.reason in ('ig_tag_missing', 'ig_handle_mismatch', 'ig_handle_not_visible', 'not_instagram', 'ig_unclear')
+       and s.reason in ('ig_tag_missing', 'ig_handle_mismatch', 'ig_handle_not_visible', 'not_instagram', 'ig_unclear',
+                        'ig_link_invalid')
        and not exists (select 1 from public.challenge_task_submissions l
                         where l.user_id = s.user_id and l.task_id = s.task_id
                           and l.status in ('needs_more', 'checking', 'accepted'))
@@ -197,7 +204,7 @@ begin
 
   insert into public.admin_actions (actor_user_id, action, details)
   values (null, 'challenge_ig_rules_relaxed', jsonb_build_object(
-    'migration', '20261007123000', 'require_link', false, 'require_tag', false, 'handle_compare', 'without dots/underscores',
+    'migration', '20261007124000', 'require_link', false, 'require_tag', false, 'handle_compare', 'without dots/underscores',
     'prompt_version', 'task-v2', 'rechecked_link_only', _links, 'rechecked_rejected', _reopened, 'submission_ids', to_jsonb(_ids),
     'skipped', _skipped));
 end $h$;
