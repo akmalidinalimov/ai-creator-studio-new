@@ -34,13 +34,54 @@ export async function healCachedAsset(url: string | null, fetchFn: typeof fetch 
   }
 }
 
+/**
+ * Every /assets/ file this page has loaded or preloads (performance entries, module scripts, modulepreload links) —
+ * WebKit's error names no file, and the poisoned file may be a SHARED chunk, not the route's own.
+ */
+export function cachedAssetUrls(): string[] {
+  const out = new Set<string>();
+  const add = (u: string | null | undefined) => {
+    if (!u) return;
+    try {
+      const url = new URL(u, window.location.href);
+      if (url.origin === window.location.origin && /^\/assets\/[^/]+\.(?:js|css)$/.test(url.pathname)) out.add(url.origin + url.pathname);
+    } catch { /* not a URL */ }
+  };
+  try { for (const e of performance.getEntriesByType("resource")) add(e.name); } catch { /* no timing API */ }
+  try {
+    document.querySelectorAll<HTMLScriptElement>("script[type=module][src]").forEach((s) => add(s.src));
+    document.querySelectorAll<HTMLLinkElement>("link[rel=modulepreload][href], link[rel=stylesheet][href]").forEach((l) => add(l.href));
+  } catch { /* no DOM */ }
+  return [...out].slice(0, 120);
+}
+
+/**
+ * Re-fetch every cached asset that is NOT what it claims to be (HTML, or an error) with cache: "reload". Reads go
+ * through the HTTP cache first (cheap); only a poisoned entry costs a network request. Never throws.
+ */
+export async function healPoisonedAssets(urls: string[] = cachedAssetUrls(), fetchFn: typeof fetch = fetch): Promise<number> {
+  let healed = 0;
+  for (const u of urls) {
+    try {
+      const r = await fetchFn(u, { cache: "force-cache", credentials: "same-origin" });
+      const ct = (r.headers.get("content-type") || "").toLowerCase();
+      if (!r.ok || ct.includes("text/html")) {
+        await fetchFn(u, { cache: "reload", credentials: "same-origin" });
+        healed++;
+      }
+    } catch { /* offline: the reload still tries */ }
+  }
+  return healed;
+}
+
 type Module<T> = { default: T };
 
 export function makeLazyRouteLoader<T extends ComponentType<any>>(
   factory: () => Promise<Module<T>>,
   deps: { reload: () => boolean; heal: (url: string | null) => Promise<void> } = {
     reload: reloadForChunkError,
-    heal: (url) => healCachedAsset(url),
+    // the failed file when the browser names it; otherwise (WebKit) every cached asset that turned out to be HTML
+    heal: async (url) => { if (url) await healCachedAsset(url); else await healPoisonedAssets(); },
   },
 ): () => Promise<Module<T>> {
   return async () => {
