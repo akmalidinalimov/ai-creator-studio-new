@@ -1,10 +1,10 @@
--- Module 2 announcement for 1-, 3- and 5-GURUH (owner, 2026-10-07). 20261006114500 posted it in 2-GURUH's «MUHIM
+-- Module 2 announcement for 1-, 3-, 4- and 5-GURUH (owner, 2026-10-07). 20261006114500 posted it in 2-GURUH's «MUHIM
 -- E'LONLAR» topic (thread 123) and left the other groups for when their topics were known.
 --
--- The owner posted "..." in each group's «MUHIM E'LONLAR» this morning. In 1-, 3- and 5-GURUH those messages arrived
+-- The owner posted "..." in each group's «MUHIM E'LONLAR» this morning. In 1-, 3-, 4- and 5-GURUH they arrived
 -- with NO message_thread_id — the group's General topic (renamed «MUHIM E'LONLAR» there), which takes a post without a
 -- thread id. Those exact messages are pinned below and re-checked in webhook_inbox before anything is sent (a renamed
--- or moved chat posts nothing). 4- and 6-GURUH: the bot received no such message — not posted here.
+-- or moved chat posts nothing). 6-GURUH: the bot received no such message — not posted here.
 --
 -- Same text as 2-GURUH got. No DMs (the students were DM'd by 20261006114500). Sent through ops_net_post (failures land
 -- in ops_http_failures, attributed to 'module2_announcement'). Replay-safe: one audit marker.
@@ -36,6 +36,7 @@ begin
     select * from (values
       ('AC CHALLENGE | 1-GURUH', -1004440955972::bigint, 3562::bigint),
       ('AC CHALLENGE | 3-GURUH', -1003714608284::bigint, 2929::bigint),
+      ('AC CHALLENGE | 4-GURUH', -1004463424516::bigint, 2074::bigint),
       ('AC CHALLENGE | 5-GURUH', -1004396568866::bigint, 29::bigint)
     ) v(name, chat, owner_msg)
   loop
@@ -58,6 +59,6 @@ begin
 
   insert into public.admin_actions (actor_user_id, action, details)
   values (null, 'group_announcement_posted', jsonb_build_object(
-    'marker', _marker, 'migration', '20261007060000', 'posts', _posts, 'skipped', _skipped,
-    'not_posted', jsonb_build_array('4-GURUH', '6-GURUH')));
+    'marker', _marker, 'migration', '20261007060500', 'posts', _posts, 'skipped', _skipped,
+    'not_posted', jsonb_build_array('6-GURUH')));
 end $$;
