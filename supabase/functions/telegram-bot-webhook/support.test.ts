@@ -166,8 +166,10 @@ Deno.test("an album (3 screenshots) is ONE ticket: the later parts are attached 
   assertEquals(w.tickets[0].messages.length, 3);
   assertEquals(w.sent.filter((s) => s.method === "copyMessage" && s.payload.chat_id === 900).length, 3, "all three reach the admin");
   assertEquals(w.sent.filter((s) => s.payload.chat_id === 500 && /qabul qilindi/.test(s.payload.text ?? "")).length, 1, "one receipt");
-  // a plain message after the album is not swallowed
-  assertEquals(await captureSupport(w.admin, msgFrom(500, 500, { text: "salom" }), STUDENT, false, "uz", w.deps), false);
+  // words typed after the album join the ticket (they are usually the description); a menu button still works
+  assert(await captureSupport(w.admin, msgFrom(500, 500, { text: "Video ochilmayapti" }), STUDENT, false, "uz", w.deps));
+  assertEquals(w.tickets[0].messages.length, 4);
+  assertEquals(await captureSupport(w.admin, msgFrom(500, 500, { text: "📸 Instagram qo‘shish" }), STUDENT, false, "uz", w.deps), false);
 });
 
 Deno.test("an admin can simply REPLY to the card, in the ticket's language", async () => {
@@ -233,4 +235,31 @@ Deno.test("✅ Hal boʻldi works once; an undeliverable answer keeps the ticket 
   assertStringIncludes(bad.sent.at(-1)!.payload.text, "yetib bormadi");
   await markSolved(bad.admin, 1, ADMIN.id, 900, bad.deps);
   assertEquals(bad.tickets[0].status, "open", "a failed ✅ is reopened");
+});
+
+Deno.test("the screenshot first, the description after it (ticket #1, 2026-10-07): both reach the admin, under the card", async () => {
+  const w = world();
+  await startSupport(w.admin, 500, 500, STUDENT.id, "uz", w.deps);
+  assert(await captureSupport(w.admin, msgFrom(500, 500, { photo: [{ file_id: "x" }] }), STUDENT, false, "uz", w.deps));
+  const card = w.tickets[0].admin_messages[0].msg;
+  const n = w.sent.length;
+  assert(await captureSupport(w.admin, msgFrom(500, 500, { text: "Shu dars nima haqida tushunmadim" }), STUDENT, false, "uz", w.deps));
+  assert(await captureSupport(w.admin, msgFrom(500, 500, { voice: { file_id: "v" } }), STUDENT, false, "uz", w.deps));
+  assertEquals(w.tickets.length, 1);
+  assertEquals(w.tickets[0].messages.map((m: any) => m.text || m.media), ["", "Shu dars nima haqida tushunmadim", "voice"].map((x, i) => i === 0 ? "photo" : x));
+  const copies = w.sent.slice(n).filter((s) => s.method === "copyMessage" && s.payload.chat_id === 900);
+  assertEquals(copies.length, 2, "the description and the voice note are copied to the admin");
+  assert(copies.every((c) => c.payload.reply_to_message_id === card), "under the ticket card");
+  assertEquals(w.sent.slice(n).filter((s) => s.payload.chat_id === 500 && /qoʻshildi/.test(s.payload.text ?? "")).length, 2);
+  // the admin's reply to a copied follow-up still answers the ticket
+  assert(w.tickets[0].admin_messages.length >= 4);
+});
+
+Deno.test("follow-ups stop when the ticket is answered", async () => {
+  const w = world();
+  await startSupport(w.admin, 500, 500, STUDENT.id, "uz", w.deps);
+  await captureSupport(w.admin, msgFrom(500, 500, { text: "Kirolmayapman" }), STUDENT, false, "uz", w.deps);
+  w.tickets[0].status = "answered";
+  assertEquals(await captureSupport(w.admin, msgFrom(500, 500, { text: "rahmat" }), STUDENT, false, "uz", w.deps), false);
+  assertEquals(w.tickets[0].messages.length, 1);
 });

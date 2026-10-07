@@ -29,6 +29,10 @@ export const SUPPORT_OPEN_STATE = "support_open";          // claimed: the ticke
 export const SUPPORT_REPLY_STATE = "awaiting_support_reply";
 export const SUPPORT_TTL_MS = 30 * 60_000;
 export const SUPPORT_ALBUM_MS = 90_000;
+// After the ticket is opened, the student's NEXT messages (the description typed after the screenshot, one more
+// screenshot, a voice note…) keep joining it for this long — 2026-10-07: ticket #1's actual description ("Shu dars
+// nima xaqida chumadim") arrived 3 minutes after its screenshot and was lost (only album parts used to join).
+export const SUPPORT_FOLLOWUP_MS = 15 * 60_000;
 export const SUPPORT_CANCEL = "sup:x";
 const CARD_TEXT_MAX = 3200;      // escaped; the card adds < 500 more — under Telegram's 4096
 const REPLY_TEXT_MAX = 3500;
@@ -56,7 +60,7 @@ const S: Record<Locale, {
     cancel: "↩️ Bekor qilish",
     cancelled: "↩️ Bekor qilindi.",
     empty: "✍️ Muammoni matn bilan yozing yoki skrinshot yuboring.",
-    received: (id) => `✅ <b>Murojaatingiz qabul qilindi (#${id}).</b>\n\nAdmin koʻrib chiqib, javobni shu yerga yozadi. Kutib turing 🙏`,
+    received: (id) => `✅ <b>Murojaatingiz qabul qilindi (#${id}).</b>\n\nYana izoh, skrinshot yoki ovozli xabar yuborsangiz — shu murojaatga qoʻshiladi. Admin koʻrib chiqib, javobni shu yerga yozadi 🙏`,
     added: (id) => `✅ <b>#${id}</b> murojaatingizga qoʻshildi.`,
     savedNotSent: (id) => `📝 Murojaatingiz saqlandi (#${id}), lekin hozir adminga yetkazib boʻlmadi. Tez orada koʻrib chiqamiz — javob shu yerga keladi.`,
     failed: "⚠️ Hozir yuborib boʻlmadi. Birozdan keyin «❓ Yordam»ni qayta bosing.",
@@ -71,7 +75,7 @@ const S: Record<Locale, {
     cancel: "↩️ Отмена",
     cancelled: "↩️ Отменено.",
     empty: "✍️ Опишите проблему текстом или отправьте скриншот.",
-    received: (id) => `✅ <b>Обращение принято (#${id}).</b>\n\nАдминистратор рассмотрит его и ответит здесь. Пожалуйста, подождите 🙏`,
+    received: (id) => `✅ <b>Обращение принято (#${id}).</b>\n\nЕсли отправите ещё пояснение, скриншот или голосовое — они добавятся к этому обращению. Администратор ответит здесь 🙏`,
     added: (id) => `✅ Добавлено к обращению <b>#${id}</b>.`,
     savedNotSent: (id) => `📝 Обращение сохранено (#${id}), но сейчас его не удалось передать администратору. Мы скоро его рассмотрим — ответ придёт сюда.`,
     failed: "⚠️ Сейчас не удалось отправить. Нажмите «❓ Помощь» ещё раз чуть позже.",
@@ -86,7 +90,7 @@ const S: Record<Locale, {
     cancel: "↩️ Cancel",
     cancelled: "↩️ Cancelled.",
     empty: "✍️ Describe the problem in text or send a screenshot.",
-    received: (id) => `✅ <b>Request received (#${id}).</b>\n\nAn admin will look at it and answer here. Please wait 🙏`,
+    received: (id) => `✅ <b>Request received (#${id}).</b>\n\nSend more details, screenshots or a voice note and they'll be added to it. An admin will answer here 🙏`,
     added: (id) => `✅ Added to your request <b>#${id}</b>.`,
     savedNotSent: (id) => `📝 Your request is saved (#${id}), but it couldn't reach an admin right now. We'll look at it soon — the answer comes here.`,
     failed: "⚠️ Couldn't send right now. Tap «❓ Help» again in a moment.",
@@ -254,6 +258,50 @@ export async function captureSupport(
 
   const st = await readState(admin, tgId);
 
+  // 1a. a follow-up to the ticket just opened: more words, another screenshot / file / voice, a NEW album. Appended to
+  //     the same ticket and copied under every admin's card. A menu button or a command ends the window. (Parts of
+  //     the album that opened the ticket are handled in 1. below, which waits for the ticket id.)
+  if (st?.state === SUPPORT_OPEN_STATE && (!albumId || (albumId !== st.context.media_group_id && !st.context.claiming))) {
+    if (!st.live || isIntent || (st.context.profile_id && st.context.profile_id !== who.id)) {
+      await clearState(admin, tgId, SUPPORT_OPEN_STATE);
+      return false;
+    }
+    if (!text && !media) return false;
+    let ticketId: number | null = st.context.claiming ? null : Number(st.context.ticket_id) || null;
+    const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+    for (let i = 0; i < 12 && !ticketId; i++) {                                 // the first message is still opening it
+      await sleep(350);
+      const again = await readState(admin, tgId);
+      if (again?.state === SUPPORT_OPEN_STATE && !again.context.claiming) ticketId = Number(again.context.ticket_id) || null;
+    }
+    const { data: t } = ticketId
+      ? await admin.from("support_tickets").select("id, status").eq("id", ticketId).maybeSingle()
+      : { data: null };
+    if (!t || t.status !== "open") {
+      // answered meanwhile (or never opened): this message is not part of it — the normal handlers take it
+      await clearState(admin, tgId, SUPPORT_OPEN_STATE);
+      return false;
+    }
+    const entry = { at: new Date().toISOString(), text: text.slice(0, 4000), media, message_id: msg.message_id ?? null };
+    const copied = msg.message_id ? await copyToAdmins(admin, ticketId!, chatId, msg.message_id, deps) : [];
+    await appendTicket(admin, ticketId!, [entry], copied);
+    if (!copied.length) {
+      await logHealth(admin, "support_followup_undelivered", { ticket_id: ticketId, profile_id: who.id, media },
+        { source: "telegram-bot-webhook", targetUserId: who.id });
+    }
+    await admin.from("bot_conversation_state").update({ updated_at: new Date().toISOString(), expires_at: isoIn(SUPPORT_FOLLOWUP_MS) })
+      .eq("telegram_id", tgId).eq("state", SUPPORT_OPEN_STATE);
+    // one confirmation per message — but not per part of an album (one album = one confirmation, its first part)
+    if (!albumId || albumId !== st.context.last_album) {
+      await deps.call("sendMessage", { chat_id: chatId, parse_mode: "HTML", text: supportCopy(locale).added(ticketId!) });
+      if (albumId) {
+        await admin.from("bot_conversation_state").update({ context: { ...st.context, ticket_id: ticketId, last_album: albumId } })
+          .eq("telegram_id", tgId).eq("state", SUPPORT_OPEN_STATE);
+      }
+    }
+    return true;
+  }
+
   // 1. the student's description
   if (st?.state === SUPPORT_STATE || (st?.state === SUPPORT_OPEN_STATE && albumId)) {
     const c = supportCopy(locale);
@@ -328,6 +376,7 @@ export async function captureSupport(
     }
     await admin.from("bot_conversation_state").update({
       context: { profile_id: who.id, media_group_id: albumId, ticket_id: id, claiming: false }, updated_at: new Date().toISOString(),
+      expires_at: isoIn(SUPPORT_FOLLOWUP_MS),                                   // follow-ups join this ticket (1a.)
     }).eq("telegram_id", tgId).eq("state", SUPPORT_OPEN_STATE);
 
     // to every admin: the card (+ the screenshot / file / voice, copied under it)
