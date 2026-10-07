@@ -62,7 +62,7 @@ const ModuleRow = React.forwardRef<HTMLDivElement, ModuleRowProps>(
           {state === "locked" ? <Lock className="size-3.5" /> : null}
         </div>
         <div className="min-w-0 flex-1">
-          <b className="block truncate text-sm font-bold text-foreground">{title}</b>
+          <b className="line-clamp-2 block break-words text-sm font-bold text-foreground">{title}</b>
           {state === "locked" && lockReason ? (
             <span className="block text-[11px] font-semibold text-gold-2">{lockReason}</span>
           ) : meta ? (

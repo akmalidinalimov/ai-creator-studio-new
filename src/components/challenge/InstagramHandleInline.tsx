@@ -91,7 +91,7 @@ export function InstagramHandleInline({ onHandle }: { onHandle?: (handle: string
       <div className="text-[13.5px] font-extrabold text-foreground">📸 {t("dailyTasks.ig.title")}</div>
       {saved && !editing ? (
         <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-semibold text-foreground">{t("dailyTasks.ig.have", { handle: saved })}</span>
+          <span className="min-w-0 break-all text-sm font-semibold text-foreground">{t("dailyTasks.ig.have", { handle: saved })}</span>
           <Button variant="ghost" size="sm" disabled={readonly} onClick={() => setEditing(true)}>{t("common.edit")}</Button>
         </div>
       ) : (

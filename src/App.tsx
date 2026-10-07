@@ -109,7 +109,7 @@ const App = () => (
     <TooltipProvider>
       <ImpersonationBanner />
       <Toaster />
-      <Sonner />
+      <Sonner position="top-center" />
       <BrowserRouter>
         <HtmlLangSync />
         <ErrorBoundary label="app-root">

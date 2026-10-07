@@ -216,7 +216,11 @@ export default function DailyTaskSubmit({ task, topicUrl, captionTextMax, onDone
     }
   };
 
-  const openTopic = (url: string) => { try { webApp?.openTelegramLink?.(url); } catch { /* the <a> is the fallback */ } };
+  // In Telegram: open in-app and STOP the <a> (it used to fire too → the topic opened twice). On the web: the <a> opens it.
+  const openTopic = (e: { preventDefault: () => void }, url: string) => {
+    if (!webApp?.openTelegramLink) return;
+    try { webApp.openTelegramLink(url); e.preventDefault(); } catch { /* the <a> is the fallback */ }
+  };
 
   return (
     <div className="space-y-3">
@@ -245,7 +249,7 @@ export default function DailyTaskSubmit({ task, topicUrl, captionTextMax, onDone
                     </div>
                   )}
                   <button type="button" onClick={() => remove(it.id)} disabled={submitting} aria-label={t("dailyTasks.submit.remove")}
-                    className="absolute -right-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full bg-card text-foreground shadow-soft ring-1 ring-border disabled:opacity-50">
+                    className="absolute -right-2 -top-2 flex size-8 items-center justify-center rounded-full bg-card text-foreground shadow-soft ring-1 ring-border disabled:opacity-50">
                     <X className="size-3.5" />
                   </button>
                 </div>
@@ -309,7 +313,7 @@ export default function DailyTaskSubmit({ task, topicUrl, captionTextMax, onDone
       {showFallback && topicUrl && (
         <div className="rounded-lg border border-primary bg-primary/5 p-3">
           <div className="text-[12px] font-semibold text-muted-foreground">{t("dailyTasks.submit.fallback")}</div>
-          <a href={topicUrl} target="_blank" rel="noopener noreferrer" onClick={() => openTopic(topicUrl)}
+          <a href={topicUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => openTopic(e, topicUrl)}
             className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-4 py-2.5 text-sm font-bold text-foreground">
             📌 {t("dailyTasks.openTopic")}
           </a>

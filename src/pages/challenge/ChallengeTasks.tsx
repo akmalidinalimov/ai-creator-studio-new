@@ -29,9 +29,13 @@ export default function ChallengeTasks() {
     return () => { alive = false; };
   }, [reloadKey]);
 
-  const openTopic = (url: string) => { try { webApp?.openTelegramLink?.(url); } catch { /* the <a> is the fallback */ } };
+  // In Telegram: open in-app and STOP the <a> (it used to fire too → the topic opened twice). On the web: the <a> opens it.
+  const openTopic = (e: { preventDefault: () => void }, url: string) => {
+    if (!webApp?.openTelegramLink) return;
+    try { webApp.openTelegramLink(url); e.preventDefault(); } catch { /* the <a> is the fallback */ }
+  };
   const topicButton = (url: string | null) => url ? (
-    <a href={url} target="_blank" rel="noopener noreferrer" onClick={() => openTopic(url)}
+    <a href={url} target="_blank" rel="noopener noreferrer" onClick={(e) => openTopic(e, url)}
       className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-4 py-2.5 text-sm font-bold text-foreground">
       📌 {t("dailyTasks.openTopic")}
     </a>
@@ -54,14 +58,16 @@ export default function ChallengeTasks() {
             </div>
           </div>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[14px] font-extrabold text-foreground">{task.title}</div>
+            <div className="line-clamp-2 break-words text-[14px] font-extrabold text-foreground">{task.title}</div>
             <div className="text-xs font-semibold text-muted-foreground">
               {task.date === today ? t("dailyTasks.today") : formatTaskDate(task.date, lng)}
               {pts > 0 ? ` · ${t("dailyTasks.task.pointsEarned", { n: pts })}` : ""}
               {task.submission?.late_days ? ` · ${t("dailyTasks.late", { days: task.submission.late_days })}` : ""}
             </div>
+            <div className="mt-1.5">
+              <StatusChip kind={st === "open" ? "wait" : statusTone(st)} label={t(`dailyTasks.status.${st}`, { defaultValue: st })} />
+            </div>
           </div>
-          <StatusChip kind={st === "open" ? "wait" : statusTone(st)} label={t(`dailyTasks.status.${st}`, { defaultValue: st })} />
           <ChevronRight className="size-[18px] flex-none text-muted-foreground" />
         </Card>
       </Link>

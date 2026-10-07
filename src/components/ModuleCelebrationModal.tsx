@@ -127,7 +127,7 @@ export function ModuleCelebrationModal() {
               </Button>
             </div>
           </div>
-          <button className="text-xs text-muted-foreground hover:underline w-full text-center" onClick={dismiss}>
+          <button className="min-h-[44px] w-full rounded-lg text-center text-sm font-semibold text-muted-foreground hover:bg-tint" onClick={dismiss}>
             Yopish
           </button>
         </div>

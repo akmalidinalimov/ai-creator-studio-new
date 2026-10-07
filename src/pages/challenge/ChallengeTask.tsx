@@ -56,7 +56,7 @@ export default function ChallengeTask() {
 
   const back = (
     <button type="button" onClick={() => navigate("/challenge/tasks")}
-      className="inline-flex items-center gap-1 text-[12.5px] font-bold text-muted-foreground">
+      className="-ml-2 inline-flex min-h-[44px] items-center gap-1 px-2 text-[12.5px] font-bold text-muted-foreground">
       <ArrowLeft className="size-3.5" />
       {t("dailyTasks.task.backToList")}
     </button>
@@ -77,9 +77,13 @@ export default function ChallengeTask() {
   const isIg = (task?.type ?? mt?.type) === "instagram";
   const readonly = impersonatingReadonly();
 
-  const openTopic = (url: string) => { try { webApp?.openTelegramLink?.(url); } catch { /* the <a> is the fallback */ } };
+  // In Telegram: open in-app and STOP the <a> (it used to fire too → the topic opened twice). On the web: the <a> opens it.
+  const openTopic = (e: { preventDefault: () => void }, url: string) => {
+    if (!webApp?.openTelegramLink) return;
+    try { webApp.openTelegramLink(url); e.preventDefault(); } catch { /* the <a> is the fallback */ }
+  };
   const topicLink = topicUrl ? (
-    <a href={topicUrl} target="_blank" rel="noopener noreferrer" onClick={() => openTopic(topicUrl)}
+    <a href={topicUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => openTopic(e, topicUrl)}
       className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-4 py-2.5 text-sm font-bold text-foreground">
       📌 {t("dailyTasks.openTopic")}
     </a>
