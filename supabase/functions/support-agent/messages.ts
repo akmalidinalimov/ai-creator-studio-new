@@ -60,6 +60,11 @@ const T: Record<string, Record<Locale, Tpl>> = {
     ru: () => "Спасибо, проблему изучают технически. Сообщим здесь, как только исправим.",
     en: () => "Thanks — the issue is being looked at on the technical side. We'll let you know here once it's fixed.",
   },
+  describe_problem: {
+    uz: () => "Rahmat, skrinshotingizni oldik! Muammoni bir-ikki soʻz bilan yozib bering (nima qilmoqchi edingiz va nima boʻldi) — shunda tezroq yordam beramiz.",
+    ru: () => "Спасибо, скриншот получили! Опишите проблему парой слов (что вы хотели сделать и что произошло) — так мы поможем быстрее.",
+    en: () => "Thanks, we got your screenshot! Please describe the problem in a few words (what you tried to do and what happened) so we can help faster.",
+  },
   unknown: {
     uz: () => "Rahmat, murojaatingiz koʻrib chiqildi. Muammo davom etsa, «❓ Yordam» orqali skrinshot bilan yana yozing.",
     ru: () => "Спасибо, ваше обращение рассмотрено. Если проблема останется, напишите снова через «❓ Помощь» со скриншотом.",

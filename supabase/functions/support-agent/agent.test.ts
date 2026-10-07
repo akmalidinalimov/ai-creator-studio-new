@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
-  asHits, cardThreads, complaintText, decide, type Hit, pickDeterministic, runOnce, ticketPart, validateLlm,
+  asHits, cardThreads, complaintText, decide, decideMediaOnly, hasWords, type Hit, pickDeterministic, runOnce, ticketPart,
+  validateLlm,
 } from "./agent.ts";
 import { templateReply } from "./messages.ts";
 import { parseSaCallback, proposalCard, proposalKeyboard } from "../_shared/support-agent-card.ts";
@@ -46,7 +47,7 @@ Deno.test("decide without a model: template reply in the student's language, arg
 });
 
 Deno.test("validateLlm: enum, lengths, no links / usernames", () => {
-  const ok = { rule: "R01_no_group", summary_uz: "x", student_reply: "Hal boʻldi.", needs_human: false };
+  const ok = { rule: "R01_no_group", summary_uz: "x", student_reply: "Guruhingizni tekshirdik.", needs_human: false };
   assert(validateLlm(ok, ["R01_no_group"]));
   assertEquals(validateLlm({ ...ok, rule: "R04_provisional" }, ["R01_no_group"]), null);    // not a hit
   assert(validateLlm({ ...ok, rule: "none" }, ["R01_no_group"]));
@@ -205,4 +206,39 @@ Deno.test("the card stays under Telegram's limit even when every character needs
   });
   assert(card.length < 3500, String(card.length));
   assert(!/&(?!amp;|lt;|gt;)/.test(card));
+});
+
+Deno.test("nothing fixed → the reply may never say it was (the first two real tickets did)", () => {
+  const base = { summary_uz: "x", needs_human: false };
+  const fixable = new Set(["R01_no_group"]);
+  // reply-only finding: "muammo bartaraf etildi" / "masala hal bo'ldi" are refused → template instead
+  assertEquals(validateLlm({ ...base, rule: "R05_tier_limit", student_reply: "Muammo bartaraf etildi, sahifani yangilang." }, ["R05_tier_limit"], fixable), null);
+  assertEquals(validateLlm({ ...base, rule: "R07_hw_skipped", student_reply: "Masala hal bo‘ldi, qayta yuboring." }, ["R07_hw_skipped"], fixable), null);
+  assertEquals(validateLlm({ ...base, rule: "none", student_reply: "Проблема решена." }, [], fixable), null);
+  // a finding WITH a fix may say so; an honest reply-only answer passes
+  assert(validateLlm({ ...base, rule: "R01_no_group", student_reply: "Guruhingiz to‘g‘rilandi, vazifani qayta yuboring." }, ["R01_no_group"], fixable));
+  assert(validateLlm({ ...base, rule: "R05_tier_limit", student_reply: "3-modul hali yopiq: u tarif bo‘yicha keyinroq ochiladi." }, ["R05_tier_limit"], fixable));
+});
+
+Deno.test("a photo-only ticket: no guess — a human looks, the reply asks for words", () => {
+  assertEquals(hasWords("[photo]\n[photo]"), false);
+  assertEquals(hasWords("[photo] video ochilmayapti"), true);
+  const d = decideMediaOnly([R06], "uz");
+  assertEquals(d.hit.rule, "R99_unknown");
+  assertEquals(d.hit.action, null);
+  assert(d.needsHuman);
+  assertStringIncludes(d.message, "skrinshot");
+  assertStringIncludes(d.hit.evidence, "R06_dm_blocked");
+});
+
+Deno.test("runOnce: a photo-only ticket never calls the model", async () => {
+  const db = fakeDb({ cfg: { enabled: true, mode: "propose", ai_provider_order: ["openai"] }, claim: [{ ...ROW, messages: [{ media: "photo", text: "" }] }], hits: [R06] });
+  let called = 0;
+  const f = (() => { called++; return Promise.reject(new Error("no")); }) as typeof fetch;
+  await runOnce({ anthropicKey: "", openaiKey: "sk-test" }, {
+    admin: db.admin, fetchFn: f, now: () => 0, send: () => Promise.resolve({ ok: true, result: { message_id: 1 }, error: null }),
+  });
+  assertEquals(called, 0);
+  assertEquals(db.calls.find((c) => c.fn === "support_proposal_create")!.args._hit.rule, "R99_unknown");
+  assertEquals(db.calls.find((c) => c.fn === "support_diag_record")!.args._llm.skipped, "media_only");
 });
