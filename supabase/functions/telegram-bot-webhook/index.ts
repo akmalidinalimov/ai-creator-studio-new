@@ -40,6 +40,7 @@ import { handleNotToday } from "./reminder-snooze.ts";
 import { typedIntent } from "./typed-intents.ts";
 import { captureIgReply, IG_CALLBACK, igCopy, startIgFlow } from "./ig-handle.ts";
 import { cancelSupport, captureSupport, markSolved, parseSupportCallback, startAdminReply, startSupport, SUPPORT_CANCEL } from "./support.ts";
+import { handleSupportAgentCallback } from "./support-agent.ts";
 import { langChooserKeyboard, parseProfAction, profileRows, profileWebCells, showProfileView } from "./profile-tabs.ts";
 import { sendStudentWelcome } from "./student-welcome.ts";
 import {
@@ -7650,7 +7651,8 @@ async function handleCallback(admin: any, cq: any) {
   // under impersonation like the list above (kept as its own line so the shared regex stays untouched).
   // PR-9: ^dtw: (the weekly approval, an admin write) is refused here too.
   // ^dtt: (walking a week task by task: approve one / rewrite its text) is an admin write too.
-  if (_isImp && /^(dt|dtw|dtt):/.test(data)) {
+  // 🤖 sa: (the support agent's approve / reject — support_apply_fix runs a data fix) is an admin write too.
+  if (_isImp && /^(dt|dtw|dtt|sa):/.test(data)) {
     await answerCallback(cq.id, "👁 Faqat o'qish — /admin");
     return;
   }
@@ -7858,6 +7860,15 @@ async function handleCallback(admin: any, cq: any) {
     await answerCallback(cq.id);
     if (sc.action === "reply") await startAdminReply(admin, chatId, tgId, sc.id, supportDeps(admin));
     else await markSolved(admin, sc.id, _clicker.id, chatId, supportDeps(admin));
+    return;
+  }
+  // 🤖 the support agent's proposal card (support-agent.ts): ✅ approve (+ confirm for a data fix) / ❌ reject.
+  // Real clicker only (impersonation refused above); support_apply_fix re-checks the admin role in SQL.
+  if (data.startsWith("sa:") && chatId) {
+    if (!_clicker) { await answerCallback(cq.id); return; }
+    if ((await getPersona(admin, _clicker.id)) !== "admin") { await answerCallback(cq.id, "⛔"); return; }
+    await answerCallback(cq.id, data.startsWith("sa:c:") || data.startsWith("sa:r:") ? "⏳" : undefined);
+    await handleSupportAgentCallback(admin, data, _clicker.id, chatId, cq.message?.message_id ?? null, supportDeps(admin));
     return;
   }
 
