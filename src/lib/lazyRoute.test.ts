@@ -55,3 +55,23 @@ describe("lazyRoute — stale-deploy recovery (2026-10-07 incident)", () => {
     await expect(load()).resolves.toEqual({ default: C });
   });
 });
+
+describe("WebKit / shared-chunk poisoning (2026-10-07, iOS)", () => {
+  it("Safari's MIME error is a chunk error (recovered, not a crash)", async () => {
+    const { isChunkLoadError } = await import("./chunkReload");
+    expect(isChunkLoadError(new TypeError("'text/html' is not a valid JavaScript MIME type."))).toBe(true);
+  });
+
+  it("only the cached assets that are HTML are re-fetched — the good ones cost nothing", async () => {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    const f = vi.fn(async (u: string, init?: RequestInit) => {
+      calls.push([u, init]);
+      const html = u.endsWith("bad.js") && init?.cache === "force-cache";
+      return new Response("x", { status: 200, headers: { "content-type": html ? "text/html" : "application/javascript" } });
+    });
+    const n = await (await import("./lazyRoute")).healPoisonedAssets(
+      ["https://x.app/assets/good.js", "https://x.app/assets/bad.js"], f as unknown as typeof fetch);
+    expect(n).toBe(1);
+    expect(calls.filter(([, i]) => i?.cache === "reload").map(([u]) => u)).toEqual(["https://x.app/assets/bad.js"]);
+  });
+});

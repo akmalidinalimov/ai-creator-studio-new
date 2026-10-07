@@ -58,7 +58,9 @@ export function isChunkLoadError(err: unknown): boolean {
     /failed to fetch dynamically imported module/i.test(msg) ||
     /error loading dynamically imported module/i.test(msg) ||
     /importing a module script failed/i.test(msg) ||
-    /dynamically imported module/i.test(msg)
+    /dynamically imported module/i.test(msg) ||
+    // WebKit (iOS Telegram) when a cached chunk is HTML: "'text/html' is not a valid JavaScript MIME type." (2026-10-07)
+    /not a valid javascript mime type/i.test(msg)
   );
 }
 

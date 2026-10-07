@@ -1,5 +1,12 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { isChunkLoadError, reloadForChunkError, hardReload } from "@/lib/chunkReload";
+import { healPoisonedAssets } from "@/lib/lazyRoute";
+
+// The reload button first re-fetches any cached asset that is really HTML (a poisoned chunk survives a plain reload —
+// 2026-10-07, iOS), at most 4 s, then the cache-busting reload.
+function healThenReload(): void {
+  void Promise.race([healPoisonedAssets(), new Promise((r) => setTimeout(r, 4000))]).finally(hardReload);
+}
 import { reportClientError } from "@/lib/beacon";
 
 // Per-page-session count of NON-chunk render crashes. A student who keeps landing
@@ -103,7 +110,7 @@ export class ErrorBoundary extends Component<Props, State> {
           type="button"
           // Cache-busting reload (not a plain soft reload) so a stale cached
           // index.html can't keep serving the same dead chunk and loop.
-          onClick={hardReload}
+          onClick={healThenReload}
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
         >
           Yangilash / Обновить / Reload
