@@ -128,3 +128,8 @@ Deno.test("renderBackfillDm and toLocale", () => {
   assertEquals(toLocale(null), "uz");
   assertEquals(toLocale("de"), "uz");
 });
+
+Deno.test("result DM for an Instagram mix-up is the step-by-step guide", () => {
+  const r = renderResultDm({ status: "rejected", reason: "not_instagram", task_id: 6, task_date: "2026-10-07", title: "Karusel" }, { locale: "en" })!;
+  assert(r.text.includes("Post your work on Instagram") && r.text.includes("«Karusel»"), r.text);
+});

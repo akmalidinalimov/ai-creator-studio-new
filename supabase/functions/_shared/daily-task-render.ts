@@ -160,6 +160,8 @@ type Copy = {
   welcome: (name: string) => string;
   missing: Record<string, string>;
   reasons: Record<string, string>;
+  /** Instagram-task problems explained as steps (2026-10-07, owner: guide the student to post first, then screenshot). */
+  igGuide: Record<string, string>;
   reasonDefault: string;
   tagMissing: (tag: string) => string;
   btnToday: string;
@@ -244,6 +246,12 @@ const UZ: Copy = {
     secret: "rasmda maxfiy ma’lumot (parol yoki token) ko‘rinadi — uni yashirib qayta yuboring",
     manipulation: "tekshiruvni chetlab o‘tishga urinish aniqlandi",
     admin_override: "admin qaroriga ko‘ra",
+  },
+  igGuide: {
+    not_instagram: "📸 Bu rasm hali Instagram skrinshoti emas.\nBall olish uchun:\n1️⃣ Ishingizni Instagram’ga joylang — story, post yoki Reels\n2️⃣ Joylangan story yoki postning skrinshotini oling — tepada Instagram username’ingiz ko‘rinib tursin\n3️⃣ Shu skrinshotni shu yerga yuboring\nHavola va teg shart emas. Bu urinish hisobga olinmadi — bemalol qayta yuboring 🙂",
+    ig_handle_not_visible: "🔎 Skrinshotda Instagram username’ingiz ko‘rinmayapti.\nStory’da u tepada, profil rasmingiz yonida; post va Reels’da — eng tepada. Username ko‘rinadigan qilib qayta skrinshot oling va yuboring. Bu urinish hisobga olinmadi 🙂",
+    ig_unclear: "🔎 Skrinshot aniq chiqmadi. Instagram oynasi va username’ingiz to‘liq ko‘rinadigan qilib qayta skrinshot oling va yuboring. Bu urinish hisobga olinmadi 🙂",
+    ig_handle_mismatch: "👤 Skrinshotdagi Instagram profil botda saqlangan username’ingiz bilan mos kelmadi.\nO‘z profilingizdagi story yoki postning skrinshotini yuboring. Username o‘zgargan bo‘lsa — botga /instagram deb yozib yangilang.",
   },
   reasonDefault: "vazifa talablariga mos kelmadi",
   tagMissing: (tag) => `postda @${tag} belgilanmagan`,
@@ -355,6 +363,12 @@ const RU: Copy = {
     manipulation: "обнаружена попытка обойти проверку",
     admin_override: "по решению администратора",
   },
+  igGuide: {
+    not_instagram: "📸 Это изображение — ещё не скриншот из Instagram.\nЧтобы получить баллы:\n1️⃣ Опубликуйте работу в Instagram — сторис, пост или Reels\n2️⃣ Сделайте скриншот опубликованной сторис или поста — вверху должен быть виден ваш username в Instagram\n3️⃣ Отправьте этот скриншот сюда\nСсылка и отметка не нужны. Эта попытка не засчитана — смело отправляйте снова 🙂",
+    ig_handle_not_visible: "🔎 На скриншоте не виден ваш username в Instagram.\nВ сторис он вверху, рядом с фото профиля; в посте и Reels — в самом верху. Сделайте скриншот так, чтобы username был виден, и отправьте снова. Эта попытка не засчитана 🙂",
+    ig_unclear: "🔎 Скриншот получился нечётким. Сделайте скриншот, где полностью видны окно Instagram и ваш username, и отправьте снова. Эта попытка не засчитана 🙂",
+    ig_handle_mismatch: "👤 Профиль Instagram на скриншоте не совпадает с username, сохранённым в боте.\nОтправьте скриншот сторис или поста из своего профиля. Если username изменился — напишите боту /instagram и обновите его.",
+  },
   reasonDefault: "не соответствует требованиям задания",
   tagMissing: (tag) => `в посте не отмечен @${tag}`,
   btnToday: "📌 Отметить как сегодняшнее",
@@ -454,6 +468,12 @@ const EN: Copy = {
     secret: "a secret (password or token) is visible — hide it and send again",
     manipulation: "an attempt to bypass the check was detected",
     admin_override: "by an admin's decision",
+  },
+  igGuide: {
+    not_instagram: "📸 This image isn't an Instagram screenshot yet.\nTo get the points:\n1️⃣ Post your work on Instagram — a story, a post or a Reel\n2️⃣ Take a screenshot of the published story or post — your Instagram username must be visible at the top\n3️⃣ Send that screenshot here\nNo link or tag needed. This attempt didn't count — feel free to send again 🙂",
+    ig_handle_not_visible: "🔎 Your Instagram username isn't visible in the screenshot.\nIn a story it's at the top, next to your profile picture; in a post or Reel — at the very top. Take a screenshot with the username visible and send it again. This attempt didn't count 🙂",
+    ig_unclear: "🔎 The screenshot isn't clear. Take a screenshot showing the whole Instagram screen and your username, and send it again. This attempt didn't count 🙂",
+    ig_handle_mismatch: "👤 The Instagram profile in the screenshot doesn't match the username saved in the bot.\nSend a screenshot of a story or post from your own profile. If your username changed, send /instagram to the bot to update it.",
   },
   reasonDefault: "it doesn't meet the task requirements",
   tagMissing: (tag) => `@${tag} isn't tagged in the post`,
@@ -590,6 +610,12 @@ function reasonText(reason: string | null | undefined, c: Copy, tag: string): st
 
 const LIVE = new Set(["needs_more", "checking", "accepted"]);
 
+/**
+ * Instagram mix-ups that are a HINT, not a used attempt (mirrors public.challenge_task_rejected_count since
+ * 20261007140000): the work is not an Instagram screenshot yet, the username is not visible, or the screenshot is unclear.
+ */
+export const IG_FREE_REASONS: ReadonlySet<string> = new Set(["not_instagram", "ig_handle_not_visible", "ig_unclear"]);
+
 /** The correction keyboard for a submission (<= 2 rows), or null. */
 export function correctionKeyboard(p: DtPayload, opts: RenderOpts = {}): InlineKeyboard | null {
   const c = copyFor(opts.locale);
@@ -667,11 +693,14 @@ export function renderReceipt(p: DtPayload, opts: RenderOpts = {}): Rendered {
       else if (!s.reason) lines.push(c.needsMore(label, c.missing.text));
       break;
     case "rejected": {
+      const guide = s.reason ? c.igGuide[s.reason] : undefined;
       if (s.reason === "ig_post_old") lines.push(c.igOld);
       else if (s.reason === "ig_link_invalid") lines.push(c.igInvalid);
+      else if (guide) lines.push(guide);
       else lines.push(c.rejected(label, reasonText(s.reason, c, tag)));
       const left = num(s.attempts_left);
-      if (left !== null) lines.push(left > 0 ? c.attemptsLeft(left) : c.attemptsNone);
+      // a free Instagram mix-up says so in its guide; anything else shows the attempts left
+      if (left !== null && !(s.reason && IG_FREE_REASONS.has(s.reason))) lines.push(left > 0 ? c.attemptsLeft(left) : c.attemptsNone);
       break;
     }
     case "withdrawn":

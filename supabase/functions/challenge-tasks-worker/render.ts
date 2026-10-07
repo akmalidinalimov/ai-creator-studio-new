@@ -257,6 +257,11 @@ export function renderResultDm(s: ResultState, opts: { locale: Locale; botUserna
     text = c.resultAccepted(title, date, num(s.points_awarded) ?? 0, (num(s.late_days) ?? 0) > 0);
   } else if (s.status === "rejected") {
     const r = String(s.reason ?? "");
+    const guide = base.igGuide[r];
+    if (guide) {
+      // an Instagram problem: what to do, in steps (not a one-word reason)
+      return { text: `📌 «${title}» (${date})\n${guide}`, keyboard: dmKeyboard(c, s.topic_url, s.task_id, opts.botUsername) };
+    }
     const why = r === "ig_tag_missing"
       ? base.tagMissing(escapeHtml(String(s.tag_handle ?? "aicreators.students").replace(/^@/, "")))
       : r === "ig_post_old" ? base.igOld.replace(/^🤔\s*/, "").replace(/\.$/, "")
