@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { formatFileSize, homeworkFileKind, homeworkMaxBytes, HW_MAX_PHOTO_BYTES, pickedKind } from "./homeworkFiles";
-import { pickPrompt } from "@/components/homework/HomeworkBrief";
+import { pickPrompt } from "./homeworkBrief";
 
 describe("homework files (mirror of submit-homework/media.ts)", () => {
   it("a PDF / Word file is homework too — it goes as a document", () => {

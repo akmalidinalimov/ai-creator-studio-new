@@ -1,6 +1,9 @@
 import { Fragment, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
+import { type BriefRow, pickPrompt } from "@/lib/homeworkBrief";
+
+export { pickPrompt };
 
 /* The homework's DESCRIPTION — one component for every place a student opens a homework (2026-10-07, owner: "in
  * one place there is a description, in another there is none"). Mounted by ModuleHomework.tsx (Darslar → module
@@ -13,22 +16,6 @@ import { supabase } from "@/integrations/supabase/client";
  *
  * homework_assignments is readable by any authenticated user (RLS "hwa read auth").
  */
-
-export interface BriefRow {
-  id: string;
-  parent_id: string | null;
-  description: string | null;
-  prompt_uz: string | null;
-  prompt_ru: string | null;
-  prompt_en: string | null;
-}
-
-export function pickPrompt(row: BriefRow | undefined, lang: string): string {
-  if (!row) return "";
-  const lng = (lang || "uz").slice(0, 2);
-  const byLang = lng === "ru" ? row.prompt_ru : lng === "en" ? row.prompt_en : row.prompt_uz;
-  return (byLang || row.prompt_uz || row.prompt_ru || row.prompt_en || row.description || "").trim();
-}
 
 /** The description of each assignment id (a step without text of its own gets its parent's). Never throws. */
 export async function fetchHomeworkBriefs(ids: string[], lang: string): Promise<Record<string, string>> {
