@@ -221,3 +221,14 @@ Deno.test("taskLabel: with grace_days a next-day ON-TIME submission (late_days 0
   assertEquals(taskLabel({ id: 1, status: "accepted", late_days: 0, task: { ...task, rel_days: 3 } }), "5-oktabr vazifasi");
   assertEquals(taskLabel({ id: 1, status: "accepted", late_days: 1, task }), "Kechagi vazifa (5-oktabr)", "an older payload: late_days");
 });
+
+Deno.test("Instagram mix-ups guide the student in steps; a free mix-up shows no attempts line (2026-10-07)", () => {
+  const sub = (reason: string) => ({ submission: { id: 1, status: "rejected", reason, task_date: "2026-10-07", attempts_left: 2 } });
+  const not = renderReceipt(sub("not_instagram") as any, { locale: "uz" }).text;
+  assert(not.includes("Instagram’ga joylang") && not.includes("username") && not.includes("Havola va teg shart emas"), not);
+  assert(!not.includes("yana 2 marta"), "a free mix-up does not show the attempts line");
+  const ru = renderReceipt(sub("ig_handle_not_visible") as any, { locale: "ru" }).text;
+  assert(ru.includes("рядом с фото профиля"), ru);
+  const mismatch = renderReceipt(sub("ig_handle_mismatch") as any, { locale: "uz" }).text;
+  assert(mismatch.includes("/instagram") && mismatch.includes("yana 2 marta"), "a wrong account still counts: " + mismatch);
+});
