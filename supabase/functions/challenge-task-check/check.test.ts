@@ -94,7 +94,7 @@ Deno.test("schemas: strict (additionalProperties false, every key required, reas
   }
   assertEquals(INSTAGRAM_SCHEMA.properties.handle_seen, { anyOf: [{ type: "string" }, { type: "null" }] });
   assertEquals(INSTAGRAM_SCHEMA.properties.posted_recently.enum, ["yes", "no", "cannot_tell"]);
-  assertEquals(PROMPT_VERSION, "task-v1");
+  assertEquals(PROMPT_VERSION, "task-v2");
 });
 
 Deno.test("validateVerdict mirrors SQL challenge_task_verdict_valid (exact keys, types, enums, 0..1)", () => {
@@ -124,7 +124,10 @@ Deno.test("injection safety: student / task text cannot close its tag; prompts t
   }
   assertStringIncludes(SYSTEM_PROMPTS.instagram, "post_age_text");
   assertStringIncludes(SYSTEM_PROMPTS.instagram, "posted_recently");
-  assertStringIncludes(SYSTEM_PROMPTS.instagram, "PUBLISHED the post");
+  assertStringIncludes(SYSTEM_PROMPTS.instagram, "PUBLISHED it");
+  // 2026-10-07: a story counts; the username is the login, never the display name
+  assertStringIncludes(SYSTEM_PROMPTS.instagram, "A story is as valid as a post");
+  assertStringIncludes(SYSTEM_PROMPTS.instagram, "Never the display name");
 });
 
 // ─────────── media.ts ───────────
@@ -382,7 +385,7 @@ Deno.test("runOnce: claim -> media -> label -> record with {verdict, link_status
   assertEquals(result.dhash, [dhashFromRgba(gradient(64, 48, 3))]);
   const calls = rec._calls as Record<string, unknown>[];
   assertEquals(calls.length, 1);
-  assertEquals([calls[0].provider, calls[0].status, calls[0].prompt_version, calls[0].input_tokens], ["anthropic", "ok", "task-v1", 1500]);
+  assertEquals([calls[0].provider, calls[0].status, calls[0].prompt_version, calls[0].input_tokens], ["anthropic", "ok", "task-v2", 1500]);
   assertEquals(calls[0].cost_usd, 0.00195);
   // the model got base64 only and the instagram prompt
   const p = a.seen[0];
@@ -444,6 +447,6 @@ Deno.test("parseClaimRows drops malformed rows; toSqlCalls is the ledger shape S
   assertEquals(parseClaimRows([CLAIM_ITEM, { submission_id: "x" }, null, { ...CLAIM_ITEM, type: "other" }]).length, 1);
   assertEquals(toSqlCalls([{ provider: "openai", model: "gpt-5-mini", ok: false, error_kind: "timeout", http_status: null, latency_ms: 5,
     tokens_in: null, tokens_out: null, cost_usd: 0, error: "t" }]),
-    [{ provider: "openai", model: "gpt-5-mini", prompt_version: "task-v1", status: "timeout", input_tokens: null, output_tokens: null,
+    [{ provider: "openai", model: "gpt-5-mini", prompt_version: "task-v2", status: "timeout", input_tokens: null, output_tokens: null,
        cost_usd: 0, latency_ms: 5, error: "t" }]);
 });

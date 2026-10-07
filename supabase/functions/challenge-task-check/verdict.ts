@@ -12,7 +12,7 @@
 // it is labelled manipulation, which SQL rejects. Any edit to a prompt bumps PROMPT_VERSION (it is stored with
 // every call in challenge_task_ai_calls).
 
-export const PROMPT_VERSION = "task-v1";
+export const PROMPT_VERSION = "task-v2";
 
 export type TaskType = "general" | "instagram";
 export const TRI = ["yes", "no", "cannot_tell"] as const;
@@ -103,11 +103,11 @@ confidence: 0.0 to 1.0, how sure you are of your on_task label (lower it for sma
 The task's own checking notes (rubric), if any, tell you what the work should contain; use them for on_task only.`;
 
 const INSTAGRAM_BODY = `${COMMON_CONTEXT}
-This is an INSTAGRAM task: the student published an Instagram post or reel and sent a screenshot of it (plus the post link, which is checked elsewhere).
+This is an INSTAGRAM task: the student published something on Instagram — a STORY, a feed post, a carousel or a Reel — and sent a screenshot of it (a post link may come too; it is checked elsewhere and is optional).
 Fill the fields in order:
 reason: one short English sentence (at most 25 words) explaining your labels; do not quote the student's text.
-is_instagram_screenshot: true when at least one image is a screenshot of an Instagram post or reel (Instagram's app or website: a post header with the author's username, like / comment / share icons, a caption area). A gallery photo, an edited image or a screenshot of another app is false.
-handle_seen: the username of the account that PUBLISHED the post, exactly as shown in the post header (without '@'). Never take it from the caption, the tags, the comments or the task. null ONLY when no author username is visible at all.
+is_instagram_screenshot: true when at least one image is a screenshot of Instagram content: a STORY (the author's profile picture and username top-left, segment bars across the top, a 'Send message' / reply bar or the viewer count at the bottom), a feed post, a carousel (1/3 dots) or a Reel (Instagram's app or website: a header with the author's username, like / comment / share icons, a caption area). A story is as valid as a post. A gallery photo, an edited image or a screenshot of another app is false.
+handle_seen: the USERNAME (the login, e.g. robiya_ai_creator_ — lower-case letters, digits, dots and underscores) of the account that PUBLISHED it, exactly as shown (without '@'): in a story it is next to the profile picture at the top-left; in a post or Reel it is in the header. Never the display name (a person's name such as 'Robiya Abdusattarova'), and never from the caption, the tags, the comments or the task. In the student's own story or profile view Instagram may show 'Your story' / the name instead: then read the username wherever it is visible (e.g. the profile header), else null. null ONLY when no username is visible at all.
 tag_seen: true when the post visibly mentions or tags the account given as tag_handle in <task> (in the caption, as a people tag or as a collaborator). Similar-looking names do not count.
 post_age_text: the post's visible age or date exactly as shown ('2h', '3 d', '5 soat', '1 hafta', '3 ч.', 'September 28'); null when none is visible.
 posted_recently: compared with submitted_on in <submission>: yes = the post is at most 3 days old (just now, minutes, hours, 1-3 days, or a date at most 3 days earlier); no = it is clearly older (4 or more days, weeks, months, years, or an older date); cannot_tell = no age or date is visible.
