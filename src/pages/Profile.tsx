@@ -11,6 +11,7 @@ import { PageShell } from "@/components/Layout";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import TeacherProfile from "@/components/profile/TeacherProfile";
+import { readContentRating, contentRatingError, type ContentRating } from "@/lib/ratingPoints";
 import { tierFor, xpToNextTier, formatXp } from "@/lib/xp";
 import { SUPPORTED_LANGUAGES } from "@/i18n";
 import {
@@ -68,6 +69,7 @@ function StudentProfile({ userId }: { userId: string | null }) {
   const [profile, setProfile] = useState<ProfileRow | null>(null);
   const [groupName, setGroupName] = useState<string | null>(null);
   const [stats, setStats] = useState<StatsRow | null>(null);
+  const [content, setContent] = useState<ContentRating | null>(null);
   const [earnedBadges, setEarnedBadges] = useState<EarnedBadge[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -83,7 +85,7 @@ function StudentProfile({ userId }: { userId: string | null }) {
     setError(false);
     (async () => {
       try {
-        const [pRes, pubRes, sRes, ubRes] = await Promise.all([
+        const [pRes, pubRes, sRes, ubRes, ratingRes] = await Promise.all([
           supabase
             .from("profiles")
             .select("name, last_name, avatar_url, telegram_username, hide_from_group_boards")
@@ -101,6 +103,8 @@ function StudentProfile({ userId }: { userId: string | null }) {
             .from("user_badges")
             .select("badges!inner(id, icon, name_uz, name_ru, name_en)")
             .eq("user_id", userId),
+          // Content-only course (Challenge 6.0: lessons + homework): the rating's own points, as on the home screen.
+          supabase.rpc("rating_points" as any, { _uid: userId }),
         ]);
         if (cancelled) return;
         // The numbers ARE this screen: a failed or empty profile_stats read shows the retry state,
@@ -120,6 +124,9 @@ function StudentProfile({ userId }: { userId: string | null }) {
         const pubRow: any = Array.isArray(pubRes.data) ? pubRes.data[0] : pubRes.data;
         setGroupName(pubRow?.group_name ?? null);
         setStats(statsRead.row);
+        const ratingErr = contentRatingError(ratingRes as any);
+        if (ratingErr) reportClientError({ type: "other", message: "profile_rating_points_failed", extra: { code: ratingErr } });
+        setContent(readContentRating(ratingRes as any));
         const eb = (((ubRes.data as any) || []) as any[])
           .map((r) => r.badges)
           .filter(Boolean) as EarnedBadge[];
@@ -198,7 +205,9 @@ function StudentProfile({ userId }: { userId: string | null }) {
   // Tier is driven by user_xp.total_xp (profile_stats.total_xp), NEVER user_group_rating_xp
   // (xp-ranking-primitive / xp-data-sources.md). tierFor().name is Uzbek regardless of locale —
   // an accepted, known limitation (shared across Home/Reyting).
-  const totalXp = stats?.total_xp ?? 0;
+  // Exception (2026-10-08): a content-only course (Challenge 6.0: lessons + homework) shows the rating's own points
+  // here and on the home screen (rating_points()), so the two screens and the rating agree.
+  const totalXp = content ? content.points : (stats?.total_xp ?? 0);
   const tier = tierFor(totalXp);
   const toNextXp = xpToNextTier(totalXp);
   const nextTierName = tier.next !== null ? tierFor(tier.next).name : null;

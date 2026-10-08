@@ -246,6 +246,7 @@ const T = {
     kbCertOld: "🎓 Sertifikat",
     statsTitle: "📊 <b>Statistikam</b>",
     statsLevel: (level: number, xp: number, toNext: string) => `⭐ Daraja: <b>${level}</b> · ⚡${xp} XP${toNext ? `\n${toNext}` : ""}`,
+    statsPoints: (xp: number) => `⚡ Reyting ballari: <b>${xp}</b> (darslar + uyga vazifalar)`,
     statsLessons: (d: number, tot: number, watch: string) => `📚 Darslar: <b>${d}/${tot}</b>${watch ? ` · ${watch} jami` : ""}\n${bar(d, tot)}`,
     statsStreak: (cur: number, best: number, barStr: string, next: number | null, atMilestone: boolean) => `🔥 <b>${cur} kunlik streak</b>${atMilestone ? " 🎉 yangi bosqich!" : ""} · rekord: ${best}\n${barStr}${next ? ` → ${next} kun` : " 🏆 eng yuqori!"}`,
     statsStreakNone: "🔥 Streak: hali boshlanmadi",
@@ -572,6 +573,7 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
     kbCertOld: "🎓 Сертификат",
     statsTitle: "📊 <b>Моя статистика</b>",
     statsLevel: (level: number, xp: number, toNext: string) => `⭐ Уровень: <b>${level}</b> · ⚡${xp} XP${toNext ? `\n${toNext}` : ""}`,
+    statsPoints: (xp: number) => `⚡ Баллы рейтинга: <b>${xp}</b> (уроки + домашние задания)`,
     statsLessons: (d: number, tot: number, watch: string) => `📚 Уроки: <b>${d}/${tot}</b>${watch ? ` · ${watch} всего` : ""}\n${bar(d, tot)}`,
     statsStreak: (cur: number, best: number, barStr: string, next: number | null, atMilestone: boolean) => `🔥 <b>${cur} дн. подряд</b>${atMilestone ? " 🎉 новый рубеж!" : ""} · рекорд: ${best}\n${barStr}${next ? ` → ${next} дн.` : " 🏆 максимум!"}`,
     statsStreakNone: "🔥 Стрик: ещё не начат",
@@ -886,6 +888,7 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
     kbCertOld: "🎓 Certificate",
     statsTitle: "📊 <b>My stats</b>",
     statsLevel: (level: number, xp: number, toNext: string) => `⭐ Level: <b>${level}</b> · ⚡${xp} XP${toNext ? `\n${toNext}` : ""}`,
+    statsPoints: (xp: number) => `⚡ Rating points: <b>${xp}</b> (lessons + homework)`,
     statsLessons: (d: number, tot: number, watch: string) => `📚 Lessons: <b>${d}/${tot}</b>${watch ? ` · ${watch} total` : ""}\n${bar(d, tot)}`,
     statsStreak: (cur: number, best: number, barStr: string, next: number | null, atMilestone: boolean) => `🔥 <b>${cur}-day streak</b>${atMilestone ? " 🎉 milestone!" : ""} · best: ${best}\n${barStr}${next ? ` → ${next} days` : " 🏆 maxed!"}`,
     statsStreakNone: "🔥 Streak: not started yet",
@@ -1339,22 +1342,38 @@ function escHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/** For a CONTENT-ONLY course (Challenge 6.0 since 2026-10-08: lessons + homework, platform_settings.rating_mode) the
+ *  rating's own points from rating_points() — the same source as the web home + Profil screens. Null for every other
+ *  course, which keeps lifetime XP exactly as before. Never throws; a failed read is DB-visible and falls back. */
+async function contentRatingPoints(admin: any, userId: string): Promise<number | null> {
+  try {
+    const { data, error } = await admin.rpc("rating_points", { _uid: userId });
+    if (error) throw new Error(String(error.message || error.code || "error"));
+    const row: any = Array.isArray(data) ? data[0] : data;
+    return row?.content_only === true && typeof row.points === "number" ? row.points : null;
+  } catch (e) {
+    await logHealthOnce(admin, "rating_points_failed", `bot:${userId}`, { error: String((e as Error)?.message || e).slice(0, 300) },
+      { targetUserId: userId, source: "telegram-bot-webhook" });
+    return null;
+  }
+}
+
 /** Student profile card TEXT: compact greeting with level, XP, streak and group rank. Its keyboard is
  *  profileViewRows(…, "card"); the tabs edit this same message in place (profile-tabs.ts). */
 async function buildProfileCard(admin: any, userId: string, locale: Locale): Promise<{ text: string }> {
   const p = PROF_T[locale];
-  const [{ data: prof }, statsRes, { ranking }] = await Promise.all([
+  const [{ data: prof }, statsRes, { ranking }, contentPts] = await Promise.all([
     admin.from("profiles").select("name, last_name").eq("id", userId).maybeSingle(),
     admin.rpc("profile_stats", { uid: userId }),
     loadGroupRanking(admin, userId, "telegram-bot-webhook"),
+    contentRatingPoints(admin, userId),
   ]);
   const s: any = Array.isArray(statsRes.data) ? statsRes.data[0] : statsRes.data;
   const name = escHtml(`${prof?.name || ""}`.trim() || "Talaba");
 
-  // The points shown are the rating's own (group_leaderboard: lessons + homework for a content-only course such as
-  // Challenge 6.0, platform_settings.rating_mode), so the card never shows a number the rank does not use.
-  const points = ranking.me ? ranking.me.total_xp : (s?.total_xp ?? 0);
-  const bits: string[] = [`L${s?.level ?? 1} ⚡${points} XP`];
+  // A content-only course (Challenge 6.0) shows the rating's own points and no level (the level counts lifetime XP,
+  // a different scale); every other course keeps "L{level} ⚡{lifetime} XP" as before.
+  const bits: string[] = [contentPts != null ? `⚡${contentPts} XP` : `L${s?.level ?? 1} ⚡${s?.total_xp ?? 0} XP`];
   if ((s?.current_streak ?? 0) > 0) bits.push(`${s.current_streak}🔥`);
   // The rank comes from the same GroupRanking as 📊 Statistika and 👥 Guruh reytingi (group_leaderboard), and
   // only for a student with ≥ 1 point: at 0 points the order is streak-then-uuid, i.e. meaningless.
@@ -2693,13 +2712,16 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
 
     const ps: any = Array.isArray(statsRes.data) ? statsRes.data[0] : statsRes.data;
     if (ps && typeof ps.level === "number") {
-      // The points are the rating's own (lessons + homework for a content-only course such as Challenge 6.0); the
-      // "to next level" hint counts lifetime XP, so it is shown only while the two numbers agree.
-      const totalXp = Number(ps.total_xp || 0);
-      const points = rankRes.ranking.me ? rankRes.ranking.me.total_xp : totalXp;
-      const need = Math.max(0, Number(ps.xp_next_level || 0) - totalXp);
-      const toNext = need > 0 && points === totalXp ? PROF_T[locale].profNextLevel(need, ps.level + 1) : "";
-      lines.push(t.statsLevel(ps.level, points, toNext));
+      // A content-only course (Challenge 6.0: lessons + homework) shows the rating's own points instead of the
+      // lifetime level line; every other course is unchanged.
+      const contentPts = await contentRatingPoints(admin, userId);
+      if (contentPts != null) {
+        lines.push(t.statsPoints(contentPts));
+      } else {
+        const need = Math.max(0, Number(ps.xp_next_level || 0) - Number(ps.total_xp || 0));
+        const toNext = need > 0 ? PROF_T[locale].profNextLevel(need, ps.level + 1) : "";
+        lines.push(t.statsLevel(ps.level, Number(ps.total_xp || 0), toNext));
+      }
       lines.push("");
     }
 

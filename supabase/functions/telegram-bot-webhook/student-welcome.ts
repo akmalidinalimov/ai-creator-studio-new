@@ -117,7 +117,8 @@ export function welcomeText(locale: Locale, f: WelcomeFacts): string {
   lines.push("");
   if (!f.trial) lines.push(`${f.labels.davom} — ${t.davom}`);
   lines.push(`${f.labels.homework} — ${t.homework}`);
-  // The keyboard's third button: 📸 Instagram qo‘shish since 2026-10-04 (it replaced 👤 Profil, still at /profil).
+  // The keyboard's third button: 👤 Profil again since 2026-10-08 (no Instagram tasks; index.ts passes no instagram
+  // label). The instagram branch stays for the day the 📸 button comes back (2026-10-04..10-07 it replaced Profil).
   lines.push(f.labels.instagram ? `${f.labels.instagram} — ${t.instagram}` : `${f.labels.profil} — ${t.profil}`);
   if (f.appOn) lines.push(t.app);
   if (f.trial) lines.push(t.trial);

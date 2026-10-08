@@ -43,7 +43,7 @@ set search_path to 'public'
 as $function$
   -- A lesson / homework XP event whose lesson / assignment belongs to _course_id (ref_key = '<prefix>:<uuid>').
   select case
-    when _course_id is null or split_part(coalesce(_ref_key, ''), ':', 2) !~* '^[0-9a-f-]{36}$' then false
+    when _course_id is null or split_part(coalesce(_ref_key, ''), ':', 2) !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then false
     when _reason = 'lesson_complete' then exists (
       select 1 from public.lessons l join public.modules m on m.id = l.module_id
       where l.id = split_part(_ref_key, ':', 2)::uuid and m.course_id = _course_id)
@@ -174,9 +174,31 @@ begin
 end
 $mig$;
 
--- The home screen (Dashboard.tsx) asks whether the student's course is content-only, to show the rating points
--- instead of lifetime XP. It reads one public setting and no user data, so signed-in users may call it.
-grant execute on function public.rating_content_only(uuid) to authenticated;
+-- 1d. ONE source for the screens (home, Profil, bot card + Statistika): whether the student's group course is
+-- content-only, and the rating's own all-time + this-week (Tashkent Monday) points. For a content-only course the
+-- screens show THESE numbers instead of lifetime XP; for every other course they keep lifetime XP, unchanged.
+-- Same caller gate as group_rating_course_id(): service role, the student, or an admin. No group / no course → no row.
+create or replace function public.rating_points(_uid uuid)
+returns table(content_only boolean, points integer, week_points integer)
+language sql
+stable security definer
+set search_path to 'public'
+as $function$
+  select public.rating_content_only(g.course_id),
+         public.user_group_rating_xp(_uid, g.course_id),
+         public.user_group_rating_xp_since(_uid, g.course_id,
+           (date_trunc('week', now() at time zone 'Asia/Tashkent') at time zone 'Asia/Tashkent'))
+  from public.profiles p
+  join public.groups g on g.id = p.group_id
+  where p.id = _uid
+    and g.course_id is not null
+    and (auth.role() = 'service_role' or _uid = auth.uid()
+         or public.has_role(auth.uid(), 'admin'::app_role)
+         or public.has_role(auth.uid(), 'superadmin'::app_role));
+$function$;
+
+revoke execute on function public.rating_points(uuid) from public, anon, authenticated;
+grant execute on function public.rating_points(uuid) to authenticated, service_role;
 
 -- ── 2. kill-switches: nothing but lessons + homework earns points in Challenge 6.0 ───────────────────────────────
 -- Verified against the live function bodies (2026-10-08):
