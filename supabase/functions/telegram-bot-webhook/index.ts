@@ -41,6 +41,8 @@ import { typedIntent } from "./typed-intents.ts";
 import { captureIgReply, IG_CALLBACK, igCopy, startIgFlow } from "./ig-handle.ts";
 import { cancelSupport, captureSupport, markSolved, parseSupportCallback, startAdminReply, startSupport, SUPPORT_CANCEL } from "./support.ts";
 import { handleSupportAgentCallback } from "./support-agent.ts";
+import { handleInboxCallback, sendInboxSummary } from "./support-inbox-bot.ts";
+import { parseInboxCallback } from "../_shared/support-inbox.ts";
 import { langChooserKeyboard, parseProfAction, profileRows, profileWebCells, showProfileView } from "./profile-tabs.ts";
 import { sendStudentWelcome } from "./student-welcome.ts";
 import {
@@ -313,6 +315,7 @@ const T = {
     adminKbInactive7: "💤 7 kun faolsiz",
     adminKbNever: "🚫 Hech qachon kirmagan",
     adminKbNew: "🆕 Yangi talabalar",
+    adminKbTickets: "🆘 Murojaatlar",
     adminKbStudentMode: "👤 Talaba rejimi",
     adminAnalyticsTitle: "📊 <b>Platforma analitikasi</b>",
     adminLine: (label: string, val: string | number) => `${label}: <b>${val}</b>`,
@@ -643,6 +646,7 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
     adminKbInactive7: "💤 Неактивны 7 дн",
     adminKbNever: "🚫 Ни разу не входили",
     adminKbNew: "🆕 Новые студенты",
+    adminKbTickets: "🆘 Обращения",
     adminKbStudentMode: "👤 Режим студента",
     adminAnalyticsTitle: "📊 <b>Аналитика платформы</b>",
     adminLine: (label: string, val: string | number) => `${label}: <b>${val}</b>`,
@@ -962,6 +966,7 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
     adminKbInactive7: "💤 Inactive 7d",
     adminKbNever: "🚫 Never logged in",
     adminKbNew: "🆕 New students",
+    adminKbTickets: "🆘 Tickets",
     adminKbStudentMode: "👤 Student mode",
     adminAnalyticsTitle: "📊 <b>Platform analytics</b>",
     adminLine: (label: string, val: string | number) => `${label}: <b>${val}</b>`,
@@ -1691,7 +1696,8 @@ function getAdminKeyboard(locale: Locale) {
   // per-group detail lives behind inline buttons under 📊 Statistika.
   return {
     keyboard: [
-      [{ text: t.adminKbAnalytics }],
+      // 🆘 the support inbox (2026-10-08): new + older open tickets, opened from here
+      [{ text: t.adminKbAnalytics }, { text: t.adminKbTickets }],
       // Mini App: opens the broadcast composer inside Telegram (auth via signed initData, admin-only).
       [{ text: t.adminKbBroadcast, web_app: { url: "https://www.aicreator.academy/tg/broadcast" } }],
       [{ text: t.adminKbClaude }],
@@ -1944,6 +1950,7 @@ function buttonTextToCommand(text: string): string | null {
     if (trimmed === t.adminKbInactive7) return "/inactive7";
     if (trimmed === t.adminKbNever) return "/nevr";
     if (trimmed === t.adminKbNew) return "/yangilar";
+    if (t.adminKbTickets && trimmed === t.adminKbTickets) return "/murojaatlar";
     if (trimmed === t.adminKbStudentMode) return "/talaba";
     // Teacher keyboard buttons
     // Data-Six: Baholash may carry a live "(N)" suffix; legacy 📝 Vazifalar
@@ -3301,6 +3308,12 @@ async function handleAdminCommand(
 
   if (cmd === "/admin") {
     await sendWithKeyboard(chatId, t.adminBackToAdmin, locale, true);
+    return true;
+  }
+
+  // 🆘 the support inbox: new + older open tickets (support-inbox-bot.ts)
+  if (cmd === "/murojaatlar" || cmd === "/tickets") {
+    await sendInboxSummary(admin, chatId, supportDeps(admin));
     return true;
   }
 
@@ -7850,6 +7863,16 @@ async function handleCallback(admin: any, cq: any) {
   if (data === SUPPORT_CANCEL && chatId) {
     await answerCallback(cq.id);
     await cancelSupport(admin, chatId, tgId, normLocale(_clicker?.preferred_locale), supportDeps(admin));
+    return;
+  }
+  // 🆘 the support inbox: sup:i (summary) · sup:l:<n|o>:<page> (a list) · sup:o:<id> (open a ticket). Admin, real clicker.
+  const inboxCb = data.startsWith("sup:") ? parseInboxCallback(data) : null;
+  if (inboxCb && chatId) {
+    if (!_clicker) { await answerCallback(cq.id); return; }
+    if (_isImp) { await answerCallback(cq.id, "👁 Faqat o'qish — /admin"); return; }
+    if ((await getPersona(admin, _clicker.id)) !== "admin") { await answerCallback(cq.id, "⛔"); return; }
+    await answerCallback(cq.id);
+    await handleInboxCallback(admin, inboxCb, chatId, inboxCb.kind === "open" ? null : (cq.message?.message_id ?? null), supportDeps(admin));
     return;
   }
   if (data.startsWith("sup:") && chatId) {

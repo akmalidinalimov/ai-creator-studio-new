@@ -34,7 +34,8 @@ export function ticketMessages(messages: unknown): Msg[] {
 const MEDIA_UZ: Record<string, string> = { photo: "skrinshot", video: "video", document: "fayl", voice: "ovozli xabar", video_note: "video xabar", audio: "audio" };
 
 /** The reminder card (HTML). Every part is capped after escaping: < 3600 characters whatever the ticket holds. */
-export function reminderCard(t: ReminderTicket, nowMs: number): string {
+/** The full ticket card: the reminder and the inbox's "open" both show it (heading differs). */
+export function reminderCard(t: ReminderTicket, nowMs: number, heading?: string): string {
   const hours = Math.max(1, Math.floor((nowMs - new Date(t.created_at).getTime()) / 3_600_000));
   const msgs = ticketMessages(t.messages);
   const words = msgs.map((m) => m.text).filter(Boolean).join("\n— ");
@@ -42,7 +43,7 @@ export function reminderCard(t: ReminderTicket, nowMs: number): string {
   const kinds = [...new Set(media.map((m) => MEDIA_UZ[m.media!] ?? m.media!))].join(", ");
   const who = `${escCap(t.display_name || "—", 120)}${t.username ? ` (@${escCap(t.username, 64)})` : ""}`;
   return [
-    `🔔 <b>Eslatma: #${t.id} — ${hours} soatdan beri javobsiz</b>`,
+    heading ?? `🔔 <b>Eslatma: #${t.id} — ${hours} soatdan beri javobsiz</b>`,
     `👤 ${who}${t.group_name ? ` · ${escCap(t.group_name, 80)}` : ""} · ${escCap(t.locale || "uz", 4)}`,
     "",
     words ? escCap(words, 2500) : "<i>(matnsiz)</i>",
