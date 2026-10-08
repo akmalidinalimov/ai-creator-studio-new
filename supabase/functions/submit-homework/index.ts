@@ -30,7 +30,7 @@
 // the outer try/catch turns it into a `notify_enqueue_failed` DB-visible health signal instead of
 // a silently-successful 200 with no teacher ever notified.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { sendTelegramMultipart } from "../_shared/telegram-send.ts";
+import { sendTelegram, sendTelegramMultipart } from "../_shared/telegram-send.ts";
 
 import {
   defaultFilename, homeworkFileKind, maxBytesFor, MAX_ITEMS, MAX_TOTAL_BYTES, sendSpec, sentFileId,
@@ -346,17 +346,19 @@ async function releaseSubmit(admin: any, userId: string, assignmentId: string): 
  * MUST be called only AFTER all validation passes — posting is a visible side effect in a shared class
  * topic, so a request that would be rejected must never reach it.
  */
-async function postHomeworkToTopic(
+type HomeworkTopic = {
+  chatId: number; threadId: number; linkBase: string; caption: string; topicUrl: string; studentTelegramId: number | null;
+};
+
+async function resolveHomeworkTopic(
   admin: any,
-  botToken: string,
   userId: string,
   assignmentId: string,
-  files: File[],
   submittedText: string,
   target: any,
-): Promise<{ mediaItems: Record<string, unknown>[]; tgCols: Record<string, unknown>; posted: number; failed: number } | { errorResponse: Response }> {
+): Promise<HomeworkTopic | { errorResponse: Response }> {
   const { data: prof, error: profErr } = await admin.from("profiles")
-    .select("group_id, name, last_name, telegram_username").eq("id", userId).maybeSingle();
+    .select("group_id, name, last_name, telegram_username, telegram_id").eq("id", userId).maybeSingle();
   if (profErr) {
     await logOutcome(admin, false, userId, { reason: "profile_lookup_failed", assignment_id: assignmentId, error: profErr.message });
     return { errorResponse: json({ error: "internal_error" }, 500) };
@@ -429,7 +431,20 @@ async function postHomeworkToTopic(
   let caption = `📝 ${studentName}${titleBits ? `\n${titleBits}` : ""}`;
   if (submittedText) caption += `\n\n${submittedText}`;
   caption = caption.slice(0, 1000);
+  const tg = Number(prof?.telegram_id);
+  return { chatId, threadId, linkBase, caption, topicUrl, studentTelegramId: Number.isSafeInteger(tg) && tg > 0 ? tg : null };
+}
 
+/** Posts the files into the resolved topic (see resolveHomeworkTopic). The side effect in the shared class topic. */
+async function postHomeworkToTopic(
+  admin: any,
+  botToken: string,
+  userId: string,
+  assignmentId: string,
+  files: File[],
+  topic: HomeworkTopic,
+): Promise<{ mediaItems: Record<string, unknown>[]; tgCols: Record<string, unknown>; posted: number; failed: number } | { errorResponse: Response }> {
+  const { chatId, threadId, linkBase, caption } = topic;
   const mediaItems: Record<string, unknown>[] = [];
   let firstMsgId: number | null = null;
   let firstFileId: string | null = null;
@@ -492,6 +507,39 @@ async function postHomeworkToTopic(
       telegram_file_kind: firstKind,
     },
   };
+}
+
+/**
+ * The upload is answered BEFORE it reaches the topic (see the handler), so a post that then fails is told to the
+ * student by DM — with the topic button as the way out — and is DB-visible (the post's own logOutcome rows + the
+ * DM's telegram_send outcome). Never throws.
+ */
+async function notifyStudentUpload(
+  admin: any, botToken: string, userId: string, topic: HomeworkTopic, kind: "failed" | "partial" | "unrecorded",
+  posted: number, total: number,
+): Promise<void> {
+  if (!topic.studentTelegramId) {
+    // the app's own wait-for-it check is this student's signal; the failure itself is already a logOutcome row
+    await logOutcome(admin, false, userId, { reason: "upload_result_no_dm", kind });
+    return;
+  }
+  const text = kind === "failed"
+    ? "⚠️ Uyga vazifangiz guruh topikiga joylanmadi. Iltimos, ilovadan qayta yuboring yoki ishingizni topikka o‘zingiz joylang 👇"
+    : kind === "partial"
+    ? `⚠️ Uyga vazifangizdagi ${total} ta fayldan ${posted} tasi joylandi. Qolganini topikka o‘zingiz joylang yoki ilovadan qayta yuboring 👇`
+    // the files ARE in the topic: never ask to resend (that would post them twice)
+    : "ℹ️ Uyga vazifangiz guruh topikiga joylandi, lekin tizimda qayd etilmadi. Qayta yubormang — admin tekshiradi.";
+  // a malformed topic link would make Telegram refuse the whole message (BUTTON_URL_INVALID): no button then
+  const button = /^https:\/\/t\.me\//.test(topic.topicUrl) && kind !== "unrecorded"
+    ? { reply_markup: { inline_keyboard: [[{ text: "📌 Topikni ochish", url: topic.topicUrl }]] } }
+    : {};
+  try {
+    await sendTelegram(botToken, "sendMessage", {
+      chat_id: topic.studentTelegramId, text, ...button,
+    }, { admin, purpose: "homework_upload_result", recipientId: topic.studentTelegramId });
+  } catch (e) {
+    await logOutcome(admin, false, userId, { reason: "upload_result_dm_failed", error: String((e as any)?.message ?? e).slice(0, 200) });
+  }
 }
 
 Deno.serve(async (req) => {
@@ -648,149 +696,149 @@ Deno.serve(async (req) => {
 
   const nowIso = new Date().toISOString();
 
-  // --- 5. Media acquisition. Deliberately AFTER every validation AND the already-graded guard above: the
-  // Telegram path posts into a SHARED CLASS TOPIC, so a request that would be rejected must never reach it.
-  let mediaItems: Record<string, unknown>[];
-  let firstImagePath: string | null = null;
-  let tgCols: Record<string, unknown> = {};
+  // --- 6/7. Record the submission (insert or resubmission) + enqueue the teacher DM + the success signal. ONE path,
+  // used by the legacy JSON flow and by the Telegram-topic flow (which runs it after its post).
+  const recordSubmission = async (
+    mediaItems: Record<string, unknown>[], firstImagePath: string | null, tgCols: Record<string, unknown>,
+  ): Promise<{ submissionId: string; status: "submitted" | "resubmitted"; attemptNumber: number } | { errorResponse: Response }> => {
+    let submissionId: string;
+    let attemptNumber: number;
+    let status: "submitted" | "resubmitted";
 
-  let postedCount = 0;
-  let failedCount = 0;
+    if (prior) {
+      status = "resubmitted";
+      const r = await applyResubmission(userClient, admin, userId, assignmentId, prior.id, submittedText, firstImagePath, mediaItems, tgCols, nowIso);
+      if ("errorResponse" in r) return r;
+      submissionId = r.submissionId;
+      attemptNumber = r.attemptNumber;
+    } else {
+      // Plain INSERT, not upsert (XP-WARN fix): a same-instant double-tap loser fails with 23505 and is funnelled
+      // through the SAME resubmission path below instead of force-writing bookkeeping over the winner's row.
+      const { data: inserted, error: insErr } = await admin.from("homework_submissions").insert({
+        user_id: userId,
+        assignment_id: assignmentId,
+        submitted_text: submittedText,
+        submitted_image_url: firstImagePath,
+        media: mediaItems,
+        ...tgCols, // Telegram-topic path only: file/message coordinates so teacher tooling resolves it
+        source: "miniapp",
+        submitted_at: nowIso,
+        attempt_number: 1,
+        previous_score: null,
+        score: null,
+        score_feedback: null,
+        scored_by: null,
+        scored_at: null,
+        score_is_stale: false,
+        is_late: false,
+      }).select("id, attempt_number").maybeSingle();
 
-  if (isMultipart) {
-    const botToken = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
-    if (!botToken) {
-      await logOutcome(admin, false, userId, { reason: "bot_token_missing", assignment_id: assignmentId });
-      return json({ error: "internal_error" }, 500);
+      if (insErr && (insErr as any).code === "23505") {
+        const { data: raced, error: racedErr } = await admin.from("homework_submissions")
+          .select("id").eq("user_id", userId).eq("assignment_id", assignmentId).maybeSingle();
+        if (racedErr || !raced?.id) {
+          await logOutcome(admin, false, userId, { reason: "race_reread_failed", assignment_id: assignmentId, error: racedErr?.message });
+          return { errorResponse: json({ error: "internal_error" }, 500) };
+        }
+        status = "resubmitted";
+        const r = await applyResubmission(userClient, admin, userId, assignmentId, raced.id, submittedText, firstImagePath, mediaItems, tgCols, nowIso);
+        if ("errorResponse" in r) return r;
+        submissionId = r.submissionId;
+        attemptNumber = r.attemptNumber;
+      } else if (insErr || !inserted?.id) {
+        await logOutcome(admin, false, userId, { reason: "write_failed", assignment_id: assignmentId, error: insErr?.message });
+        return { errorResponse: json({ error: "internal_error" }, 500) };
+      } else {
+        status = "submitted";
+        submissionId = inserted.id;
+        attemptNumber = inserted.attempt_number ?? 1;
+      }
     }
-    // ATOMIC claim before the irreversible group post — a concurrent request (double-tap / retry during a
-    // slow upload / second webview) gets a clean 409 instead of posting the same media into the class topic
-    // a second time. Released in `finally` so a later legitimate resubmission isn't blocked.
-    //
-    // ACCEPTED RESIDUAL: the release happens when the post returns, a few ms BEFORE the row write below
-    // commits, so a retry landing in exactly that gap could repost. It cannot corrupt data (the unique
-    // (user_id, assignment_id) index funnels the loser into applyResubmission), and a realistic retry only
-    // happens after a client timeout — seconds later, i.e. after this request finished, which no claim
-    // window covers anyway. Fully closing THAT needs a client-supplied idempotency key; tracked as a
-    // follow-up rather than pretending the claim solves it.
-    if (!(await claimSubmit(admin, userId, assignmentId))) {
-      await logOutcome(admin, false, userId, { reason: "submit_in_progress", assignment_id: assignmentId });
-      return json({ error: "submit_in_progress" }, 409);
+
+    // Teacher notification: enqueue only, never send from here (see enqueueTeacherDm doc). Never fails the submission.
+    try {
+      const groupId = await resolveGroupId(admin, userId);
+      await enqueueTeacherDm(admin, {
+        studentId: userId,
+        groupId,
+        moduleId: (target as any).module_id,
+        moduleNumber: (target as any).module_number,
+        stepNumber: (target as any).step_number,
+        assignmentId,
+        assignmentTitle: (target as any).title || "",
+        submissionId,
+        attemptNumber,
+      });
+    } catch (e) {
+      await logOutcome(admin, false, userId, { reason: "notify_enqueue_failed", assignment_id: assignmentId, submission_id: submissionId, error: String((e as any)?.message ?? e) }, submissionId);
     }
+
+    // Success health signal (source='miniapp' on the row is also a queryable marker).
+    await logOutcome(admin, true, userId, { assignment_id: assignmentId, status, attempt_number: attemptNumber }, submissionId);
+    return { submissionId, status, attemptNumber };
+  };
+
+  if (!isMultipart) {
+    // Legacy JSON flow (photos already in the homework_images bucket): no topic post, synchronous as before.
+    const rec = await recordSubmission(imagePaths.map((p) => ({ kind: "photo", url: p })), imagePaths[0], {});
+    if ("errorResponse" in rec) return rec.errorResponse;
+    return json({ submission_id: rec.submissionId, status: rec.status, attempt_number: rec.attemptNumber });
+  }
+
+  // --- 5. The Telegram-topic flow. Deliberately AFTER every validation AND the already-graded guard above: the post
+  // lands in a SHARED CLASS TOPIC, so a request that would be rejected must never reach it.
+  const botToken = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
+  if (!botToken) {
+    await logOutcome(admin, false, userId, { reason: "bot_token_missing", assignment_id: assignmentId });
+    return json({ error: "internal_error" }, 500);
+  }
+  // The group + topic are resolved BEFORE answering: a problem the student must act on (no group, no topic) still
+  // comes back to the app now, with its topic-fallback card.
+  const topic = await resolveHomeworkTopic(admin, userId, assignmentId, submittedText, target);
+  if ("errorResponse" in topic) return topic.errorResponse;
+  // ATOMIC claim before the irreversible group post — a concurrent request (double-tap / retry while the post is still
+  // running) gets a clean 409 instead of posting the same media a second time. Released when the post returns.
+  if (!(await claimSubmit(admin, userId, assignmentId))) {
+    await logOutcome(admin, false, userId, { reason: "submit_in_progress", assignment_id: assignmentId });
+    return json({ error: "submit_in_progress" }, 409);
+  }
+
+  const finish = async (): Promise<Response> => {
     let posted;
     try {
-      posted = await postHomeworkToTopic(admin, botToken, userId, assignmentId, files, submittedText, target);
+      posted = await postHomeworkToTopic(admin, botToken, userId, assignmentId, files, topic);
     } finally {
       await releaseSubmit(admin, userId, assignmentId);
     }
-    if ("errorResponse" in posted) return posted.errorResponse;
-    mediaItems = posted.mediaItems;
-    tgCols = posted.tgCols;
-    postedCount = posted.posted;
-    failedCount = posted.failed;
-  } else {
-    // media[] carries every uploaded photo in order; submitted_image_url keeps the FIRST as the legacy
-    // scalar that older teacher-facing reads still use (the grading gallery renders the full media[]).
-    mediaItems = imagePaths.map((p) => ({ kind: "photo", url: p }));
-    firstImagePath = imagePaths[0];
-  }
-
-  let submissionId: string;
-  let attemptNumber: number;
-  let status: "submitted" | "resubmitted";
-
-  if (prior) {
-    status = "resubmitted";
-    const r = await applyResubmission(userClient, admin, userId, assignmentId, prior.id, submittedText, firstImagePath, mediaItems, tgCols, nowIso);
-    if ("errorResponse" in r) return r.errorResponse;
-    submissionId = r.submissionId;
-    attemptNumber = r.attemptNumber;
-  } else {
-    // Fresh row: mirrors the bot's own upsert shape (index.ts:5895-5921) minus the
-    // Telegram-specific columns, which stay NULL for a miniapp-sourced row (the teacher grading
-    // screen already renders submitted_image_url via a signed URL for non-Telegram submissions —
-    // index.ts:4057-4063 "Legacy web-source submission").
-    //
-    // XP-WARN fix: plain INSERT, not upsert. A same-instant double-tap where both requests read
-    // `prior = null` used to race an upsert — the loser's UPDATE-on-conflict would force-write
-    // attempt_number=1 / previous_score=null / score_is_stale=false over a row the winner may have
-    // already turned into an in-progress resubmission of an already-graded assignment (the guard
-    // trigger only protects `score` itself, not that other bookkeeping). A plain INSERT instead
-    // fails with 23505 on the loser, which is handled below by re-reading the row and funneling
-    // through the SAME resubmission path used everywhere else in this file — one path, not a race.
-    const { data: inserted, error: insErr } = await admin.from("homework_submissions").insert({
-      user_id: userId,
-      assignment_id: assignmentId,
-      submitted_text: submittedText,
-      submitted_image_url: firstImagePath,
-      media: mediaItems,
-      ...tgCols, // Telegram-topic path only: file/message coordinates so teacher tooling resolves it
-      source: "miniapp",
-      submitted_at: nowIso,
-      attempt_number: 1,
-      previous_score: null,
-      score: null,
-      score_feedback: null,
-      scored_by: null,
-      scored_at: null,
-      score_is_stale: false,
-      is_late: false,
-    }).select("id, attempt_number").maybeSingle();
-
-    if (insErr && (insErr as any).code === "23505") {
-      const { data: raced, error: racedErr } = await admin.from("homework_submissions")
-        .select("id").eq("user_id", userId).eq("assignment_id", assignmentId).maybeSingle();
-      if (racedErr || !raced?.id) {
-        await logOutcome(admin, false, userId, { reason: "race_reread_failed", assignment_id: assignmentId, error: racedErr?.message });
-        return json({ error: "internal_error" }, 500);
-      }
-      status = "resubmitted";
-      const r = await applyResubmission(userClient, admin, userId, assignmentId, raced.id, submittedText, firstImagePath, mediaItems, tgCols, nowIso);
-      if ("errorResponse" in r) return r.errorResponse;
-      submissionId = r.submissionId;
-      attemptNumber = r.attemptNumber;
-    } else if (insErr || !inserted?.id) {
-      await logOutcome(admin, false, userId, { reason: "write_failed", assignment_id: assignmentId, error: insErr?.message });
-      return json({ error: "internal_error" }, 500);
-    } else {
-      status = "submitted";
-      submissionId = inserted.id;
-      attemptNumber = inserted.attempt_number ?? 1;
+    if ("errorResponse" in posted) {
+      await notifyStudentUpload(admin, botToken, userId, topic, "failed", 0, files.length);
+      return posted.errorResponse;
     }
+    const rec = await recordSubmission(posted.mediaItems, null, posted.tgCols);
+    if ("errorResponse" in rec) {
+      // posted but not recorded: distinct signal, and the student is NOT asked to resend (that would double-post)
+      await logOutcome(admin, false, userId, { reason: "posted_not_recorded", assignment_id: assignmentId, posted: posted.posted });
+      await notifyStudentUpload(admin, botToken, userId, topic, "unrecorded", posted.posted, posted.posted + posted.failed);
+      return rec.errorResponse;
+    }
+    if (posted.failed > 0) {
+      await notifyStudentUpload(admin, botToken, userId, topic, "partial", posted.posted, posted.posted + posted.failed);
+    }
+    // posted/failed let a synchronous caller tell the student "N of M uploaded" instead of a plain success
+    return json({ submission_id: rec.submissionId, status: rec.status, attempt_number: rec.attemptNumber, posted: posted.posted, failed: posted.failed });
+  };
+
+  // 2026-10-08 incident: answering only AFTER every file reached Telegram held the phone's connection open 10–45 s (via
+  // the /sb proxy, on mobile data). 19 students in a week got "Failed to fetch" for uploads the server then completed —
+  // one retried 13 times. Every file is already received and validated here, so: answer now, post in the background.
+  // The post's failures are DB-visible (logOutcome) and told to the student by DM (notifyStudentUpload).
+  const er = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime;
+  if (typeof er?.waitUntil === "function") {
+    er.waitUntil(finish().catch(async (e) => {
+      await logOutcome(admin, false, userId, { reason: "background_crashed", assignment_id: assignmentId, error: String((e as any)?.message ?? e).slice(0, 300) });
+      await notifyStudentUpload(admin, botToken, userId, topic, "failed", 0, files.length);
+    }));
+    return json({ status: "processing", files: files.length }, 202);
   }
-
-  // --- 6. Teacher notification: enqueue only, never send from here (see enqueueTeacherDm doc). ---
-  try {
-    const groupId = await resolveGroupId(admin, userId);
-    await enqueueTeacherDm(admin, {
-      studentId: userId,
-      groupId,
-      moduleId: (target as any).module_id,
-      moduleNumber: (target as any).module_number,
-      stepNumber: (target as any).step_number,
-      assignmentId,
-      assignmentTitle: (target as any).title || "",
-      submissionId,
-      attemptNumber,
-    });
-  } catch (e) {
-    // Never fail the submission itself over the notification leg — mirrors
-    // notifyTeachersOfSubmission's own top-level try/catch (index.ts:6151-6153). Class-A fix:
-    // every write inside resolveGroupId/enqueueTeacherDm now throws on error instead of silently
-    // continuing with undefined data, so this catch is reliably reached on a real failure instead
-    // of the function reporting a clean 200 with no queue row and no trace.
-    await logOutcome(admin, false, userId, { reason: "notify_enqueue_failed", assignment_id: assignmentId, submission_id: submissionId, error: String((e as any)?.message ?? e) }, submissionId);
-  }
-
-  // --- 7. Success health signal (source='miniapp' on the row is also a queryable marker). ---
-  await logOutcome(admin, true, userId, { assignment_id: assignmentId, status, attempt_number: attemptNumber }, submissionId);
-
-  // posted/failed let the client tell the student "N of M uploaded" instead of a plain success toast when
-  // some files didn't make it into the topic (the failure is DB-visible via telegram_post_partial too).
-  return json({
-    submission_id: submissionId,
-    status,
-    attempt_number: attemptNumber,
-    ...(isMultipart ? { posted: postedCount, failed: failedCount } : {}),
-  });
+  return await finish(); // no background runtime (local / tests): the synchronous behaviour
 });
