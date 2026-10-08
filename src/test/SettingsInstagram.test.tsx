@@ -80,7 +80,24 @@ beforeEach(async () => {
 });
 afterEach(() => cleanup());
 
-describe("Settings — Instagram handle", () => {
+// 2026-10-08 (owner): no Instagram tasks any more, so Settings hides the field (SHOW_INSTAGRAM = false) and never
+// writes the handle. The suite below pins the field's behaviour for the day it comes back (flip SHOW_INSTAGRAM and
+// un-skip); the one after it pins today's behaviour.
+describe("Settings — Instagram hidden (2026-10-08)", () => {
+  it("there is no Instagram field, and saving never writes instagram_username (even with a stored handle)", async () => {
+    h.storedHandle = "my.handle";
+    render(<MemoryRouter><Settings /></MemoryRouter>);
+    await waitFor(() => expect((screen.getAllByRole("textbox")[0] as HTMLInputElement).value).toBe("Ali"));
+    expect(screen.queryByLabelText("Instagram")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("settings.saveProfile") }));
+    await waitFor(() => expect(h.toast.success).toHaveBeenCalled());
+    expect(h.updates).toHaveLength(1);
+    expect(h.updates[0].payload).not.toHaveProperty("instagram_username");
+    for (const col of GUARDED) expect(h.updates[0].payload).not.toHaveProperty(col);
+  });
+});
+
+describe.skip("Settings — Instagram handle", () => {
   it("a reel link is refused BEFORE anything is written, with an Uzbek reason, and beaconed", async () => {
     await openAndType("https://www.instagram.com/reel/C8xYz12/?igsh=abc");
     expect(await screen.findByRole("alert")).toHaveTextContent(i18n.t("settings.instagramErrors.not_profile_link"));

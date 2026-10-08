@@ -22,6 +22,10 @@ import { SUPPORTED_LANGUAGES, type LanguageCode } from "@/i18n";
 import { HomeworkProfileSection } from "@/components/HomeworkProfileSection";
 import { NudgePreferencesCard } from "@/components/NudgePreferencesCard";
 
+// Owner, 2026-10-08: no Instagram tasks any more (the Challenge 6.0 rating counts lessons + homework only), so the
+// Instagram field is hidden and the save never touches instagram_username. Flip back to true to bring it back.
+const SHOW_INSTAGRAM = false;
+
 
 interface AuthEvent {
   id: string;
@@ -143,7 +147,7 @@ export default function Settings() {
     if (!user || saving) return;
     // 1. Check the handle BEFORE anything is written (same rules as the DB's instagram_handle_parse).
     const parsed = parseInstagramHandle(instagram);
-    if (!parsed.ok) {
+    if (SHOW_INSTAGRAM && !parsed.ok) {
       igFail(t(`settings.instagramErrors.${parsed.reason}`), "instagram_handle_rejected", { reason: parsed.reason }, false);
       return;
     }
@@ -168,10 +172,11 @@ export default function Settings() {
       // has (unique index) must not throw away the edits saved above. The normalized value is sent,
       // and the stored value is read back — the DB may still refuse it (it keeps the old handle and
       // records 'instagram_handle_rejected'), and that must never be reported as "Saqlandi".
-      const wanted = parsed.handle ?? "";
-      if (wanted !== savedInstagram) {
+      const handle = parsed.ok ? parsed.handle : null;
+      const wanted = handle ?? "";
+      if (SHOW_INSTAGRAM && wanted !== savedInstagram) {
         const ig = await mutate<{ id: string; instagram_username: string | null }>(
-          () => (supabase as any).from("profiles").update({ instagram_username: parsed.handle }).eq("id", user.id),
+          () => (supabase as any).from("profiles").update({ instagram_username: handle }).eq("id", user.id),
           "id,instagram_username",
         );
         if (!ig.ok) {
@@ -262,7 +267,7 @@ export default function Settings() {
           <div className="space-y-1.5"><Label>{t("settings.timezone")}</Label><Input value={timezone} onChange={(e) => setTimezone(e.target.value)} /></div>
           <div className="space-y-1.5"><Label>{t("settings.weeklyGoal")}</Label><Input type="number" value={goal} onChange={(e) => setGoal(parseInt(e.target.value) || 0)} /></div>
           {/* "Instagram" is the same word in uz/ru/en, so it needs no translation key. */}
-          <div className="space-y-1.5">
+          {SHOW_INSTAGRAM && <div className="space-y-1.5">
             <Label htmlFor="settings-instagram">Instagram</Label>
             <Input
               id="settings-instagram"
@@ -280,7 +285,7 @@ export default function Settings() {
             ) : (
               <p id="settings-instagram-help" className="text-xs text-muted-foreground">{t("settings.instagramHint")}</p>
             )}
-          </div>
+          </div>}
           <Button onClick={save} disabled={saving}>{t("settings.saveProfile")}</Button>
         </Card>
 

@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { ModuleCelebrationModal } from "@/components/ModuleCelebrationModal";
+import { readContentRating, contentRatingError } from "@/lib/ratingPoints";
 import { tierFor, formatXp, type TierKey } from "@/lib/xp";
 import { loadCourseRows, pickResume, type CourseRow, type EnrollmentRow } from "@/lib/nextLesson";
 import { reportClientError } from "@/lib/beacon";
@@ -118,7 +119,7 @@ export default function Dashboard() {
     (async () => {
      try {
       const weekStartIso = tashkentWeekStartIso();
-      const [profRes, statsRes, enrollRes, weekXpRes, dailyRes, hwRes, courseRes] = await Promise.all([
+      const [profRes, statsRes, enrollRes, weekXpRes, dailyRes, hwRes, courseRes, ratingRes] = await Promise.all([
         supabase.from("profiles").select("name, last_name").eq("id", user.id).maybeSingle(),
         // profile_stats(uid): total_xp/level/group_rank/badges_earned/current_streak are the SAME
         // underlying reads xp-data-sources.md pins (user_xp.total_xp, user_group_rating_xp-based
@@ -134,6 +135,9 @@ export default function Dashboard() {
         // The course the group rating is scored by (same lookup as group_leaderboard / profile_stats;
         // `groups` is admin-only under RLS) — needed to know whether the student has any rating points.
         supabase.rpc("group_rating_course_id" as any, { uid: user.id }),
+        // A content-only course (Challenge 6.0 since 2026-10-08: lessons + homework, platform_settings.rating_mode):
+        // the rating's own all-time + this-week points, shown below instead of lifetime XP. Null for other courses.
+        supabase.rpc("rating_points" as any, { _uid: user.id }),
       ]);
       if (enrollRes.error) throw enrollRes.error;
       // A failed or EMPTY profile_stats read (a failed caller gate returns 200 + []) is a failure: show
@@ -157,7 +161,12 @@ export default function Dashboard() {
       setDisplayName(full || first || t("dashboard.there"));
 
       const sRow: any = statsRead.row;
-      const freshTotalXp = sRow?.total_xp ?? 0;
+      const ratingErr = contentRatingError(ratingRes as any);
+      if (ratingErr) reportClientError({ type: "other", message: "dashboard_rating_points_failed", extra: { code: ratingErr } });
+      const content = readContentRating(ratingRes as any);
+      // The XP tile, the tier (and its celebration) and the weekly ring use the rating's points for a content-only
+      // course, so the home screen never shows a number the rating does not count.
+      const freshTotalXp = content ? content.points : (sRow?.total_xp ?? 0);
       const freshLevel = sRow?.level ?? 1;
 
       // No rank without points. profile_stats numbers a group 1..N even when everyone is at 0 (ties
@@ -225,7 +234,7 @@ export default function Dashboard() {
       }
 
       const weekAmt = (((weekXpRes.data as any[]) || [])).reduce((sum, e) => sum + (e.amount || 0), 0);
-      setWeeklyXp(weekAmt);
+      setWeeklyXp(content && content.week != null ? content.week : weekAmt);
 
       const dailyRow: any = Array.isArray(dailyRes.data) ? dailyRes.data[0] : dailyRes.data;
       setDailyRemaining(Math.max((dailyRow?.target ?? 0) - (dailyRow?.done ?? 0), 0));
