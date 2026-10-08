@@ -140,11 +140,13 @@ describe("Profil — failed stats, and the 'edit my info' row", () => {
     }));
   });
 
-  it("the Profil tab has a 'Shaxsiy ma'lumotlar' row that opens the name / surname / Instagram editor", async () => {
+  it("the Profil tab has a 'Shaxsiy ma'lumotlar' row that opens the name / surname editor", async () => {
     await i18n.changeLanguage("uz");
     render(<MemoryRouter><Profile /></MemoryRouter>);
     const row = await screen.findByRole("link", { name: /Shaxsiy ma'lumotlar/ });
     expect(row).toHaveAttribute("href", "/settings#profile");
-    expect(row).toHaveTextContent("Instagram");
+    expect(row).toHaveTextContent("familiya");
+    // 2026-10-08: no Instagram tasks any more — the row no longer advertises an Instagram field
+    expect(row).not.toHaveTextContent("Instagram");
   });
 });
