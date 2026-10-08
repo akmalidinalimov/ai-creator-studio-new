@@ -31,3 +31,44 @@ describe("homework description precedence", () => {
     expect(pickPrompt(undefined, "uz")).toBe("");
   });
 });
+
+describe("waitForSubmission — checked against the row itself, never the phone clock (2026-10-08)", () => {
+  const T0 = Date.parse("2026-10-08T10:00:00Z");
+  const fake = (rows: Array<string | null | Error>) => {
+    let t = T0, i = 0;
+    return {
+      read: async () => { const r = rows[Math.min(i++, rows.length - 1)]; if (r instanceof Error) throw r; return r; },
+      opts: { everyMs: 5_000, maxMs: 30_000, now: () => t, sleep: async (ms: number) => { t += ms; } },
+    };
+  };
+  const wait = async (...a: Parameters<typeof import("./homeworkFiles").waitForSubmission>) =>
+    (await import("./homeworkFiles")).waitForSubmission(...a);
+  it("a first submission: the row appearing at all is this upload", async () => {
+    const f = fake([null, null, "2026-10-08T09:59:00Z"]);              // server clock may lag the phone: still counts
+    expect(await wait(f.read, { baseline: null, startedMs: T0 }, f.opts)).toBe(true);
+  });
+  it("a resubmission: arrives when submitted_at moves past the old value; the old value alone is not it", async () => {
+    const old = "2026-10-07T09:00:00Z";
+    const f = fake([old, old, "2026-10-08T10:00:20Z"]);
+    expect(await wait(f.read, { baseline: old, startedMs: T0 }, f.opts)).toBe(true);
+    const stuck = fake([old]);
+    expect(await wait(stuck.read, { baseline: old, startedMs: T0 }, stuck.opts)).toBe(false);
+  });
+  it("offline while checking → keeps trying; baseline unknown → phone clock with a wide margin", async () => {
+    const f = fake([new Error("Failed to fetch"), "2026-10-08T10:00:12Z"]);
+    expect(await wait(f.read, { baseline: "unknown", startedMs: T0 }, f.opts)).toBe(true);
+    const never = fake([null]);
+    expect(await wait(never.read, { baseline: null, startedMs: T0 }, never.opts)).toBe(false);
+  });
+});
+
+describe("isFunctionNetworkError — the REAL functions-js errors", () => {
+  it("a dropped connection (FunctionsFetchError, context = the TypeError) is a network error", async () => {
+    const { FunctionsFetchError, FunctionsHttpError } = await import("@supabase/functions-js");
+    const { isFunctionNetworkError } = await import("./homeworkFiles");
+    expect(isFunctionNetworkError(new FunctionsFetchError(new TypeError("Failed to fetch")))).toBe(true);
+    // an HTTP answer (e.g. 409 already_graded) is NOT — the app reads its code instead
+    expect(isFunctionNetworkError(new FunctionsHttpError(new Response("{}", { status: 409 })))).toBe(false);
+    expect(isFunctionNetworkError(null)).toBe(false);
+  });
+});

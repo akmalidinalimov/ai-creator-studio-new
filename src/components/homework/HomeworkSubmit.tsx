@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { AssignableItem } from "@/lib/homeworkAssignable";
 import {
-  formatFileSize, HW_MAX_ITEMS, HW_MAX_PHOTO_BYTES, HW_MAX_VIDEO_BYTES, homeworkMaxBytes, pickedKind,
+  formatFileSize, HW_MAX_ITEMS, HW_MAX_PHOTO_BYTES, HW_MAX_VIDEO_BYTES, homeworkMaxBytes, pickedKind, waitForSubmission, isFunctionNetworkError,
   type HomeworkFileKind,
 } from "@/lib/homeworkFiles";
 
@@ -160,6 +160,8 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
   const [items, setItems] = useState<PickedItem[]>([]);
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // after the upload: "received" → waiting for it to be in the topic, or a dropped connection → checking it arrived
+  const [waitLabel, setWaitLabel] = useState<"" | "placing" | "verifying">("");
   const [needTopicFallback, setNeedTopicFallback] = useState(false); // a file was too big for the bot
   const [confirmResubmitOpen, setConfirmResubmitOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);   // photos / videos (opens the gallery)
@@ -259,6 +261,19 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
   const submitHomework = async (resubmit: boolean) => {
     if (!items.length || submitting) return;
     setSubmittingTracked(true);
+    const startedAt = Date.now();
+    const kinds = itemsRef.current.map((it) => it.kind);
+    const bytes = itemsRef.current.reduce((n, it) => n + it.file.size, 0);
+    // this assignment's row BEFORE the upload (server time): what "it arrived" is compared against
+    const readSubmittedAt = async (): Promise<string | null> => {
+      const { data: row, error: rowErr } = await supabase.from("homework_submissions")
+        .select("submitted_at").eq("assignment_id", assignment.assignment_id).eq("user_id", user?.id ?? "").maybeSingle();
+      if (rowErr) throw rowErr;
+      return (row as any)?.submitted_at ?? null;
+    };
+    let baseline: string | null | "unknown" = "unknown";
+    try { baseline = await readSubmittedAt(); } catch { /* offline: the phone-clock fallback */ }
+    const arrived = (maxMs: number) => waitForSubmission(readSubmittedAt, { baseline, startedMs: startedAt }, { maxMs });
     try {
       // Send the real FILES (multipart). submit-homework posts them into the group's homework topic as the
       // bot on the student's behalf — nothing is written to Supabase storage.
@@ -278,6 +293,28 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
       }
 
       const { data, error } = await supabase.functions.invoke("submit-homework", { body: fd });
+      // A dropped connection (no HTTP answer: functions-js FunctionsFetchError, whose `context` is the TypeError — not a
+      // Response): the server may well have it — check before saying it failed.
+      const isNetwork = isFunctionNetworkError(error);
+      if (isNetwork) {
+        setWaitLabel("verifying");
+        const ok = await arrived(75_000);
+        setWaitLabel("");
+        if (ok) {
+          toast.success(t("homework.picker.submitSuccess"));
+          reportClientError({ type: "other", message: "hw_upload_arrived_after_drop", route: "/homework",
+            extra: { assignment_id: assignment.assignment_id, kinds, bytes, ms: Date.now() - startedAt } });
+          resetForm();
+          onDone();
+          return;
+        }
+        // really not there: say so, offer the topic, and make it DB-visible
+        setNeedTopicFallback(true);
+        toast.error(t("homework.picker.errNetwork"));
+        reportClientError({ type: "other", message: "hw_upload_network_failed", route: "/homework",
+          extra: { assignment_id: assignment.assignment_id, kinds, bytes, ms: Date.now() - startedAt } });
+        return;
+      }
       if (error) {
         let code = "";
         try {
@@ -294,6 +331,31 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
           setNeedTopicFallback(true);
         }
         toast.error(submitErrorMessage(code, t));
+        // every refusal the student sees is DB-visible too (graceful is not silent)
+        if (code !== "already_graded") {
+          reportClientError({ type: "other", message: `hw_submit_refused:${code || "unknown"}`, route: "/homework",
+            extra: { assignment_id: assignment.assignment_id, kinds, bytes } });
+        }
+        return;
+      }
+
+      // 202: received and checked; the server posts it to the group topic in the background. Success is shown only once
+      // it is RECORDED (short reads, no open connection) — a failed post is never hidden behind "received"
+      // (and ~70% of students can't get the bot's DM).
+      if ((data as any)?.status === "processing") {
+        setWaitLabel("placing");
+        const ok = await arrived(120_000);
+        setWaitLabel("");
+        if (ok) {
+          toast.success(t("homework.picker.submitSuccess"));
+          resetForm();
+          onDone();
+        } else {
+          setNeedTopicFallback(true);
+          toast.error(t("homework.picker.notConfirmed"));
+          reportClientError({ type: "other", message: "hw_upload_not_confirmed", route: "/homework",
+            extra: { assignment_id: assignment.assignment_id, kinds, bytes, ms: Date.now() - startedAt } });
+        }
         return;
       }
 
@@ -465,7 +527,7 @@ export default function HomeworkSubmit({ assignment, onDone, onSubmittingChange,
         className="mt-4"
       >
         {submitting ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-        {submitting ? t("homework.picker.submitting") : t("homework.picker.submitCta")}
+        {waitLabel ? t(`homework.picker.${waitLabel}`) : submitting ? t("homework.picker.submitting") : t("homework.picker.submitCta")}
       </Button>
 
       <AlertDialog open={confirmResubmitOpen} onOpenChange={setConfirmResubmitOpen}>
