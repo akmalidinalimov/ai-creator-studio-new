@@ -164,17 +164,39 @@ export default function Dashboard() {
       // broken by streak, then uuid), so a Challenge 6.0 student saw an arbitrary "#17" on day 1. The
       // rank is shown only when the student's own RATING score (user_group_rating_xp over the group's
       // course — the number the rank is computed from, not lifetime XP) is at least 1.
+      //
+      // A content-only course (Challenge 6.0 since 2026-10-08, platform_settings.rating_mode) rates ONLY lessons +
+      // homework, so for it the XP tile, the tier and the weekly ring show the RATING points too (weekly =
+      // user_group_rating_xp_since): never lifetime XP that the rating does not use. Every other course is unchanged.
       let rankScore: number | null = null;
-      if (sRow?.group_rank != null) {
+      let contentOnly = false;
+      let contentWeek: number | null = null;
+      if (typeof courseRes.data === "string" && !courseRes.error) {
+        const { data: mode, error: modeErr } = await supabase.rpc("rating_content_only" as any, { _course_id: courseRes.data });
+        if (modeErr) reportClientError({ type: "other", message: "dashboard_rating_mode_failed", extra: { code: modeErr.code ?? modeErr.message ?? null } });
+        contentOnly = mode === true;
+      }
+      if (sRow?.group_rank != null || contentOnly) {
         if (courseRes.error) {
           reportClientError({ type: "other", message: "dashboard_rank_score_failed", extra: { step: "course", code: courseRes.error.code ?? courseRes.error.message ?? null } });
         } else if (typeof courseRes.data === "string") {
-          const { data: score, error: scoreErr } = await supabase
-            .rpc("user_group_rating_xp" as any, { _uid: user.id, _course_id: courseRes.data });
+          const [{ data: score, error: scoreErr }, weekRes] = await Promise.all([
+            supabase.rpc("user_group_rating_xp" as any, { _uid: user.id, _course_id: courseRes.data }),
+            contentOnly
+              ? supabase.rpc("user_group_rating_xp_since" as any, { _uid: user.id, _course_id: courseRes.data, _since: weekStartIso })
+              : Promise.resolve({ data: null, error: null }),
+          ]);
           if (scoreErr || typeof score !== "number") {
             reportClientError({ type: "other", message: "dashboard_rank_score_failed", extra: { step: "score", code: scoreErr?.code ?? scoreErr?.message ?? "not_a_number" } });
           } else {
             rankScore = score;
+          }
+          if (contentOnly) {
+            if (weekRes.error || typeof weekRes.data !== "number") {
+              reportClientError({ type: "other", message: "dashboard_rank_score_failed", extra: { step: "week", code: weekRes.error?.code ?? weekRes.error?.message ?? "not_a_number" } });
+            } else {
+              contentWeek = weekRes.data;
+            }
           }
         } else {
           // The group has no course (0 such groups on 2026-09-30). profile_stats then scores the group by
@@ -183,8 +205,9 @@ export default function Dashboard() {
           rankScore = freshTotalXp;
         }
       }
+      const shownXp = contentOnly && rankScore != null ? rankScore : freshTotalXp;
       setStats({
-        totalXp: freshTotalXp,
+        totalXp: shownXp,
         level: freshLevel,
         groupRank: displayRank(sRow?.group_rank ?? null, rankScore),
         badges: sRow?.badges_earned ?? 0,
@@ -205,7 +228,7 @@ export default function Dashboard() {
         const tierKey = `aic_seen_tier:${user.id}`;
         const storedLevel = localStorage.getItem(levelKey);
         const storedTierMin = localStorage.getItem(tierKey);
-        const freshTier = tierFor(freshTotalXp);
+        const freshTier = tierFor(shownXp);
         const events: CelebrationEvent[] = [];
         if (storedLevel !== null && freshLevel > Number(storedLevel)) {
           events.push({ kind: "level", level: freshLevel });
@@ -225,7 +248,7 @@ export default function Dashboard() {
       }
 
       const weekAmt = (((weekXpRes.data as any[]) || [])).reduce((sum, e) => sum + (e.amount || 0), 0);
-      setWeeklyXp(weekAmt);
+      setWeeklyXp(contentOnly && contentWeek != null ? contentWeek : weekAmt);
 
       const dailyRow: any = Array.isArray(dailyRes.data) ? dailyRes.data[0] : dailyRes.data;
       setDailyRemaining(Math.max((dailyRow?.target ?? 0) - (dailyRow?.done ?? 0), 0));

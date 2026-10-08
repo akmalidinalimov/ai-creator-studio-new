@@ -213,31 +213,24 @@ const T = {
     nmWelcome: (name: string) => `👋 <b>${name}</b>, xush kelibsiz! Akkountingiz yaratildi (sinov hisobi) — vazifalaringiz qabul qilinadi, ball va statistika yuritiladi. Darsliklar to'liq to'lovdan so'ng ochiladi. Quyidagi menyudan foydalaning 👇`,
     // The ladder welcome (onboarding "starter kit"): sent to a Challenge member whose modules are open
     // by tier, so it must NOT repeat nmWelcome's "lessons unlock after full payment" — that is false for
-    // them. Every button and number here is real: see the module ladder (migration 20261001075500),
-    // platform_settings.challenge_tasks.points (5 / 8, late half, +10 per 5 on-time days) and
-    // platform_settings.challenge.points (chat 1 capped 5/day, group_media 5 capped 3/day). The two
-    // rules that do NOT pay yet are deliberately absent: answering a classmate (qa.mode = 'shadow') and
-    // the Instagram @mention bonus (needs the Meta app).
+    // them. Every button and number here is real: see the module ladder (migration 20261001075500). Since
+    // 2026-10-08 (owner) the rating counts ONLY lessons + homework (platform_settings.rating_mode, migration
+    // 20261008084500): the extra tasks, Instagram, questions/answers, chat and group media pay nothing, so
+    // they are not mentioned here.
     nmWelcomeChallenge: (name: string, open: number) =>
       `🎉 <b>${name}</b>, <b>AI CREATORS CHALLENGE 6.0</b>ga xush kelibsiz!\n\n` +
-      `Hisobingiz ochildi. Quyida 5 ta muhim narsa — bir daqiqada o'qib chiqing.\n\n` +
+      `Hisobingiz ochildi. Quyida 4 ta muhim narsa — bir daqiqada o'qib chiqing.\n\n` +
       `<b>1) Darslar 📚</b>\n` +
       `Hozir ${open === 1 ? "<b>1-modul</b>" : `<b>1–${open}-modullar</b>`} ochiq — «📚 Davom etish» tugmasini bosing. Keyingi modullar har hafta navbati bilan ochiladi.\n\n` +
-      `<b>2) Instagram username’ingizni qo‘shing 📸</b>\n` +
-      `Pastdagi «📸 Instagram qo‘shish» tugmasini bosing va username’ingizni yuboring (masalan: @ismingiz). Instagram vazifalari uchun ball aynan shu nom orqali beriladi — kurs davomida Instagram’ingiz portfoliongizga aylanadi.\n\n` +
-      `<b>3) Ismingizni to'g'rilang ✏️</b>\n` +
+      `<b>2) Ismingizni to'g'rilang ✏️</b>\n` +
       `/profil → «✏️ Ismni o'zgartirish». Reyting va sertifikatda aynan shu ism chiqadi.\n\n` +
-      `<b>4) Ball jadvali ⭐️</b>\n` +
+      `<b>3) Ball jadvali ⭐️</b>\n` +
+      `Reyting faqat darslar va uyga vazifalardan yig'iladi:\n` +
       `• Dars tugatish — <b>+20</b>\n` +
       `• Uyga vazifa topshirish — <b>+15</b> (guruhdagi «UYGA VAZIFA» mavzusiga yuboring)\n` +
       `• Vazifaga 9–10 baho — <b>+25</b>\n` +
-      `• Qo'shimcha vazifa — <b>+8</b>: Instagram'ga post yoki Reels joylaysiz (dushanba, chorshanba, juma 09:00da «QO'SHIMCHA VAZIFALAR» mavzusida; ertasi kuni 23:59 gacha)\n` +
-      `• 5 ta vazifani ketma-ket o'z vaqtida bajarsangiz — <b>+10 bonus</b>\n` +
-      `• Guruhdoshingizning savoliga foydali javob — <b>+3</b>, javob olgan haqiqiy savolingiz — <b>+2</b> (AI tekshiradi; jami kuniga 10 ballgacha)\n` +
-      `• O'z ishingizni guruhga tashlasangiz (rasm/video) — <b>+5</b> (kuniga 2 martagacha)\n` +
-      `• Har kuni platformaga kirish — <b>+5</b>\n` +
-      `Qo'shimcha vazifa muddati o'tgach yopiladi.\n\n` +
-      `<b>5) Reytingni ko'rish 📊</b>\n` +
+      `Eng muhimi — darslarni ko'ring va uyga vazifani sifatli bajaring 💪\n\n` +
+      `<b>4) Reytingni ko'rish 📊</b>\n` +
       `/profil → «📊 Statistika» — o'z ballaringiz, «👥 Guruh reytingi» — guruhingizdagi o'rningiz.\n\n` +
       `Savol bo'lsa — «❓ Yordam». Omad! 🚀`,
     noNextLesson: "Yangi dars yo'q. Keyinroq qayta urinib ko'ring.",
@@ -552,24 +545,18 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
     nmWelcome: (name: string) => `👋 <b>${name}</b>, добро пожаловать! Ваш аккаунт создан (пробный) — задания принимаются, баллы и статистика ведутся. Уроки откроются после полной оплаты. Пользуйтесь меню ниже 👇`,
     nmWelcomeChallenge: (name: string, open: number) =>
       `🎉 <b>${name}</b>, добро пожаловать в <b>AI CREATORS CHALLENGE 6.0</b>!\n\n` +
-      `Аккаунт открыт. Ниже 5 главных вещей — прочитайте за минуту.\n\n` +
+      `Аккаунт открыт. Ниже 4 главные вещи — прочитайте за минуту.\n\n` +
       `<b>1) Уроки 📚</b>\n` +
       `Сейчас открыт ${open === 1 ? "<b>1-й модуль</b>" : `<b>1–${open}-й модули</b>`} — нажмите «📚 Продолжить». Следующие модули открываются каждую неделю по очереди.\n\n` +
-      `<b>2) Добавьте свой Instagram 📸</b>\n` +
-      `Нажмите внизу «📸 Добавить Instagram» и отправьте свой username (например: @vashe_imya). Баллы за Instagram-задания начисляются именно по этому имени — за время курса ваш Instagram станет вашим портфолио.\n\n` +
-      `<b>3) Исправьте своё имя ✏️</b>\n` +
+      `<b>2) Исправьте своё имя ✏️</b>\n` +
       `/profil → «✏️ Изменить имя». Именно это имя попадёт в рейтинг и сертификат.\n\n` +
-      `<b>4) Как начисляются баллы ⭐️</b>\n` +
+      `<b>3) Как начисляются баллы ⭐️</b>\n` +
+      `Рейтинг складывается только из уроков и домашних заданий:\n` +
       `• Завершить урок — <b>+20</b>\n` +
       `• Сдать домашнее задание — <b>+15</b> (в тему «UYGA VAZIFA» вашей группы)\n` +
       `• Оценка 9–10 за задание — <b>+25</b>\n` +
-      `• Дополнительное задание — <b>+8</b>: пост или Reels в Instagram (понедельник, среда, пятница в 09:00 в теме «QO'SHIMCHA VAZIFALAR»; до 23:59 следующего дня)\n` +
-      `• 5 заданий подряд вовремя — <b>+10 бонус</b>\n` +
-      `• Полезный ответ на вопрос однокурсника — <b>+3</b>, ваш настоящий вопрос, получивший ответ — <b>+2</b> (проверяет AI; всего до 10 баллов в день)\n` +
-      `• Своя работа в группе (фото/видео) — <b>+5</b> (до 2 раз в день)\n` +
-      `• Ежедневный вход на платформу — <b>+5</b>\n` +
-      `После срока дополнительное задание закрывается.\n\n` +
-      `<b>5) Рейтинг 📊</b>\n` +
+      `Главное — смотрите уроки и делайте домашние задания качественно 💪\n\n` +
+      `<b>4) Рейтинг 📊</b>\n` +
       `/profil → «📊 Статистика» — ваши баллы, «👥 Рейтинг группы» — ваше место в группе.\n\n` +
       `Вопросы — «❓ Помощь». Удачи! 🚀`,
     noNextLesson: "Новых уроков нет. Попробуйте позже.",
@@ -872,24 +859,18 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
     nmWelcome: (name: string) => `👋 <b>${name}</b>, welcome! Your account has been created (trial) — homework is accepted, points and stats are tracked. Lessons unlock after full payment. Use the menu below 👇`,
     nmWelcomeChallenge: (name: string, open: number) =>
       `🎉 <b>${name}</b>, welcome to <b>AI CREATORS CHALLENGE 6.0</b>!\n\n` +
-      `Your account is open. Five things to know — one minute to read.\n\n` +
+      `Your account is open. Four things to know — one minute to read.\n\n` +
       `<b>1) Lessons 📚</b>\n` +
       `${open === 1 ? "<b>Module 1</b> is" : `<b>Modules 1–${open}</b> are`} open now — tap «📚 Continue». The next modules open one per week.\n\n` +
-      `<b>2) Add your Instagram 📸</b>\n` +
-      `Tap «📸 Add Instagram» below and send your username (for example: @yourname). Instagram task points are given by this name — over the course your Instagram becomes your portfolio.\n\n` +
-      `<b>3) Fix your name ✏️</b>\n` +
+      `<b>2) Fix your name ✏️</b>\n` +
       `/profil → «✏️ Edit name». This is the name that appears in the rating and on your certificate.\n\n` +
-      `<b>4) How points work ⭐️</b>\n` +
+      `<b>3) How points work ⭐️</b>\n` +
+      `The rating counts only lessons and homework:\n` +
       `• Finish a lesson — <b>+20</b>\n` +
       `• Submit homework — <b>+15</b> (into your group's «UYGA VAZIFA» topic)\n` +
       `• A score of 9–10 — <b>+25</b>\n` +
-      `• Extra task — <b>+8</b>: an Instagram post or Reels (Monday, Wednesday, Friday at 09:00 in «QO'SHIMCHA VAZIFALAR»; due 23:59 the next day)\n` +
-      `• 5 tasks in a row on time — <b>+10 bonus</b>\n` +
-      `• A helpful answer to a classmate's question — <b>+3</b>, your real question that gets answered — <b>+2</b> (checked by AI; up to 10 a day in total)\n` +
-      `• Sharing your own work in the group (photo/video) — <b>+5</b> (up to 2 a day)\n` +
-      `• Opening the platform each day — <b>+5</b>\n` +
-      `An extra task closes after its deadline.\n\n` +
-      `<b>5) Your rating 📊</b>\n` +
+      `What matters most: watch the lessons and do your homework well 💪\n\n` +
+      `<b>4) Your rating 📊</b>\n` +
       `/profil → «📊 Statistics» — your points, «👥 Group rating» — your place in the group.\n\n` +
       `Questions — «❓ Help». Good luck! 🚀`,
     noNextLesson: "No new lesson. Check back later.",
@@ -1370,7 +1351,10 @@ async function buildProfileCard(admin: any, userId: string, locale: Locale): Pro
   const s: any = Array.isArray(statsRes.data) ? statsRes.data[0] : statsRes.data;
   const name = escHtml(`${prof?.name || ""}`.trim() || "Talaba");
 
-  const bits: string[] = [`L${s?.level ?? 1} ⚡${s?.total_xp ?? 0} XP`];
+  // The points shown are the rating's own (group_leaderboard: lessons + homework for a content-only course such as
+  // Challenge 6.0, platform_settings.rating_mode), so the card never shows a number the rank does not use.
+  const points = ranking.me ? ranking.me.total_xp : (s?.total_xp ?? 0);
+  const bits: string[] = [`L${s?.level ?? 1} ⚡${points} XP`];
   if ((s?.current_streak ?? 0) > 0) bits.push(`${s.current_streak}🔥`);
   // The rank comes from the same GroupRanking as 📊 Statistika and 👥 Guruh reytingi (group_leaderboard), and
   // only for a student with ≥ 1 point: at 0 points the order is streak-then-uuid, i.e. meaningless.
@@ -1391,7 +1375,7 @@ async function profileViewRows(admin: any, chatId: number, userId: string, local
   });
   return profileRows(view, {
     card: p.kbProfil, stats: p.btnProfStats, badges: p.btnProfBadges, group: p.btnProfGroup,
-    settings: p.btnProfSettings, editName: p.btnEditName, lang: T[locale].kbLang, instagram: igCopy(locale).button,
+    settings: p.btnProfSettings, editName: p.btnEditName, lang: T[locale].kbLang,
   }, web);
 }
 
@@ -1676,9 +1660,9 @@ function getMainKeyboard(locale: Locale) {
   }
   rows.push(
     [{ text: t.kbDavom }],
-    // 📸 Instagram qo‘shish replaced 👤 Profil (owner, 2026-10-04): every student must add their Instagram username
-    // for the Instagram tasks / portfolio. 👤 Profil stays at /profil, and cached keyboards' Profil still works.
-    [{ text: igCopy(locale).kbButton }, { text: t.kbHomework }],
+    // 👤 Profil is back (owner, 2026-10-08: no Instagram tasks any more). The 📸 Instagram qo‘shish button of
+    // 2026-10-04 still maps to /instagram in buttonTextToCommand, so a student's cached keyboard keeps working.
+    [{ text: PROF_T[locale].kbProfil }, { text: t.kbHomework }],
     [{ text: t.kbCert }, { text: t.kbLang }],
     [{ text: t.kbHelp }],
   );
@@ -2709,9 +2693,13 @@ async function buildStatsMessage(admin: any, userId: string, locale: Locale): Pr
 
     const ps: any = Array.isArray(statsRes.data) ? statsRes.data[0] : statsRes.data;
     if (ps && typeof ps.level === "number") {
-      const need = Math.max(0, Number(ps.xp_next_level || 0) - Number(ps.total_xp || 0));
-      const toNext = need > 0 ? PROF_T[locale].profNextLevel(need, ps.level + 1) : "";
-      lines.push(t.statsLevel(ps.level, Number(ps.total_xp || 0), toNext));
+      // The points are the rating's own (lessons + homework for a content-only course such as Challenge 6.0); the
+      // "to next level" hint counts lifetime XP, so it is shown only while the two numbers agree.
+      const totalXp = Number(ps.total_xp || 0);
+      const points = rankRes.ranking.me ? rankRes.ranking.me.total_xp : totalXp;
+      const need = Math.max(0, Number(ps.xp_next_level || 0) - totalXp);
+      const toNext = need > 0 && points === totalXp ? PROF_T[locale].profNextLevel(need, ps.level + 1) : "";
+      lines.push(t.statsLevel(ps.level, points, toNext));
       lines.push("");
     }
 
@@ -5135,7 +5123,7 @@ async function handleTeacherSession(admin: any, msg: any, profileId: string, loc
 async function studentWelcome(admin: any, chatId: number, profile: any, locale: Locale) {
   await sendStudentWelcome(admin, {
     chatId, locale, profile,
-    labels: { davom: T[locale].kbDavom, homework: T[locale].kbHomework, profil: PROF_T[locale].kbProfil, instagram: igCopy(locale).kbButton },
+    labels: { davom: T[locale].kbDavom, homework: T[locale].kbHomework, profil: PROF_T[locale].kbProfil },
     appOn: __studentMiniAppEnabled?.on === true,
     sendWithKeyboard: (text) => sendWithKeyboard(chatId, text, locale, false, "student"),
     primaryCourseId: () => getPrimaryCourseIdForUser(admin, profile.id),
