@@ -1,5 +1,5 @@
-// The rating's own points for a CONTENT-ONLY course (Challenge 6.0 since 2026-10-08: lessons + homework only,
-// platform_settings.rating_mode) — read from public.rating_points(uid), the one source the home screen, the Profil
+// The rating's own points for a CONTENT-ONLY course (Challenge 6.0: points earned before 2026-10-08 are kept, after it
+// only lessons + homework add — platform_settings.rating_mode) — read from public.rating_points(uid), the one source the home screen, the Profil
 // screen and the bot all use. For every other course it is null and the screens keep lifetime XP exactly as before.
 
 export type ContentRating = { points: number; week: number | null };

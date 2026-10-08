@@ -214,9 +214,9 @@ const T = {
     // The ladder welcome (onboarding "starter kit"): sent to a Challenge member whose modules are open
     // by tier, so it must NOT repeat nmWelcome's "lessons unlock after full payment" — that is false for
     // them. Every button and number here is real: see the module ladder (migration 20261001075500). Since
-    // 2026-10-08 (owner) the rating counts ONLY lessons + homework (platform_settings.rating_mode, migration
-    // 20261008084500): the extra tasks, Instagram, questions/answers, chat and group media pay nothing, so
-    // they are not mentioned here.
+    // 2026-10-08 (owner) only lessons + homework ADD to the rating (platform_settings.rating_mode, migration
+    // 20261008084500; points earned before stay): the extra tasks, Instagram, questions/answers, chat and group
+    // media pay nothing, so they are not mentioned here.
     nmWelcomeChallenge: (name: string, open: number) =>
       `🎉 <b>${name}</b>, <b>AI CREATORS CHALLENGE 6.0</b>ga xush kelibsiz!\n\n` +
       `Hisobingiz ochildi. Quyida 4 ta muhim narsa — bir daqiqada o'qib chiqing.\n\n` +
@@ -225,7 +225,7 @@ const T = {
       `<b>2) Ismingizni to'g'rilang ✏️</b>\n` +
       `/profil → «✏️ Ismni o'zgartirish». Reyting va sertifikatda aynan shu ism chiqadi.\n\n` +
       `<b>3) Ball jadvali ⭐️</b>\n` +
-      `Reyting faqat darslar va uyga vazifalardan yig'iladi:\n` +
+      `Reytingga ball faqat darslar va uyga vazifalardan qo'shiladi:\n` +
       `• Dars tugatish — <b>+20</b>\n` +
       `• Uyga vazifa topshirish — <b>+15</b> (guruhdagi «UYGA VAZIFA» mavzusiga yuboring)\n` +
       `• Vazifaga 9–10 baho — <b>+25</b>\n` +
@@ -246,7 +246,7 @@ const T = {
     kbCertOld: "🎓 Sertifikat",
     statsTitle: "📊 <b>Statistikam</b>",
     statsLevel: (level: number, xp: number, toNext: string) => `⭐ Daraja: <b>${level}</b> · ⚡${xp} XP${toNext ? `\n${toNext}` : ""}`,
-    statsPoints: (xp: number) => `⚡ Reyting ballari: <b>${xp}</b> (darslar + uyga vazifalar)`,
+    statsPoints: (xp: number) => `⚡ Reyting ballari: <b>${xp}</b>`,
     statsLessons: (d: number, tot: number, watch: string) => `📚 Darslar: <b>${d}/${tot}</b>${watch ? ` · ${watch} jami` : ""}\n${bar(d, tot)}`,
     statsStreak: (cur: number, best: number, barStr: string, next: number | null, atMilestone: boolean) => `🔥 <b>${cur} kunlik streak</b>${atMilestone ? " 🎉 yangi bosqich!" : ""} · rekord: ${best}\n${barStr}${next ? ` → ${next} kun` : " 🏆 eng yuqori!"}`,
     statsStreakNone: "🔥 Streak: hali boshlanmadi",
@@ -552,7 +552,7 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
       `<b>2) Исправьте своё имя ✏️</b>\n` +
       `/profil → «✏️ Изменить имя». Именно это имя попадёт в рейтинг и сертификат.\n\n` +
       `<b>3) Как начисляются баллы ⭐️</b>\n` +
-      `Рейтинг складывается только из уроков и домашних заданий:\n` +
+      `Баллы в рейтинг добавляются только за уроки и домашние задания:\n` +
       `• Завершить урок — <b>+20</b>\n` +
       `• Сдать домашнее задание — <b>+15</b> (в тему «UYGA VAZIFA» вашей группы)\n` +
       `• Оценка 9–10 за задание — <b>+25</b>\n` +
@@ -573,7 +573,7 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
     kbCertOld: "🎓 Сертификат",
     statsTitle: "📊 <b>Моя статистика</b>",
     statsLevel: (level: number, xp: number, toNext: string) => `⭐ Уровень: <b>${level}</b> · ⚡${xp} XP${toNext ? `\n${toNext}` : ""}`,
-    statsPoints: (xp: number) => `⚡ Баллы рейтинга: <b>${xp}</b> (уроки + домашние задания)`,
+    statsPoints: (xp: number) => `⚡ Баллы рейтинга: <b>${xp}</b>`,
     statsLessons: (d: number, tot: number, watch: string) => `📚 Уроки: <b>${d}/${tot}</b>${watch ? ` · ${watch} всего` : ""}\n${bar(d, tot)}`,
     statsStreak: (cur: number, best: number, barStr: string, next: number | null, atMilestone: boolean) => `🔥 <b>${cur} дн. подряд</b>${atMilestone ? " 🎉 новый рубеж!" : ""} · рекорд: ${best}\n${barStr}${next ? ` → ${next} дн.` : " 🏆 максимум!"}`,
     statsStreakNone: "🔥 Стрик: ещё не начат",
@@ -867,7 +867,7 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
       `<b>2) Fix your name ✏️</b>\n` +
       `/profil → «✏️ Edit name». This is the name that appears in the rating and on your certificate.\n\n` +
       `<b>3) How points work ⭐️</b>\n` +
-      `The rating counts only lessons and homework:\n` +
+      `Only lessons and homework add points to the rating:\n` +
       `• Finish a lesson — <b>+20</b>\n` +
       `• Submit homework — <b>+15</b> (into your group's «UYGA VAZIFA» topic)\n` +
       `• A score of 9–10 — <b>+25</b>\n` +
@@ -888,7 +888,7 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
     kbCertOld: "🎓 Certificate",
     statsTitle: "📊 <b>My stats</b>",
     statsLevel: (level: number, xp: number, toNext: string) => `⭐ Level: <b>${level}</b> · ⚡${xp} XP${toNext ? `\n${toNext}` : ""}`,
-    statsPoints: (xp: number) => `⚡ Rating points: <b>${xp}</b> (lessons + homework)`,
+    statsPoints: (xp: number) => `⚡ Rating points: <b>${xp}</b>`,
     statsLessons: (d: number, tot: number, watch: string) => `📚 Lessons: <b>${d}/${tot}</b>${watch ? ` · ${watch} total` : ""}\n${bar(d, tot)}`,
     statsStreak: (cur: number, best: number, barStr: string, next: number | null, atMilestone: boolean) => `🔥 <b>${cur}-day streak</b>${atMilestone ? " 🎉 milestone!" : ""} · best: ${best}\n${barStr}${next ? ` → ${next} days` : " 🏆 maxed!"}`,
     statsStreakNone: "🔥 Streak: not started yet",

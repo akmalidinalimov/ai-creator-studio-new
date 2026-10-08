@@ -199,7 +199,7 @@
     "subtitleCount": "{{count}} учащихся",
     "toggleWeekly": "За неделю",
     "toggleAllTime": "Всего",
-    "xpSourceNote": "Рейтинг складывается из уроков и домашних заданий",
+    "xpSourceNote": "Баллы в рейтинг добавляются за уроки и домашние задания",
     "rankedTitle": "Все участники",
     "nudgeToTop3": "До топ-3",
     "noGroupTitle": "У вас нет группы",

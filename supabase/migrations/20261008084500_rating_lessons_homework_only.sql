@@ -2,24 +2,32 @@
 -- too seriously and spending too much time setting it up … the only thing we give points for is homework and the
 -- points earned from watching lessons — that is what everybody should be focusing on").
 --
--- 1. RATING. platform_settings.rating_mode.content_only_course_ids lists the courses whose group rating is content
---    only: lesson_complete (+20) + homework_submit (+15) + homework_high_score (+25, grade >= 9), and only for lessons /
---    assignments of THAT course. Everything else (daily_active, streaks, community_*, challenge_* — extra tasks, chat,
---    questions, answers, group media, Instagram) stays in xp_events but no longer counts in the rating. Reversible:
---    drop the course from the list and the old rating is back, nothing was deleted.
+-- Owner, same day: "keep the points as they are now, but after the merge add points to watched lessons and homework".
+--
+-- 1. RATING. platform_settings.rating_mode = {content_only_course_ids, since}. For a listed course the group rating is
+--      every point earned BEFORE `since` (the old rule, untouched — nobody loses anything)
+--    + from `since` on, ONLY lesson_complete (+20) + homework_submit (+15) + homework_high_score (+25, grade >= 9) of
+--      THAT course's lessons / assignments.
+--    `since` = the moment this migration applies, so at apply time every rating is exactly what it was. After it,
+--    daily_active, streaks, community_* and challenge_* events (extra tasks, chat, questions, answers, group media,
+--    Instagram) still land in xp_events but add nothing to the rating. Reversible: drop the course from the list and
+--    the old rating is back, nothing was deleted.
 --      user_group_rating_xp / user_group_rating_xp_since feed every student rank: group_leaderboard, profile_stats
 --      .group_rank, group_student_leaderboard, the Leaderboard weekly tab, post_group_weekly_boards and
 --      freeze_challenge_week (the weekly prize snapshot). Their live bodies (md5-pinned) move unchanged to *_all, and
---      the original names become a switch: content-only course → user_course_content_xp_since, else → *_all.
---      challenge_team_board summed raw xp_events of every reason; it gets the same content-only filter.
+--      the original names become a switch: content-only course → old rule before `since` + content from `since`,
+--      else → *_all. challenge_team_board summed raw xp_events of every reason; it gets the same rule.
 --    5.0 and every other course: byte-identical behaviour (not in the list → *_all = the old body).
 --
 -- 2. KILL-SWITCHES (config only, every engine stays installed and can be switched back on): see section 2 below.
 
 -- ── 1a. config + helpers ─────────────────────────────────────────────────────────────────────────────────────────
+-- DO NOTHING on conflict: a replay must never move `since` (that would re-open points earned in between).
 insert into public.platform_settings (key, value, updated_at)
-values ('rating_mode', jsonb_build_object('content_only_course_ids', jsonb_build_array('f502f631-2104-4834-b6c2-702cd3080e27')), now())
-on conflict (key) do update set value = excluded.value, updated_at = now();
+values ('rating_mode', jsonb_build_object(
+          'content_only_course_ids', jsonb_build_array('f502f631-2104-4834-b6c2-702cd3080e27'),
+          'since', to_jsonb(now())), now())
+on conflict (key) do nothing;
 
 create or replace function public.rating_content_only(_course_id uuid)
 returns boolean
@@ -33,6 +41,28 @@ as $function$
     from public.platform_settings ps
     where ps.key = 'rating_mode' and jsonb_typeof(ps.value -> 'content_only_course_ids') = 'array'
   ), false);
+$function$;
+
+-- The moment a content-only course switched to "lessons + homework only": NULL for every other course. A missing or
+-- unreadable `since` means the whole history is content-only (-infinity) and is recorded, never a crash: this runs
+-- inside every leaderboard.
+create or replace function public.rating_content_since(_course_id uuid)
+returns timestamptz
+language plpgsql
+stable security definer
+set search_path to 'public'
+as $function$
+declare
+  _v text;
+begin
+  if not public.rating_content_only(_course_id) then return null; end if;
+  select ps.value ->> 'since' into _v from public.platform_settings ps where ps.key = 'rating_mode';
+  begin
+    return coalesce(_v::timestamptz, '-infinity'::timestamptz);
+  exception when others then
+    return '-infinity'::timestamptz;
+  end;
+end
 $function$;
 
 create or replace function public.xp_event_is_course_content(_reason text, _ref_key text, _course_id uuid)
@@ -70,6 +100,8 @@ as $function$
 $function$;
 
 revoke execute on function public.rating_content_only(uuid) from public, anon, authenticated;
+revoke execute on function public.rating_content_since(uuid) from public, anon, authenticated;
+grant execute on function public.rating_content_since(uuid) to service_role;
 revoke execute on function public.xp_event_is_course_content(text, text, uuid) from public, anon, authenticated;
 revoke execute on function public.user_course_content_xp_since(uuid, uuid, timestamptz) from public, anon, authenticated;
 grant execute on function public.rating_content_only(uuid) to service_role;
@@ -124,12 +156,16 @@ language sql
 stable security definer
 set search_path to 'public'
 as $function$
-  -- 20261008084500: a content-only course (platform_settings.rating_mode) rates lessons + homework of that course;
-  -- every other course keeps the full rating (user_group_rating_xp_all = the body before this migration).
+  -- 20261008084500: a content-only course (platform_settings.rating_mode) keeps every point earned before `since`
+  -- (the old rule) and from then on adds only lessons + homework of that course; every other course keeps the full
+  -- rating (user_group_rating_xp_all = the body before this migration).
   select case
-    when public.rating_content_only(_course_id) then public.user_course_content_xp_since(_uid, _course_id, null)
+    when z.cs is null then public.user_group_rating_xp_all(_uid, _course_id)
     else public.user_group_rating_xp_all(_uid, _course_id)
-  end;
+       - public.user_group_rating_xp_since_all(_uid, _course_id, z.cs)
+       + public.user_course_content_xp_since(_uid, _course_id, z.cs)
+  end
+  from (select public.rating_content_since(_course_id) as cs) z;
 $function$;
 
 create or replace function public.user_group_rating_xp_since(_uid uuid, _course_id uuid, _since timestamp with time zone)
@@ -138,11 +174,15 @@ language sql
 stable security definer
 set search_path to 'public'
 as $function$
-  -- 20261008084500: see user_group_rating_xp.
+  -- 20261008084500: see user_group_rating_xp. The window [_since, now) is split at `since`: before it the old rule,
+  -- from it lessons + homework only.
   select case
-    when public.rating_content_only(_course_id) then public.user_course_content_xp_since(_uid, _course_id, _since)
+    when z.cs is null then public.user_group_rating_xp_since_all(_uid, _course_id, _since)
     else public.user_group_rating_xp_since_all(_uid, _course_id, _since)
-  end;
+       - public.user_group_rating_xp_since_all(_uid, _course_id, greatest(_since, z.cs))
+       + public.user_course_content_xp_since(_uid, _course_id, greatest(_since, z.cs))
+  end
+  from (select public.rating_content_since(_course_id) as cs) z;
 $function$;
 
 -- The two public names keep exactly the grants they had (authenticated + service_role): the Leaderboard weekly tab
@@ -158,9 +198,10 @@ declare
   _def text := pg_get_functiondef('public.challenge_team_board(timestamptz,timestamptz)'::regprocedure);
   _old text := E'  left join xp_events x on x.user_id = m.user_id and x.created_at >= _from and x.created_at < _to\n';
   _new text := E'  left join xp_events x on x.user_id = m.user_id and x.created_at >= _from and x.created_at < _to\n'
-            || E'    and (not public.rating_content_only(g.course_id) or public.xp_event_is_course_content(x.reason, x.ref_key, g.course_id))\n';
+            || E'    and (public.rating_content_since(g.course_id) is null or x.created_at < public.rating_content_since(g.course_id)\n'
+            || E'         or public.xp_event_is_course_content(x.reason, x.ref_key, g.course_id))\n';
 begin
-  if position('rating_content_only' in _def) > 0 then
+  if position('rating_content_since' in _def) > 0 then
     raise notice 'challenge_team_board already content-aware (replay) — skipped';
     return;
   end if;
@@ -239,12 +280,18 @@ begin
   if not public.rating_content_only(_c) then raise exception 'selftest: 6.0 is not content-only'; end if;
   if public.rating_content_only(null) then raise exception 'selftest: null course is content-only'; end if;
 
-  -- a 6.0 student: the rating is exactly their 6.0 lesson + homework points
+  if public.rating_content_since(_c) is null or public.rating_content_since(_c) > now() then
+    raise exception 'selftest: 6.0 has no cut-over moment';
+  end if;
+  -- a 6.0 student: at apply time the rating is exactly what it was (every earlier point is kept)
   select p.id into _u from public.profiles p join public.groups g on g.id = p.group_id
-   where g.course_id = _c and exists (select 1 from public.xp_events e where e.user_id = p.id and e.reason = 'lesson_complete')
+   where g.course_id = _c and exists (select 1 from public.xp_events e where e.user_id = p.id and e.reason like 'challenge_%')
    limit 1;
-  if _u is not null and public.user_group_rating_xp(_u, _c) <> public.user_course_content_xp_since(_u, _c, null) then
-    raise exception 'selftest: 6.0 rating is not content-only for %', _u;
+  if _u is not null and public.user_group_rating_xp(_u, _c)
+       <> public.user_group_rating_xp_all(_u, _c)
+          - public.user_group_rating_xp_since_all(_u, _c, public.rating_content_since(_c))
+          + public.user_course_content_xp_since(_u, _c, public.rating_content_since(_c)) then
+    raise exception 'selftest: 6.0 rating formula broken for %', _u;
   end if;
 
   -- a student of another course: byte-identical to the old body
