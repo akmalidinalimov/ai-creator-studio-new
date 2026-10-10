@@ -43,6 +43,8 @@ import { cancelSupport, captureSupport, markSolved, parseSupportCallback, startA
 import { handleSupportAgentCallback } from "./support-agent.ts";
 import { handleInboxCallback, sendInboxSummary } from "./support-inbox-bot.ts";
 import { parseInboxCallback } from "../_shared/support-inbox.ts";
+import { parseTqCallback, TQ_BUTTON } from "../_shared/teacher-questions.ts";
+import { captureTqAnswer, handleTqCallback, sendTqSummary } from "./teacher-questions-bot.ts";
 import { langChooserKeyboard, parseProfAction, profileRows, profileWebCells, showProfileView } from "./profile-tabs.ts";
 import { sendStudentWelcome } from "./student-welcome.ts";
 import {
@@ -1785,7 +1787,8 @@ function getTeacherKeyboard(locale: Locale, pendingCount?: number) {
     : { text: grade };
   return {
     keyboard: [
-      [gradeBtn],
+      // ❓ Savollar (2026-10-10): the «KURATORGA SAVOLLAR» inbox — new vs waiting questions (teacher-questions-bot.ts)
+      [gradeBtn, { text: TQ_BUTTON[locale] }],
       [{ text: t.tKbStats }, { text: t.tKbHomework }],
       [{ text: t.tKbStudents }, { text: t.tKbBroadcast }],
       [{ text: PROF_T[locale].kbProfil }],
@@ -1967,6 +1970,7 @@ function buttonTextToCommand(text: string): string | null {
     if (t.tKbBroadcast && trimmed === t.tKbBroadcast) return "/tbroadcast";
     if (t.tKbSettings && trimmed === t.tKbSettings) return "/sozlamalar";
     if (t.tKbSwitchGroup && trimmed === t.tKbSwitchGroup) return "/guruh";
+    if (trimmed === TQ_BUTTON[loc]) return "/savollar";
     if (t.tKbGrade && trimmed === t.tKbGrade) return "/baholash";
     if (t.tKbHealth && trimmed === t.tKbHealth) return "/thealth";
     // "📝 Vazifalar" opens module-grouped homework view.
@@ -3327,6 +3331,12 @@ async function handleAdminCommand(
     return true;
   }
 
+  // ❓ the curator-question inbox, every group with a questions topic (teacher-questions-bot.ts)
+  if (cmd === "/savollar" || cmd === "/questions") {
+    await sendTqSummary(admin, chatId, { id: adminProfileId, isAdmin: true }, supportDeps(admin));
+    return true;
+  }
+
   // 🤖 Claude Code: owner types a task → it's queued for the laptop poller. OWNER-ONLY (this runs
   // Claude Code with real permissions on the owner's laptop), so gate to superadmin even though
   // handleAdminCommand is already admin-gated. Sets a conversation state; the next message is the task.
@@ -3506,6 +3516,12 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
   if (cmd === "/cancel") {
     await admin.from("bot_sessions").delete().eq("user_id", teacherId);
     await sendWithKeyboard(chatId, t.teacherCancelled, locale, false, "teacher");
+    return true;
+  }
+
+  // ❓ «KURATORGA SAVOLLAR»: new vs waiting questions of the teacher's groups (teacher-questions-bot.ts)
+  if (cmd === "/savollar" || cmd === "/questions") {
+    await sendTqSummary(admin, chatId, { id: teacherId, isAdmin: false }, supportDeps(admin));
     return true;
   }
 
@@ -7875,6 +7891,22 @@ async function handleCallback(admin: any, cq: any) {
     await cancelSupport(admin, chatId, tgId, normLocale(_clicker?.preferred_locale), supportDeps(admin));
     return;
   }
+  // ❓ the curator-question inbox: tq:s · tq:l · tq:o (open) · tq:r (✍️ answer) · tq:d (✅) · tq:u (undo). The REAL clicker
+  // must be a teacher or an admin and not impersonating; the handler re-checks the question's group (client-supplied).
+  if (data.startsWith("tq:") && chatId) {
+    const tqCb = parseTqCallback(data);
+    if (!tqCb || !_clicker) { await answerCallback(cq.id); return; }
+    if (_isImp) { await answerCallback(cq.id, "👁 Faqat o'qish — /admin"); return; }
+    const p = await getPersona(admin, _clicker.id);
+    if (p !== "teacher" && p !== "admin") { await answerCallback(cq.id, "⛔"); return; }
+    await answerCallback(cq.id);
+    const inPlace = tqCb.kind === "summary" || tqCb.kind === "list";
+    await handleTqCallback(admin, tqCb, {
+      chatId, messageId: inPlace ? (cq.message?.message_id ?? null) : null,
+      viewer: { id: _clicker.id, isAdmin: p === "admin" }, tgId,
+    }, supportDeps(admin));
+    return;
+  }
   // 🆘 the support inbox: sup:i (summary) · sup:l:<n|o>:<page> (a list) · sup:o:<id> (open a ticket). Admin, real clicker.
   const inboxCb = data.startsWith("sup:") ? parseInboxCallback(data) : null;
   if (inboxCb && chatId) {
@@ -8980,6 +9012,18 @@ Deno.serve(async (req) => {
       // that flag is off. Throttled 1h/chat; can never block or break the actual interaction (menu-button.ts).
       if (isPrivateChat && profileForLocale) {
         try { await syncMenuLive(admin, msg.chat.id, menuSyncOpts(persona, locale)); } catch (_e) { /* best-effort */ }
+      }
+
+      // ❓ a teacher's / admin's answer after «✍️ Javob yozish» on a curator question (teacher-questions-bot.ts)
+      if (isPrivateChat && profileForLocale && (persona === "teacher" || persona === "admin")) {
+        try {
+          const consumedTq = await captureTqAnswer(admin, msg, { id: profileForLocale.id, isAdmin: persona === "admin" },
+            supportDeps(admin));
+          if (consumedTq) return new Response("ok", { status: 200, headers: corsHeaders });
+        } catch (e) {
+          await logHealth(admin, "teacher_question_answer_failed", { stage: "capture", error: String((e as any)?.message ?? e).slice(0, 200) },
+            { source: "telegram-bot-webhook", targetUserId: profileForLocale.id });
+        }
       }
 
       // 🆘 support (support.ts): a pending description (text or screenshot), an admin's pending answer, or an admin's

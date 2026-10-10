@@ -41,6 +41,7 @@ const STUDENT: Row[] = [
 const TEACHER: Row[] = [
   ["start", "🏠 Boshlash va menyu", "🏠 Начало и меню", "🏠 Start and menu"],
   ["baholash", "📝 Baholash", "📝 Оценить", "📝 Grade"],
+  ["savollar", "❓ Kuratorga savollar", "❓ Вопросы куратору", "❓ Questions to the curator"],
   ["profil", "👤 Ustoz profili", "👤 Профиль устоза", "👤 Teacher profile"],
   ["tstats", "📊 Guruh statistikasi", "📊 Статистика группы", "📊 Group stats"],
   ["modulvazifalar", "📚 Vazifalar (modullar bo'yicha)", "📚 Задания по модулям", "📚 Homework by module"],
@@ -58,6 +59,7 @@ const ADMIN: Row[] = [
   ["analitika", "📊 Statistika", "📊 Статистика", "📊 Statistics"],
   ["yangilar", "🆕 Yangi talabalar", "🆕 Новые студенты", "🆕 New students"],
   ["baholash", "📝 Baholash", "📝 Оценить", "📝 Grade"],
+  ["savollar", "❓ Kuratorga savollar", "❓ Вопросы куратору", "❓ Questions to the curator"],
   ["profil", "👤 Profil", "👤 Профиль", "👤 Profile"],
   ["asteacher", "👁 Ustoz sifatida ko'rish", "👁 Смотреть как устоз", "👁 View as a teacher"],
   ["aststudent", "👁 Talaba sifatida ko'rish", "👁 Смотреть как студент", "👁 View as a student"],
