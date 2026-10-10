@@ -44,7 +44,7 @@ import { handleSupportAgentCallback } from "./support-agent.ts";
 import { handleInboxCallback, sendInboxSummary } from "./support-inbox-bot.ts";
 import { parseInboxCallback } from "../_shared/support-inbox.ts";
 import { parseTqCallback, TQ_BUTTON } from "../_shared/teacher-questions.ts";
-import { captureTqAnswer, handleTqCallback, sendTqSummary } from "./teacher-questions-bot.ts";
+import { captureTqAnswer, handleTqCallback, sendTqSummary, TQ_ANSWER_STATE } from "./teacher-questions-bot.ts";
 import { langChooserKeyboard, parseProfAction, profileRows, profileWebCells, showProfileView } from "./profile-tabs.ts";
 import { sendStudentWelcome } from "./student-welcome.ts";
 import {
@@ -7658,6 +7658,14 @@ async function handleCallback(admin: any, cq: any) {
   const data: string = cq.data || "";
   const tgId = cq.from.id as number;
   const chatId = cq.message?.chat?.id;
+
+  // ❓ any inline tap other than ✍️ ends a teacher's pending curator answer: the next unrelated message must never be
+  // posted to the group as «Kurator javobi» (teacher-questions-bot.ts). One keyed delete, a no-op for everyone else.
+  if (!data.startsWith("tq:r:")) {
+    try {
+      await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", TQ_ANSWER_STATE);
+    } catch (_e) { /* best-effort: the 15-minute expiry still ends it */ }
+  }
 
   if (data === "ack:not_today") {
     // 🌙 Bugun emas: skip tonight's streak warning, say so, remove the buttons (reminder-snooze.ts).

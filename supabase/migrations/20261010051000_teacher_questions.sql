@@ -22,7 +22,7 @@
 --
 -- REMINDERS: the teacher-questions-reminder edge function (pg_cron every 5 min, only while something is due) DMs the
 -- group's teachers ONE digest of the questions waiting > remind_after_min (60), then again every repeat_min (180), at
--- most max_reminders (3) times, never in quiet hours (23–08 Tashkent). A group with no reachable teacher → the admins.
+-- most max_reminders (3) times, never in quiet hours (22–08 Tashkent). A group with no reachable teacher → the admins.
 --
 -- HEALTH: app_settings.teacher_questions_state (the reconciler's heartbeat + counts); teacher_questions_watchdog()
 -- (hourly :23) DMs the admins if the reconciler stopped or reminders are not delivered, and stamps
@@ -33,7 +33,7 @@
 insert into public.platform_settings (key, value, updated_at)
 values ('teacher_questions', jsonb_build_object(
   'enabled', true, 'merge_min', 10, 'new_min', 60, 'remind_after_min', 60, 'repeat_min', 180, 'max_reminders', 3,
-  'expire_days', 7, 'quiet_start_hour', 23, 'quiet_end_hour', 8), now())
+  'expire_days', 7, 'quiet_start_hour', 22, 'quiet_end_hour', 8), now())
 on conflict (key) do nothing;
 
 alter table public.groups add column if not exists questions_thread_id bigint;
@@ -99,6 +99,7 @@ declare
   _mid bigint; _from_id bigint; _sender_chat bigint; _reply bigint; _reply_uid bigint;
   _staff uuid; _is_staff boolean; _txt text; _kind text; _ack boolean; _qid bigint; _k int;
   _scanned int := 0; _created int := 0; _appended int := 0; _answered int := 0; _peer int := 0; _expired int := 0;
+  _errors int := 0; _last_error text;
 begin
   if not pg_try_advisory_xact_lock(hashtext('teacher_questions_reconcile')) then
     return jsonb_build_object('status', 'locked');
@@ -111,7 +112,7 @@ begin
   end;
 
   select value into _state from public.app_settings where key = 'teacher_questions_state';
-  if coalesce((_cfg->>'enabled')::boolean, true) is not true then
+  if coalesce(lower(_cfg->>'enabled'), 'true') = 'false' then
     insert into public.app_settings (key, value)
     values ('teacher_questions_state', coalesce(_state, '{}'::jsonb) || jsonb_build_object('last_run', now(), 'status', 'disabled'))
     on conflict (key) do update set value = excluded.value;
@@ -135,6 +136,8 @@ begin
     _scanned := _scanned + 1;
     _max := greatest(_max, _r.received_at);
     _m := _r.m;
+    -- one malformed update must never stall the whole topic: count it, record it, move on
+    begin
     continue when _m ?| array['forum_topic_created', 'forum_topic_edited', 'forum_topic_closed', 'forum_topic_reopened',
                              'new_chat_members', 'left_chat_member', 'pinned_message'];
     _mid := (_m->>'message_id')::bigint;
@@ -160,7 +163,7 @@ begin
         update public.teacher_questions
            set status = 'answered', answered_at = _r.received_at, answered_by = _staff,
                answered_via = 'group_reply', answer_message_id = _mid
-         where chat_id = _r.chat_id and thread_id = _r.th and _reply = any(message_ids) and status = 'open';
+         where chat_id = _r.chat_id and thread_id = _r.th and message_ids @> array[_reply] and status = 'open';
         get diagnostics _k = row_count;
         _answered := _answered + _k;
       end if;
@@ -172,7 +175,7 @@ begin
                   or coalesce((_m #>> '{from,is_bot}')::boolean, false);
     -- already taken (the 2-minute overlap re-reads messages)
     continue when exists (select 1 from public.teacher_questions q
-                           where q.chat_id = _r.chat_id and q.thread_id = _r.th and _mid = any(q.message_ids));
+                           where q.chat_id = _r.chat_id and q.thread_id = _r.th and q.message_ids @> array[_mid]);
 
     -- a reply to a CLASSMATE's message: peer help on that question, not a new one
     if _reply is not null and _reply_uid is not null and _reply_uid <> _from_id and _reply_uid <> 1087968824
@@ -180,8 +183,8 @@ begin
                         where p.telegram_id = _reply_uid and ur.role in ('teacher', 'admin', 'superadmin')) then
       update public.teacher_questions
          set peer_reply_ids = peer_reply_ids || _mid
-       where chat_id = _r.chat_id and thread_id = _r.th and _reply = any(message_ids) and status = 'open'
-         and not (_mid = any(peer_reply_ids));
+       where chat_id = _r.chat_id and thread_id = _r.th and message_ids @> array[_reply] and status = 'open'
+         and not (peer_reply_ids @> array[_mid]);
       get diagnostics _k = row_count;
       _peer := _peer + _k;
       continue;
@@ -194,7 +197,7 @@ begin
     _ack := _kind is null and (
       _txt !~ '[[:alnum:]]'
       or lower(_txt) ~ ('^\s*(assalomu?\s*a[ly]a?[iy]?kum|assalamu?\s*a[ly]a?[iy]?kum|salom|rahmat|raxmat|katta\s+rahmat|'
-                        || 'tushundim|tushunarli|ok|okay|xop|xo''p|ha|xa|yaxshi|zo''r|zor|ассалому?\s*ал[ае]йкум|салом|'
+                        || 'tushundim|tushunarli|ok|okay|xop|xo[''ʻ‘’`]p|ha|xa|yaxshi|zo[''ʻ‘’`]r|zor|ассалому?\s*ал[ае]йкум|салом|'
                         || 'рахмат|раҳмат|тушундим|хоп|ха|спасибо|спс|понятно|ок)[\s!.,)]*[^[:alnum:]]*$'));
 
     -- the same student's open question, still being typed → join it
@@ -228,7 +231,16 @@ begin
     on conflict (chat_id, first_message_id) do nothing;
     get diagnostics _k = row_count;
     _created := _created + _k;
+    exception when others then
+      _errors := _errors + 1;
+      _last_error := left(sqlerrm, 200) || ' (message ' || coalesce(_m->>'message_id', '?') || ')';
+    end;
   end loop;
+
+  if _errors > 0 then
+    insert into public.admin_actions (actor_user_id, action, details)
+    values (null, 'teacher_questions_reconcile_error', jsonb_build_object('errors', _errors, 'last_error', _last_error));
+  end if;
 
   update public.teacher_questions set status = 'expired' where status = 'open' and asked_at < now() - _expire;
   get diagnostics _expired = row_count;
@@ -236,13 +248,13 @@ begin
   insert into public.app_settings (key, value)
   values ('teacher_questions_state', jsonb_build_object(
     'cursor', _max, 'last_run', now(), 'status', 'ok', 'scanned', _scanned, 'created', _created, 'appended', _appended,
-    'answered', _answered, 'peer', _peer, 'expired', _expired,
+    'answered', _answered, 'peer', _peer, 'expired', _expired, 'errors', _errors, 'last_error', _last_error,
     'open', (select count(*) from public.teacher_questions where status = 'open'),
     'groups', (select count(*) from public.groups where questions_thread_id is not null)))
   on conflict (key) do update set value = excluded.value;
 
   return jsonb_build_object('status', 'ok', 'scanned', _scanned, 'created', _created, 'appended', _appended,
-                            'answered', _answered, 'peer', _peer, 'expired', _expired);
+                            'answered', _answered, 'peer', _peer, 'expired', _expired, 'errors', _errors);
 end
 $function$;
 
@@ -300,13 +312,14 @@ set search_path to 'public', 'pg_temp'
 as $function$
 declare
   _cfg jsonb := coalesce((select value from public.platform_settings where key = 'teacher_questions'), '{}'::jsonb);
-  _enabled boolean := coalesce((_cfg->>'enabled')::boolean, true);
+  _enabled boolean := coalesce(lower(_cfg->>'enabled'), 'true') <> 'false';
   _st jsonb := (select value from public.app_settings where key = 'teacher_questions_state');
   _prev jsonb := (select value from public.app_settings where key = 'teacher_questions_watchdog_state');
   _hour int := extract(hour from (now() at time zone 'Asia/Tashkent'))::int;
   _stale boolean;
   _undelivered int;
   _overdue int;
+  _skipped int;
   _problems text[] := '{}';
   _msg text;
   _tok text;
@@ -323,6 +336,13 @@ begin
    where status = 'open' and reminder_count = 0 and asked_at < now() - interval '4 hours';
 
   if _stale then _problems := array_append(_problems, 'savollar yigʻilmayapti (reconcile toʻxtagan)'); end if;
+  select count(*) into _skipped from public.admin_actions
+   where action = 'teacher_questions_reconcile_error' and created_at > now() - interval '1 hour';
+  if _skipped > 0 then
+    _problems := array_append(_problems, 'savollar mavzusidagi ayrim xabarlar oʻqilmadi (' || coalesce(_st->>'last_error',
+      (select details->>'last_error' from public.admin_actions where action = 'teacher_questions_reconcile_error'
+        order by created_at desc limit 1), '?') || ')');
+  end if;
   if _undelivered > 0 then _problems := array_append(_problems, _undelivered || ' ta eslatma/javob yetkazilmadi (1 soat)'); end if;
   if _overdue > 0 and _hour between 9 and 21 then _problems := array_append(_problems, _overdue || ' ta savol 4 soatdan beri eslatmasiz'); end if;
 
@@ -376,7 +396,8 @@ begin
     jsonb_build_object('Content-Type', 'application/json', 'apikey', public.cron_service_key(),
       'Authorization', 'Bearer ' || public.cron_service_key(), 'x-internal-secret', public.internal_fn_secret()),
     'teacher-questions-reminder', 60000)
-   where coalesce((select (value->>'enabled')::boolean from public.platform_settings where key = 'teacher_questions'), true)
+   where coalesce((select lower(value->>'enabled') from public.platform_settings where key = 'teacher_questions'), 'true') <> 'false'
+     and extract(hour from (now() at time zone 'Asia/Tashkent'))::int between 8 and 21
      and exists (
        select 1 from public.teacher_questions q
         where q.status = 'open'
@@ -391,13 +412,18 @@ begin
 end $$;
 
 -- ── 6. backfill the last 12 hours, so the inbox starts with today's open questions ──────────────────────────────
--- (a deliberate first run, not a self-test: it writes question rows and the cursor, exactly as the cron would)
-select public.teacher_questions_reconcile(now() - interval '12 hours');
-
+-- (a deliberate first run, not a self-test: it writes question rows and the cursor, exactly as the cron would).
+-- Switched off or locked at deploy time → nothing to check; the cron does the first run later.
 do $test$
-declare _st jsonb := (select value from public.app_settings where key = 'teacher_questions_state');
+declare
+  _run jsonb := public.teacher_questions_reconcile(now() - interval '12 hours');
+  _st jsonb := (select value from public.app_settings where key = 'teacher_questions_state');
 begin
-  if _st is null or _st->>'status' <> 'ok' then raise exception 'selftest: reconcile did not run (%)', _st; end if;
+  if _run->>'status' in ('disabled', 'locked') then
+    raise notice 'teacher questions backfill skipped: %', _run;
+    return;
+  end if;
+  if _run->>'status' <> 'ok' or _st is null then raise exception 'selftest: reconcile did not run (%)', _run; end if;
   if (select count(*) from public.groups where questions_thread_id is not null) < 4 then
     raise exception 'selftest: the four Challenge question topics are not set';
   end if;

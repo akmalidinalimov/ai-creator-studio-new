@@ -4,11 +4,14 @@
 // admin and is not impersonating; every question action here re-checks that the question's group is one of the
 // viewer's (callback data is client-supplied).
 //
-// ✍️ Javob yozish → bot_conversation_state 'awaiting_tq_answer' (30 min) → the teacher's next message (text, photo,
-// voice, video, file) is posted in the group's questions topic as a REPLY to the student's question, headed
-// «💬 Kurator javobi», and sent to the student in a DM when the bot can write to them. A reply-keyboard button or a
-// /command instead ends the wait and works as usual. A failed post is DB-visible (teacher_question_answer_failed)
-// and the question stays open.
+// ✍️ Javob yozish → bot_conversation_state 'awaiting_tq_answer' (15 min) → the teacher's next message (text, photo,
+// voice, video, file, GIF, sticker, or an ALBUM) is posted in the group's questions topic as a REPLY to the student's
+// question, headed «💬 Kurator javobi», and sent to the student in a DM when the bot can write to them.
+// The wait ends on: a reply-keyboard button, a /command, or ANY other inline-button tap (index.ts clears the state on
+// every callback except tq:r) — so an unrelated later message can never be posted to the group by accident.
+// Albums: the first part CLAIMS the state (one UPDATE … WHERE state = 'awaiting_tq_answer' RETURNING → 'tq_answer_album'
+// with its media_group_id, 2 min); the other parts of the same album are copied under the answer.
+// A failed post is DB-visible (teacher_question_answer_failed) and the question stays open.
 
 import { logHealth } from "../_shared/edge.ts";
 import {
@@ -20,8 +23,16 @@ import { escapeCapped, mediaKind, messageText, type SupportDeps } from "./suppor
 type Db = any;
 export type TqViewer = { id: string; isAdmin: boolean };
 export const TQ_ANSWER_STATE = "awaiting_tq_answer";
-const TQ_TTL_MS = 30 * 60_000;
+export const TQ_ALBUM_STATE = "tq_answer_album";
+const TQ_TTL_MS = 15 * 60_000;
+const TQ_ALBUM_MS = 2 * 60_000;
 const NO_CAPTION = new Set(["video_note", "sticker"]);
+const TEXT_MAX = 3800;
+
+/** support.ts mediaKind + the two kinds a teacher may also answer with (a GIF, a sticker). */
+function answerKind(msg: any): string | null {
+  return mediaKind(msg) ?? (msg?.animation ? "animation" : msg?.sticker ? "sticker" : null);
+}
 
 /** The groups this viewer sees: their own (primary ∪ co-teacher) that have a questions topic; an admin sees all such. */
 export async function viewerGroups(admin: Db, viewer: TqViewer): Promise<Array<{ id: string; name: string }>> {
@@ -180,6 +191,10 @@ export async function handleTqCallback(admin: Db, cb: TqCallback,
 
 /** ✍️ Javob yozish: the teacher's next message is the answer. */
 export async function startTqAnswer(admin: Db, chatId: number, tgId: number, q: TqRow, deps: SupportDeps) {
+  const { data: prev } = await admin.from("bot_conversation_state").select("state, expires_at").eq("telegram_id", tgId).maybeSingle();
+  const replaced = prev && prev.state !== TQ_ANSWER_STATE && prev.state !== TQ_ALBUM_STATE && !!prev.expires_at &&
+      Date.parse(prev.expires_at) > Date.now()
+    ? `\n\n<i>(Oldin kutilayotgan amal — ${escapeCapped(String(prev.state), 60)} — bekor qilindi.)</i>` : "";
   await admin.from("bot_conversation_state").upsert({
     telegram_id: tgId, state: TQ_ANSWER_STATE, context: { question_id: q.id },
     updated_at: new Date().toISOString(), expires_at: new Date(Date.now() + TQ_TTL_MS).toISOString(),
@@ -189,18 +204,32 @@ export async function startTqAnswer(admin: Db, chatId: number, tgId: number, q: 
     chat_id: chatId, parse_mode: "HTML",
     text: `✍️ <b>#${q.id}</b> — ${who} uchun javobingizni yozing (matn, rasm, ovozli xabar yoki fayl).\n\n` +
       "Javob guruhdagi savolga <b>reply</b> boʻlib chiqadi va oʻquvchiga botda ham yuboriladi.\n" +
-      "<i>Bekor qilish: istalgan tugmani bosing yoki /cancel yozing.</i>",
+      "<i>Bekor qilish: istalgan tugmani bosing yoki /cancel yozing.</i>" + replaced,
   });
 }
 
 /** The teacher's message while 'awaiting_tq_answer'. true = consumed. */
 export async function captureTqAnswer(admin: Db, msg: any, viewer: TqViewer, deps: SupportDeps): Promise<boolean> {
   const tgId = Number(msg?.from?.id);
-  const { data: st } = await admin.from("bot_conversation_state").select("state, context, expires_at").eq("telegram_id", tgId).maybeSingle();
-  if (!st || st.state !== TQ_ANSWER_STATE) return false;
-  const text = messageText(msg);
-  const media = mediaKind(msg);
+  const albumId: string | null = typeof msg?.media_group_id === "string" ? msg.media_group_id : null;
+  const read = async () =>
+    (await admin.from("bot_conversation_state").select("state, context, expires_at").eq("telegram_id", tgId).maybeSingle()).data;
+  const st = await read();
+  if (!st) return false;
   const live = !!st.expires_at && Date.parse(st.expires_at) > Date.now();
+
+  // the other parts of an album whose first part is the answer
+  if (st.state === TQ_ALBUM_STATE) {
+    if (live && albumId && albumId === st.context?.media_group_id) {
+      await deliverTqAlbumPart(admin, st.context, msg, deps);
+      return true;
+    }
+    await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", TQ_ALBUM_STATE);
+    return false;
+  }
+  if (st.state !== TQ_ANSWER_STATE) return false;
+  const text = messageText(msg);
+  const media = answerKind(msg);
   const isIntent = !media && (text.startsWith("/") || deps.isMenuButton(text));
   if (!live || isIntent) {
     await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", TQ_ANSWER_STATE);
@@ -210,9 +239,38 @@ export async function captureTqAnswer(admin: Db, msg: any, viewer: TqViewer, dep
     await deps.call("sendMessage", { chat_id: msg.chat.id, text: "Javobni matn, rasm, ovozli xabar yoki fayl qilib yuboring." });
     return true;
   }
-  await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", TQ_ANSWER_STATE);
-  await deliverTqAnswer(admin, Number(st.context?.question_id), viewer, msg, deps);
+  const questionId = Number(st.context?.question_id);
+  // CLAIM: exactly one concurrent update (the parts of an album arrive as separate webhook calls) becomes the answer
+  const claim = albumId
+    ? await admin.from("bot_conversation_state")
+      .update({ state: TQ_ALBUM_STATE, context: { question_id: questionId, media_group_id: albumId },
+        updated_at: new Date().toISOString(), expires_at: new Date(Date.now() + TQ_ALBUM_MS).toISOString() })
+      .eq("telegram_id", tgId).eq("state", TQ_ANSWER_STATE).select("telegram_id")
+    : await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId).eq("state", TQ_ANSWER_STATE).select("telegram_id");
+  if (!Array.isArray(claim.data) || !claim.data.length) {
+    // another part won the claim: if it is this album, this part goes under the answer
+    const again = await read();
+    if (albumId && again?.state === TQ_ALBUM_STATE && again.context?.media_group_id === albumId) {
+      await deliverTqAlbumPart(admin, again.context, msg, deps);
+    }
+    return true;
+  }
+  await deliverTqAnswer(admin, questionId, viewer, msg, deps);
   return true;
+}
+
+/** Another part of the answer album: copied into the topic as a reply to the question (no second heading). */
+async function deliverTqAlbumPart(admin: Db, ctx: any, msg: any, deps: SupportDeps) {
+  const q = await loadQuestion(admin, Number(ctx?.question_id));
+  if (!q) return;
+  const r = await deps.call("copyMessage", {
+    chat_id: q.chat_id, message_thread_id: q.thread_id, from_chat_id: msg.chat.id, message_id: msg.message_id,
+    reply_parameters: { message_id: q.first_message_id, allow_sending_without_reply: true },
+  });
+  if (!r.ok) {
+    await logHealth(admin, "teacher_question_answer_failed", { question_id: q.id, stage: "album_part", error: r.error },
+      { source: "telegram-bot-webhook" });
+  }
 }
 
 /** Post the teacher's message in the topic as a reply to the question, DM the student, mark it answered. */
@@ -229,10 +287,17 @@ export async function deliverTqAnswer(admin: Db, questionId: number, viewer: TqV
     return;
   }
   const text = messageText(msg);
-  const media = mediaKind(msg);
+  const media = answerKind(msg);
   const reply = { message_id: q.first_message_id, allow_sending_without_reply: true };
   const caption = (extra: string) => `${tqAnswerHead()}${extra ? `\n\n${extra}` : ""}`;
+  const cut = !media && text.length > TEXT_MAX - 40;
 
+  // a sticker / video circle cannot carry a caption: the heading goes first, as its own reply
+  if (media && NO_CAPTION.has(media)) {
+    await deps.call("sendMessage", {
+      chat_id: q.chat_id, message_thread_id: q.thread_id, parse_mode: "HTML", text: tqAnswerHead(), reply_parameters: reply,
+    });
+  }
   const posted = media
     ? await deps.call("copyMessage", {
       chat_id: q.chat_id, message_thread_id: q.thread_id, from_chat_id: chatId, message_id: msg.message_id,
@@ -241,7 +306,7 @@ export async function deliverTqAnswer(admin: Db, questionId: number, viewer: TqV
     })
     : await deps.call("sendMessage", {
       chat_id: q.chat_id, message_thread_id: q.thread_id, parse_mode: "HTML", disable_web_page_preview: true,
-      text: caption(escapeCapped(text, 3800)), reply_parameters: reply,
+      text: caption(escapeCapped(text, TEXT_MAX)), reply_parameters: reply,
     });
   const answerId = Number(posted.result?.message_id);
   if (!posted.ok || !Number.isSafeInteger(answerId)) {
@@ -254,9 +319,14 @@ export async function deliverTqAnswer(admin: Db, questionId: number, viewer: TqV
     });
     return;
   }
-  await admin.from("teacher_questions")
+  const { error: markErr } = await admin.from("teacher_questions")
     .update({ status: "answered", answered_at: new Date().toISOString(), answered_by: viewer.id, answered_via: "bot", answer_message_id: answerId })
     .eq("id", q.id).eq("status", "open");
+  if (markErr) {
+    // posted, but still open in the inbox: visible, and the teacher can close it with ✅
+    await logHealth(admin, "teacher_question_answer_failed", { question_id: q.id, stage: "mark_answered", error: String(markErr.message ?? markErr) },
+      { source: "telegram-bot-webhook", targetUserId: viewer.id });
+  }
 
   // the student: only when the bot can write to them (they pressed Start)
   const link = messageLink(q.chat_id, q.thread_id, answerId);
@@ -283,7 +353,8 @@ export async function deliverTqAnswer(admin: Db, questionId: number, viewer: TqV
   await deps.call("sendMessage", {
     chat_id: chatId, parse_mode: "HTML",
     text: `✅ Javob guruhga yuborildi (savol <b>#${q.id}</b>)` +
-      (dm ? " va oʻquvchiga botda ham yetkazildi." : ". Oʻquvchiga bot orqali yuborib boʻlmadi — u guruhda koʻradi."),
+      (dm ? " va oʻquvchiga botda ham yetkazildi." : ". Oʻquvchiga bot orqali yuborib boʻlmadi — u guruhda koʻradi.") +
+      (cut ? "\n\n<i>Javob juda uzun edi — oxiri qisqartirildi. Davomini yana «✍️ Yana javob yozish» bilan yuboring.</i>" : ""),
     reply_markup: { inline_keyboard: [[
       ...(link ? [{ text: "🔗 Guruhda koʻrish", url: link }] : []),
       { text: "❓ Keyingi savollar", callback_data: "tq:s" },

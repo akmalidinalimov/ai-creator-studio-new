@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { captureTqAnswer, deliverTqAnswer, handleTqCallback, TQ_ANSWER_STATE } from "./teacher-questions-bot.ts";
+import { captureTqAnswer, deliverTqAnswer, handleTqCallback, TQ_ALBUM_STATE, TQ_ANSWER_STATE } from "./teacher-questions-bot.ts";
 
 type Row = Record<string, any>;
 const G1 = "11111111-1111-4111-8111-111111111111";
@@ -33,7 +33,7 @@ function world(o: { teacherOf?: string[]; state?: Row | null; studentDm?: boolea
       },
       then: (res: any) => {
         if (op === "update") { updates.push({ table, patch: patch!, filters: { ...f } }); return res({ data: [{ id: f.id }], error: null }); }
-        if (op === "delete") { deleted.push({ table, ...f }); return res({ error: null }); }
+        if (op === "delete") { deleted.push({ table, ...f }); return res({ data: [{ telegram_id: f.telegram_id }], error: null }); }
         if (table === "groups" && "teacher_id" in f) return res({ data: (o.teacherOf ?? [G1]).map((id) => ({ id })), error: null });
         if (table === "group_teachers") return res({ data: [], error: null });
         if (table === "groups") return res({ data: (o.teacherOf ?? [G1]).map((id) => ({ id, name: "AC CHALLENGE | 1-GURUH" })), error: null });
@@ -131,4 +131,36 @@ Deno.test("✅ closes an open question once, with ↩️ undo", async () => {
   assertEquals(u.patch.answered_via, "manual");
   assertEquals(u.filters.status, "open");
   assertEquals(w.calls.at(-1)!.payload.reply_markup.inline_keyboard[0][0].callback_data, "tq:u:12");
+});
+
+Deno.test("an album answer: the first part claims the wait and gets the heading, the other parts follow under it", async () => {
+  const live = { state: TQ_ANSWER_STATE, context: { question_id: 12 }, expires_at: new Date(Date.now() + 60_000).toISOString() };
+  const w = world({ state: live });
+  const part = (id: number) => ({ message_id: id, chat: { id: 901 }, from: { id: 901 }, media_group_id: "alb1", photo: [{}] });
+  assertEquals(await captureTqAnswer(w.admin, part(60), teacher, w.deps), true);
+  const claim = w.updates.find((u) => u.table === "bot_conversation_state")!;
+  assertEquals(claim.patch.state, TQ_ALBUM_STATE);
+  assertEquals(claim.patch.context.media_group_id, "alb1");
+  assertStringIncludes(w.calls.find((c) => c.payload.chat_id === Q.chat_id)!.payload.caption, "Kurator javobi");
+
+  const albumState = { state: TQ_ALBUM_STATE, context: { question_id: 12, media_group_id: "alb1" }, expires_at: new Date(Date.now() + 60_000).toISOString() };
+  const x = world({ state: albumState });
+  assertEquals(await captureTqAnswer(x.admin, part(61), teacher, x.deps), true);
+  const sib = x.calls.find((c) => c.payload.chat_id === Q.chat_id)!;
+  assertEquals(sib.method, "copyMessage");
+  assertEquals(sib.payload.reply_parameters.message_id, 345);
+  assertEquals(sib.payload.caption, undefined);
+  // a later, unrelated message after the album is NOT posted
+  const y = world({ state: albumState });
+  assertEquals(await captureTqAnswer(y.admin, textMsg("boshqa narsa"), teacher, y.deps), false);
+  assert(!y.calls.some((c) => c.payload.chat_id === Q.chat_id));
+});
+
+Deno.test("a sticker answer gets the heading as its own reply first (stickers take no caption)", async () => {
+  const w = world();
+  await deliverTqAnswer(w.admin, 12, teacher, { message_id: 52, chat: { id: 901 }, from: { id: 901 }, sticker: { file_id: "s" } }, w.deps);
+  const posts = w.calls.filter((c) => c.payload.chat_id === Q.chat_id);
+  assertEquals(posts.map((p) => p.method), ["sendMessage", "copyMessage"]);
+  assertStringIncludes(posts[0].payload.text, "Kurator javobi");
+  assertEquals(posts[1].payload.caption, undefined);
 });

@@ -20,7 +20,7 @@ type Kb = { inline_keyboard: Array<Array<{ text: string; callback_data?: string;
 export const TQ_PAGE_SIZE = 8;
 export const TQ_DEFAULTS = {
   enabled: true, merge_min: 10, new_min: 60, remind_after_min: 60, repeat_min: 180, max_reminders: 3,
-  quiet_start_hour: 23, quiet_end_hour: 8,
+  quiet_start_hour: 22, quiet_end_hour: 8,
 };
 export type TqSettings = typeof TQ_DEFAULTS;
 
@@ -40,7 +40,7 @@ export function tqSettingsOf(v: unknown): TqSettings {
     remind_after_min: int(o.remind_after_min, 60, 5, 24 * 60),
     repeat_min: int(o.repeat_min, 180, 15, 7 * 24 * 60),
     max_reminders: int(o.max_reminders, 3, 0, 20),
-    quiet_start_hour: int(o.quiet_start_hour, 23, 0, 23),
+    quiet_start_hour: int(o.quiet_start_hour, 22, 0, 23),
     quiet_end_hour: int(o.quiet_end_hour, 8, 0, 23),
   };
 }
