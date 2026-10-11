@@ -10,6 +10,7 @@ import { useTelegramBackButton } from "./useTelegramBackButton";
 import TgNotLinked from "@/pages/TgNotLinked";
 import { readTrack, startParamFromInitData, startParamToPath, stripTrack, type MiniAppSrc } from "@/lib/miniappLinks";
 import { fastPathRedirect, resolveLanding } from "./landing";
+import { reportClientError } from "@/lib/beacon";
 
 /**
  * TelegramGate — the "two doors" boot layer.
@@ -111,12 +112,29 @@ export function TelegramGate({ children }: { children: ReactNode }) {
         // Fast re-open: is there already a session, and does it belong to THIS Telegram user?
         const { data: sess } = await supabase.auth.getSession();
         if (sess?.session) {
-          const { data: prof } = await supabase
-            .from("profiles")
-            .select("telegram_id")
-            .eq("id", sess.session.user.id)
-            .maybeSingle();
-          const owns = prof && Number((prof as { telegram_id: number | null }).telegram_id) === tgId && tgId > 0;
+          // A failed READ is not a different account (2026-10-11: on a weak connection the read failed, `owns` became
+          // false and the valid session was signed out — the lesson video then failed with a 401). Retry the read; if it
+          // still cannot be made, keep the session and carry on: only a read that SUCCEEDED and names another Telegram
+          // user drops it.
+          let prof: { telegram_id: number | null } | null = null;
+          let readOk = false;
+          for (const wait of [0, 600, 1800]) {
+            if (wait) await new Promise((r) => setTimeout(r, wait));
+            if (cancelled) return;
+            const { data, error: readErr } = await supabase
+              .from("profiles")
+              .select("telegram_id")
+              .eq("id", sess.session.user.id)
+              .maybeSingle();
+            if (!readErr) { prof = data as { telegram_id: number | null } | null; readOk = true; break; }
+          }
+          if (!readOk) {
+            reportClientError({ type: "other", message: "tg_gate_profile_read_failed", extra: { kept_session: true } });
+            if (cancelled) return;
+            setPhase("ready");
+            return;
+          }
+          const owns = prof && Number(prof.telegram_id) === tgId && tgId > 0;
           if (owns) {
             if (cancelled) return;
             // Fast re-open keeps the requested path (a web_app deep link already points at it). Two extras:

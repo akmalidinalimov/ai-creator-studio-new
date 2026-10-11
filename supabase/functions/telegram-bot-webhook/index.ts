@@ -37,7 +37,7 @@ import { boardLines, cardRankBit, statsRankLines } from "./rank-views.ts";
 import { flagSig, liveFresh, syncMenuLive } from "./menu-button.ts";
 import { runMenuSweepTick, scheduleMenuSweepTick } from "./menu-sweep.ts";
 import { handleNotToday } from "./reminder-snooze.ts";
-import { typedIntent } from "./typed-intents.ts";
+import { typedIntent, looksLikeProblem, isEscapeWord } from "./typed-intents.ts";
 import { captureIgReply, IG_CALLBACK, igCopy, startIgFlow } from "./ig-handle.ts";
 import { cancelSupport, captureSupport, markSolved, parseSupportCallback, startAdminReply, startSupport, SUPPORT_CANCEL } from "./support.ts";
 import { handleSupportAgentCallback } from "./support-agent.ts";
@@ -1205,7 +1205,9 @@ function supportDeps(admin: any) {
       const { outcome, result } = await sendTelegramResult(BOT_TOKEN, method, payload, { admin, purpose: `support_${method}` });
       return { ok: outcome.ok, result, error: outcome.error };
     },
-    isMenuButton: (text: string) => !!buttonTextToCommand(text) || !!typedIntent(text),
+    // ONLY an exact reply-keyboard label ends a pending free-text flow (2026-10-11): typedIntent here swallowed every
+    // «❓ Yordam» description containing vazifa / dars / ball / kurs — 11 of 11 since 10-06, silently.
+    isMenuButton: (text: string) => !!buttonTextToCommand(text) || isEscapeWord(text),
   };
 }
 
@@ -1213,7 +1215,9 @@ function supportDeps(admin: any) {
 function igDeps() {
   return {
     send: (chatId: number, html: string) => sendMessage(chatId, html),
-    isMenuButton: (text: string) => !!buttonTextToCommand(text) || !!typedIntent(text),
+    // ONLY an exact reply-keyboard label ends a pending free-text flow (2026-10-11): typedIntent here swallowed every
+    // «❓ Yordam» description containing vazifa / dars / ball / kurs — 11 of 11 since 10-06, silently.
+    isMenuButton: (text: string) => !!buttonTextToCommand(text) || isEscapeWord(text),
   };
 }
 
@@ -2119,9 +2123,13 @@ type MembershipResult = {
 // Sweep the distinct Telegram chats behind all published-course groups and ask each whether
 // tgId is a member. Chat ids come from groups.homework_topic_url / telegram_group_url AND
 // group_module_topics.telegram_topic_url (telegram_group_url is usually an invite link with
-// no chat id — per-module topic URLs are where /c/<id>/ reliably lives). Short-circuits on
-// the first hit; 'administrator'/'creator' means staff — member:true but never auto-registered
-// as a student (U4 rule).
+// no chat id — per-module topic URLs are where /c/<id>/ reliably lives). 'administrator'/'creator'
+// means staff — member:true but never auto-registered as a student (U4 rule).
+// 2026-10-11: no longer stops at the FIRST chat the user is in (DB row order): 9 of 205 first-time
+// registrations landed in a chat the student had merely joined (often 2-GURUH, where many joined first)
+// instead of the one they write in → homework refused as «boshqa guruh», the wrong curator. Every chat is
+// probed; with several, the one the user POSTED in most recently wins (webhook_inbox), else the newest
+// group; the choice is DB-visible (membership_multi_chat).
 async function resolveMembershipGroup(admin: any, tgId: number): Promise<MembershipResult> {
   const [groupsRes, gmtRes] = await Promise.all([
     admin.from("groups")
@@ -2152,7 +2160,9 @@ async function resolveMembershipGroup(admin: any, tgId: number): Promise<Members
 
   let errors = 0;
   let checked = 0;
-  for (const [chatId, groupMap] of chats) {
+  const hits: Array<{ chatId: string; staff: boolean; group: any }> = [];
+  // Every chat is probed (not first-hit), in small parallel batches so latency stays flat and 429s stay rare.
+  const probe = async (chatId: string, groupMap: Map<string, any>) => {
     checked++;
     try {
       const resp = await tgApi("getChatMember", { chat_id: Number(chatId), user_id: tgId });
@@ -2161,22 +2171,63 @@ async function resolveMembershipGroup(admin: any, tgId: number): Promise<Members
         // 429 / bot kicked / chat gone — distinguish from a clean "not a member".
         errors++;
         console.warn("[membership-gate] getChatMember failed", { chatId, code: cm?.error_code, desc: cm?.description });
-        continue;
+        return;
       }
       const st = cm.result?.status;
       const isMember = st === "member" || st === "administrator" || st === "creator" ||
         (st === "restricted" && cm.result?.is_member === true);
-      if (!isMember) continue;
+      if (!isMember) return;
       const staff = st === "administrator" || st === "creator";
       const groups = Array.from(groupMap.values());
       groups.sort((a: any, b: any) =>
         (b.homework_topic_id != null ? 1 : 0) - (a.homework_topic_id != null ? 1 : 0) ||
         String(b.created_at).localeCompare(String(a.created_at)));
-      return { member: true, staff, indeterminate: false, group: groups[0] ? { id: groups[0].id, course_id: groups[0].course_id } : null };
+      hits.push({ chatId, staff, group: groups[0] ?? null });
     } catch (e) {
       errors++;
       console.warn("[membership-gate] getChatMember threw", { chatId, err: String(e) });
     }
+  };
+  const entries = Array.from(chats.entries());
+  for (let i = 0; i < entries.length; i += 5) {
+    await Promise.all(entries.slice(i, i + 5).map(([chatId, groupMap]) => probe(chatId, groupMap)));
+  }
+  if (hits.length) {
+    // staff anywhere = staff (never auto-registered as a student — U4); recorded when it overrides a member hit
+    const staffHit = hits.find((h) => h.staff);
+    if (staffHit) {
+      if (hits.length > 1) {
+        try {
+          await admin.from("admin_actions").insert({
+            actor_user_id: null, action: "membership_multi_chat",
+            details: { telegram_id: tgId, chats: hits.map((h) => h.chatId), picked: staffHit.chatId, by: "staff", probes: checked },
+          });
+        } catch (_e) { /* best-effort */ }
+      }
+      return { member: true, staff: true, indeterminate: false,
+        group: staffHit.group ? { id: staffHit.group.id, course_id: staffHit.group.course_id } : null };
+    }
+    let pick = hits[0];
+    if (hits.length > 1) {
+      // the chat they actually write in wins; else the newest group
+      let postedIn: string | null = null;
+      try {
+        const { data: last } = await admin.from("webhook_inbox").select("chat_id")
+          .eq("from_user_id", tgId).in("chat_id", hits.map((h) => Number(h.chatId)))
+          .order("received_at", { ascending: false }).limit(1);
+        postedIn = Array.isArray(last) && last[0] ? String(last[0].chat_id) : null;
+      } catch (_e) { /* fall back to the newest group */ }
+      const byPost = postedIn ? hits.find((h) => h.chatId === postedIn) : undefined;
+      pick = byPost ?? [...hits].sort((a, b) => String(b.group?.created_at ?? "").localeCompare(String(a.group?.created_at ?? "")))[0];
+      try {
+        await admin.from("admin_actions").insert({
+          actor_user_id: null, action: "membership_multi_chat",
+          details: { telegram_id: tgId, chats: hits.map((h) => h.chatId), picked: pick.chatId, by: byPost ? "last_post" : "newest_group", probes: checked },
+        });
+      } catch (_e) { /* best-effort */ }
+    }
+    return { member: true, staff: false, indeterminate: false,
+      group: pick.group ? { id: pick.group.id, course_id: pick.group.course_id } : null };
   }
   const indeterminate = checked > 0 && errors === checked;
   if (indeterminate) {
@@ -9220,6 +9271,52 @@ Deno.serve(async (req) => {
         }
         if (!consumed) {
           const mapped = buttonTextToCommand(text);
+          // A student who TYPES a problem ("darslar ochilmayapti", "ballarim qo'shilmagan") gets a «❓ Yordam» ticket, not a
+          // menu screen (2026-10-11: 23 such messages were turned into screens and lost). The ticket path is the same as
+          // after the button: open the support state, then capture this very message as the description.
+          if (!mapped && isPrivateChat && persona === "student" && profileForLocale && looksLikeProblem(text)) {
+            let opened = false;
+            try {
+              // Never over a flow the student is in the middle of (e.g. confirm_name) — only over nothing, an expired row
+              // or the membership cache.
+              const { data: live } = await admin.from("bot_conversation_state").select("state, expires_at")
+                .eq("telegram_id", msg.from.id).maybeSingle();
+              const busy = !!live && live.state !== "nm_cache" &&
+                (!live.expires_at || new Date(live.expires_at).getTime() > Date.now());
+              if (busy) throw new Error(`busy:${live!.state}`);
+              await admin.from("bot_conversation_state").upsert({
+                telegram_id: msg.from.id, state: "awaiting_support", context: { profile_id: profileForLocale.id, via: "typed_problem" },
+                updated_at: new Date().toISOString(), expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+              });
+              opened = true;
+              const ticketed = await captureSupport(admin, msg, {
+                id: profileForLocale.id,
+                name: [profileForLocale.name, profileForLocale.last_name].filter(Boolean).join(" ") || (msg.from.first_name ?? ""),
+                username: profileForLocale.telegram_username ?? msg.from.username ?? null,
+                groupId: profileForLocale.group_id ?? null,
+              }, false, locale, supportDeps(admin));
+              if (ticketed) {
+                await logHealth(admin, "support_ticket_from_typed_problem", { text: text.slice(0, 120) },
+                  { source: "telegram-bot-webhook", targetUserId: profileForLocale.id });
+                return new Response("ok", { status: 200, headers: corsHeaders });
+              }
+              await logHealth(admin, "support_capture_failed", { stage: "typed_problem", error: "not_ticketed" },
+                { source: "telegram-bot-webhook", targetUserId: profileForLocale.id });
+            } catch (e) {
+              const err = String((e as any)?.message ?? e);
+              if (!err.startsWith("busy:")) {
+                await logHealth(admin, "support_capture_failed", { stage: "typed_problem", error: err.slice(0, 200) },
+                  { source: "telegram-bot-webhook", targetUserId: profileForLocale.id });
+              }
+            }
+            // No ticket → don't leave a live description state behind (the NEXT message would become a stray ticket).
+            if (opened) {
+              try {
+                await admin.from("bot_conversation_state").delete()
+                  .eq("telegram_id", msg.from.id).eq("state", "awaiting_support");
+              } catch (_e) { /* expires in 30 min anyway */ }
+            }
+          }
           // A student who TYPES "uyga vazifa" / "Давом этамиз" / "Start" gets that screen (typed-intents.ts);
           // anything else still gets kbHint with the keyboard re-sent.
           const intent = !mapped && isPrivateChat && persona === "student" && profileForLocale ? typedIntent(text) : null;

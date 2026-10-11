@@ -28,6 +28,37 @@ const RULES: [RegExp, TypedIntent][] = [
 
 const START_RE = /^(start|старт|boshla\w*|бошла\w*|начать|menu|menyu|меню)$/;
 
+// A REPORTED PROBLEM is never a menu choice (2026-10-11): "Уйга вазифа қабул қилинмаяпти", "Баллар хато хисобланди",
+// "Darslarni korib bolmayabdi qotyabdi" used to open the homework / profile / lesson screen and the complaint was lost —
+// 23 such messages from 19 students in 30 days, plus 11 typed right after «❓ Yordam». These words say "something does
+// not work"; index.ts turns such a message into a «❓ Yordam» ticket instead.
+const PROBLEM_RE = new RegExp([
+  "ochilma", "очилма", "ochilmay", "ishlama", "ишлама", "ishlamay", "ko'rolma", "korolma", "кўролма", "куролма",
+  "ko'rib bo'lma", "korib bolma", "кўриб бўлма", "куриб булма", "kirolma", "киролма", "kira olma", "chiqma", "чиқма", "чикма",
+  "yuklanma", "юкланма", "yuklay olma", "qo'shilma", "qoshilma", "қўшилма", "кушилма", "qabul qilinma", "қабул қилинма",
+  "кабул килинма", "baholanma", "бахоланма", "баҳоланма", "qotib", "qotya", "қотя", "котя", "xato", "хато", "ошибк",
+  "не работ", "не открыва", "не загруж", "не могу", "не получа", "muammo", "муаммо", "problem", "tushunmay", "тушунмай",
+  "тшунмай", "(?<!\\p{L})nega(?!\\p{L})", "(?<!\\p{L})нега(?!\\p{L})", "почему",
+].join("|"), "u");
+
+// Typed words that LEAVE a flow (support description, IG handle, curator answer) instead of being taken as its input.
+// Exact whole-message matches only — "dars ochilmayapti" is a description, "menyu" is a way out.
+const ESCAPE_RE = /^(start|старт|boshla\w*|бошла\w*|начать|menu|menyu|меню|bekor|bekor qilish|бекор|бекор қилиш|отмена|отменить|cancel|stop|стоп)$/u;
+
+/** True for a typed way out of a flow ("menyu", "bekor", "отмена") — the keyword rules of typedIntent do NOT apply. */
+export function isEscapeWord(text: string): boolean {
+  if (typeof text !== "string") return false;
+  const t = normalizeIntentText(text);
+  return !!t && ESCAPE_RE.test(t);
+}
+
+/** True when the student is reporting that something does not work (→ a support ticket, never a menu screen). */
+export function looksLikeProblem(text: string): boolean {
+  if (typeof text !== "string") return false;
+  const t = normalizeIntentText(text);
+  return !!t && PROBLEM_RE.test(t);
+}
+
 /** Lower-case, one apostrophe, no emoji/punctuation noise, single spaces. */
 export function normalizeIntentText(text: string): string {
   return String(text ?? "")
@@ -46,6 +77,7 @@ export function typedIntent(text: string): TypedIntent | null {
   const t = normalizeIntentText(raw);
   if (!t) return null;
   if (START_RE.test(t)) return "/start";
+  if (PROBLEM_RE.test(t)) return null;                      // a reported problem → support, not a menu
   for (const [re, intent] of RULES) if (re.test(t)) return intent;
   return null;
 }

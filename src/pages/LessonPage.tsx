@@ -137,22 +137,33 @@ export default function LessonPage() {
     let cancelled = false;
     setVideoData(null);
     (async () => {
-      const { data, error } = await supabase.functions.invoke("lesson-video-url", { body: { lessonId } });
-      if (cancelled) return;
-      // Only a 403 is "not in your plan"; no network / 5xx / 401 / empty is a load failure with a retry
-      // (lessonVideoState.ts: a flaky connection used to be told the lesson was outside their plan).
-      const outcome = videoFetchOutcome(error, data);
-      if (outcome === "locked") { setVideoData({ locked: true }); return; }
-      if (outcome === "failed") {
+      // Up to 3 tries before the student sees "couldn't load" (2026-10-11: weak Telegram-webview connections and an
+      // expired login made 1 failed call look like a broken lesson). A 401 refreshes the login first; a network error
+      // just waits and tries again.
+      const waits = [1500, 4000];
+      for (let i = 0; ; i++) {
+        const { data, error } = await supabase.functions.invoke("lesson-video-url", { body: { lessonId } });
+        if (cancelled) return;
+        // Only a 403 is "not in your plan"; no network / 5xx / 401 / empty is a load failure with a retry
+        // (lessonVideoState.ts: a flaky connection used to be told the lesson was outside their plan).
+        const outcome = videoFetchOutcome(error, data);
+        if (outcome === "locked") { setVideoData({ locked: true }); return; }
+        if (outcome !== "failed") { setVideoData(data as VideoData); return; }
+        const status = videoFetchStatus(error);
+        if (i < waits.length) {
+          if (status === 401) await supabase.auth.refreshSession().catch(() => undefined);
+          await new Promise((r) => setTimeout(r, waits[i]));
+          if (cancelled) return;
+          continue;
+        }
         reportClientError({
           type: "video_error",
           message: "lesson_video_url_failed",
-          extra: { lessonId, status: videoFetchStatus(error), attempt: videoAttempt },
+          extra: { lessonId, status, attempt: videoAttempt, tries: i + 1 },
         });
         setVideoData({ failed: true });
         return;
       }
-      setVideoData(data as VideoData);
     })();
     return () => { cancelled = true; };
   }, [lessonId, videoAttempt]);
