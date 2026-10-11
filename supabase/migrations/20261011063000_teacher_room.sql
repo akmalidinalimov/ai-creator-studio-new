@@ -71,12 +71,13 @@ as $function$
       from g join public.profiles p
         on p.id = (select teacher_id from public.groups where id = g.id)
         or p.id in (select gt.teacher_id from public.group_teachers gt where gt.group_id = g.id)),
-  stu as (select p.id, p.group_id from public.profiles p join g on g.id = p.group_id),
+  stu as (select p.id, p.group_id from public.profiles p join g on g.id = p.group_id
+          where p.status = 'active' and p.archived_at is null),
   hw as (
     select s.group_id gid,
            count(*) filter (where h.scored_at >= _from and h.scored_at < _to and h.score is not null) graded,
            count(*) filter (where h.submitted_at >= _from and h.submitted_at < _to) submitted,
-           count(*) filter (where h.score is null or h.score_is_stale) pending
+           count(*) filter (where h.submitted_at is not null and (h.score is null or h.score_is_stale)) pending
       from public.homework_submissions h join stu s on s.id = h.user_id
      group by s.group_id),
   q as (
