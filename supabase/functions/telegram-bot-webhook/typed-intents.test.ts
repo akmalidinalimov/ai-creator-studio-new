@@ -2,7 +2,7 @@
 // conservative edges (long text, slash commands, greetings stay kbHint).
 // Run: deno test supabase/functions/telegram-bot-webhook/typed-intents.test.ts
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { INTENT_MAX_LEN, typedIntent } from "./typed-intents.ts";
+import { INTENT_MAX_LEN, looksLikeProblem, isEscapeWord, typedIntent } from "./typed-intents.ts";
 
 Deno.test("the September messages that deserved a real answer", () => {
   assertEquals(typedIntent("uyga vazifa"), "/vazifalar");
@@ -17,7 +17,7 @@ Deno.test("each intent in Latin Uzbek, Cyrillic Uzbek, Russian and English", () 
     ["vazifalarim", "/vazifalar"], ["Вазифа қаерда?", "/vazifalar"], ["где задание?", "/vazifalar"],
     ["домашка", "/vazifalar"], ["homework", "/vazifalar"],
     ["davom etish", "/davom"], ["продолжить", "/davom"], ["keyingi dars", "/davom"], ["Дарс", "/davom"],
-    ["урок не открывается", "/davom"], ["next lesson", "/davom"], ["darslar", "/davom"],
+    ["next lesson", "/davom"], ["darslar", "/davom"],
     ["kurs", "/dars"], ["модули курса", "/dars"], ["modullar", "/dars"],
     ["reyting", "/profil"], ["рейтинг", "/profil"], ["ballarim", "/profil"], ["Балл", "/profil"],
     ["profilim", "/profil"], ["statistika", "/profil"], ["o‘rnim qanday", "/profil"],
@@ -42,4 +42,30 @@ Deno.test("left for kbHint: greetings, thanks, noise, slash commands, and long p
 Deno.test("word starts only where it matters: 'ball' is not inside another word, 'dars' starts a word", () => {
   assertEquals(typedIntent("football"), null);
   assertEquals(typedIntent("sidars"), null);
+});
+
+// 2026-10-11: the complaints that were turned into menu screens and lost (webhook_inbox, real texts)
+Deno.test("a reported problem is never a menu choice — it goes to support", () => {
+  for (const t of [
+    "Уйга вазифа қабул қилинмаяпти", "Баллар хато хисобланди", "Darslarni korib bolmayabdi qotyabdi",
+    "Впн ишламайди куролмаяпман дарсларни", "Nega mening bugun uyga vazifadan olgan ballarim qo'shilmagan",
+    "Mening uyga vazifa ballarim ballarimga qo'shilmagan shuni ko'rib chiqishingizni so'rayman",
+    "урок не открывается", "video ochilmayapti", "dars ochilmayabdi",
+  ]) {
+    assertEquals(looksLikeProblem(t), true, t);
+    assertEquals(typedIntent(t), null, t);
+  }
+  // plain menu wishes still open their screen
+  for (const t of ["uyga vazifa", "Men yana qanday vazifalarni qilmaganman", "ballarim", "keyingi dars"]) {
+    assertEquals(looksLikeProblem(t), false, t);
+  }
+});
+
+Deno.test("isEscapeWord: exact ways out of a flow, never a description", () => {
+  for (const t of ["menyu", "Menyu", "start", "Start", "меню", "bekor", "Bekor qilish", "отмена", "Cancel", "boshlash"]) {
+    assertEquals(isEscapeWord(t), true, t);
+  }
+  for (const t of ["dars ochilmayapti", "vazifa", "menyuda dars yo'q", "bekor qilindi nega", "uyga vazifa qabul qilinmayapti", ""]) {
+    assertEquals(isEscapeWord(t), false, t);
+  }
 });

@@ -308,6 +308,11 @@ export async function captureSupport(
     if (st.state === SUPPORT_STATE) {
       if (!st.live || (st.context.profile_id && st.context.profile_id !== who.id) || isIntent) {
         await clearState(admin, tgId, SUPPORT_STATE);
+        // graceful is not silent: a live «❓ Yordam» wait ended by a button / command leaves a trace (2026-10-11 — the
+        // typed-intent hijack lost 11 descriptions with no signal at all)
+        if (st.live && isIntent) {
+          await logHealth(admin, "support_state_interrupted", { by: text.slice(0, 60) }, { source: "telegram-bot-webhook", targetUserId: who.id });
+        }
         return false;
       }
       if (!text && !media) {
