@@ -111,8 +111,11 @@ function world(o: { mode?: "shadow" | "live"; label?: Label | "fail"; facts?: Fa
     sent.push({ method, payload });
     return Promise.resolve({ ok: true, result: { message_id: 999 }, error: null });
   };
-  const io = { admin: { from, rpc }, send, now: () => Date.parse("2026-10-11T08:00:00Z"),
-    available: ["openai"] as any, label: { openaiKey: "k", fetchFn, now: () => Date.now() } };
+  // ONE clock for both: runOnce derives the AI deadline from io.now(); a real-clock label.now made these tests pass only
+  // before 08:00:40 UTC on 2026-10-11 (the deadline looked expired ever after).
+  const clock = () => Date.parse("2026-10-11T08:00:00Z");
+  const io = { admin: { from, rpc }, send, now: clock,
+    available: ["openai"] as any, label: { openaiKey: "k", fetchFn, now: clock } };
   return { io, sent, updates, actions };
 }
 
