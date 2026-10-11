@@ -62,9 +62,13 @@ import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 import { sendTelegram } from "../_shared/telegram-send.ts";
 import { logHealth } from "../_shared/edge.ts";
 import {
+  CAUGHT_UP_STREAK,
+  caughtUpPaths,
   dailyKeyboard,
   dripKeyboard,
   fetchAllKeyset,
+  type NextLessonState,
+  nextLessonState,
   reminderPaths,
   reminderWindows,
   type Row,
@@ -290,6 +294,13 @@ function pickTemplate(cache: Map<string, TplRow>, key: string, locale: Locale): 
     return fb;
   }
   return { body: "" };
+}
+// streak_warning_caught_up: a notification_templates row (requested locale, then uz) when an admin wrote one, else
+// the built-in copy in the student's own language (core.ts CAUGHT_UP_STREAK).
+function caughtUpTemplate(cache: Map<string, TplRow>, locale: Locale): { body: string; button_label?: string } {
+  const row = cache.get(`streak_warning_caught_up:${locale}`) ?? cache.get("streak_warning_caught_up:uz");
+  if (row) return { body: row.body, button_label: row.button_label || undefined };
+  return CAUGHT_UP_STREAK[locale];
 }
 function interpolate(s: string, vars: Record<string, string | number>): string {
   return s.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => String(vars[k] ?? ""));
@@ -536,15 +547,22 @@ async function completedLessons(ctx: Ctx, userId: string, courseId: string, cont
 }
 
 async function getNextIncompleteLesson(ctx: Ctx, userId: string, courseId: string): Promise<string | null> {
+  return (await lessonStateFor(ctx, userId, courseId)).nextId;
+}
+
+// The next unfinished lesson inside the student's tier, and whether there is none left (caught up). nextId keeps
+// the old "first lesson" fallback for a caught-up student (the drip's magic link still uses it).
+async function lessonStateFor(ctx: Ctx, userId: string, courseId: string): Promise<NextLessonState> {
+  const none: NextLessonState = { nextId: null, caughtUp: false };
   const content = await courseContent(ctx, courseId);
-  if (!content || !content.modules.length) return null;
+  if (!content || !content.modules.length) return none;
   // Tier clamp (Phase 2): never deep-link a re-engagement nudge past the student's cap.
   const limit = await moduleLimitFor(ctx, userId, courseId);
   const modules = (limit == null) ? content.modules : content.modules.slice(0, limit);
-  if (!modules.length) return null;
+  if (!modules.length) return none;
   const inScope = new Set(modules.map((m) => m.id));
   const lessons = content.lessons.filter((l) => inScope.has(l.module_id)); // a copy: the cache stays intact
-  if (!lessons.length) return null;
+  if (!lessons.length) return none;
   const positionMap = new Map(modules.map((m, i) => [m.id, i]));
   lessons.sort((a: any, b: any) => {
     const pa = (positionMap.get(a.module_id) ?? 0) * 10000 + a.position;
@@ -552,8 +570,7 @@ async function getNextIncompleteLesson(ctx: Ctx, userId: string, courseId: strin
     return pa - pb;
   });
   const completed = await completedLessons(ctx, userId, courseId, content);
-  const next = lessons.find((l: any) => !completed.has(l.id));
-  return next?.id ?? lessons[0].id;
+  return nextLessonState(lessons.map((l: any) => l.id as string), completed);
 }
 
 // notifications_log rows are display-only (nothing reads the engagement types back), so they are buffered and
@@ -588,6 +605,8 @@ type TargetingStats = {
   redirected: number;
   /** Buttons that opened the course page for a trial student (trial_to_course_page). */
   trial_course_page: number;
+  /** Students who had watched every lesson their tier opens: daily reminder skipped, streak warning reworded. */
+  caught_up: { daily_skipped: number; streak: number };
 };
 
 type Stats = {
@@ -615,7 +634,8 @@ function newStats(): Stats {
     eligible: 0, processed: 0, skipped_quiet_hours: 0, skipped_out_of_window: 0, skipped_staff_only: 0, deferred: 0,
     errors: 0, error_sample: null, sent: { daily: 0, streak: 0, drip: 0 }, drip_resets: 0,
     not_delivered: 0, log_write_failed: 0, partial: false, partial_reason: null, error: null,
-    targeting: { closed_skipped: { daily: 0, streak: 0, drip: 0 }, redirected: 0, trial_course_page: 0 },
+    targeting: { closed_skipped: { daily: 0, streak: 0, drip: 0 }, redirected: 0, trial_course_page: 0,
+      caught_up: { daily_skipped: 0, streak: 0 } },
   };
 }
 
@@ -762,10 +782,19 @@ async function run(ctx: Ctx, stats: Stats): Promise<Response> {
       if (dailyWindow && !(await watchedToday())) {
         const userCourseId = await userCourse();
         if (!userCourseId && (await userTarget()).closed) stats.targeting.closed_skipped.daily++;
-        if (userCourseId) {
+        const state = userCourseId && !trialToCourse ? await lessonStateFor(ctx, u.id, userCourseId) : null;
+        if (userCourseId && state?.caughtUp) {
+          // Every lesson the tier opens is watched: "continue learning?" has nothing to continue. Stamped like a
+          // send so the window does not re-check them every tick; counted in engagement_run_done and logged per
+          // student (watch_button_health counts daily_reminder_caught_up as "reached", so a group whose students
+          // are all caught up is not a false coverage_gap).
+          stats.targeting.caught_up.daily_skipped++;
+          await admin.from("profiles").update({ last_daily_reminder_at: new Date().toISOString() }).eq("id", u.id);
+          await logNotif(ctx, stats, u.id, "daily_reminder_caught_up", {});
+        } else if (userCourseId) {
           const tpl = pickTemplate(templates, "daily_reminder", locale);
           const text = interpolate(tpl.body, { first_name: firstName || "👋" });
-          const nextId = await getNextIncompleteLesson(ctx, u.id, userCourseId);
+          const nextId = state ? state.nextId : await getNextIncompleteLesson(ctx, u.id, userCourseId);
           // (old) a button only when nextId && button_label; "Bugun emas" always. The Mini App button opens
           // /continue/<course>, which resolves the next lesson when TAPPED (never a stale one); a trial
           // student's opens the course page (trial_to_course_page).
@@ -793,18 +822,24 @@ async function run(ctx: Ctx, stats: Stats): Promise<Response> {
           const userCourseId = await userCourse();
           if (!userCourseId && (await userTarget()).closed) stats.targeting.closed_skipped.streak++;
           if (userCourseId) {
-            const tpl = pickTemplate(templates, "streak_warning", locale);
+            const state = trialToCourse ? null : await lessonStateFor(ctx, u.id, userCourseId);
+            const caughtUp = !!state?.caughtUp;
+            // Caught up: the words must be true — no lesson is left, but a re-watch (≥30 s), homework or a group
+            // post keeps the streak (bump_streak_for_user's triggers); the button opens the course page.
+            const tpl = caughtUp ? caughtUpTemplate(templates, locale) : pickTemplate(templates, "streak_warning", locale);
             const text = interpolate(tpl.body, { first_name: firstName, streak_days: cs });
-            const nextId = await getNextIncompleteLesson(ctx, u.id, userCourseId);
+            const nextId = state ? state.nextId : await getNextIncompleteLesson(ctx, u.id, userCourseId);
+            if (caughtUp) stats.targeting.caught_up.streak++;
             const w = nextId && tpl.button_label
-              ? await reminderWatch(ctx, u.id, tpl.button_label, pathsFor(userCourseId, nextId), "streak_warning")
+              ? await reminderWatch(ctx, u.id, tpl.button_label,
+                caughtUp ? caughtUpPaths(userCourseId) : pathsFor(userCourseId, nextId), "streak_warning")
               : null;
             const payload = { chat_id: chatId, text, reply_markup: streakKeyboard(w?.button ?? null) };
             const out = await sendReminder(ctx, payload,
               async () => (w ? { ...payload, reply_markup: streakKeyboard(await w.legacy()) } : null), "streak_warning");
             if (out.ok) stats.sent.streak++; else stats.not_delivered++;
             await admin.from("profiles").update({ last_streak_warning_at: new Date().toISOString() }).eq("id", u.id);
-            await logNotif(ctx, stats, u.id, "streak_warning", { streak: cs });
+            await logNotif(ctx, stats, u.id, "streak_warning", caughtUp ? { streak: cs, caught_up: true } : { streak: cs });
           }
         }
       }

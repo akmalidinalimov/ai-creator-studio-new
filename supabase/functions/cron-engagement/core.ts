@@ -190,3 +190,42 @@ export function reminderPaths(courseId: string, nextId: string | null, trialToCo
     trial: false,
   };
 }
+
+// ─────────────────────────── a student with nothing left to watch ───────────────────────────
+// 2026-10-11: 83 Challenge students had watched every lesson their tier opens (the next module still locked), yet
+// the daily reminder and the streak warning kept saying "watch a lesson" with a ⚡ Continue button — which, with
+// nothing new, lands on the course page with no video (54 of them got 167 such messages in 3 days; one reported
+// it). The next-lesson lookup used to fall back to the FIRST lesson, so the reminder could not tell. Now:
+//   daily reminder   → not sent ("continue learning?" has nothing to continue);
+//   streak warning   → sent with words that are true (rewatch any lesson ≥30 s, homework, or a group post keeps the
+//                      streak — bump_streak_for_user's three triggers) and a button to the course page.
+
+/** Where the next lesson is: `caughtUp` = every lesson inside the tier is complete (and there is at least one). */
+export type NextLessonState = { nextId: string | null; caughtUp: boolean };
+
+export function nextLessonState(orderedLessonIds: string[], completed: Set<string>): NextLessonState {
+  if (!orderedLessonIds.length) return { nextId: null, caughtUp: false };
+  const next = orderedLessonIds.find((id) => !completed.has(id));
+  return next ? { nextId: next, caughtUp: false } : { nextId: orderedLessonIds[0], caughtUp: true };
+}
+
+/** The caught-up streak button opens the course page (any lesson can be re-watched there), on both paths. */
+export function caughtUpPaths(courseId: string): ReminderPaths {
+  return { miniPath: coursePath(courseId), legacyPath: `/course/${courseId}`, trial: false };
+}
+
+/** Defaults for streak_warning_caught_up (the notification_templates rows win when present). */
+export const CAUGHT_UP_STREAK: Record<"uz" | "ru" | "en", { body: string; button_label: string }> = {
+  uz: {
+    body: "🔥 {{streak_days}} kunlik seriyangizni saqlang!\n\nSiz hozircha ochiq boʻlgan barcha darslarni koʻrib boʻldingiz 👏 Yangi darslar ochilganda shu yerda koʻrasiz.\n\nSeriyani bugun saqlash uchun istalgan darsni qayta koʻring (30 soniya ham yetadi), uyga vazifa topshiring yoki guruhda yozing.",
+    button_label: "📚 Darslarni ochish",
+  },
+  ru: {
+    body: "🔥 Сохраните серию в {{streak_days}} дней!\n\nВы посмотрели все уроки, открытые на сегодня 👏 Новые уроки появятся здесь, когда откроются.\n\nЧтобы сохранить серию сегодня, пересмотрите любой урок (хватит 30 секунд), сдайте домашнее задание или напишите в группе.",
+    button_label: "📚 Открыть уроки",
+  },
+  en: {
+    body: "🔥 Keep your {{streak_days}}-day streak!\n\nYou've watched every lesson open so far 👏 New lessons will show up here when they open.\n\nTo keep the streak today, rewatch any lesson (30 seconds is enough), submit homework or post in your group.",
+    button_label: "📚 Open lessons",
+  },
+};
