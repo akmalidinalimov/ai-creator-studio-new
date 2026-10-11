@@ -1,7 +1,7 @@
 // Pins cron-engagement's reminder rules (they must not drift while the function is optimised) and the
 // paginator's "never trust a short page" property. Run: deno test supabase/functions/cron-engagement/
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { fetchAllKeyset, reminderWindows, type WindowUser, ymdInTz } from "./core.ts";
+import { CAUGHT_UP_STREAK, caughtUpPaths, fetchAllKeyset, nextLessonState, reminderWindows, type WindowUser, ymdInTz } from "./core.ts";
 
 // Asia/Tashkent is UTC+5 all year, so "HH:MM Tashkent" = UTC + 5 h.
 const tashkent = (day: string, hhmm: string) => {
@@ -103,4 +103,25 @@ Deno.test("fetchAllKeyset reports a failed page instead of returning a partial r
   const rows = Array.from({ length: 10 }, (_, i) => ({ id: `id-${String(i).padStart(2, "0")}` }));
   const r = await fetchAllKeyset(fakeTable(rows, 3, 2), "t", "id", "id", (q) => q);
   assertEquals(r.error, "boom");
+});
+
+// 2026-10-11: a student who had watched every open lesson got "watch a lesson" + a Continue button that opened the
+// course page with no video. The lookup must say "caught up" instead of pretending the first lesson is next.
+Deno.test("nextLessonState: the first unfinished lesson, or caught up when every one is done", () => {
+  assertEquals(nextLessonState(["a", "b", "c"], new Set(["a"])), { nextId: "b", caughtUp: false });
+  assertEquals(nextLessonState(["a", "b", "c"], new Set()), { nextId: "a", caughtUp: false });
+  assertEquals(nextLessonState(["a", "b"], new Set(["a", "b"])), { nextId: "a", caughtUp: true });
+  assertEquals(nextLessonState([], new Set(["a"])), { nextId: null, caughtUp: false }); // no lessons is not "caught up"
+});
+
+Deno.test("caught up: the streak button opens the course page; the copy keeps the day count and never says 'one lesson left'", () => {
+  const c = "f502f631-2104-4834-b6c2-702cd3080e27";
+  assertEquals(caughtUpPaths(c), { miniPath: `/course/${c}`, legacyPath: `/course/${c}`, trial: false });
+  for (const l of ["uz", "ru", "en"] as const) {
+    const t = CAUGHT_UP_STREAK[l];
+    assertEquals(t.body.includes("{{streak_days}}"), true, l);
+    assertEquals(/30/.test(t.body), true, l);                 // the re-watch bar the streak trigger uses
+    assertEquals(/dars qoldi|урок остал|lesson left/i.test(t.body), false, l);
+    assertEquals(t.button_label.length > 0, true, l);
+  }
 });
