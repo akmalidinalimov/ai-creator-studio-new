@@ -45,6 +45,7 @@ import { handleInboxCallback, sendInboxSummary } from "./support-inbox-bot.ts";
 import { parseInboxCallback } from "../_shared/support-inbox.ts";
 import { parseTqCallback, TQ_BUTTON } from "../_shared/teacher-questions.ts";
 import { captureTqAnswer, handleTqCallback, sendTqSummary, TQ_ANSWER_STATE } from "./teacher-questions-bot.ts";
+import { handleQaCallback, parseQaCallback } from "./question-assist-bot.ts";
 import { langChooserKeyboard, parseProfAction, profileRows, profileWebCells, showProfileView } from "./profile-tabs.ts";
 import { sendStudentWelcome } from "./student-welcome.ts";
 import {
@@ -7897,6 +7898,25 @@ async function handleCallback(admin: any, cq: any) {
   if (data === SUPPORT_CANCEL && chatId) {
     await answerCallback(cq.id);
     await cancelSupport(admin, chatId, tgId, normLocale(_clicker?.preferred_locale), supportDeps(admin));
+    return;
+  }
+  // 🤖 the question assistant (question-assist-bot.ts): qa:s / qa:x — a curator's ✅ / ❌ on a trial draft (real clicker,
+  // teacher/admin, not impersonating; the group is re-checked there) · qa:n — the asking student's «❌ Yordam bermadi».
+  if (data === "qa:noop") { await answerCallback(cq.id); return; }
+  if (data.startsWith("qa:") && chatId) {
+    const qaCb = parseQaCallback(data);
+    if (!qaCb) { await answerCallback(cq.id); return; }
+    let viewer: { id: string; isAdmin: boolean } | null = null;
+    if (qaCb.kind !== "not_helped" && _clicker && !_isImp) {
+      const p = await getPersona(admin, _clicker.id);
+      if (p === "teacher" || p === "admin") viewer = { id: _clicker.id, isAdmin: p === "admin" };
+    }
+    let answered = false;
+    await handleQaCallback(admin, qaCb, {
+      tgId, chatId, messageId: cq.message?.message_id ?? null, viewer,
+      answer: async (text?: string) => { if (!answered) { answered = true; await answerCallback(cq.id, text); } },
+    }, supportDeps(admin));
+    if (!answered) await answerCallback(cq.id);
     return;
   }
   // ❓ the curator-question inbox: tq:s · tq:l · tq:o (open) · tq:r (✍️ answer) · tq:d (✅) · tq:u (undo). The REAL clicker
