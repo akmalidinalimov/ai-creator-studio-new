@@ -20,12 +20,13 @@ Deno.test("evening: per-curator numbers, team total, the day's star and the fast
   const t = renderEvening(SAMPLE, NOW);
   assertStringIncludes(t, "<b>Feruza</b> · 3-GURUH");
   assertStringIncludes(t, "✅ Baholandi: <b>41</b> ta vazifa");
-  assertStringIncludes(t, "💬 Javob berildi: <b>5</b> ta savol · oʻrtacha 3 daqiqada");
+  assertStringIncludes(t, "💬 Javob berildi: <b>5</b> ta savol (oʻrtacha 3 daqiqa)");
   assertStringIncludes(t, "⏳ Ertaga: 12 ta vazifa · 7 ta savol");
   assertStringIncludes(t, "🤝 Jamoa boʻlib bugun: <b>87</b> ta vazifa va <b>39</b> ta savol");
-  assertStringIncludes(t, "🏆 Kun yulduzi: <b>Feruza</b> — 41 ta vazifa!");
+  assertStringIncludes(t, "🏆 Kun yulduzi: <b>Feruza</b> — 41 ta vazifa");
+  assertStringIncludes(t, "🏅 <b>Kun qahramonlari</b>");
   assertStringIncludes(t, "⚡ Eng tez javoblar: <b>Feruza</b>");
-  assertStringIncludes(t, "💬 Eng koʻp javob: <b>@nigorakm</b> — 23 ta savol!");
+  assertStringIncludes(t, "💬 Eng koʻp javob: <b>@nigorakm</b> — 23 ta savol");
   assertStringIncludes(t, "<b>@nigorakm</b> · 4-GURUH");          // initials only → the @username
   const quiet = renderEvening([g("5-GURUH", { name: "Ali" }, {})], NOW);
   assertStringIncludes(quiet, "✅ Baholandi: <b>0</b> ta vazifa");
@@ -36,19 +37,19 @@ Deno.test("evening: per-curator numbers, team total, the day's star and the fast
 Deno.test("morning: greeting, yesterday's team result, today's queue per group, the longest wait", () => {
   const t = renderMorning(SAMPLE, NOW);
   assertStringIncludes(t, "Yakshanba");                              // a Sunday line
-  assertStringIncludes(t, "Kecha jamoa boʻlib <b>87</b> ta vazifani baholadi va <b>39</b> ta savolga javob berdi");
-  assertStringIncludes(t, "• 3-GURUH (Feruza): 12 ta vazifa · 7 ta savol");
-  assertStringIncludes(t, "3 soat oldin");
+  assertStringIncludes(t, "📊 <b>Kechagi natija</b>\n✅ 87 ta vazifa baholandi\n💬 39 ta savolga javob berildi");
+  assertStringIncludes(t, "• 3-GURUH · Feruza — 12 ta vazifa · 7 ta savol");
+  assertStringIncludes(t, "⏳ Eng uzoq kutayotgan savol: <b>3 soat</b>");
   const empty = renderMorning([g("1-GURUH", { name: "Rano" }, {})], NOW);
   assertStringIncludes(empty, "Navbat boʻsh");
-  assert(!empty.includes("Kecha jamoa"));
+  assert(!empty.includes("Kechagi natija"));
 });
 
 Deno.test("two days in a row never open the same way; names and group names are escaped", () => {
   const d = tashkentDayNumber(NOW);
   for (let i = 0; i < 30; i++) {
-    assert(pick(MORNING_OPENERS, d + i) !== pick(MORNING_OPENERS, d + i + 1));
-    assert(pick(EVENING_OPENERS, d + i) !== pick(EVENING_OPENERS, d + i + 1));
+    assert(pick(MORNING_OPENERS, d + i).head + pick(MORNING_OPENERS, d + i).body !== pick(MORNING_OPENERS, d + i + 1).head + pick(MORNING_OPENERS, d + i + 1).body);
+    assert(pick(EVENING_OPENERS, d + i).body !== pick(EVENING_OPENERS, d + i + 1).body);
   }
   assertEquals(curatorName(g("x", { name: "<b>Ali</b>" }, {})), "&lt;b&gt;Ali&lt;/b&gt;");
   assertEquals(curatorName(g("x", { name: null, username: null }, {})), "Ustoz");

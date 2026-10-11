@@ -58,57 +58,81 @@ const sum = (xs: GroupStat[], k: "graded" | "answered" | "pending" | "open") => 
 export function renderMorning(stats: GroupStat[], nowMs: number): string {
   const day = tashkentDayNumber(nowMs);
   const dow = new Date(nowMs + TZ_MS).getUTCDay();
-  const lines: string[] = [];
-  if (WEEKDAY_LINES[dow]) lines.push(`<b>${WEEKDAY_LINES[dow]}</b>`);
-  lines.push(pick(MORNING_OPENERS, day));
+  const o = pick(MORNING_OPENERS, day);
+  const blocks: string[] = [];
 
+  // 1. the greeting — a bold line, the weekday line, a short paragraph
+  blocks.push([`<b>${o.head}</b>`, ...(WEEKDAY_LINES[dow] ? [WEEKDAY_LINES[dow]] : []), "", o.body].join("\n"));
+
+  // 2. yesterday
   const graded = sum(stats, "graded"), answered = sum(stats, "answered");
   if (graded + answered > 0) {
-    lines.push("", `Kecha jamoa boʻlib <b>${graded}</b> ta vazifani baholadi va <b>${answered}</b> ta savolga javob berdi — zoʻr natija! 👏`);
+    blocks.push([
+      "📊 <b>Kechagi natija</b>",
+      `✅ ${graded} ta vazifa baholandi`,
+      `💬 ${answered} ta savolga javob berildi`,
+      "Zoʻr ish, jamoa! 👏",
+    ].join("\n"));
   }
+
+  // 3. today's queue
   const pending = sum(stats, "pending"), open = sum(stats, "open");
   if (pending + open === 0) {
-    lines.push("", "📌 Navbat boʻsh — ajoyib boshlanish! 🎉");
+    blocks.push("📌 <b>Bugungi navbat</b>\nNavbat boʻsh — ajoyib boshlanish! 🎉");
   } else {
-    const oldest = Math.max(0, ...stats.map((s) => Number(s.oldest_min) || 0));
-    lines.push("", "📌 <b>Bugungi navbat</b>");
+    const rows = ["📌 <b>Bugungi navbat</b>"];
     for (const s of stats) {
       if (!s.pending && !s.open) continue;
       const bits = [s.pending ? `${s.pending} ta vazifa` : "", s.open ? `${s.open} ta savol` : ""].filter(Boolean).join(" · ");
-      lines.push(`• ${shortGroup(s.group_name)} (${curatorName(s)}): ${bits}`);
+      rows.push(`• ${shortGroup(s.group_name)} · ${curatorName(s)} — ${bits}`);
     }
-    if (open && oldest >= 60) lines.push(`<i>Eng uzoq kutayotgan savol — ${ageText(oldest * 60_000)} oldin berilgan.</i>`);
+    const oldest = Math.max(0, ...stats.map((s) => Number(s.oldest_min) || 0));
+    if (open && oldest >= 60) rows.push("", `⏳ Eng uzoq kutayotgan savol: <b>${ageText(oldest * 60_000)}</b>`);
+    blocks.push(rows.join("\n"));
   }
-  lines.push("", pick(MORNING_CLOSINGS, day, 3));
-  return lines.join("\n");
+
+  blocks.push(pick(MORNING_CLOSINGS, day, 3));
+  return blocks.join("\n\n");
 }
 
 export function renderEvening(stats: GroupStat[], nowMs: number): string {
   const day = tashkentDayNumber(nowMs);
-  const lines: string[] = [pick(EVENING_OPENERS, day), ""];
-  for (const s of stats) {
-    lines.push(`👩‍🏫 <b>${curatorName(s)}</b> · ${shortGroup(s.group_name)}`);
-    lines.push(`✅ Baholandi: <b>${s.graded}</b> ta vazifa`);
-    const med = s.answered > 0 && s.median_min !== null ? ` · oʻrtacha ${minutesText(Number(s.median_min))}da` : "";
-    lines.push(`💬 Javob berildi: <b>${s.answered}</b> ta savol${med}`);
-    const left = [s.pending ? `${s.pending} ta vazifa` : "", s.open ? `${s.open} ta savol` : ""].filter(Boolean).join(" · ");
-    lines.push(left ? `⏳ Ertaga: ${left}` : "🎉 Navbat boʻsh!");
-    lines.push("");
+  const o = pick(EVENING_OPENERS, day);
+  const blocks: string[] = [`<b>${o.head}</b>\n\n${o.body}`];
+
+  // 1. per curator
+  if (stats.length) {
+    blocks.push("📊 <b>Bugungi natijalar</b>");
+    for (const s of stats) {
+      const med = s.answered > 0 && s.median_min !== null ? ` (oʻrtacha ${minutesText(Number(s.median_min))})` : "";
+      const left = [s.pending ? `${s.pending} ta vazifa` : "", s.open ? `${s.open} ta savol` : ""].filter(Boolean).join(" · ");
+      blocks.push([
+        `👩‍🏫 <b>${curatorName(s)}</b> · ${shortGroup(s.group_name)}`,
+        `✅ Baholandi: <b>${s.graded}</b> ta vazifa`,
+        `💬 Javob berildi: <b>${s.answered}</b> ta savol${med}`,
+        left ? `⏳ Ertaga: ${left}` : "🎉 Navbat boʻsh!",
+      ].join("\n"));
+    }
   }
-  const graded = sum(stats, "graded"), answered = sum(stats, "answered");
-  if (stats.length > 1 && graded + answered > 0) {
-    lines.push(`🤝 Jamoa boʻlib bugun: <b>${graded}</b> ta vazifa va <b>${answered}</b> ta savol`);
-  }
+
+  // 2. the day's heroes + the team
+  const heroes: string[] = [];
   const star = [...stats].sort((a, b) => b.graded - a.graded)[0];
-  if (star && star.graded > 0) lines.push(`🏆 Kun yulduzi: <b>${curatorName(star)}</b> — ${star.graded} ta vazifa!`);
+  if (star && star.graded > 0) heroes.push(`🏆 Kun yulduzi: <b>${curatorName(star)}</b> — ${star.graded} ta vazifa`);
   const most = [...stats].sort((a, b) => b.answered - a.answered)[0];
-  if (most && most.answered >= 3) lines.push(`💬 Eng koʻp javob: <b>${curatorName(most)}</b> — ${most.answered} ta savol!`);
+  if (most && most.answered >= 3) heroes.push(`💬 Eng koʻp javob: <b>${curatorName(most)}</b> — ${most.answered} ta savol`);
   const fast = stats.filter((s) => s.answered >= 3 && s.median_min !== null)
     .sort((a, b) => Number(a.median_min) - Number(b.median_min))[0];
-  if (fast) lines.push(`⚡ Eng tez javoblar: <b>${curatorName(fast)}</b> — oʻrtacha ${minutesText(Number(fast.median_min))}da`);
-  if (lines[lines.length - 1] !== "") lines.push("");
-  lines.push(pick(EVENING_CLOSINGS, day, 5));
-  return lines.join("\n");
+  if (fast) heroes.push(`⚡ Eng tez javoblar: <b>${curatorName(fast)}</b> — oʻrtacha ${minutesText(Number(fast.median_min))}`);
+  if (heroes.length) blocks.push(["🏅 <b>Kun qahramonlari</b>", ...heroes].join("\n"));
+
+  const graded = sum(stats, "graded"), answered = sum(stats, "answered");
+  if (stats.length > 1 && graded + answered > 0) {
+    blocks.push(`🤝 Jamoa boʻlib bugun: <b>${graded}</b> ta vazifa va <b>${answered}</b> ta savol`);
+  }
+
+  blocks.push(pick(EVENING_CLOSINGS, day, 5));
+  return blocks.join("\n\n");
 }
 
 export async function runOnce(io: Io, kind: Kind): Promise<{ status: string; [k: string]: unknown }> {
