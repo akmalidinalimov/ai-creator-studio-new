@@ -20,6 +20,7 @@
 import { logHealth, logHealthOnce } from "../_shared/edge.ts";
 import { POSTER_PROFILE_COLS } from "../_shared/group-poster-identity.ts";
 import { redactSecrets } from "../_shared/redact.ts";
+import { clip } from "../_shared/text-safe.ts";
 import type { SendResultOutcome } from "../_shared/telegram-send.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -121,8 +122,8 @@ export async function registerDailyTaskPoster(d: RegistrarDeps, inp: RegisterInp
         },
         body: JSON.stringify({
           students: [{
-            name: String(from.first_name ?? "").slice(0, 60) || String(from.username ?? "") || `tg-${from.id}`,
-            last_name: String(from.last_name ?? "").slice(0, 60) || undefined,
+            name: clip(String(from.first_name ?? ""), 60) || String(from.username ?? "") || `tg-${from.id}`,
+            last_name: clip(String(from.last_name ?? ""), 60) || undefined,
             telegram_user_id: from.id,
             telegram_username: from.username || undefined,
             role: "student",

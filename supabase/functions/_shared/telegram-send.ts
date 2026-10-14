@@ -15,6 +15,7 @@
 
 import { tgResult, isTerminal, isRecipientError, isContentError, classifySend, type SendClass } from "./telegram-classify.ts";
 import { logHealth, logHealthOnce } from "./edge.ts";
+import { deepWellFormed, wellFormed } from "./text-safe.ts";
 
 export type SendOutcome = {
   ok: boolean;            // Telegram accepted the send
@@ -83,7 +84,7 @@ export async function sendTelegramMultipart(
   let j: { ok?: boolean; description?: string; result?: unknown } | null = null;
   try {
     const form = new FormData();
-    for (const [k, v] of Object.entries(fields)) form.append(k, String(v));
+    for (const [k, v] of Object.entries(fields)) form.append(k, wellFormed(String(v)));
     form.append(file.field, file.blob, file.filename);
     // No explicit Content-Type: fetch sets multipart/form-data + the boundary from the FormData body.
     const resp = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, { method: "POST", body: form });
@@ -132,7 +133,7 @@ export async function sendTelegramResult(
     const resp = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(deepWellFormed(payload)),
     });
     status = resp.status;
     j = await resp.json().catch(() => null);
@@ -198,7 +199,7 @@ export async function sendTelegramWithResult(
     const resp = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(deepWellFormed(payload)),
     });
     status = resp.status;
     j = await resp.json().catch(() => null);
@@ -292,7 +293,7 @@ export async function sendTelegramMultipartWithResult(
   opts?: SendResultOpts,
 ): Promise<{ outcome: SendResultOutcome; result: any }> {
   const form = new FormData();
-  for (const [k, v] of Object.entries(fields)) form.append(k, String(v));
+  for (const [k, v] of Object.entries(fields)) form.append(k, wellFormed(String(v)));
   for (const f of files) form.append(f.field, f.blob, f.filename);
   const { j, status } = await postMultipart(botToken, method, form);
   return await resolveWithResult(j, status, method, fields, opts);
@@ -335,11 +336,11 @@ export async function sendMediaGroupMultipart(
     return { outcome: r.outcome, result: null };
   }
   const form = new FormData();
-  for (const [k, v] of Object.entries(fields)) form.append(k, String(v));
+  for (const [k, v] of Object.entries(fields)) form.append(k, wellFormed(String(v)));
   const media = items.map((it, i) => ({
     type: it.type,
     media: `attach://file${i}`,
-    ...(it.caption ? { caption: it.caption } : {}),
+    ...(it.caption ? { caption: wellFormed(it.caption) } : {}),
     ...(it.type === "video" ? { supports_streaming: true } : {}),
   }));
   form.append("media", JSON.stringify(media));

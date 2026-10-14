@@ -12,6 +12,7 @@
 // reminder (teacher-questions-reminder) do the I/O.
 
 import { escCap } from "./support-agent-card.ts";
+import { clip } from "./text-safe.ts";
 import { ageText } from "./support-inbox.ts";
 
 export { ageText };
@@ -162,7 +163,7 @@ export function renderTqList(
     lines.push(`   ${snippet(r.text, 90)}${files}`);
   }
   const kb: Kb["inline_keyboard"] = slice.map((r) => [{
-    text: `📂 #${r.id} · ${String(r.student_name || r.student_username || "Oʻquvchi").slice(0, 24)} · ${ageText(nowMs - Date.parse(r.asked_at))}`,
+    text: `📂 #${r.id} · ${clip(String(r.student_name || r.student_username || "Oʻquvchi"), 24)} · ${ageText(nowMs - Date.parse(r.asked_at))}`,
     callback_data: `tq:o:${r.id}`,
   }]);
   const nav: Kb["inline_keyboard"][number] = [];
@@ -208,7 +209,7 @@ export function renderTqDigest(rows: TqRow[], nowMs: number, groupNames: Record<
   }
   if (rows.length > shown.length) lines.push("", `… va yana ${rows.length - shown.length} ta`);
   const kb: Kb["inline_keyboard"] = shown.map((r) => [{
-    text: `📂 #${r.id} · ${String(r.student_name || r.student_username || "Oʻquvchi").slice(0, 24)}`,
+    text: `📂 #${r.id} · ${clip(String(r.student_name || r.student_username || "Oʻquvchi"), 24)}`,
     callback_data: `tq:o:${r.id}`,
   }]);
   kb.push([{ text: "❓ Barcha savollar", callback_data: "tq:s" }]);

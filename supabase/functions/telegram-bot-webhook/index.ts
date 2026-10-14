@@ -38,6 +38,7 @@ import { flagSig, liveFresh, syncMenuLive } from "./menu-button.ts";
 import { runMenuSweepTick, scheduleMenuSweepTick } from "./menu-sweep.ts";
 import { handleNotToday } from "./reminder-snooze.ts";
 import { typedIntent, looksLikeProblem, isEscapeWord } from "./typed-intents.ts";
+import { clip, deepWellFormed } from "../_shared/text-safe.ts";
 import { captureIgReply, IG_CALLBACK, igCopy, startIgFlow } from "./ig-handle.ts";
 import { cancelSupport, captureSupport, markSolved, parseSupportCallback, startAdminReply, startSupport, SUPPORT_CANCEL } from "./support.ts";
 import { handleSupportAgentCallback } from "./support-agent.ts";
@@ -355,7 +356,7 @@ const T = {
     thmEmpty: "Sizga hali kurs va guruh biriktirilmagan.",
     thmOtherCourse: "ℹ️ Bu modul tanlangan guruh kursiga tegishli emas. /modulvazifalar ni qayta oching.",
     thmModuleRow: (pos: number, title: string, sub: number, total: number) =>
-      `📦 ${pos}-modul · ${title} — ✅ ${sub}/${total}`.slice(0, 60),
+      clip(`📦 ${pos}-modul · ${title} — ✅ ${sub}/${total}`, 60),
     thmSubmittedTitle: (pos: number, title: string) =>
       `✅ <b>${pos}-modul — ${csvEscapeHtml(title)}</b>\nTopshirganlar:`,
     thmMissingTitle: (pos: number, title: string) =>
@@ -680,7 +681,7 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
     thmEmpty: "К вам пока не прикреплён курс или группа.",
     thmOtherCourse: "ℹ️ Этот модуль не относится к курсу выбранной группы. Откройте /modulvazifalar заново.",
     thmModuleRow: (pos: number, title: string, sub: number, total: number) =>
-      `📦 Модуль ${pos} · ${title} — ✅ ${sub}/${total}`.slice(0, 60),
+      clip(`📦 Модуль ${pos} · ${title} — ✅ ${sub}/${total}`, 60),
     thmSubmittedTitle: (pos: number, title: string) =>
       `✅ <b>Модуль ${pos} — ${csvEscapeHtml(title)}</b>\nСдали:`,
     thmMissingTitle: (pos: number, title: string) =>
@@ -995,7 +996,7 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
     thmEmpty: "No course or group is assigned to you yet.",
     thmOtherCourse: "ℹ️ This module is not part of the selected group's course. Open /modulvazifalar again.",
     thmModuleRow: (pos: number, title: string, sub: number, total: number) =>
-      `📦 Module ${pos} · ${title} — ✅ ${sub}/${total}`.slice(0, 60),
+      clip(`📦 Module ${pos} · ${title} — ✅ ${sub}/${total}`, 60),
     thmSubmittedTitle: (pos: number, title: string) =>
       `✅ <b>Module ${pos} — ${csvEscapeHtml(title)}</b>\nSubmitted:`,
     thmMissingTitle: (pos: number, title: string) =>
@@ -1162,7 +1163,7 @@ async function tgApi(method: string, body: unknown): Promise<Response> {
     return await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(deepWellFormed(body)),
     });
   } catch (e) {
     // TOKEN CONTAINMENT: Deno's transport errors ("error sending request for url (...)") embed the FULL
@@ -2366,7 +2367,7 @@ async function sendUnregisteredReply(
         const prof = await findProfileByTelegramId(admin, from.id);
         if (prof) {
           await admin.from("bot_conversation_state").delete().eq("telegram_id", from.id).eq("state", "nm_cache");
-          const name = (from.first_name || from.username || "do'st").slice(0, 40);
+          const name = clip(from.first_name || from.username || "do'st", 40);
           // Engine may MATCH an existing account instead of creating one — never tell a paid
           // student their account "was created (trial)" (review finding). A LADDER account (its
           // modules are open by tier) gets the onboarding starter kit instead, because nmWelcome's
@@ -3309,7 +3310,7 @@ async function buildAdminOverallStats(admin: any, locale: Locale): Promise<{ tex
   const counts = new Map<string, number>();
   for (const m of (memb || []) as any[]) counts.set(m.group_id, (counts.get(m.group_id) || 0) + 1);
   const btns = ((groups || []) as any[]).map((g) => ({
-    text: `${g.name} (${counts.get(g.id) || 0})`.slice(0, 30),
+    text: clip(`${g.name} (${counts.get(g.id) || 0})`, 30),
     callback_data: `ast:g:${g.id}`,
   }));
   const kbRows: any[] = [];
@@ -3707,7 +3708,7 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
           const pct = m.total_students > 0 ? Math.round((m.submitted_count / m.total_students) * 100) : 0;
           const pctStr = m.total_students > 0 ? `${pct}%` : "—";
           const tag = `M${(m.module_position ?? 0) + 1}`;
-          const title = (m.module_title || "").slice(0, 30);
+          const title = clip(m.module_title || "", 30);
           lines.push(`<code>${tag}</code> ${csvEscapeHtml(title)} — <b>${m.submitted_count}/${m.total_students}</b> (${pctStr})`);
           // Module POSITION, not uuid: groupId+moduleId uuids = 81 bytes > Telegram's 64-byte
           // callback cap → the whole /thomework message was rejected (audit BUG-3). ~48 bytes now.
@@ -3915,7 +3916,7 @@ async function handleGradingCommand(
           if (gid) byGroup.set(gid, (byGroup.get(gid) || 0) + 1);
         }
         const btns: any[][] = tGroups.map((g: any) => [{
-          text: `${g.name} (${byGroup.get(g.id) || 0})`.slice(0, 60),
+          text: clip(`${g.name} (${byGroup.get(g.id) || 0})`, 60),
           callback_data: `gs:grp:${g.id}`,
         }]);
         btns.push([{ text: t.gradeAllGroupsBtn(pend.length), callback_data: "gs:grp:all" }]);
@@ -3999,7 +4000,7 @@ async function renderStudentPicker(admin: any, chatId: number, graderId: string,
   const slice = rows.slice(pageIdx * PICKER_PAGE_SIZE, (pageIdx + 1) * PICKER_PAGE_SIZE);
 
   const buttons: any[][] = slice.map((r) => [{
-    text: `${r.name} (${r.n})`.slice(0, 60),
+    text: clip(`${r.name} (${r.n})`, 60),
     callback_data: `gs:pick:${r.id}`,
   }]);
   // Pagination carries the chosen scope so page 2 shows the same group as page 1
@@ -4089,7 +4090,7 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
       lines.push(isResub
         ? `   🔄 V${tn}: ${csvEscapeHtml(it.a.title || "")} (oldingi: ${it.sub.score}/${it.a.max_score || 10})`
         : `   ⏳ V${tn}: ${csvEscapeHtml(it.a.title || "")}`);
-      buttons.push([{ text: `${isResub ? "🔄 " : ""}M${m.mPos + 1}·V${tn} — ${it.a.title || ""}`.slice(0, 60), callback_data: `gs:open:${it.sub.id}` }]);
+      buttons.push([{ text: clip(`${isResub ? "🔄 " : ""}M${m.mPos + 1}·V${tn} — ${it.a.title || ""}`, 60), callback_data: `gs:open:${it.sub.id}` }]);
       const postUrl = it.sub.telegram_message_url;
       if (postUrl) {
         anyPostUrl = true;
@@ -4145,7 +4146,7 @@ async function renderTeacherRoster(
   const slice = rows.slice(pageIdx * ROSTER_PAGE_SIZE, (pageIdx + 1) * ROSTER_PAGE_SIZE);
 
   const buttons: any[][] = slice.map((r) => [{
-    text: t.rosterStudentRow(r.label, r.n).slice(0, 60),
+    text: clip(t.rosterStudentRow(r.label, r.n), 60),
     callback_data: `tr:stu:${r.id}`,
   }]);
   const nav: any[] = [];
@@ -4210,7 +4211,7 @@ async function renderStudentModules(
     const dateStr = fmtDate(m.latest);
     lines.push(`📦 <b>${m.mPos + 1}-MODUL</b> — ${m.items.length} ta · ${csvEscapeHtml(scoresStr)}${dateStr ? ` · 📅 ${dateStr}` : ""}`);
     return [{
-      text: `${m.mPos + 1}-MODUL · ${m.items.length} ta · ${scoresStr}${dateStr ? ` · ${dateStr}` : ""}`.slice(0, 60),
+      text: clip(`${m.mPos + 1}-MODUL · ${m.items.length} ta · ${scoresStr}${dateStr ? ` · ${dateStr}` : ""}`, 60),
       // Module POSITION, not uuid: two uuids = 80 bytes > Telegram's 64-byte callback cap, which
       // made Telegram reject this whole message (BUTTON_DATA_INVALID) — audit BUG-2. PR-1: plus an 8-char
       // course token, because a student moved between courses has submissions at the SAME position in two
@@ -4268,7 +4269,7 @@ async function renderStudentModuleDetail(
       lines.push(`• ${label} — ${csvEscapeHtml(a.title || "")}${dateStr ? ` · 📅 ${dateStr}` : ""} · ${scoreStr}`);
       if (s.score_feedback) lines.push(`   💬 ${csvEscapeHtml(s.score_feedback)}`);
       if (s.score == null) {
-        buttons.push([{ text: `📝 ${label} — baholash`.slice(0, 60), callback_data: `gs:open:${s.id}` }]);
+        buttons.push([{ text: clip(`📝 ${label} — baholash`, 60), callback_data: `gs:open:${s.id}` }]);
       }
       if (s.telegram_message_url) {
         buttons.push([{ text: t.gradeOpenSubmissionBtn(tn), url: s.telegram_message_url }]);
@@ -5796,7 +5797,7 @@ async function logWebhookInbox(admin: any, update: any): Promise<number | null> 
       message_id: m?.message_id ?? null,
       from_user_id: fromUser?.id ?? null,
       from_username: fromUser?.username ?? null,
-      text_preview: String(text).slice(0, 200),
+      text_preview: clip(String(text), 200),
       raw_update: update,
       resolution: null,
     }).select("id").maybeSingle();
