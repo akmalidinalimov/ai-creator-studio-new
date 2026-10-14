@@ -1748,6 +1748,7 @@ export type Database = {
       }
       modules: {
         Row: {
+          always_open: boolean
           course_id: string
           created_at: string
           id: string
@@ -1756,6 +1757,7 @@ export type Database = {
           title: string
         }
         Insert: {
+          always_open?: boolean
           course_id: string
           created_at?: string
           id?: string
@@ -1764,6 +1766,7 @@ export type Database = {
           title: string
         }
         Update: {
+          always_open?: boolean
           course_id?: string
           created_at?: string
           id?: string

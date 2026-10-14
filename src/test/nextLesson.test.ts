@@ -231,3 +231,21 @@ describe("resolveContinueTarget", () => {
     expect(await resolveContinueTarget(base("paid", []) as never, U, {})).toBe("/dashboard");
   });
 });
+
+// 2026-10-14: the BONUS module (6th) opened to every Challenge student without opening modules 4–5 —
+// modules.always_open. An always-open module beyond the tier limit is reachable; the others stay clamped.
+describe("buildCourseRow — an always-open module beyond the tier limit", () => {
+  it("module 3 is always-open: limit 1 reaches module 1 + module 3, never module 2", () => {
+    const rows = lessonsFor(1).map((l) => l.modules?.title === "Module 3"
+      ? { ...l, modules: { ...l.modules!, always_open: true } } : l);
+    const r = buildCourseRow(course(C1), 1, rows, []);
+    expect(r.total).toBe(6);
+    expect(r.accessibleLessonIds).toEqual([Lx(1, 1, 1), Lx(1, 1, 2), Lx(1, 1, 3), Lx(1, 3, 1), Lx(1, 3, 2), Lx(1, 3, 3)]);
+    // module 1 done → the next lesson is the always-open module's first, never a locked module-2 lesson
+    const next = buildCourseRow(course(C1), 1, rows, [done(Lx(1, 1, 1)), done(Lx(1, 1, 2)), done(Lx(1, 1, 3))]);
+    expect(next.nextLessonId).toBe(Lx(1, 3, 1));
+  });
+  it("without the flag, nothing changes", () => {
+    expect(buildCourseRow(course(C1), 1, lessonsFor(1), []).total).toBe(3);
+  });
+});

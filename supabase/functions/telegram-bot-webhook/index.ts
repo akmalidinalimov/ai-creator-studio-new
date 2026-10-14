@@ -2557,11 +2557,12 @@ async function getBlockedModuleIds(admin: any, userId: string): Promise<Set<stri
     if (typeof lim !== "number") continue; // unlimited → nothing blocked
     const { data: mods } = await admin
       .from("modules")
-      .select("id")
+      .select("id, always_open")
       .eq("course_id", e.course_id)
       .order("position", { ascending: true })
       .order("created_at", { ascending: true });
-    (mods || []).slice(lim).forEach((m: any) => blocked.add(m.id)); // beyond the cap
+    // beyond the cap — unless always-open (modules.always_open, e.g. a bonus; same rule as has_module_access)
+    (mods || []).slice(lim).forEach((m: any) => { if (m.always_open !== true) blocked.add(m.id); });
   }
   return blocked;
 }
@@ -2575,9 +2576,9 @@ async function isModuleBlocked(admin: any, userId: string, moduleId: string): Pr
   const limit = await moduleLimitFor(admin, userId, courseId);
   if (limit == null) return false; // unlimited → not blocked
   const { data: mods } = await admin
-    .from("modules").select("id").eq("course_id", courseId)
+    .from("modules").select("id, always_open").eq("course_id", courseId)
     .order("position", { ascending: true }).order("created_at", { ascending: true });
-  const accessible = new Set((mods || []).slice(0, limit).map((x: any) => x.id));
+  const accessible = new Set((mods || []).filter((x: any, i: number) => i < limit || x.always_open === true).map((x: any) => x.id));
   return !accessible.has(moduleId);
 }
 
@@ -2590,13 +2591,13 @@ async function getNextIncompleteLesson(admin: any, userId: string, courseId: str
   // All published lessons in the course in order
   const { data: modulesRaw } = await admin
     .from("modules")
-    .select("id, position")
+    .select("id, position, always_open")
     .eq("course_id", courseId)
     .order("position", { ascending: true });
   if (!modulesRaw?.length) return null;
-  // Tier clamp (Phase 2): never recommend a lesson in a module past the student's cap.
+  // Tier clamp (Phase 2): never recommend a lesson in a module past the student's cap (an always-open one is in).
   const limit = await moduleLimitFor(admin, userId, courseId);
-  const modules = (limit == null) ? modulesRaw : modulesRaw.slice(0, limit);
+  const modules = (limit == null) ? modulesRaw : modulesRaw.filter((m: any, i: number) => i < limit || m.always_open === true);
   if (!modules.length) return null;
   const moduleIds = modules.map((m: any) => m.id);
   const { data: lessons } = await admin
@@ -2639,13 +2640,13 @@ async function computeStats(admin: any, userId: string) {
     // Tier cap: only the modules the student can actually reach count toward %,
     // otherwise a tier-capped (Premium/VIP) student can never hit 100% and the
     // certificate stays unreachable. Modules ranked by position, first `limit`.
-    const { data: modules } = await admin.from("modules").select("id")
+    const { data: modules } = await admin.from("modules").select("id, always_open")
       .eq("course_id", courseId)
       .order("position", { ascending: true })
       .order("created_at", { ascending: true });
     let modList = (modules || []) as any[];
     const _limit = await moduleLimitFor(admin, userId, courseId);
-    if (typeof _limit === "number") modList = modList.slice(0, _limit);
+    if (typeof _limit === "number") modList = modList.filter((m: any, i: number) => i < _limit || m.always_open === true);
     const mids = modList.map((m: any) => m.id);
     let total = 0;
     let done = 0;

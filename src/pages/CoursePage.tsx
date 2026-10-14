@@ -78,9 +78,9 @@ export default function CoursePage() {
   );
   if (!course) return <PageShell><p>{t("coursePage.notFound")}</p></PageShell>;
 
-  const accessibleCount = moduleLimit == null ? modules.length : Math.min(moduleLimit, modules.length);
-  const accessibleModules = modules.slice(0, accessibleCount);
-  const isModuleLocked = (i: number) => moduleLimit != null && i >= moduleLimit;
+  // The first module_limit modules, plus any always-open one (modules.always_open, e.g. a bonus) — has_module_access.
+  const isModuleLocked = (i: number) => moduleLimit != null && i >= moduleLimit && modules[i]?.always_open !== true;
+  const accessibleModules = modules.filter((_m, i) => !isModuleLocked(i));
   const totalLessons = accessibleModules.reduce((s, m) => s + m.lessons.length, 0);
   const pct = totalLessons ? Math.round((completed.size / totalLessons) * 100) : 0;
   const nextLesson = accessibleModules.flatMap((m) => m.lessons).find((l: any) => !completed.has(l.id));
@@ -156,7 +156,7 @@ export default function CoursePage() {
             </div>
             <Progress value={pct} className="mt-3 h-1.5" />
             <div className="grid grid-cols-3 gap-2 mt-5 text-center">
-              <Stat n={accessibleCount} l={t("coursePage.stats.modules")} />
+              <Stat n={accessibleModules.length} l={t("coursePage.stats.modules")} />
               <Stat n={totalLessons} l={t("coursePage.stats.lessons")} />
               <Stat n={`${course.duration_hours}h`} l={t("coursePage.stats.total")} />
             </div>
