@@ -209,7 +209,8 @@ export default function LessonPage() {
         const { data: lim } = await supabase.rpc("my_module_limit" as any, { _course_id: courseId });
         const moduleLimit = typeof lim === "number" ? lim : null;
         const moduleIdx = (ms || []).findIndex((m: any) => m.id === (l as any)?.module_id);
-        if (moduleLimit != null && moduleIdx >= 0 && moduleIdx >= moduleLimit) {
+        const alwaysOpen = moduleIdx >= 0 && (ms as any[])[moduleIdx]?.always_open === true;   // e.g. a bonus module
+        if (moduleLimit != null && moduleIdx >= 0 && moduleIdx >= moduleLimit && !alwaysOpen) {
           toast.error(t("lesson.tierLocked", { defaultValue: "Bu modul sizning tarifingizda mavjud emas." }));
           navigate(`/course/${courseId}`, { replace: true });
           return;

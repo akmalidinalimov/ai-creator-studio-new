@@ -41,6 +41,8 @@ interface ModuleRec {
   title: string;
   position: number;
   lessons: LessonRec[];
+  /** modules.always_open — reachable whatever the tier limit (e.g. a bonus module). */
+  alwaysOpen: boolean;
 }
 
 export default function Lessons() {
@@ -101,7 +103,7 @@ export default function Lessons() {
         const courseIds = enrollments.map((e: any) => e.courses.id as string);
         const { data: modsData, error: mErr } = await supabase
           .from("modules")
-          .select("id, course_id, position, title, lessons(id, title, position, duration_seconds)")
+          .select("id, course_id, position, title, always_open, lessons(id, title, position, duration_seconds)")
           .in("course_id", courseIds)
           .order("position", { ascending: true });
         if (mErr) throw mErr;
@@ -118,7 +120,7 @@ export default function Lessons() {
             }),
           );
           const lessons: LessonRec[] = rawLessons.sort((a, b) => a.position - b.position);
-          const rec: ModuleRec = { id: m.id, title: m.title, position: m.position ?? 0, lessons };
+          const rec: ModuleRec = { id: m.id, title: m.title, position: m.position ?? 0, lessons, alwaysOpen: m.always_open === true };
           const arr = modulesByCourse.get(m.course_id) || [];
           arr.push(rec);
           modulesByCourse.set(m.course_id, arr);
@@ -133,7 +135,7 @@ export default function Lessons() {
           const c = e.courses;
           const limit: number | null = e.course_tiers?.module_limit ?? null;
           const allModules = modulesByCourse.get(c.id) || [];
-          const accessibleModules = limit == null ? allModules : allModules.slice(0, limit);
+          const accessibleModules = limit == null ? allModules : allModules.filter((m, i) => i < limit || m.alwaysOpen);
           const orderedLessons = accessibleModules.flatMap((m) => m.lessons);
           return { id: c.id as string, title: c.title as string, moduleLimit: limit, allModules, orderedLessons };
         });
@@ -206,7 +208,7 @@ export default function Lessons() {
     return () => { cancelled = true; };
   }, [user, reloadKey]);
 
-  const accessibleModules = moduleLimit == null ? modules : modules.slice(0, moduleLimit);
+  const accessibleModules = moduleLimit == null ? modules : modules.filter((m, i) => i < moduleLimit || m.alwaysOpen);
   const orderedAccessibleLessons = accessibleModules.flatMap((m) => m.lessons);
   const totalAccessible = orderedAccessibleLessons.length;
   const doneAccessible = orderedAccessibleLessons.filter((l) => completed.has(l.id)).length;
@@ -318,7 +320,7 @@ export default function Lessons() {
 
             {modules.map((m, idx) => {
               const rank = idx + 1;
-              const capped = moduleLimit != null && rank > moduleLimit;
+              const capped = moduleLimit != null && rank > moduleLimit && !m.alwaysOpen;
               const total = m.lessons.length;
               const doneCount = m.lessons.filter((l) => completed.has(l.id)).length;
               const fullyDone = total > 0 && doneCount === total;

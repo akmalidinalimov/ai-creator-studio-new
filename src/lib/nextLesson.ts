@@ -25,7 +25,7 @@ export interface RawLessonRow {
   position: number | null;
   title: string;
   duration_seconds: number | null;
-  modules: { id: string; course_id?: string; position: number | null; title: string } | null;
+  modules: { id: string; course_id?: string; position: number | null; title: string; always_open?: boolean | null } | null;
 }
 
 export interface ProgressRow {
@@ -54,6 +54,7 @@ export function buildCourseRow(course: CourseMeta, limit: number | null, lessons
   const raw = (lessons || []).map((l) => ({
     id: l.id, lp: l.position ?? 0, title: l.title as string, dur: l.duration_seconds as number | null,
     mid: l.modules?.id as string, mp: l.modules?.position ?? 0, mtitle: l.modules?.title as string,
+    open: l.modules?.always_open === true,
   }));
   // Rank modules by position so the cap matches the backend's rank logic.
   const modRank = new Map<string, number>();
@@ -64,7 +65,8 @@ export function buildCourseRow(course: CourseMeta, limit: number | null, lessons
   raw.forEach((l) => { if (!modTitleByMid.has(l.mid)) modTitleByMid.set(l.mid, l.mtitle); });
   let ordered = raw
     .sort((a, b) => (modRank.get(a.mid)! - modRank.get(b.mid)!) || a.lp - b.lp);
-  if (limit != null) ordered = ordered.filter((l) => (modRank.get(l.mid) ?? 1e9) <= limit);
+  // An always-open module (e.g. a bonus) is reachable whatever the tier limit (modules.always_open, has_module_access).
+  if (limit != null) ordered = ordered.filter((l) => l.open || (modRank.get(l.mid) ?? 1e9) <= limit);
   const lessonIds = ordered.map((l) => l.id);
   const total = lessonIds.length;
   // The Dashboard only ever READ progress for the accessible lessons (.in("lesson_id", lessonIds)); filtering
@@ -150,7 +152,7 @@ export async function fetchCourseRow(client: Client, userId: string, e: Enrollme
   const limit: number | null = e.course_tiers?.module_limit ?? null;
   const { data: lessonsData } = await (client as SupabaseClient)
     .from("lessons")
-    .select("id, position, title, duration_seconds, modules!inner(id, course_id, position, title)")
+    .select("id, position, title, duration_seconds, modules!inner(id, course_id, position, title, always_open)")
     .eq("modules.course_id", c.id);
   const lessons = (lessonsData || []) as unknown as RawLessonRow[];
   // Progress is read for the ACCESSIBLE lessons only (as before): compute the clamp first.

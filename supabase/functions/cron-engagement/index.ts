@@ -177,7 +177,7 @@ type Ctx = {
 };
 
 type CourseContent = {
-  modules: { id: string; position: number }[];
+  modules: { id: string; position: number; always_open?: boolean }[];
   lessons: { id: string; module_id: string; position: number }[];
 };
 
@@ -497,7 +497,7 @@ function courseContent(ctx: Ctx, courseId: string): Promise<CourseContent | null
   if (hit) return hit;
   const p = (async (): Promise<CourseContent | null> => {
     try {
-      const { data: modulesRaw, error: mErr } = await ctx.admin.from("modules").select("id, position").eq("course_id", courseId).order("position", { ascending: true });
+      const { data: modulesRaw, error: mErr } = await ctx.admin.from("modules").select("id, position, always_open").eq("course_id", courseId).order("position", { ascending: true });
       if (mErr || !modulesRaw) return null;
       if (!modulesRaw.length) return { modules: [], lessons: [] };
       const moduleIds = modulesRaw.map((m: any) => m.id);
@@ -558,7 +558,8 @@ async function lessonStateFor(ctx: Ctx, userId: string, courseId: string): Promi
   if (!content || !content.modules.length) return none;
   // Tier clamp (Phase 2): never deep-link a re-engagement nudge past the student's cap.
   const limit = await moduleLimitFor(ctx, userId, courseId);
-  const modules = (limit == null) ? content.modules : content.modules.slice(0, limit);
+  // ...an always-open module (modules.always_open, e.g. a bonus) is in, whatever the limit.
+  const modules = (limit == null) ? content.modules : content.modules.filter((m, i) => i < limit || m.always_open === true);
   if (!modules.length) return none;
   const inScope = new Set(modules.map((m) => m.id));
   const lessons = content.lessons.filter((l) => inScope.has(l.module_id)); // a copy: the cache stays intact
