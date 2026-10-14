@@ -33,7 +33,7 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45   # a _shared change can redeploy ~40 functions
     permissions:
       contents: read
       pull-requests: read
@@ -78,6 +78,29 @@ jobs:
             grep '^supabase/functions/' changed.txt | cut -d/ -f3 | sort -u | while read -r d; do
               [ -f "supabase/functions/$d/index.ts" ] && echo "$d"
             done > fns.txt || true
+
+            # A changed _shared file has no index.ts of its own, so the rule above deployed NOTHING that uses it
+            # (2026-10-14: the UTF-8 fix to _shared/teacher-questions.ts would have merged green while the failing
+            # teacher-questions-reminder kept running old code). Redeploy every function that imports a changed shared
+            # file — directly, or through another shared file (imports are followed until nothing new turns up).
+            grep '^supabase/functions/_shared/.*\.ts$' changed.txt | grep -v '\.test\.ts$'               | sed 's#^supabase/functions/_shared/##' | sort -u > shared.txt || true
+            if [ -s shared.txt ]; then
+              while :; do
+                before=$(wc -l < shared.txt)
+                while read -r f; do
+                  grep -rlF "./${f}\"" supabase/functions/_shared --include='*.ts' | grep -v '\.test\.ts$'                     | sed 's#^supabase/functions/_shared/##' || true
+                done < shared.txt | cat - shared.txt | sort -u > shared.next
+                mv shared.next shared.txt
+                [ "$(wc -l < shared.txt)" -eq "$before" ] && break
+              done
+              echo "--- shared files changed (with their importers) ---"; cat shared.txt
+              while read -r f; do
+                grep -rlF "_shared/${f}\"" supabase/functions --include='*.ts' | cut -d/ -f3 || true
+              done < shared.txt | sort -u | while read -r d; do
+                [ -f "supabase/functions/$d/index.ts" ] && echo "$d"
+              done >> fns.txt || true
+              sort -u fns.txt -o fns.txt
+            fi
           fi
           echo "--- functions to deploy ---"; cat fns.txt || true
 

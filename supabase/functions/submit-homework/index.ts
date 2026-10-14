@@ -31,6 +31,7 @@
 // a silently-successful 200 with no teacher ever notified.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { sendTelegram, sendTelegramMultipart } from "../_shared/telegram-send.ts";
+import { clip } from "../_shared/text-safe.ts";
 
 import {
   defaultFilename, homeworkFileKind, maxBytesFor, MAX_ITEMS, MAX_TOTAL_BYTES, sendSpec, sentFileId,
@@ -430,7 +431,7 @@ async function resolveHomeworkTopic(
   // 1024 chars; 1000 leaves margin.
   let caption = `📝 ${studentName}${titleBits ? `\n${titleBits}` : ""}`;
   if (submittedText) caption += `\n\n${submittedText}`;
-  caption = caption.slice(0, 1000);
+  caption = clip(caption, 1000);
   const tg = Number(prof?.telegram_id);
   return { chatId, threadId, linkBase, caption, topicUrl, studentTelegramId: Number.isSafeInteger(tg) && tg > 0 ? tg : null };
 }
@@ -585,7 +586,7 @@ Deno.serve(async (req) => {
     try { form = await req.formData(); } catch { return json({ error: "bad_form" }, 400); }
     assignmentId = String(form.get("assignment_id") || "").trim();
     const t = form.get("submitted_text");
-    submittedText = typeof t === "string" ? t.slice(0, 4000) : "";
+    submittedText = typeof t === "string" ? clip(t, 4000) : "";
     resubmitConfirmed = String(form.get("resubmit") || "") === "true";
     files = form.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
   } else {
@@ -596,7 +597,7 @@ Deno.serve(async (req) => {
       ? body.image_paths
       : (body?.image_path != null ? [body.image_path] : []);
     imagePaths = rawPaths.map((p) => String(p ?? "").trim()).filter((p) => p.length > 0);
-    submittedText = typeof body?.submitted_text === "string" ? body.submitted_text.slice(0, 4000) : "";
+    submittedText = typeof body?.submitted_text === "string" ? clip(body.submitted_text, 4000) : "";
     resubmitConfirmed = body?.resubmit === true;
   }
 

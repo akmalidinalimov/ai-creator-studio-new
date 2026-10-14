@@ -30,6 +30,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { verifyInternalSecret } from "../_shared/internal-secret.ts";
 import { redactSecrets } from "../_shared/redact.ts";
+import { deepWellFormed } from "../_shared/text-safe.ts";
 import { logHealthOnce } from "../_shared/edge.ts";
 import { loadStudentMiniAppFlag, type WatchFlag } from "../_shared/miniapp-button.ts";
 import { type EngagementTargeting, loadEngagementTargeting, TARGETING_OFF } from "../_shared/engagement-targeting.ts";
@@ -58,7 +59,7 @@ async function tgSend(payload: Record<string, unknown>) {
     r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(deepWellFormed(payload)),
     });
   } catch (e) {
     // TOKEN CONTAINMENT (same class as the webhook's tgApi): a Deno transport error embeds the full
