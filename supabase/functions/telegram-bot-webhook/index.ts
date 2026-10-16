@@ -7972,7 +7972,8 @@ async function handleCallback(admin: any, cq: any) {
     if (!answered) await answerCallback(cq.id);
     return;
   }
-  // ❓ the curator-question inbox: tq:s · tq:l · tq:o (open) · tq:r (✍️ answer) · tq:d (✅) · tq:u (undo). The REAL clicker
+  // ❓ the curator-question inbox: tq:s · tq:l (n/o, h = 🙈 hidden) · tq:o (open) · tq:r (✍️ answer) · tq:d (✅) · tq:u (undo)
+  // · tq:x (🙅 not a question) · tq:q (↩️ restore a hidden one). The REAL clicker
   // must be a teacher or an admin and not impersonating; the handler re-checks the question's group (client-supplied).
   if (data.startsWith("tq:") && chatId) {
     const tqCb = parseTqCallback(data);

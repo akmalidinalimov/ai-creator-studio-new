@@ -97,8 +97,16 @@ Deno.test("inbox: new vs waiting, group filter, pages; every callback fits 64 by
   assertStringIncludes(card, "Savol #4");
   assertStringIncludes(card, "1-GURUH");
   const kb = tqCardKeyboard(rows[3]);
-  assertEquals(kb.inline_keyboard[1][0].url, "https://t.me/c/4440955972/2/104");
+  assertEquals(kb.inline_keyboard[1][0].callback_data, "tq:x:4");                  // 🙅 Savol emas (question triage)
+  assertEquals(kb.inline_keyboard[2][0].url, "https://t.me/c/4440955972/2/104");
+  const hiddenCard = tqCardKeyboard({ ...rows[3], status: "dismissed" });
+  assertEquals(hiddenCard.inline_keyboard[0][0].callback_data, "tq:q:4");          // ↩️ Bu savol
+  const sumHidden = renderTqSummary(b, NOW, { new_min: 60 }, groups, G1, undefined, 3);
+  assertStringIncludes(sumHidden.text, "Savol emas deb yashirilgan (7 kun): <b>3</b>");
+  const hiddenList = renderTqList("h", [rows[0]], 0, NOW, names, null);
+  assertStringIncludes(hiddenList.text, "Savol emas deb yashirilganlar");
   const all = [...sum.keyboard.inline_keyboard, ...list.keyboard.inline_keyboard, ...kb.inline_keyboard,
+    ...hiddenCard.inline_keyboard, ...sumHidden.keyboard.inline_keyboard, ...hiddenList.keyboard.inline_keyboard,
     ...renderTqDigest(rows, NOW, names).keyboard.inline_keyboard].flat().filter((x) => x.callback_data);
   for (const btn of all) {
     assert(new TextEncoder().encode(btn.callback_data!).length <= 64, btn.callback_data);
@@ -106,7 +114,10 @@ Deno.test("inbox: new vs waiting, group filter, pages; every callback fits 64 by
   }
   assertEquals(parseTqCallback(`tq:l:o:3:${G2}`), { kind: "list", bucket: "o", page: 3, gid: G2 });
   assertEquals(parseTqCallback("tq:r:12"), { kind: "reply", id: 12 });
-  assertEquals(parseTqCallback("tq:x:1"), null);
+  assertEquals(parseTqCallback("tq:x:1"), { kind: "notq", id: 1 });
+  assertEquals(parseTqCallback("tq:q:1"), { kind: "restore", id: 1 });
+  assertEquals(parseTqCallback(`tq:l:h:0:${G2}`), { kind: "list", bucket: "h", page: 0, gid: G2 });
+  assertEquals(parseTqCallback("tq:z:1"), null);
   assertEquals(parseTqCallback("tq:s:not-a-uuid"), null);
   assertEquals(messageLink(-123, 2, 5), null);
 });
