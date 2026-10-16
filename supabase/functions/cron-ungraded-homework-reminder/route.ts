@@ -77,18 +77,24 @@ export type AdminItem = {
 
 // --- Teacher reminder (one DM per reachable teacher per submission) ---
 
-const TEACHER_COPY: Record<Locale, (s: string, label: string, h: number, n: number) => string> = {
-  uz: (s, t, h, n) => `⏳ <b>${s}</b>ning «${t}» topshirig'i ${h} soatdan beri baholanmagan. Iltimos, baholang. (eslatma ${n}/3)`,
-  ru: (s, t, h, n) => `⏳ Работа «${t}» от <b>${s}</b> не оценена уже ${h} ч. Пожалуйста, оцените. (напоминание ${n}/3)`,
-  en: (s, t, h, n) => `⏳ <b>${s}</b>'s «${t}» has been awaiting grading for ${h}h. Please grade it. (reminder ${n}/3)`,
+// Owner 2026-10-16: the teacher must see WHICH GROUP and WHICH STUDENT at a glance — one line each.
+const TEACHER_COPY: Record<Locale, (s: string, g: string, label: string, h: number, n: number) => string> = {
+  uz: (s, g, t, h, n) =>
+    `⏳ <b>Baholanmagan vazifa — ${h} soat</b>\n\n👥 Guruh: <b>${g}</b>\n👤 Oʻquvchi: <b>${s}</b>\n📝 Vazifa: ${t}\n\nIltimos, baholang 🙏 (eslatma ${n}/3)`,
+  ru: (s, g, t, h, n) =>
+    `⏳ <b>Работа не оценена — ${h} ч</b>\n\n👥 Группа: <b>${g}</b>\n👤 Студент: <b>${s}</b>\n📝 Задание: ${t}\n\nПожалуйста, оцените 🙏 (напоминание ${n}/3)`,
+  en: (s, g, t, h, n) =>
+    `⏳ <b>Homework not graded — ${h}h</b>\n\n👥 Group: <b>${g}</b>\n👤 Student: <b>${s}</b>\n📝 Task: ${t}\n\nPlease grade it 🙏 (reminder ${n}/3)`,
 };
 const TEACHER_BTN: Record<Locale, string> = { uz: "🎯 Baholash", ru: "🎯 Оценить", en: "🎯 Grade" };
 const TEACHER_SITE_BTN: Record<Locale, string> = { uz: "🌐 Saytda ochish", ru: "🌐 Открыть на сайте", en: "🌐 Open on the site" };
 export const TEACHER_URL = "https://aicreator.academy/teacher/homework";
 
 /** Raw inputs (unescaped); escaped here. `label` is the hw-label; "" falls back to "—". */
-export function teacherReminderText(loc: Locale, studentName: string, label: string, hours: number, n: number): string {
-  return TEACHER_COPY[loc](escHtml(studentName || "—"), escHtml(label || "—"), hours, n);
+export function teacherReminderText(
+  loc: Locale, studentName: string, groupName: string | null, label: string, hours: number, n: number,
+): string {
+  return TEACHER_COPY[loc](escHtml(studentName || "—"), escHtml(groupName || "—"), escHtml(label || "—"), hours, n);
 }
 
 /**
