@@ -1,6 +1,7 @@
-// Hourly job: when a homework submission has been ungraded for 24h+, DM every reachable teacher of the
-// student's group — the primary AND the co-teachers (_shared/group-teachers.ts). Up to 3 reminders per
-// submission, 24h apart. Submissions with no reachable teacher go to the admins as ONE message per run
+// Hourly job: when a homework submission has been ungraded for 12h+ (owner 2026-10-16; was 24h), DM every reachable
+// teacher of the student's group — the primary AND the co-teachers (_shared/group-teachers.ts) — naming the group and
+// the student. Up to 3 reminders per submission: at 12h, then 24h apart (the spacing lives in
+// ungraded_reminder_candidates); never in quiet hours (22–08 Tashkent). Submissions with no reachable teacher go to the admins as ONE message per run
 // (routing + copy in route.ts). Mirrors notify-homework-submission for auth + Telegram send pattern.
 //
 // 2026-09-30: with platform_settings.teacher_miniapp on, 🎯 opens THIS submission in the teacher Mini App
@@ -41,6 +42,8 @@ const corsHeaders = {
 };
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
+/** First reminder once a submission has waited this long ungraded. */
+const REMIND_AFTER_HOURS = 12;
 
 const __admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
@@ -88,7 +91,7 @@ Deno.serve(async (req) => {
   // Candidate query — the RPC does the anti-join in SQL (excludes rows already
   // at 3 reminders in their current cycle, or reminded in the last 24h) BEFORE
   // the limit, so exhausted old rows can't starve newer ungraded homework.
-  const cutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  const cutoff = new Date(Date.now() - REMIND_AFTER_HOURS * 3600 * 1000).toISOString();
   const { data: subs, error: subsErr } = await admin
     .rpc("ungraded_reminder_candidates", { p_cutoff: cutoff, p_limit: 200 });
   if (subsErr) return fail(subsErr.message);
@@ -221,7 +224,7 @@ Deno.serve(async (req) => {
         });
         const payload = (app: typeof gradeApp) => ({
           chat_id: r.chatId,
-          text: teacherReminderText(r.locale, rawName, label, hours, n),
+          text: teacherReminderText(r.locale, rawName, item.groupName, label, hours, n),
           parse_mode: "HTML",
           reply_markup: teacherReminderKeyboard(r.locale, s.id, app, GRADE_CHAT_LABEL[r.locale]),
         });

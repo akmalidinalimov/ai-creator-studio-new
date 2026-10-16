@@ -88,16 +88,19 @@ Deno.test("admin digest: each line carries the full label (course · group · M 
 
 Deno.test("teacher reminder: the label names the course and group, so 5.0 and its Challenge copy differ", () => {
   const parts = { taskTitle: "1- MODUL: PROMPT ENGINEERING", moduleNumber: 1, step: 1 };
-  const a = teacherReminderText("uz", "Aziza", itemLabel({ ...parts, courseTitle: "AI CREATORS 5.0", groupName: "1-GURUH VIP 5.0" }), 26, 1);
-  const b = teacherReminderText("uz", "Aziza", itemLabel({ ...parts, courseTitle: "AI CREATORS CHALLENGE 6.0", groupName: "AC CHALLENGE | 1-GURUH" }), 26, 1);
-  assertEquals(a, "⏳ <b>Aziza</b>ning «5.0 · 1-GURUH VIP · M1 V1 — 1- MODUL: PROMPT ENGINEERING» topshirig'i 26 soatdan beri baholanmagan. Iltimos, baholang. (eslatma 1/3)");
-  assertEquals(b, "⏳ <b>Aziza</b>ning «CH6 · 1-GURUH · M1 V1 — 1- MODUL: PROMPT ENGINEERING» topshirig'i 26 soatdan beri baholanmagan. Iltimos, baholang. (eslatma 1/3)");
+  const a = teacherReminderText("uz", "Aziza", "1-GURUH VIP 5.0", itemLabel({ ...parts, courseTitle: "AI CREATORS 5.0", groupName: "1-GURUH VIP 5.0" }), 26, 1);
+  const b = teacherReminderText("uz", "Aziza", "AC CHALLENGE | 1-GURUH", itemLabel({ ...parts, courseTitle: "AI CREATORS CHALLENGE 6.0", groupName: "AC CHALLENGE | 1-GURUH" }), 12, 1);
+  assertEquals(a, "⏳ <b>Baholanmagan vazifa — 26 soat</b>\n\n👥 Guruh: <b>1-GURUH VIP 5.0</b>\n👤 Oʻquvchi: <b>Aziza</b>\n" +
+    "📝 Vazifa: 5.0 · 1-GURUH VIP · M1 V1 — 1- MODUL: PROMPT ENGINEERING\n\nIltimos, baholang 🙏 (eslatma 1/3)");
+  assertEquals(b, "⏳ <b>Baholanmagan vazifa — 12 soat</b>\n\n👥 Guruh: <b>AC CHALLENGE | 1-GURUH</b>\n👤 Oʻquvchi: <b>Aziza</b>\n" +
+    "📝 Vazifa: CH6 · 1-GURUH · M1 V1 — 1- MODUL: PROMPT ENGINEERING\n\nIltimos, baholang 🙏 (eslatma 1/3)");
 });
 
 Deno.test("teacher reminder: user text escaped; an empty label reads as —", () => {
-  const t = teacherReminderText("en", "<i>x</i>", "a<b", 30, 2);
-  assert(t.includes("&lt;i&gt;x&lt;/i&gt;") && t.includes("«a&lt;b»"));
-  assert(teacherReminderText("ru", "", "", 30, 3).includes("«—» от <b>—</b>"));
+  const t = teacherReminderText("en", "<i>x</i>", "<g>", "a<b", 30, 2);
+  assert(t.includes("&lt;i&gt;x&lt;/i&gt;") && t.includes("Task: a&lt;b") && t.includes("Group: <b>&lt;g&gt;</b>"));
+  const ru = teacherReminderText("ru", "", null, "", 30, 3);
+  assert(ru.includes("Группа: <b>—</b>") && ru.includes("Студент: <b>—</b>") && ru.includes("Задание: —"));
 });
 
 Deno.test("teacher reminder: 🎯 opens THIS submission (gs:open:<id>, ≤ 64 bytes); the web link stays second", () => {
