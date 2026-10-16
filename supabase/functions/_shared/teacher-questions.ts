@@ -58,8 +58,8 @@ export const TQ_COLUMNS = "id, group_id, chat_id, thread_id, tg_user_id, student
 
 export type TqCallback =
   | { kind: "summary"; gid: string | null }
-  | { kind: "list"; bucket: "n" | "o"; page: number; gid: string | null }
-  | { kind: "open" | "reply" | "done" | "undo"; id: number };
+  | { kind: "list"; bucket: "n" | "o" | "h"; page: number; gid: string | null }
+  | { kind: "open" | "reply" | "done" | "undo" | "notq" | "restore"; id: number };
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 
@@ -67,13 +67,15 @@ export function parseTqCallback(data: string): TqCallback | null {
   const d = String(data ?? "");
   let m = new RegExp(`^tq:s(?::(${UUID}))?$`).exec(d);
   if (m) return { kind: "summary", gid: m[1] ?? null };
-  m = new RegExp(`^tq:l:([no]):(\\d{1,4})(?::(${UUID}))?$`).exec(d);
-  if (m) return { kind: "list", bucket: m[1] as "n" | "o", page: Number(m[2]), gid: m[3] ?? null };
-  m = /^tq:([ordu]):(\d{1,12})$/.exec(d);
+  m = new RegExp(`^tq:l:([noh]):(\\d{1,4})(?::(${UUID}))?$`).exec(d);
+  if (m) return { kind: "list", bucket: m[1] as "n" | "o" | "h", page: Number(m[2]), gid: m[3] ?? null };
+  m = /^tq:([orduxq]):(\d{1,12})$/.exec(d);
   if (m) {
     const id = Number(m[2]);
     if (!Number.isSafeInteger(id) || id <= 0) return null;
-    const kind = ({ o: "open", r: "reply", d: "done", u: "undo" } as const)[m[1] as "o" | "r" | "d" | "u"];
+    // x = «🙅 Savol emas» (hide), q = «↩️ Bu savol» (restore a hidden one) — question triage, 20261016112600
+    const kind = ({ o: "open", r: "reply", d: "done", u: "undo", x: "notq", q: "restore" } as const)[
+      m[1] as "o" | "r" | "d" | "u" | "x" | "q"];
     return { kind, id };
   }
   return null;
@@ -117,6 +119,7 @@ const gidSuffix = (gid: string | null) => (gid ? `:${gid}` : "");
 export function renderTqSummary(
   b: { fresh: TqRow[]; old: TqRow[] }, nowMs: number, s: Pick<TqSettings, "new_min">,
   groups: Array<{ id: string; name: string; open: number }>, gid: string | null, heading = "❓ <b>Kuratorga savollar</b>",
+  hidden = 0,
 ): { text: string; keyboard: Kb } {
   const total = b.fresh.length + b.old.length;
   const scope = gid ? groups.find((g) => g.id === gid)?.name ?? null : null;
@@ -141,18 +144,25 @@ export function renderTqSummary(
       ...groups.map((g) => ({ text: `${gid === g.id ? "• " : ""}${shortGroup(g.name)} (${g.open})`, callback_data: `tq:s:${g.id}` }))];
     for (let i = 0; i < cells.length; i += 3) kb.push(cells.slice(i, i + 3));
   }
+  // Messages judged not to be questions (greetings, thanks, chat) in the last 7 days — one tap to check them.
+  if (hidden > 0) {
+    lines.push("", `🙈 Savol emas deb yashirilgan (7 kun): <b>${hidden}</b> — salomlashish, rahmat, suhbat.`);
+    kb.push([{ text: `🙈 Yashirilgan (${hidden})`, callback_data: `tq:l:h:0${gidSuffix(gid)}` }]);
+  }
   kb.push([{ text: "🔄 Yangilash", callback_data: `tq:s${gidSuffix(gid)}` }]);
   return { text: lines.join("\n"), keyboard: { inline_keyboard: kb } };
 }
 
 /** One page of a bucket: a line per question + a 📂 button each, ◀️ 🔙 ▶️ navigation. */
 export function renderTqList(
-  bucket: "n" | "o", rows: TqRow[], page: number, nowMs: number, groupNames: Record<string, string>, gid: string | null,
+  bucket: "n" | "o" | "h", rows: TqRow[], page: number, nowMs: number, groupNames: Record<string, string>, gid: string | null,
 ): { text: string; keyboard: Kb } {
   const pages = Math.max(1, Math.ceil(rows.length / TQ_PAGE_SIZE));
   const p = Math.min(Math.max(0, page), pages - 1);
   const slice = rows.slice(p * TQ_PAGE_SIZE, (p + 1) * TQ_PAGE_SIZE);
-  const title = bucket === "n" ? "🆕 <b>Yangi savollar</b>" : "⏳ <b>Javob kutayotgan savollar</b>";
+  const title = bucket === "n" ? "🆕 <b>Yangi savollar</b>" : bucket === "h"
+    ? "🙈 <b>Savol emas deb yashirilganlar</b> (7 kun)\nSavol boʻlsa — oching va «↩️ Bu savol» ni bosing."
+    : "⏳ <b>Javob kutayotgan savollar</b>";
   const lines = [`${title}${pages > 1 ? ` · ${p + 1}/${pages}-sahifa` : ""}`, ""];
   if (!slice.length) lines.push("Hozircha yoʻq ✅");
   const multi = new Set(rows.map((r) => r.group_id)).size > 1;
@@ -178,7 +188,7 @@ export function renderTqList(
 export function tqCard(r: TqRow, nowMs: number, groupName: string | null): string {
   const who = `${whoOf(r)}${r.student_username ? ` (@${escCap(r.student_username, 40)})` : ""}`;
   const status = r.status === "open" ? `⏳ ${ageText(nowMs - Date.parse(r.asked_at))} dan beri javob kutmoqda`
-    : r.status === "answered" ? "✅ javob berilgan" : r.status === "dismissed" ? "☑️ yopilgan" : "⌛️ muddati oʻtgan";
+    : r.status === "answered" ? "✅ javob berilgan" : r.status === "dismissed" ? "🙈 savol emas deb yashirilgan" : "⌛️ muddati oʻtgan";
   const peers = (r.peer_reply_ids?.length ?? 0) > 0 ? `\n💬 Guruhdoshlar ${r.peer_reply_ids!.length} marta javob yozgan` : "";
   const files = (r.media?.length ?? 0) > 0 ? `\n📎 ${r.media!.length} ta fayl — pastda` : "";
   const body = r.text ? escCap(r.text, 3000) : "<i>(matnsiz — rasm/fayl)</i>";
@@ -190,6 +200,9 @@ export function tqCardKeyboard(r: TqRow): Kb {
   const rows: Kb["inline_keyboard"] = [];
   if (r.status === "open") {
     rows.push([{ text: "✍️ Javob yozish", callback_data: `tq:r:${r.id}` }, { text: "✅ Javob berildi", callback_data: `tq:d:${r.id}` }]);
+    rows.push([{ text: "🙅 Savol emas", callback_data: `tq:x:${r.id}` }]);
+  } else if (r.status === "dismissed") {
+    rows.push([{ text: "↩️ Bu savol", callback_data: `tq:q:${r.id}` }]);
   } else {
     rows.push([{ text: "✍️ Yana javob yozish", callback_data: `tq:r:${r.id}` }]);
   }

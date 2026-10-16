@@ -65,6 +65,18 @@ async function openRows(admin: Db, groupIds: string[]): Promise<TqRow[]> {
   return (data ?? []) as TqRow[];
 }
 
+/** Every message hidden as a not-question in the last 7 days (newest first) — «🙈 Yashirilgan»: the triage's, the
+ *  question assistant's 'chatter', a teacher's 🙅 — each one has its «↩️ Bu savol» way back. */
+async function hiddenRows(admin: Db, groupIds: string[]): Promise<TqRow[]> {
+  if (!groupIds.length) return [];
+  const { data, error } = await admin.from("teacher_questions").select(TQ_COLUMNS)
+    .eq("status", "dismissed").in("group_id", groupIds)
+    .gte("asked_at", new Date(Date.now() - 7 * 86_400_000).toISOString())
+    .order("asked_at", { ascending: false }).limit(200);
+  if (error) throw new Error(`teacher_questions hidden: ${String(error.message ?? error).slice(0, 200)}`);
+  return (data ?? []) as TqRow[];
+}
+
 async function show(deps: SupportDeps, chatId: number, messageId: number | null, r: { text: string; keyboard: unknown }) {
   if (messageId) {
     const e = await deps.call("editMessageText", {
@@ -91,12 +103,13 @@ export async function sendTqSummary(admin: Db, chatId: number, viewer: TqViewer,
       return;
     }
     const s = await settings(admin);
-    const rows = await openRows(admin, groups.map((g) => g.id));
+    const [rows, hidden] = await Promise.all([openRows(admin, groups.map((g) => g.id)), hiddenRows(admin, groups.map((g) => g.id))]);
     const scope = gid && groups.some((g) => g.id === gid) ? gid : null;
     const now = Date.now();
     const b = bucketizeTq(scope ? rows.filter((r) => r.group_id === scope) : rows, now, s.new_min);
     const counts = groups.map((g) => ({ ...g, open: rows.filter((r) => r.group_id === g.id).length }));
-    await show(deps, chatId, messageId, renderTqSummary(b, now, s, counts, scope));
+    const hiddenN = (scope ? hidden.filter((r) => r.group_id === scope) : hidden).length;
+    await show(deps, chatId, messageId, renderTqSummary(b, now, s, counts, scope, undefined, hiddenN));
   } catch (e) {
     await failed(admin, deps, chatId, e, "summary");
   }
@@ -142,6 +155,11 @@ export async function handleTqCallback(admin: Db, cb: TqCallback,
   try {
     const groups = await viewerGroups(admin, viewer);
     const names: Record<string, string> = Object.fromEntries(groups.map((g) => [g.id, g.name]));
+    if (cb.kind === "list" && cb.bucket === "h") {
+      const scope = cb.gid && names[cb.gid] ? cb.gid : null;
+      const rows = await hiddenRows(admin, scope ? [scope] : groups.map((g) => g.id));
+      return show(deps, chatId, ctx.messageId, renderTqList("h", rows, cb.page, Date.now(), names, scope));
+    }
     if (cb.kind === "list") {
       const s = await settings(admin);
       const scope = cb.gid && names[cb.gid] ? cb.gid : null;
@@ -171,6 +189,40 @@ export async function handleTqCallback(admin: Db, cb: TqCallback,
         text: done ? `✅ Savol <b>#${q.id}</b> javob berilgan deb belgilandi.` : `Savol <b>#${q.id}</b> allaqachon yopilgan.`,
         reply_markup: { inline_keyboard: [[
           ...(done ? [{ text: "↩️ Qaytarish", callback_data: `tq:u:${q.id}` }] : []),
+          { text: "❓ Savollar", callback_data: "tq:s" },
+        ]] },
+      });
+      return;
+    }
+    // 🙅 Savol emas — the teacher hides it (the ground truth the triage is measured against)
+    if (cb.kind === "notq") {
+      const { data } = await admin.from("teacher_questions")
+        .update({ status: "dismissed", triage: "not_question", triage_by: "teacher", triage_kind: "teacher", triage_at: new Date().toISOString(),
+                  triage_reason: `teacher:${viewer.id}`.slice(0, 200) })
+        .eq("id", q.id).eq("status", "open").select("id");
+      const hid = Array.isArray(data) && data.length > 0;
+      await deps.call("sendMessage", {
+        chat_id: chatId, parse_mode: "HTML",
+        text: hid ? `🙈 <b>#${q.id}</b> savol emas deb yashirildi.` : `Savol <b>#${q.id}</b> allaqachon yopilgan.`,
+        reply_markup: { inline_keyboard: [[
+          ...(hid ? [{ text: "↩️ Qaytarish", callback_data: `tq:q:${q.id}` }] : []),
+          { text: "❓ Savollar", callback_data: "tq:s" },
+        ]] },
+      });
+      return;
+    }
+    // ↩️ Bu savol — a hidden message was a real question after all: back in the list, reminders resume
+    if (cb.kind === "restore") {
+      const { data } = await admin.from("teacher_questions")
+        .update({ status: "open", triage: "question", triage_by: "teacher", triage_kind: "teacher", triage_at: new Date().toISOString(),
+                  triage_reason: `teacher:${viewer.id}`.slice(0, 200) })
+        .eq("id", q.id).eq("status", "dismissed").select("id");
+      const back = Array.isArray(data) && data.length > 0;
+      await deps.call("sendMessage", {
+        chat_id: chatId, parse_mode: "HTML",
+        text: back ? `↩️ <b>#${q.id}</b> yana savollar roʻyxatida.` : `Savol <b>#${q.id}</b> yashirilmagan edi.`,
+        reply_markup: { inline_keyboard: [[
+          ...(back ? [{ text: "✍️ Javob yozish", callback_data: `tq:r:${q.id}` }] : []),
           { text: "❓ Savollar", callback_data: "tq:s" },
         ]] },
       });
