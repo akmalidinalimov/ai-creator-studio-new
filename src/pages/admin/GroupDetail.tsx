@@ -695,6 +695,9 @@ export default function GroupDetail() {
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
                 <span className="inline-flex items-center gap-1">
                   Teacher: <span className="text-foreground font-medium">{overview.teacher_name || "—"}</span>
+                  {coTeachers.filter((c) => !c.is_primary).map((c) => (
+                    <span key={c.teacher_id} className="text-foreground" title="Yordamchi ustoz">, {c.name}</span>
+                  ))}
                   <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setPendingTeacher(overview.teacher_id || "__none__"); setEditTeacher(true); }}>
                     <Pencil className="h-3.5 w-3.5" />
                   </Button>
