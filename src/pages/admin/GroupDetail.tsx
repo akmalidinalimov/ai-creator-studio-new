@@ -24,6 +24,7 @@ import { ChevronLeft, Pencil, Plus, Upload as UploadIcon, X, UserMinus } from "l
 import { toast } from "sonner";
 import { GroupTopicsSection } from "@/components/admin/GroupTopicsSection";
 import { CLEAR_GROUP_WARNING, isEngineFailure, loadGroupMovePlan, transferDecision } from "@/lib/courseMove";
+import { normalizeTelegramUsername, teacherAccountOutcome, teacherReach } from "@/lib/coTeacher";
 
 type Overview = {
   group_id: string;
@@ -92,10 +93,17 @@ export default function GroupDetail() {
 
   // co-teachers (multiple-teachers-per-group Stage C): primary (is_primary=true, managed by the
   // Teacher field + DB trigger) + co-teachers (is_primary=false, managed HERE via group_teachers).
-  type CoTeacher = { teacher_id: string; is_primary: boolean; created_at: string; name: string; assigned_by_name: string | null };
+  type CoTeacher = {
+    teacher_id: string; is_primary: boolean; created_at: string; name: string; assigned_by_name: string | null;
+    username: string | null; reach: "ready" | "needs_start";
+  };
   const [coTeachers, setCoTeachers] = useState<CoTeacher[]>([]);
   const [openAddCoTeacher, setOpenAddCoTeacher] = useState(false);
   const [pendingCoTeacher, setPendingCoTeacher] = useState<string>("");
+  // «@username» path: the teacher need not be in the list (or have an account) yet — see src/lib/coTeacher.ts
+  const [pendingCoUsername, setPendingCoUsername] = useState<string>("");
+  const [pendingCoName, setPendingCoName] = useState<string>("");
+  const [coTeacherBusy, setCoTeacherBusy] = useState(false);
   const [removeCoTeacher, setRemoveCoTeacher] = useState<{ teacher_id: string; name: string } | null>(null);
 
   // edit name / tier
@@ -177,13 +185,15 @@ export default function GroupDetail() {
       new Set(gtList.flatMap((r: any) => [r.teacher_id, r.created_by]).filter(Boolean))
     );
     const nameMap = new Map<string, string>();
+    const contactMap = new Map<string, { username: string | null; reach: "ready" | "needs_start" }>();
     if (nameIds.length) {
       const { data: profs } = await supabase
         .from("profiles")
-        .select("id, name, last_name, email")
+        .select("id, name, last_name, email, telegram_username, telegram_id, telegram_write_access_at")
         .in("id", nameIds as string[]);
       for (const p of (profs as any[]) || []) {
         nameMap.set(p.id, [p.name, p.last_name].filter(Boolean).join(" ") || p.email || "—");
+        contactMap.set(p.id, { username: p.telegram_username || null, reach: teacherReach(p) });
       }
     }
     const cts: CoTeacher[] = gtList
@@ -193,6 +203,8 @@ export default function GroupDetail() {
         created_at: r.created_at,
         name: nameMap.get(r.teacher_id) || "—",
         assigned_by_name: r.created_by ? nameMap.get(r.created_by) ?? null : null,
+        username: contactMap.get(r.teacher_id)?.username ?? null,
+        reach: contactMap.get(r.teacher_id)?.reach ?? "needs_start",
       }))
       .sort((a, b) => {
         if (a.is_primary !== b.is_primary) return a.is_primary ? -1 : 1; // primary first
@@ -237,27 +249,88 @@ export default function GroupDetail() {
 
   // ---- Co-teachers (Stage C) ---- NEVER touches the primary: the primary is managed only by the
   // Teacher field (saveTeacher) + the DB primary-sync trigger. This UI only adds/removes is_primary=false rows.
+  const insertCoTeacher = async (teacherId: string, success: string) => {
+    if (!id) return false;
+    const r = await saveWithToast(
+      () => supabase.from("group_teachers" as any).insert({
+        group_id: id,
+        teacher_id: teacherId,
+        is_primary: false,
+        created_by: session?.user?.id ?? null,
+      }),
+      { success, returning: "teacher_id" },
+    );
+    return r.ok;
+  };
+
+  const closeAddCoTeacher = () => {
+    setPendingCoTeacher("");
+    setPendingCoUsername("");
+    setPendingCoName("");
+    setOpenAddCoTeacher(false);
+    reload();
+  };
+
   const addCoTeacher = async () => {
-    if (!id || !pendingCoTeacher || pendingCoTeacher === "__none__") return;
+    if (!id || coTeacherBusy) return;
+    if (pendingCoUsername.trim()) return addCoTeacherByUsername();
+    if (!pendingCoTeacher || pendingCoTeacher === "__none__") return;
     // Guard: never (re)add someone already assigned (primary or an existing co-teacher). The PK would
     // reject a dup anyway, but fail friendly and keep the primary uncloneable.
     if (coTeachers.some((c) => c.teacher_id === pendingCoTeacher)) {
       toast.error("Bu ustoz allaqachon biriktirilgan");
       return;
     }
-    const r = await saveWithToast(
-      () => supabase.from("group_teachers" as any).insert({
-        group_id: id,
-        teacher_id: pendingCoTeacher,
-        is_primary: false,
-        created_by: session?.user?.id ?? null,
-      }),
-      { success: "Yordamchi ustoz qo'shildi", returning: "teacher_id" },
-    );
-    if (!r.ok) return;
-    setPendingCoTeacher("");
-    setOpenAddCoTeacher(false);
-    reload();
+    if (await insertCoTeacher(pendingCoTeacher, "Yordamchi ustoz qo'shildi")) closeAddCoTeacher();
+  };
+
+  // «@username»: find or create the teacher account (admin-create-students, role teacher — it refuses a student's
+  // username), then attach it to this group as a co-teacher. target_group_id = this group, never the default one:
+  // the engine makes a teacher the PRIMARY only of a group that has none, so a group without a primary gets this
+  // teacher as its primary (the DB trigger then writes the junction row itself) and is reported as such.
+  const addCoTeacherByUsername = async () => {
+    if (!id) return;
+    const u = normalizeTelegramUsername(pendingCoUsername);
+    if (!u.ok) { toast.error(u.error); return; }
+    setCoTeacherBusy(true);
+    try {
+      const resp = await fetch(`${FN_BASE}/admin-create-students`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({
+          students: [{
+            name: pendingCoName.trim() || u.username,
+            email: "",
+            telegram_username: u.username,
+            role: "teacher" as const,
+          }],
+          target_group_id: id,
+          target_course_id: overview?.course_id ?? undefined,
+        }),
+      });
+      const res = await resp.json().catch(() => null);
+      const out = teacherAccountOutcome(resp.ok ? (res?.results || [])[0] : null, u.username);
+      if (!out.ok) { toast.error(resp.ok ? out.error : (res?.error || out.error), { duration: 10000 }); return; }
+      if (coTeachers.some((c) => c.teacher_id === out.userId)) {
+        toast.warning(`@${u.username} bu guruhga allaqachon biriktirilgan`);
+        closeAddCoTeacher();
+        return;
+      }
+      const { data: existing } = await supabase.from("group_teachers" as any)
+        .select("is_primary").eq("group_id", id).eq("teacher_id", out.userId).maybeSingle();
+      if (existing) {
+        toast.success(`@${u.username} guruhning asosiy ustozi bo'ldi (guruhda asosiy ustoz yo'q edi)`);
+        closeAddCoTeacher();
+        return;
+      }
+      const added = await insertCoTeacher(out.userId,
+        out.created ? `@${u.username} uchun ustoz hisobi ochildi va yordamchi ustoz qo'shildi` : `@${u.username} yordamchi ustoz qo'shildi`);
+      if (added) closeAddCoTeacher();
+    } catch (e) {
+      toast.error(`Qo'shib bo'lmadi: ${(e as Error)?.message || "tarmoq xatosi"}`);
+    } finally {
+      setCoTeacherBusy(false);
+    }
   };
 
   const handleRemoveCoTeacher = async () => {
@@ -662,7 +735,7 @@ export default function GroupDetail() {
                   size="sm"
                   variant="outline"
                   className="gap-1.5"
-                  onClick={() => { setPendingCoTeacher(""); setOpenAddCoTeacher(true); }}
+                  onClick={() => { setPendingCoTeacher(""); setPendingCoUsername(""); setPendingCoName(""); setOpenAddCoTeacher(true); }}
                 >
                   <Plus className="h-4 w-4" /> Yordamchi ustoz qo'shish
                 </Button>
@@ -678,8 +751,19 @@ export default function GroupDetail() {
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm font-medium truncate">{c.name}</span>
+                          {c.username && <span className="text-xs text-muted-foreground">@{c.username}</span>}
                           {c.is_primary && <Badge variant="secondary">Asosiy</Badge>}
+                          {c.reach === "ready" ? (
+                            <Badge variant="outline" title="Bot unga yoza oladi: savollar va eslatmalar keladi">✅ Botda</Badge>
+                          ) : (
+                            <Badge variant="destructive" title="Bot faqat /start bosgan odamga yoza oladi">⚠️ Botga /start bosmagan</Badge>
+                          )}
                         </div>
+                        {c.reach === "needs_start" && (
+                          <div className="text-xs text-destructive">
+                            Savollar unga kelmaydi — u botni ochib /start bosishi kerak.
+                          </div>
+                        )}
                         {!c.is_primary && (
                           <div className="text-xs text-muted-foreground">
                             · qo'shdi: {c.assigned_by_name || "—"} · {localeDate(c.created_at)}
@@ -1065,13 +1149,35 @@ export default function GroupDetail() {
             <DialogHeader>
               <DialogTitle>Yordamchi ustoz qo'shish</DialogTitle>
               <DialogDescription>
-                Bu guruhga qo'shimcha ustoz biriktiriladi. Asosiy ustoz "Teacher" maydonidan boshqariladi.
+                Bu guruhga qo'shimcha ustoz biriktiriladi: «KURATORGA SAVOLLAR» savollari, eslatmalar va uy vazifalari
+                xabarlari asosiy ustoz bilan birga unga ham boradi. Asosiy ustoz "Teacher" maydonidan boshqariladi.
               </DialogDescription>
             </DialogHeader>
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="co-teacher-username">Telegram username</label>
+              <Input
+                id="co-teacher-username"
+                placeholder="@username"
+                value={pendingCoUsername}
+                onChange={(e) => setPendingCoUsername(e.target.value)}
+                autoComplete="off"
+              />
+              {pendingCoUsername.trim() && (
+                <Input
+                  placeholder="Ism (ixtiyoriy, yangi hisob uchun)"
+                  value={pendingCoName}
+                  onChange={(e) => setPendingCoName(e.target.value)}
+                />
+              )}
+              <p className="text-xs text-muted-foreground">
+                Hisobi bo'lmasa, ustoz hisobi ochiladi. U botni ochib /start bosgach, savollar unga kela boshlaydi.
+              </p>
+            </div>
+            <div className="text-xs text-muted-foreground text-center">— yoki ro'yxatdan tanlang —</div>
             {(() => {
               const available = teachers.filter((t) => !coTeachers.some((c) => c.teacher_id === t.id));
               return (
-                <Select value={pendingCoTeacher} onValueChange={setPendingCoTeacher}>
+                <Select value={pendingCoTeacher} onValueChange={(v) => { setPendingCoTeacher(v); setPendingCoUsername(""); }}>
                   <SelectTrigger><SelectValue placeholder="Ustozni tanlang" /></SelectTrigger>
                   <SelectContent>
                     {available.length === 0 ? (
@@ -1085,7 +1191,12 @@ export default function GroupDetail() {
             })()}
             <DialogFooter>
               <Button variant="ghost" onClick={() => setOpenAddCoTeacher(false)}>Cancel</Button>
-              <Button onClick={addCoTeacher} disabled={!pendingCoTeacher || pendingCoTeacher === "__none__"}>Qo'shish</Button>
+              <Button
+                onClick={addCoTeacher}
+                disabled={coTeacherBusy || (!pendingCoUsername.trim() && (!pendingCoTeacher || pendingCoTeacher === "__none__"))}
+              >
+                {coTeacherBusy ? "Qo'shilmoqda…" : "Qo'shish"}
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
