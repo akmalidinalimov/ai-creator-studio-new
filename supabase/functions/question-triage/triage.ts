@@ -42,7 +42,10 @@ const ACK = new Set(("rahmat raxmat rahmatt raxmatt katta kotta ko'p kop рах�
   "tushundim tushunarli tushundm тушундим тушунарли тушунарли чунарли понятно понял поняла ок ok okay oke окей " +
   "хоп xop hop hup ха хаа xa xaa ha haa да yaxshi яхши zo'r zor зор super супер bo'ldi boldi buldi булди бўлди " +
   "topdim топдим to'g'riladim togriladim тўғриладим baraka barakalla toping топинг ofarin офарин ajoyib ажойиб " +
-  "mazza мазза mana мана ok'").split(" "));
+  "mazza мазза mana мана ok' " +
+  // spelling variants seen in the 7-day backtest (2026-10-17)
+  "aha axa ahha ага угу tushinarli tshunarli tushunarl тушинарли тшунарли chunarli chunarliy tugirladim to'g'irladim " +
+  "тугирладим тўғирладим bo'pti bopti бопти xo'p хўп mayli майли okey okk окей ясно хорошо ладно понятно").split(" "));
 const ADDRESS = new Set(("ustoz ustozim ustozlar устоз устозим устозлар opa opajon опа опажон aka akajon ака акажон domla домла " +
   "kurator куратор hammaga ҳаммага хаммага hammangizga barchaga azizlar jamoa guruh").split(" "));
 const QWORDS = /(\?|？|(?<!\p{L})(qanday|qanaqa|qachon|nima|nega|nimaga|nimanga|qayer|qaysi|kim|qancha|necha|bo'ladimi|kerakmi|bormi|mumkinmi|как|что|почему|зачем|где|когда|сколько|можно|какой|how|what|why|where|when|which|can)(?!\p{L})|\p{L}(mi|mikan|misiz|misizlar|ми|микан|мисиз|мисизлар)(?!\p{L}))/u;
@@ -71,6 +74,29 @@ export function ruleVerdict(r: Pick<Row, "text" | "media_count" | "prev_answered
 
 // ── AI ──────────────────────────────────────────────────────────────────────────────────────────────────────
 export type Label = { needs_teacher: boolean; kind: Kind; confidence: number };
+
+// A message that reports something NOT working ("kiromadim", "ko'rolmadim", "ochilmayapti", "чунмамман") is never hidden
+// by the AI — 2026-10-17 backtest: «Assalomu aleykum … man kiromadim Darsni koromadim» was labelled not-a-question at 0.8.
+const PROBLEM_WORDS = new RegExp([
+  "ochilma", "ishlama", "chiqma", "yuklanma", "topolma", "topa ?olma", "kirolma", "kira ?olma", "ko'?rolma", "ko'?ra ?olma",
+  "qo'?shilma", "qabul qilinma", "baholanma", "tushunma", "tushinma", "chunma", "\\p{L}{2,}(o|a)?madim(?!\\p{L})",
+  "\\p{L}{2,}(o|a)?mayap", "\\p{L}{2,}(o|a)?mayab", "\\p{L}{2,}(a|o)?mayman(?!\\p{L})", "\\p{L}{2,}mamman(?!\\p{L})",
+  "очилма", "ишлама", "чиқма", "чикма", "юкланма", "тополма", "киролма", "кўролма", "куролма", "қўшилма", "кушилма",
+  "тушунма", "тушинма", "чунма", "\\p{L}{2,}(о|а)?мадим(?!\\p{L})", "\\p{L}{2,}(о|а)?маяп", "\\p{L}{2,}(о|а)?майап",
+  "\\p{L}{2,}мамман(?!\\p{L})", "\\p{L}{2,}(а|о)?майман(?!\\p{L})", "не работ", "не открыва", "не загруж", "не могу", "не получа",
+].join("|"), "iu");
+
+export function hasProblemWords(text: string): boolean {
+  return PROBLEM_WORDS.test(String(text ?? "").toLowerCase().replace(/[‘’ʻʼ`´]/g, "'"));
+}
+
+/** The AI may hide a message only when it carries no problem words. */
+export function guardProblem(v: Verdict, text: string): Verdict {
+  if (v.verdict === "not_question" && v.by === "ai" && hasProblemWords(text)) {
+    return { ...v, verdict: "question", kind: "problem", reason: "problem_words" };
+  }
+  return v;
+}
 
 export function systemPrompt(): string {
   return [
@@ -129,7 +155,7 @@ export function settingsOf(v: unknown): Settings {
   const num = (x: unknown, d: number, lo: number, hi: number) => { const n = Number(x); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
   return {
     enabled: String(o.enabled ?? "true").toLowerCase() !== "false", mode: String(o.mode ?? "shadow"),
-    min_conf: num(o.min_conf, 0.8, 0.5, 0.99), max_per_run: num(o.max_per_run, 20, 1, 50),
+    min_conf: num(o.min_conf, 0.85, 0.5, 0.99), max_per_run: num(o.max_per_run, 20, 1, 50),
     ai_daily_budget_usd: num(o.ai_daily_budget_usd, 1, 0, 20), raw: o,
   };
 }
@@ -175,7 +201,7 @@ export async function runOnce(io: Io): Promise<{ status: string; [k: string]: un
         }, aiCfg, io.label, breaker, Math.min(deadline, io.now() + 25_000));
         cost = costOf(res.calls);
         spent += cost;
-        if (res.ok) v = fromLabel(res.value, cfg.min_conf);
+        if (res.ok) v = guardProblem(fromLabel(res.value, cfg.min_conf), String(r.text ?? ""));
         else {
           failed++;
           v = { verdict: "question", kind: "question", by: "fallback", conf: null, reason: `ai_failed: ${res.error}`.slice(0, 120) };

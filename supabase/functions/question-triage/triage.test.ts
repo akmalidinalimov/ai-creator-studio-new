@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { fromLabel, type Row, ruleVerdict, runOnce, userPart, validateLabel } from "./triage.ts";
+import { fromLabel, guardProblem, hasProblemWords, type Row, ruleVerdict, runOnce, userPart, validateLabel } from "./triage.ts";
 
 // Real texts from «KURATORGA SAVOLLAR», 2026-10-10 … 10-16 (the owner's complaint and the measured sample).
 const r = (text: string, extra: Partial<Row> = {}) => ({ text, media_count: 0, prev_answered_min: null, ...extra });
@@ -110,4 +110,24 @@ Deno.test("runOnce: a sure 'peer chat' from the AI is hidden; an unsure one stay
   const unsure = world([{ text: "Qanoq zor Moskvani qaerida turasiz" }], { label: { needs_teacher: false, kind: "peer_chat", confidence: 0.55 } });
   await runOnce(unsure.io);
   assertEquals(unsure.recorded[0]._verdict, "question");
+});
+
+Deno.test("2026-10-17: a reported problem is never hidden by the AI, whatever its confidence", () => {
+  for (const t of ["Assalomu aleykum Yaxshimisila man kiromadim Darsni koromadim", "Хаа болди чунмамман рахмат 😅",
+    "Video ochilmayapti", "darsni ko'rolmadim", "не могу войти", "topa olmayapman", "kirolmayabman"]) {
+    assert(hasProblemWords(t), t);
+    const v = guardProblem({ verdict: "not_question", kind: "greeting", by: "ai", conf: 0.95, reason: "ai_not_needed" }, t);
+    assertEquals([v.verdict, v.reason], ["question", "problem_words"], t);
+  }
+  for (const t of ["Тшунарли рахмат", "In shaa Alloh ko'rishamiz", "Qanoq zor Moskvani qaerida turasiz", "Manam", "Xamma prinyat qilindi"]) {
+    assert(!hasProblemWords(t), t);
+  }
+  // a rule verdict is not touched (rules only hide pure small talk)
+  assertEquals(guardProblem({ verdict: "not_question", kind: "greeting", by: "rule", conf: null, reason: "x" }, "x").verdict, "not_question");
+});
+
+Deno.test("2026-10-17: backtest spelling variants are small talk now", () => {
+  for (const t of ["Aha tushinarli Rahmat", "Axa raxmat", "Bopti, rahmat", "Mayli ustoz", "Ага понятно спасибо"]) {
+    assertEquals(ruleVerdict({ text: t, media_count: 0, prev_answered_min: null })?.verdict, "not_question", t);
+  }
 });
