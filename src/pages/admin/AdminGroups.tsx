@@ -86,17 +86,25 @@ export default function AdminGroups() {
   const [studentsGroup, setStudentsGroup] = useState<Group | null>(null);
   const [assignTeacherGroup, setAssignTeacherGroup] = useState<Group | null>(null);
   const [courseFilter, setCourseFilter] = useState<string>("all");
+  // group id → its secondary teachers (group_teachers.is_primary=false), shown after the primary: «Barno, Feruza»
+  const [coTeachersByGroup, setCoTeachersByGroup] = useState<Record<string, string[]>>({});
 
   const reload = async () => {
     setLoading(true);
-    const [g, c, p, ct, ch] = await Promise.all([
+    const [g, c, p, ct, ch, gt] = await Promise.all([
       supabase.from("groups").select("*").order("created_at", { ascending: false }),
       supabase.from("courses").select("id,title").order("title"),
       supabase.rpc("admin_list_users"),
       supabase.from("course_tiers").select("id,course_id,name,position").order("position"),
       // Which groups are in the 6.0 challenge (the daily-task topic badge is shown for those).
       supabase.from("platform_settings").select("value").eq("key", "challenge").maybeSingle(),
+      supabase.from("group_teachers" as any).select("group_id, teacher_id, created_at").eq("is_primary", false).order("created_at"),
     ]);
+    const coMap: Record<string, string[]> = {};
+    for (const r of ((gt.data as unknown as { group_id: string; teacher_id: string }[]) || [])) {
+      (coMap[r.group_id] ||= []).push(r.teacher_id);
+    }
+    setCoTeachersByGroup(coMap);
     const chv = ((ch.data as { value?: Record<string, unknown> } | null)?.value) ?? {};
     setChallengeScope({ courses: strList(chv.course_ids), groups: strList(chv.group_ids) });
     setGroups((g.data as Group[]) || []);
@@ -190,7 +198,16 @@ export default function AdminGroups() {
                   </TableCell>
                   <TableCell>
                     {g.teacher_id ? (
-                      teacherLabel(g.teacher_id)
+                      <span>
+                        {teacherLabel(g.teacher_id)}
+                        {(coTeachersByGroup[g.id] || []).filter((tid) => tid !== g.teacher_id).map((tid) => (
+                          <span key={tid} title="Yordamchi ustoz">, {teacherLabel(tid)}</span>
+                        ))}
+                      </span>
+                    ) : (coTeachersByGroup[g.id] || []).length ? (
+                      <span title="Yordamchi ustoz(lar); asosiy ustoz tayinlanmagan">
+                        {(coTeachersByGroup[g.id] || []).map(teacherLabel).join(", ")}
+                      </span>
                     ) : (
                       <button
                         className="text-xs text-emerald-600 hover:text-emerald-700 hover:underline font-medium inline-flex items-center gap-1"
