@@ -20,8 +20,11 @@ function push<K, V>(m: Map<K, V[]>, k: K, v: V) {
   if (a) a.push(v); else m.set(k, [v]);
 }
 
-/** group id → the Telegram chats of its teachers (primary ∪ co-teachers) the bot may write to. */
-async function teacherChats(admin: Db, groupIds: string[]): Promise<Map<string, number[]>> {
+/** group id → the Telegram chats of its teachers (primary ∪ co-teachers) the bot may write to, and every teacher it
+ *  may NOT (never pressed /start — e.g. a co-teacher added by @username who has not opened the bot yet). */
+async function teacherChats(admin: Db, groupIds: string[]): Promise<{
+  chats: Map<string, number[]>; unreachable: Array<{ group_id: string; teacher_id: string }>;
+}> {
   const [{ data: gs }, { data: gt }] = await Promise.all([
     admin.from("groups").select("id, teacher_id").in("id", groupIds),
     admin.from("group_teachers").select("group_id, teacher_id").in("group_id", groupIds),
@@ -39,11 +42,14 @@ async function teacherChats(admin: Db, groupIds: string[]): Promise<Map<string, 
     }
   }
   const out = new Map<string, number[]>();
+  const unreachable: Array<{ group_id: string; teacher_id: string }> = [];
   for (const gid of groupIds) {
-    const chats = (byGroup.get(gid) ?? []).map((t) => chatOf.get(t)).filter((x): x is number => typeof x === "number");
+    const teachers = Array.from(new Set(byGroup.get(gid) ?? []));
+    for (const t of teachers) if (!chatOf.has(t)) unreachable.push({ group_id: gid, teacher_id: t });
+    const chats = teachers.map((t) => chatOf.get(t)).filter((x): x is number => typeof x === "number");
     out.set(gid, Array.from(new Set(chats)));
   }
-  return out;
+  return { chats: out, unreachable };
 }
 
 export async function runOnce(io: Io): Promise<{ status: string; [k: string]: unknown }> {
@@ -64,10 +70,15 @@ export async function runOnce(io: Io): Promise<{ status: string; [k: string]: un
 
   try {
     const groupIds = Array.from(new Set(rows.map((r) => r.group_id)));
-    const [{ data: gn }, chats] = await Promise.all([
+    const [{ data: gn }, { chats, unreachable }] = await Promise.all([
       admin.from("groups").select("id, name").in("id", groupIds),
       teacherChats(admin, groupIds),
     ]);
+    // a teacher of a group with waiting questions whom the bot cannot write to: DB-visible, never silent (the
+    // group's other teachers — or the admins — still get the digest)
+    if (unreachable.length) {
+      await logHealth(admin, "teacher_question_teacher_unreachable", { teachers: unreachable }, { source: "teacher-questions-reminder" });
+    }
     const names: Record<string, string> = Object.fromEntries(((gn ?? []) as any[]).map((g) => [g.id, g.name]));
     // a group no teacher can be reached for → the admins
     const orphan = groupIds.filter((g) => !(chats.get(g) ?? []).length);

@@ -15,7 +15,7 @@ const q = (id: number, min: number, extra: Partial<TqRow> = {}): TqRow => ({
   text: `savol ${id}?`, media: [], peer_reply_ids: [], asked_at: ago(min), status: "open", reminder_count: 0, ...extra,
 });
 
-function world(o: { due: TqRow[]; teachers?: Row[]; failSends?: boolean; cfg?: Row }) {
+function world(o: { due: TqRow[]; teachers?: Row[]; junction?: Row[]; failSends?: boolean; cfg?: Row }) {
   const sent: Array<{ method: string; payload: Row }> = [];
   const actions: Row[] = [];
   const unclaimed: number[][] = [];
@@ -26,7 +26,7 @@ function world(o: { due: TqRow[]; teachers?: Row[]; failSends?: boolean; cfg?: R
       maybeSingle: () => Promise.resolve({ data: table === "platform_settings" ? (o.cfg ? { value: o.cfg } : null) : null, error: null }),
       then: (res: any) => {
         if (table === "groups") return res({ data: [{ id: G1, name: "AC CHALLENGE | 1-GURUH", teacher_id: "t1" }, { id: G2, name: "AC CHALLENGE | 2-GURUH", teacher_id: null }], error: null });
-        if (table === "group_teachers") return res({ data: [], error: null });
+        if (table === "group_teachers") return res({ data: o.junction ?? [], error: null });
         if (table === "profiles") return res({ data: o.teachers ?? [{ id: "t1", telegram_id: 901, telegram_write_access_at: "2026-10-01" }], error: null });
         if (table === "user_roles") return res({ data: [{ user_id: "a1" }], error: null });
         return res({ data: [], error: null });
@@ -127,4 +127,26 @@ Deno.test("HTML is escaped everywhere a student's words appear", () => {
   for (const t of [tqCard(evil, NOW, "G"), renderTqDigest([evil], NOW, {}).text, renderTqList("o", [evil], 0, NOW, {}, null).text]) {
     assert(!t.includes("<b>hack") && !t.includes("<i>Ali") && !t.includes("<a href=x>"), t);
   }
+});
+
+Deno.test("2026-10-17: a co-teacher gets the same digest as the primary; one who never pressed /start is DB-visible", async () => {
+  const both = world({
+    due: [q(5, 70)],
+    junction: [{ group_id: G1, teacher_id: "t2" }],
+    teachers: [{ id: "t1", telegram_id: 901, telegram_write_access_at: "2026-10-01" }, { id: "t2", telegram_id: 902, telegram_write_access_at: "2026-10-17" }],
+  });
+  assertEquals((await runOnce({ admin: both.admin, send: both.send, now: () => NOW })).status, "ok");
+  assertEquals(both.sent.map((s) => s.payload.chat_id).sort(), [901, 902]);
+  assert(!both.actions.some((a) => a.action === "teacher_question_teacher_unreachable"));
+
+  const noStart = world({
+    due: [q(6, 70)],
+    junction: [{ group_id: G1, teacher_id: "t3" }],
+    teachers: [{ id: "t1", telegram_id: 901, telegram_write_access_at: "2026-10-01" }, { id: "t3", telegram_id: null, telegram_write_access_at: null }],
+  });
+  assertEquals((await runOnce({ admin: noStart.admin, send: noStart.send, now: () => NOW })).status, "ok");
+  assertEquals(noStart.sent.map((s) => s.payload.chat_id), [901]);
+  const un = noStart.actions.find((a) => a.action === "teacher_question_teacher_unreachable");
+  assert(un, "unreachable co-teacher recorded");
+  assertEquals(JSON.stringify(un.details).includes("t3"), true);
 });
