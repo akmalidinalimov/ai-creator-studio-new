@@ -2132,11 +2132,14 @@ type MembershipResult = {
 // probed; with several, the one the user POSTED in most recently wins (webhook_inbox), else the newest
 // group; the choice is DB-visible (membership_multi_chat).
 async function resolveMembershipGroup(admin: any, tgId: number): Promise<MembershipResult> {
-  const [groupsRes, gmtRes] = await Promise.all([
+  const [groupsRes, gmtRes, channelsRes] = await Promise.all([
     admin.from("groups")
       .select("id, course_id, homework_topic_url, telegram_group_url, homework_topic_id, created_at, courses:course_id(published)")
       .not("course_id", "is", null),
     admin.from("group_module_topics").select("group_id, telegram_topic_url"),
+    // a course's lessons channel (20261030145000): its members register into the course's holding group
+    admin.from("courses").select("id, telegram_channel_chat_id, channel_group_id")
+      .eq("published", true).not("telegram_channel_chat_id", "is", null).not("channel_group_id", "is", null),
   ]);
   const published = new Map<string, any>();
   for (const g of (groupsRes.data || []) as any[]) {
@@ -2157,6 +2160,16 @@ async function resolveMembershipGroup(admin: any, tgId: number): Promise<Members
   for (const r of (gmtRes.data || []) as any[]) {
     const g = published.get(r.group_id);
     if (g) addChat(r.telegram_topic_url, g);
+  }
+  // Channels: a member found ONLY there joins the holding group; a member of a real group too always gets the group.
+  const channelChats = new Set<string>();
+  for (const c of (channelsRes.data || []) as any[]) {
+    const g = published.get(c.channel_group_id);
+    const chatId = String(c.telegram_channel_chat_id);
+    if (!g || !/^-100\d+$/.test(chatId)) continue;
+    if (!chats.has(chatId)) chats.set(chatId, new Map());
+    chats.get(chatId)!.set(g.id, g);
+    channelChats.add(chatId);
   }
 
   let errors = 0;
@@ -2208,18 +2221,21 @@ async function resolveMembershipGroup(admin: any, tgId: number): Promise<Members
       return { member: true, staff: true, indeterminate: false,
         group: staffHit.group ? { id: staffHit.group.id, course_id: staffHit.group.course_id } : null };
     }
-    let pick = hits[0];
-    if (hits.length > 1) {
+    // a real group beats a course channel (the channel only places a member nobody else claims — holding group)
+    const groupHits = hits.filter((h) => !channelChats.has(h.chatId));
+    const pool = groupHits.length ? groupHits : hits;
+    let pick = pool[0];
+    if (pool.length > 1) {
       // the chat they actually write in wins; else the newest group
       let postedIn: string | null = null;
       try {
         const { data: last } = await admin.from("webhook_inbox").select("chat_id")
-          .eq("from_user_id", tgId).in("chat_id", hits.map((h) => Number(h.chatId)))
+          .eq("from_user_id", tgId).in("chat_id", pool.map((h) => Number(h.chatId)))
           .order("received_at", { ascending: false }).limit(1);
         postedIn = Array.isArray(last) && last[0] ? String(last[0].chat_id) : null;
       } catch (_e) { /* fall back to the newest group */ }
-      const byPost = postedIn ? hits.find((h) => h.chatId === postedIn) : undefined;
-      pick = byPost ?? [...hits].sort((a, b) => String(b.group?.created_at ?? "").localeCompare(String(a.group?.created_at ?? "")))[0];
+      const byPost = postedIn ? pool.find((h) => h.chatId === postedIn) : undefined;
+      pick = byPost ?? [...pool].sort((a, b) => String(b.group?.created_at ?? "").localeCompare(String(a.group?.created_at ?? "")))[0];
       try {
         await admin.from("admin_actions").insert({
           actor_user_id: null, action: "membership_multi_chat",
@@ -8963,6 +8979,25 @@ Deno.serve(async (req) => {
     // Nothing handled my_chat_member before (it fell through to the 200 below), so nothing else changes.
     if (update.my_chat_member) {
       try { await dailyTasks.onMyChatMember(admin, update.my_chat_member); } catch (e) { console.error("dt:mcm:err", String(e).slice(0, 200)); }
+      return new Response("ok", { status: 200, headers: corsHeaders });
+    }
+
+    // Course membership (20261030145000, Challenge 7.0): someone joined or left a chat of a course that requires
+    // Telegram membership. A join marks them a member at once (unlocks); a leave asks course-membership-check to
+    // re-probe them (they may still be in the channel or another group) — the lock itself only ever comes from it.
+    // Both RPCs are no-ops for a chat that belongs to no such course, and for anyone who is not enrolled there.
+    if (update.chat_member) {
+      const cm = update.chat_member;
+      const tg = Number(cm?.new_chat_member?.user?.id);
+      const chat = Number(cm?.chat?.id);
+      const st = cm?.new_chat_member?.status;
+      if (Number.isSafeInteger(tg) && Number.isSafeInteger(chat) && !cm?.new_chat_member?.user?.is_bot) {
+        const joined = st === "member" || st === "administrator" || st === "creator" ||
+          (st === "restricted" && cm?.new_chat_member?.is_member === true);
+        try {
+          await admin.rpc(joined ? "course_membership_seen" : "course_membership_flag", { _telegram_id: tg, _chat_id: chat });
+        } catch (e) { console.error("course-membership:err", String(e).slice(0, 200)); }
+      }
       return new Response("ok", { status: 200, headers: corsHeaders });
     }
 

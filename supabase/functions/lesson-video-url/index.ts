@@ -72,11 +72,11 @@ Deno.serve(async (req) => {
     // One row per (user, lesson, reason) per Tashkent day: a student retrying the player never floods the log.
     // The RESPONSE keeps its original code (TeacherLessons / lessonVideoState read "forbidden" / "module_locked" /
     // "provisional_locked"); only the logged reason is finer.
-    const denied = async (reason: string, code: string = reason) => {
+    const denied = async (reason: string, code: string = reason, extra: Record<string, unknown> = {}) => {
       await logHealthOnce(admin, "video_access_denied", `${userId}:${lessonId}:${reason}`,
         { reason, lesson_id: lessonId, module_id: (lesson as any).module_id ?? null, course_id: courseId },
         { source: "lesson-video-url", targetUserId: userId });
-      return new Response(JSON.stringify({ error: code }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ error: code, ...extra }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     };
 
     // has_module_access (tier/module-limit gate): enforced for students only. Admins and
@@ -84,6 +84,17 @@ Deno.serve(async (req) => {
     if (!isStaff) {
       const { data: __allowed } = await admin.rpc("has_module_access", { _user_id: userId, _module_id: (lesson as any).module_id });
       if (!__allowed) {
+        // 20261030145000: closed because they left the course's Telegram channel and groups — say so (with the way
+        // back), and ask course-membership-check to re-probe within 15 min, so a student who just rejoined is not
+        // kept waiting for the daily check.
+        if (courseId) {
+          const { data: notMember } = await admin.rpc("course_membership_locked", { _uid: userId, _course: courseId });
+          if (notMember === true) {
+            await admin.rpc("course_membership_request_check", { _uid: userId, _course: courseId });
+            const { data: c } = await admin.from("courses").select("telegram_channel_url").eq("id", courseId).maybeSingle();
+            return await denied("not_member", "not_member", { join_url: (c as any)?.telegram_channel_url ?? null });
+          }
+        }
         return await denied("module_locked");
       }
     }

@@ -7,7 +7,7 @@ import { reportClientError } from "@/lib/beacon";
 import { trackVideoProgress } from "@/lib/videoProgress";
 import { SB_BASE } from "@/lib/supabaseBase";
 import { watchedEnough } from "@/lib/watchGate";
-import { videoFetchOutcome, videoFetchStatus } from "@/lib/lessonVideoState";
+import { videoErrorBody, videoFetchOutcome, videoFetchStatus, videoLockOf, type VideoLock } from "@/lib/lessonVideoState";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageShell } from "@/components/Layout";
 import { Input } from "@/components/ui/input";
@@ -128,7 +128,7 @@ export default function LessonPage() {
   // lessons table anymore (those columns are revoked from students — M05); the
   // only way to get a playable URL is the lesson-video-url edge function, which
   // enforces has_module_access + published + enrollment server-side.
-  type VideoData = { url?: string; kind?: string; provider?: string; bunny?: { lib: string; guid: string }; locked?: boolean; failed?: boolean };
+  type VideoData = { url?: string; kind?: string; provider?: string; bunny?: { lib: string; guid: string }; locked?: boolean; lock?: VideoLock; failed?: boolean };
   const [videoData, setVideoData] = useState<VideoData | null>(null);
   const [videoAttempt, setVideoAttempt] = useState(0);
 
@@ -147,7 +147,13 @@ export default function LessonPage() {
         // Only a 403 is "not in your plan"; no network / 5xx / 401 / empty is a load failure with a retry
         // (lessonVideoState.ts: a flaky connection used to be told the lesson was outside their plan).
         const outcome = videoFetchOutcome(error, data);
-        if (outcome === "locked") { setVideoData({ locked: true }); return; }
+        if (outcome === "locked") {
+          // which lock: a student who left the course's Telegram channel + groups is told to rejoin (not "not in your plan")
+          const lock = videoLockOf(await videoErrorBody(error));
+          if (cancelled) return;
+          setVideoData({ locked: true, lock });
+          return;
+        }
         if (outcome !== "failed") { setVideoData(data as VideoData); return; }
         const status = videoFetchStatus(error);
         if (i < waits.length) {
@@ -537,6 +543,26 @@ export default function LessonPage() {
           <Button size="sm" onClick={() => setVideoAttempt((n) => n + 1)}>
             {t("lesson.video.retry", "Qayta urinish")}
           </Button>
+        </div>
+      );
+    }
+    if (videoData?.locked && videoData.lock?.code === "not_member") {
+      return (
+        <div className="aspect-video w-full bg-black flex flex-col items-center justify-center gap-3 p-6 text-center text-white/85 text-sm">
+          <p>
+            {t("lesson.video.notMember",
+              "Darslarni koʻrish uchun kurs kanalida yoki guruhingizda boʻlishingiz kerak. Qayta qoʻshiling — darslar bir necha daqiqada yana ochiladi, ballaringiz saqlanib qolgan.")}
+          </p>
+          {videoData.lock.joinUrl && (
+            <a
+              href={videoData.lock.joinUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-cta px-4 py-2 text-sm font-bold text-cta-foreground hover:bg-cta/90"
+            >
+              {t("lesson.video.joinChannel", "📣 Kanalga qoʻshilish")}
+            </a>
+          )}
         </div>
       );
     }
