@@ -10,10 +10,16 @@
 import { logHealth } from "../_shared/edge.ts";
 
 type Db = any;
-export type Verdict = "member" | "not" | "error";
+export type Verdict = "member" | "not" | "error" | "rate_limited";
 export type Probe = (chatId: number, telegramId: number) => Promise<Verdict>;
 export type SendFn = (chatId: number, text: string, button?: { text: string; url: string }) => Promise<boolean>;
-export interface Io { admin: Db; probe: Probe; send: SendFn; now: () => number }
+export interface Io { admin: Db; probe: Probe; send: SendFn; now: () => number; budgetMs?: number }
+
+/** No student DMs 22:00–08:00 Tashkent (UTC+5): the warning waits for the morning run (warned_at stays null). */
+export function quietHour(nowMs: number): boolean {
+  const h = new Date(nowMs + 5 * 3_600_000).getUTCHours();
+  return h >= 22 || h < 8;
+}
 
 export type Due = {
   user_id: string; course_id: string; telegram_id: number; chats: number[]; member: boolean | null; ready: boolean;
@@ -22,6 +28,7 @@ export type Due = {
 
 /** A getChatMember answer → member / not. Anything that is not a clean answer is an error (never "not"). */
 export function verdictOf(resp: any): Verdict {
+  if (resp && resp.ok === false && resp.error_code === 429) return "rate_limited";
   if (!resp || resp.ok !== true || !resp.result) return "error";
   const st = resp.result.status;
   if (st === "member" || st === "administrator" || st === "creator") return "member";
@@ -33,19 +40,22 @@ export function verdictOf(resp: any): Verdict {
 /** Member of ANY chat → member + that chat (stops at the first; the SQL lists group chats before the channel); every
  *  chat a clean "not" → not; otherwise unknown. */
 export async function probeAll(chats: number[], telegramId: number, probe: Probe):
-  Promise<{ state: "member" | "not" | "unknown"; chat: number | null }> {
+  Promise<{ state: "member" | "not" | "unknown"; chat: number | null; rateLimited?: boolean }> {
   if (!chats.length) return { state: "unknown", chat: null };
   let errors = 0;
   for (const c of chats) {
     const v = await probe(c, telegramId);
     if (v === "member") return { state: "member", chat: c };
+    if (v === "rate_limited") return { state: "unknown", chat: null, rateLimited: true };
     if (v === "error") errors++;
   }
   return { state: errors ? "unknown" : "not", chat: null };
 }
 
+const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 export function warningText(courseTitle: string, graceHours: number): string {
-  return `⚠️ <b>${courseTitle}</b> kanali va guruhlarida sizni topa olmadik.\n\n` +
+  return `⚠️ <b>${esc(courseTitle)}</b> kanali va guruhlarida sizni topa olmadik.\n\n` +
     `Darslar <b>${graceHours} soatdan keyin</b> yopiladi. Davom ettirish uchun kanalga yoki guruhingizga qayta qoʻshiling — ` +
     `qoʻshilganingizdan keyin darslar darhol yana ochiladi, ballaringiz va vazifalaringiz saqlanib qoladi.`;
 }
@@ -68,12 +78,20 @@ export async function runOnce(io: Io): Promise<Record<string, unknown>> {
     for (const c of (cs ?? []) as any[]) courses.set(c.id, { title: c.title, url: c.telegram_channel_url ?? null });
   }
 
-  const out = { due: rows.length, member: 0, not_member: 0, unknown: 0, not_ready: 0, warned: 0, rejoined: 0, locked: 0, placed: 0 };
+  const out = { due: rows.length, member: 0, not_member: 0, unknown: 0, not_ready: 0, warned: 0, rejoined: 0, locked: 0, placed: 0,
+    stopped: null as string | null, quiet: false };
   const notReady = new Set<string>();
+  const started = io.now();
+  const budget = io.budgetMs ?? 100_000;   // under the edge wall clock: the rest is picked up by the next 15-min run
+  const quiet = quietHour(started);
+  out.quiet = quiet;
   for (const r of rows) {
+    if (io.now() - started > budget) { out.stopped = "time_budget"; break; }
     // a course whose channel or some group chat is unknown: an absence cannot be trusted yet — record nothing
     if (!r.ready) { out.not_ready++; notReady.add(r.course_id); continue; }
-    const { state, chat } = await probeAll((r.chats ?? []).map(Number).filter(Number.isFinite), Number(r.telegram_id), io.probe);
+    const { state, chat, rateLimited } = await probeAll((r.chats ?? []).map(Number).filter(Number.isFinite), Number(r.telegram_id), io.probe);
+    // Telegram said slow down: record nothing for this student and stop — the next run continues (fail-open)
+    if (rateLimited) { out.stopped = "rate_limited"; break; }
     const member = state === "member" ? true : state === "not" ? false : null;
     const { data: rec, error: recErr } = await admin.rpc("course_membership_record", {
       _uid: r.user_id, _course: r.course_id, _member: member, _error: state === "unknown" ? "telegram_error" : null,
@@ -93,7 +111,7 @@ export async function runOnce(io: Io): Promise<Record<string, unknown>> {
     if (state === "unknown") { out.unknown++; continue; }
     out.not_member++;
     if (res.locked) out.locked++;
-    if (!res.warned) {
+    if (!res.warned && !quiet) {
       const c = courses.get(r.course_id);
       const sent = await io.send(Number(r.telegram_id), warningText(c?.title ?? "Kurs", grace),
         c?.url ? { text: "📣 Kanalga qoʻshilish", url: c.url } : undefined);

@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { type Due, probeAll, runOnce, verdictOf } from "./check.ts";
+import { type Due, probeAll, quietHour, runOnce, verdictOf } from "./check.ts";
 
 Deno.test("verdictOf: only a clean left/kicked is 'not'; every error is 'error' (never locks)", () => {
   assertEquals(verdictOf({ ok: true, result: { status: "member" } }), "member");
@@ -8,7 +8,7 @@ Deno.test("verdictOf: only a clean left/kicked is 'not'; every error is 'error' 
   assertEquals(verdictOf({ ok: true, result: { status: "restricted", is_member: false } }), "not");
   assertEquals(verdictOf({ ok: true, result: { status: "left" } }), "not");
   assertEquals(verdictOf({ ok: true, result: { status: "kicked" } }), "not");
-  assertEquals(verdictOf({ ok: false, error_code: 429 }), "error");
+  assertEquals(verdictOf({ ok: false, error_code: 429 }), "rate_limited");
   assertEquals(verdictOf({ ok: false, error_code: 400, description: "Bad Request: user not found" }), "error");
   assertEquals(verdictOf(null), "error");
 });
@@ -21,7 +21,8 @@ Deno.test("probeAll: a member anywhere wins; one error among 'not's is unknown; 
   assertEquals((await probeAll([], 9, p({}))).state, "unknown");
 });
 
-function world(rows: Partial<Due>[], verdicts: Record<number, "member" | "not" | "error">, recordResult: Record<string, unknown> = {}) {
+const NOON_TK = Date.parse("2026-11-02T07:00:00Z");   // 12:00 Tashkent
+function world(rows: Partial<Due>[], verdicts: Record<number, "member" | "not" | "error" | "rate_limited">, recordResult: Record<string, unknown> = {}, now = NOON_TK) {
   const recorded: Record<string, unknown>[] = [];
   const warned: string[] = [];
   const sent: number[] = [];
@@ -53,7 +54,7 @@ function world(rows: Partial<Due>[], verdicts: Record<number, "member" | "not" |
   };
   const probe = (chat: number, tg: number) => Promise.resolve(verdicts[tg * 10 + Math.abs(chat)] ?? verdicts[tg] ?? "not");
   const send = (chatId: number) => { sent.push(chatId); return Promise.resolve(true); };
-  return { io: { admin, probe, send, now: () => 0 }, recorded, warned, sent, health, placed };
+  return { io: { admin, probe, send, now: () => now }, recorded, warned, sent, health, placed };
 }
 
 Deno.test("runOnce: member / not / unknown are recorded as such; the absent one gets ONE warning DM", async () => {
@@ -92,4 +93,19 @@ Deno.test("runOnce: a channel-registered student found in a real group is placed
   const alreadyPlaced = world([{ chats: [-2, -1], channel_chat_id: -1, in_holding: false }], { 1002: "member" });
   await runOnce(alreadyPlaced.io as any);
   assertEquals(alreadyPlaced.placed.length, 0);
+});
+
+Deno.test("quiet hours: no warning DM at night (warned_at stays unset, the 08:00 run sends it); state still recorded", async () => {
+  assertEquals([quietHour(Date.parse("2026-11-02T18:00:00Z")), quietHour(Date.parse("2026-11-02T02:59:00Z")), quietHour(NOON_TK)], [true, true, false]);
+  const w = world([{}], { 100: "not" }, {}, Date.parse("2026-11-02T18:30:00Z"));   // 23:30 Tashkent
+  await runOnce(w.io as any);
+  assertEquals(w.recorded.map((r) => r._member), [false]);
+  assertEquals([w.sent.length, w.warned.length], [0, 0]);
+});
+
+Deno.test("a 429 stops the run and records nothing for that student (fail-open, next run continues)", async () => {
+  const w = world([{}, {}], { 100: "rate_limited", 101: "not" });
+  const out = await runOnce(w.io as any);
+  assertEquals(out.stopped, "rate_limited");
+  assertEquals(w.recorded.length, 0);
 });

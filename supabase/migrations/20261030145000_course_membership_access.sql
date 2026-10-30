@@ -72,6 +72,8 @@ declare _cfg jsonb := public.course_membership_cfg(); _grace int;
 begin
   if coalesce(lower(_cfg->>'enabled'), 'false') <> 'true' then return false; end if;
   if not exists (select 1 from public.courses where id = _course and membership_required) then return false; end if;
+  -- a course whose chats are not all known (e.g. a new group without its chat yet) locks nobody, old absences included
+  if not coalesce((public.course_membership_ready(_course)->>'ready')::boolean, false) then return false; end if;
   begin _grace := greatest(coalesce((_cfg->>'grace_hours')::int, 24), 1); exception when others then _grace := 24; end;
   return exists (select 1 from public.course_memberships m
                   where m.user_id = _uid and m.course_id = _course and m.member = false
@@ -280,8 +282,10 @@ grant execute on function public.course_membership_mark_warned(uuid, uuid) to se
 
 -- ── has_module_access: + the membership lock (rewritten from the LIVE definition, pinned) ──
 do $pin$
+declare _def text := pg_get_functiondef('public.has_module_access(uuid,uuid)'::regprocedure);
 begin
-  if md5(pg_get_functiondef('public.has_module_access'::regproc)) <> 'cd321b71d67ef19cdc4273f96b4d6520' then
+  -- a replay (the rewrite below is already live) passes; any OTHER change to the function refuses the file
+  if position('course_membership_locked' in _def) = 0 and md5(_def) <> 'cd321b71d67ef19cdc4273f96b4d6520' then
     raise exception 'has_module_access changed since 2026-10-30 — re-derive this rewrite from the live definition';
   end if;
 end $pin$;
@@ -425,8 +429,16 @@ end $$;
 
 -- ── self-test (read-only, pure): the lock is false for a course that does not require membership ──
 do $test$
+declare _n int;
 begin
   if public.course_membership_locked(gen_random_uuid(), 'f502f631-2104-4834-b6c2-702cd3080e27') then
     raise exception 'self-test: 6.0 must never be membership-locked';
   end if;
+  if public.course_membership_locked(gen_random_uuid(), 'a13b606e-11d3-47e5-a2ff-6815790f7311') then
+    raise exception 'self-test: a student with no membership row must never be locked';
+  end if;
+  -- read-only runs of every set-returning helper (they are SQL bodies: only a call proves they plan)
+  select count(*) into _n from public.course_membership_due(5);
+  select count(*) into _n from public.course_membership_chats('a13b606e-11d3-47e5-a2ff-6815790f7311');
+  perform public.course_membership_ready('a13b606e-11d3-47e5-a2ff-6815790f7311');
 end $test$;

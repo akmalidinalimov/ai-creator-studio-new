@@ -8994,9 +8994,18 @@ Deno.serve(async (req) => {
       if (Number.isSafeInteger(tg) && Number.isSafeInteger(chat) && !cm?.new_chat_member?.user?.is_bot) {
         const joined = st === "member" || st === "administrator" || st === "creator" ||
           (st === "restricted" && cm?.new_chat_member?.is_member === true);
+        // supabase-js returns RPC failures as { error } (it does not throw): record them, or a broken join/leave path
+        // would be silent (the 15-min checker still converges, so nobody is wrongly locked either way)
+        let failure: string | null = null;
         try {
-          await admin.rpc(joined ? "course_membership_seen" : "course_membership_flag", { _telegram_id: tg, _chat_id: chat });
-        } catch (e) { console.error("course-membership:err", String(e).slice(0, 200)); }
+          const { error } = await admin.rpc(joined ? "course_membership_seen" : "course_membership_flag", { _telegram_id: tg, _chat_id: chat });
+          if (error) failure = String(error.message ?? error).slice(0, 200);
+        } catch (e) { failure = String(e).slice(0, 200); }
+        if (failure) {
+          console.error("course-membership:err", failure);
+          await logHealth(admin, "course_membership_event_failed", { kind: joined ? "join" : "leave", chat_id: chat, error: failure },
+            { source: "telegram-bot-webhook" });
+        }
       }
       return new Response("ok", { status: 200, headers: corsHeaders });
     }
