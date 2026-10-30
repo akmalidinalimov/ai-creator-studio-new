@@ -24,15 +24,13 @@ Deno.serve(async (req) => {
     const out = await runOnce({
       admin,
       now: () => Date.now(),
+      // getChatMember through the shared Telegram client (token containment); record:false — a "left" answer or a
+      // failed probe is not a failed SEND, so nothing goes to telegram_send_failed (the run's heartbeat counts them)
       probe: async (chatId, telegramId) => {
         try {
-          const r = await fetch(`https://api.telegram.org/bot${botToken}/getChatMember`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ chat_id: chatId, user_id: telegramId }),
-            signal: AbortSignal.timeout(10_000),
-          });
-          return verdictOf(await r.json().catch(() => null));
+          const { outcome, result } = await sendTelegramResult(botToken, "getChatMember",
+            { chat_id: chatId, user_id: telegramId }, { record: false });
+          return verdictOf({ ok: outcome.ok, result, error_code: outcome.status });
         } catch (_e) {
           return "error";
         }
