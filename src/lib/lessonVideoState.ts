@@ -20,3 +20,22 @@ export function videoFetchStatus(error: unknown): number | null {
   const status = (error as { context?: { status?: unknown } } | null)?.context?.status;
   return typeof status === "number" ? status : null;
 }
+
+export type VideoLock = { code: "not_member" | "locked"; joinUrl: string | null };
+
+/** The 403 body → which lock. 'not_member' (20261030145000): the student left the course's Telegram channel and groups —
+ *  shown as "rejoin" with the channel link, never as "not in your plan". Anything unreadable is the plain lock. */
+export function videoLockOf(body: unknown): VideoLock {
+  const b = (body && typeof body === "object" ? body : {}) as { error?: unknown; join_url?: unknown };
+  if (b.error === "not_member") {
+    const url = typeof b.join_url === "string" && /^https:\/\/t\.me\//.test(b.join_url) ? b.join_url : null;
+    return { code: "not_member", joinUrl: url };
+  }
+  return { code: "locked", joinUrl: null };
+}
+
+/** Read the JSON body of a FunctionsHttpError's Response (once; null when there is none). */
+export async function videoErrorBody(error: unknown): Promise<unknown> {
+  const ctx = (error as { context?: { json?: () => Promise<unknown> } } | null)?.context;
+  try { return ctx && typeof ctx.json === "function" ? await ctx.json() : null; } catch { return null; }
+}

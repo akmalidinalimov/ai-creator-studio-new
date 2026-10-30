@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { videoFetchOutcome, videoFetchStatus } from "./lessonVideoState";
+import { videoErrorBody, videoFetchOutcome, videoFetchStatus, videoLockOf } from "./lessonVideoState";
 
 // Shapes of supabase-js functions.invoke errors: FunctionsHttpError / FunctionsRelayError carry the Response in
 // .context; FunctionsFetchError (no network) carries the original error, which has no status.
@@ -24,5 +24,25 @@ describe("videoFetchOutcome", () => {
     expect(videoFetchStatus(http(502))).toBe(502);
     expect(videoFetchStatus({ name: "FunctionsFetchError", context: new TypeError("x") })).toBeNull();
     expect(videoFetchStatus(null)).toBeNull();
+  });
+});
+
+describe("videoLockOf (20261030145000)", () => {
+  it("a not_member 403 is the rejoin lock, with the channel link (t.me only)", () => {
+    expect(videoLockOf({ error: "not_member", join_url: "https://t.me/+srXusW0zCM41NDg0" }))
+      .toEqual({ code: "not_member", joinUrl: "https://t.me/+srXusW0zCM41NDg0" });
+    expect(videoLockOf({ error: "not_member", join_url: "javascript:alert(1)" })).toEqual({ code: "not_member", joinUrl: null });
+    expect(videoLockOf({ error: "not_member" })).toEqual({ code: "not_member", joinUrl: null });
+  });
+  it("every other 403 (tier, trial, unreadable) is the plain lock", () => {
+    for (const b of [{ error: "module_locked" }, { error: "provisional_locked" }, null, "x", {}]) {
+      expect(videoLockOf(b).code).toBe("locked");
+    }
+  });
+  it("videoErrorBody reads the Response JSON, else null", async () => {
+    expect(await videoErrorBody({ context: new Response(JSON.stringify({ error: "not_member" }), { status: 403 }) }))
+      .toEqual({ error: "not_member" });
+    expect(await videoErrorBody({ context: new TypeError("x") })).toBeNull();
+    expect(await videoErrorBody(null)).toBeNull();
   });
 });
