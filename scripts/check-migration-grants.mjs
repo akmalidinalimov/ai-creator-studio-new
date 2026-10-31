@@ -62,6 +62,11 @@
 // fails — unless the line carries `-- lint:allow E11: <reason>` (e.g. a rolled-back self-test, or a trigger
 // reviewed as never assigning NEW AND pinned in profiles_guard_health()'s _vetted list).
 //
+// A FOURTH CLASS: NO NEW EDGE JOB ON MINUTE :00 (E12). Every SUPABASE_EDGE_RUNTIME_SERVICE_DEGRADED on record fell in
+// the first seconds of an hour, when up to 19 cron calls start together (20261031170500 moved them). A cron.schedule
+// that calls an edge function on minute 0, or on a */N that includes it, fails unless the line carries
+// `-- lint:allow E12: <reason>` (a post that has to go out on the clock). Pick an unused minute instead.
+//
 // CI usage:  node scripts/check-migration-grants.mjs            (fails on errors)
 //            node scripts/check-migration-grants.mjs --strict   (fails on warnings too)
 // It is chained onto `npm run lint:footguns`, which CI already runs as a blocking step — deliberately,
@@ -107,6 +112,9 @@ const ANON_ALLOWLIST = {
 // The profiles column guard's trigger (E11). It must sort after every other BEFORE ROW trigger on public.profiles.
 // Renaming it means updating this, profiles_guard_health() and profiles_guard_alert_text() in the same PR.
 const PROFILES_GUARD_TRIGGER = "trg_profiles_zzz_column_guard";
+
+// E12 applies from here: older migrations already ran, and 20261031170500 moved the jobs they scheduled.
+const E12_FROM = "20261031170500";
 
 // ─────────────────────────── SQL-aware scanner ───────────────────────────
 // Blanks out comments and string/dollar-quoted bodies, preserving offsets and newlines so that
@@ -726,6 +734,20 @@ function checkFile(file, raw) {
     e9(m.index,
       `revokes EXECUTE on every function in schema public from postgres or service_role — that ` +
       `includes public.ops_net_post, which every converted watchdog and cron job runs as those roles.`);
+  }
+
+  // E12 (ERROR): a new cron job that calls an edge function must not start on minute :00 (see the header).
+  if (file.slice(0, 14) >= E12_FROM) {
+    for (const m of noComments.matchAll(/\bcron\s*\.\s*schedule\s*\(\s*'[^']*'\s*,\s*'(\S+)\s[^']*'/gi)) {
+      const close = balancedClose(noComments, noComments.indexOf("(", m.index));
+      const call = noComments.slice(m.index, close === -1 ? undefined : close);
+      if (!/^(0|0,.*|\*\/\d+)$/.test(m[1]) || !call.includes("functions/v1/")) continue;
+      if (lintAllowed(raw, noComments, m.index, "E12")) continue;
+      push(errors, lineOf(noComments, m.index),
+        `schedules an edge function on minute :00 (minute field '${m[1]}'). The top of the hour is where every ` +
+        `SUPABASE_EDGE_RUNTIME_SERVICE_DEGRADED has landed. Use an unused minute. If it must go out on the clock, add a ` +
+        `comment on this line: "lint:allow E12: <reason>".`);
+    }
   }
 
   // E11 (ERROR): keep the profiles column guard the LAST BEFORE ROW trigger on public.profiles (see the header).

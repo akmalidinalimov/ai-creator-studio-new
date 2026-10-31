@@ -41,6 +41,14 @@ select public.ops_http_health();
 - **`403 {"error":"forbidden"}` from one of our functions** → a cron/caller is using a stale/missing
   secret. Identify the caller (its `purpose`, or match the time to a cron schedule), then re-set the
   correct Vault secret. *Secret values are owner-entered — never printed.*
+- **🟡 "Supabase edge runtime refused N call(s)"** → `503 SUPABASE_EDGE_RUNTIME_SERVICE_DEGRADED`, sent before any
+  function starts (no function id in the edge logs). All four on record before 20261031170500 hit the first
+  seconds of an hour, so the recurring jobs were moved off `:00`. Recurring jobs catch up by themselves: no action unless
+  it repeats. If it comes back at `:00`, check `cron.job` for a job that returned there; if it now lands on other
+  minutes, the burst was not the cause: open a Supabase ticket.
+- **❗ "NOT retried: <job>"** → a job that fires once a day or week failed, and nothing will re-run it. Re-run its
+  `cron.job.command` by hand. Check first that the function has a duplicate guard: the weekly digests do not, so a job
+  that partly ran must not be re-fired blindly.
 - **`5xx` from an edge function** → check that function's logs (`/analytics/endpoints/logs.all`) and
   `platform_error_log`; fix the function; redeploy via merge.
 - **`400` to `api.telegram.org`** → malformed payload (too long / bad parse mode / bad file id) in the
@@ -54,7 +62,7 @@ select public.ops_http_health();
   for the same minute before assuming work was lost. Ignore the "DNS time: N ms" wording in
   `error_msg`: it is pg_net's text for any timeout, not a DNS problem (a "DNS time: 30000" row was a
   call that ran 38 s and returned 200). If one caller dominates, that function is slow: make it do
-  less per call, or stagger its cron away from `:00`/`:30`, where ~13 calls start in the same second.
+  less per call, or give its cron its own minute (the jobs were staggered off `:00`/`:30` by 20261031170500).
   `unattributed` = the failure has no `ops_http_calls` row, so no purpose (a call not made through
   `ops_net_post`).
 **Silence (false alarm):** raise `timeout_threshold`, add a phrase to `tg_expected_regex`, or set

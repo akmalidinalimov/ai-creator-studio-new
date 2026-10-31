@@ -107,10 +107,12 @@ Deno.serve(async (req) => {
   }
   const admin = __admin;
 
-  // Same-day dedup: the cron fires once, but a manual re-invoke must not re-DM everyone.
+  // Same-day dedup: the cron fires at 16:00 and retries at 16:20 (a refused 16:00 call would otherwise lose the day,
+  // 20261031170500), and neither that nor a manual re-invoke may re-DM everyone. _start is the claim: _run is only
+  // written after the last DM, so a run that died half-way must still stop the retry (a missed report beats a double).
   const _since = new Date(Date.now() - 20 * 3600_000).toISOString();
   const { data: _prior } = await admin.from("admin_actions").select("id")
-    .eq("action", "teacher_daily_report_run").gte("created_at", _since).limit(1);
+    .in("action", ["teacher_daily_report_run", "teacher_daily_report_start"]).gte("created_at", _since).limit(1);
   if (_prior && (_prior as any[]).length) {
     return new Response(JSON.stringify({ ok: true, skipped: "already_ran_today" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
@@ -121,6 +123,7 @@ Deno.serve(async (req) => {
     await admin.from("admin_actions").insert({ actor_user_id: null, action: "teacher_daily_report_error", details: { error: repErr.message } }).then(() => {}, () => {});
     return new Response(JSON.stringify({ ok: false, error: repErr.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
+  await admin.from("admin_actions").insert({ actor_user_id: null, action: "teacher_daily_report_start", details: {} }).then(() => {}, () => {});
   const rows = ((reportData || []) as any[]);
   const rankMap: Record<string, number> = {};
   if (rows.length) {

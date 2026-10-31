@@ -122,6 +122,10 @@ every migration named at or after its cutoff. Each rule exists because the mista
   channel — depend on its exact name, parameter order (cron jobs call it positionally), types and
   defaults, and pg_depend cannot see them, so Postgres would allow the drop. A deliberate change
   updates `OPS_NET_POST_SHAPE` in the lint and checks every caller in `pg_proc` and `cron.job`.
+- **No new edge cron job on minute `:00`** (E12). Every `SUPABASE_EDGE_RUNTIME_SERVICE_DEGRADED` on record hit the
+  first seconds of an hour, when up to 19 calls started together. Pick an unused minute. A job that fires once a day
+  gets a second fire (`0,20`) only if the function has a duplicate guard; otherwise a refused call simply loses the
+  run, and the alert names it.
 - **Name a migration with the current timestamp.** An older name is grandfathered only if it is in
   the frozen `scripts/migrations-grandfathered.txt` (E10); otherwise it would skip every rule while
   the pipeline still applies it.
