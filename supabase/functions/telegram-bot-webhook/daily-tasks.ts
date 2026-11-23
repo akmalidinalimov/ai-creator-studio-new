@@ -15,13 +15,15 @@
 //
 // DB-visible outcomes (graceful is not silent): challenge_task_capture_failed {reason}, challenge_task_topic_missing,
 // telegram_rate_limited (sendTelegramWithResult), challenge_task_reaction_failed, challenge_task_autoreg_skipped,
-// challenge_bot_status_changed, challenge_task_misplaced_homework; plus every row the engine writes itself.
+// challenge_task_welcome_delivered {via, delivered}, challenge_bot_status_changed, challenge_task_misplaced_homework;
+// plus every row the engine writes itself.
 import { logHealth, logHealthOnce } from "../_shared/edge.ts";
 import { resolveGroupPoster } from "../_shared/group-poster-identity.ts";
 import { type SendResultOutcome, sendTelegramWithResult } from "../_shared/telegram-send.ts";
 import {
   correctionToast, type DtPayload, isTelegramUrl, type Locale, parseDailyStartArg, parseDtCallback, reactionFor,
   renderCard, renderHint, renderIgStart, renderMergedNote, renderReceipt, type Rendered, renderUnavailable,
+  renderWelcome,
 } from "../_shared/daily-task-render.ts";
 import {
   botStatusDetails, type CapturePlan, createDailyTopicsCache, type DailyCacheResult, type DailyConfig,
@@ -241,21 +243,49 @@ export function createDailyTasks(deps: DailyTasksDeps) {
     return { profile: who.profile, created: created && who.via === "auto_register" };
   }
 
-  async function act(admin: Db, msg: TgMessage, p: Record<string, any>, plan: CapturePlan, cfg: DailyConfig): Promise<void> {
+  /**
+   * G7 / 20261001070000: the welcome the engine could not fold into a receipt. `welcomeOwed` is true only when THIS
+   * message auto-registered a brand-new profile; if the plan carries a receipt that already carries the welcome, the
+   * receipt delivers it and nothing extra is sent. Every path records 'challenge_task_welcome_delivered' (once per
+   * profile), delivered true or false with the reason — a welcome that never arrives must not be silent.
+   */
+  async function recordWelcome(
+    admin: Db, p: Record<string, any>, msg: TgMessage, via: string, delivered: boolean, klass?: string,
+  ): Promise<void> {
+    const uid = typeof p?.user_id === "string" ? p.user_id : "";
+    await logHealthOnce(admin, "challenge_task_welcome_delivered", uid || `tg:${msg?.from?.id ?? "-"}`, {
+      via, delivered, klass: klass ?? null, outcome: String(p?.outcome ?? "") || null,
+      chat_id: msg?.chat?.id ?? null, thread_id: msg?.message_thread_id ?? null, message_id: msg?.message_id ?? null,
+      telegram_id: msg?.from?.id ?? null, user_id: uid || null,
+    }, { source: "telegram-bot-webhook", ...(uid ? { targetUserId: uid } : {}) });
+  }
+
+  async function act(
+    admin: Db, msg: TgMessage, p: Record<string, any>, plan: CapturePlan, cfg: DailyConfig, welcomeOwed = false,
+  ): Promise<void> {
     const chatId = Number(msg.chat.id);
     const threadId = Number(msg.message_thread_id) || null;
-    const needName = plan.receipt !== null || plan.hint !== null;
+    // The receipt carries the welcome itself only when it is actually going to be sent or edited.
+    const receiptWelcomes = welcomeOwed && plan.receipt !== null && plan.submissionId !== null && plan.welcome;
+    let owed = welcomeOwed && !receiptWelcomes;
+    const needName = plan.receipt !== null || plan.hint !== null || owed;
     const name = needName ? await displayName(admin, p.user_id, msg?.from?.first_name) : "";
     if (plan.hint) {
       const h = renderHint(p as DtPayload, renderOpts(cfg, name, false));
       if (h) {
-        await send("sendMessage", {
+        // One message, not two: the welcome rides along with the hint this post already earns.
+        const w = owed ? renderWelcome(renderOpts(cfg, name, true)) : null;
+        const { outcome } = await send("sendMessage", {
           chat_id: chatId,
           ...(threadId ? { message_thread_id: threadId } : {}),
-          text: h.text, parse_mode: "HTML", disable_web_page_preview: true,
+          text: w ? `${w.text}\n\n${h.text}` : h.text, parse_mode: "HTML", disable_web_page_preview: true,
           reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true },
           ...(h.keyboard ? { reply_markup: h.keyboard } : {}),
         }, { admin, purpose: "challenge_task_hint", recipientId: chatId, topicMissingAction: TOPIC_MISSING });
+        if (w) {
+          await recordWelcome(admin, p, msg, "hint", outcome.ok, outcome.ok ? undefined : outcome.klass);
+          owed = false; // the attempt was made and recorded; never send a second welcome for the same message
+        }
       }
     }
     if (plan.receipt && plan.submissionId !== null) {
@@ -267,6 +297,21 @@ export function createDailyTasks(deps: DailyTasksDeps) {
         const { outcome } = await editReceipt(admin, chatId, plan.receiptMessageId, r);
         await recordReceipt(admin, plan.submissionId, plan.receiptVersion, chatId, plan.receiptMessageId, outcome);
       }
+    }
+    if (owed) {
+      // No receipt and no hint carried it (no_slot with a hint already handled above; 'comment', a degraded
+      // reaction-only receipt, a queued receipt): one short in-thread reply, so the new student still learns they
+      // have an account and that their daily-task work counts.
+      const w = renderWelcome(renderOpts(cfg, name, true));
+      const { outcome } = await send("sendMessage", {
+        chat_id: chatId,
+        ...(threadId ? { message_thread_id: threadId } : {}),
+        text: w.text, parse_mode: "HTML", disable_web_page_preview: true,
+        reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true },
+      }, { admin, purpose: "challenge_task_welcome", recipientId: chatId, topicMissingAction: TOPIC_MISSING });
+      await recordWelcome(admin, p, msg, "reply", outcome.ok, outcome.ok ? undefined : outcome.klass);
+    } else if (receiptWelcomes) {
+      await recordWelcome(admin, p, msg, "receipt", true);
     }
     if (plan.reactWith) await react(admin, chatId, Number(msg.message_id), plan.reactWith);
     if (plan.linkUsername) {
@@ -315,9 +360,14 @@ export function createDailyTasks(deps: DailyTasksDeps) {
         return { handled: false, outcome: "error" };
       }
       let plan = planCapture(p);
+      // 20261001070000: a brand-new profile is owed the welcome whatever the re-judged outcome is. The engine can
+      // only fold it into a RECEIPT, so a post that earns none (no_slot before Monday, 'comment', a held sender)
+      // left the student with a silent new account. act() delivers it and records the attempt either way.
+      let welcomeOwed = false;
       if (plan.needsIdentity && route.config.autoRegister) {
         const who = await identify(admin, msg, route.topic);
         if (who.profile) {
+          welcomeOwed = who.created;
           const p2 = await capture(admin, msg, { welcome: who.created });
           if (p2) {
             p = p2;
@@ -325,11 +375,16 @@ export function createDailyTasks(deps: DailyTasksDeps) {
           }
         }
       }
-      if (plan.fallThrough) return { handled: false, outcome: String(p.outcome ?? "") };
-      await act(admin, msg, p, plan, route.config);
+      if (plan.fallThrough) {
+        // The engine did not handle the message after all (disabled / not a task topic / an engine error) and
+        // today's handler runs instead. Nothing is sent here, but an owed welcome must not vanish silently.
+        if (welcomeOwed) await recordWelcome(admin, p, msg, "fall_through", false, String(p.outcome ?? "") || "fall_through");
+        return { handled: false, outcome: String(p.outcome ?? "") };
+      }
+      await act(admin, msg, p, plan, route.config, welcomeOwed);
       console.log("dt:captured", JSON.stringify({
         chat: msg.chat.id, thread: msg.message_thread_id, msg: msg.message_id, outcome: p.outcome,
-        sub: plan.submissionId, receipt: plan.receipt, hint: plan.hint,
+        sub: plan.submissionId, receipt: plan.receipt, hint: plan.hint, welcome: welcomeOwed,
       }));
       return { handled: true, outcome: String(p.outcome ?? "") };
     },

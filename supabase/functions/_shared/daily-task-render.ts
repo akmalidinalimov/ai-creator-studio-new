@@ -626,6 +626,15 @@ export function correctionKeyboard(p: DtPayload, opts: RenderOpts = {}): InlineK
   return { inline_keyboard: rows };
 }
 
+/**
+ * The auto-registration welcome ON ITS OWN (G7, 20261001070000). The engine folds the welcome into a RECEIPT, so a
+ * brand-new poster whose post earns no receipt (no_slot, comment, held) used to never learn they now have an account.
+ * The bot delivers this line instead — folded into that day's hint when there is one, else as one in-thread reply.
+ */
+export function renderWelcome(opts: RenderOpts = {}): Rendered {
+  return { text: copyFor(opts.locale).welcome(safeName(opts.name)), keyboard: null };
+}
+
 /** The receipt a student sees under their work (one per submission, edited as it changes — spec C7). */
 export function renderReceipt(p: DtPayload, opts: RenderOpts = {}): Rendered {
   const locale = opts.locale ?? "uz";
