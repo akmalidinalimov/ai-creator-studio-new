@@ -12,6 +12,15 @@
 #
 # No-ops gracefully when SUPABASE_ACCESS_TOKEN is absent (workflows land before secrets).
 # Kill-switch: disable this workflow in the Actions UI — manual deploys keep working.
+#
+# 2026-11-27 incident: #330 merged, and the deploy stopped at its first function — the Supabase CLI (unpinned, `npx
+# supabase` = latest = 3.4.0) began asking "Confirmation required … Re-run with --yes" and cannot ask in CI, so it
+# changed nothing and exited 1, which also skipped the migration step. Fixed as a class:
+#   • the CLI is PINNED (SUPABASE_CLI below) and every call passes --yes: a new CLI release can no longer change the
+#     pipeline under us; bumping it is a reviewed one-line change.
+#   • the migration label gate checks the PR that ADDED each file (not only the newest commit's PR), and a manual
+#     run (Actions → Run workflow) takes `since` = the last good commit, so a deploy that failed half-way is finished
+#     through this same pipeline — never by hand.
 name: Deploy Supabase (functions + migrations)
 
 on:
@@ -21,7 +30,12 @@ on:
       - "supabase/functions/**"
       - "supabase/config.toml"
       - "supabase/migrations/**"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "Deploy everything changed since this commit (e.g. the last commit that deployed fine). Empty = the previous commit."
+        required: false
+        default: ""
 
 concurrency:
   group: deploy-supabase
@@ -29,6 +43,7 @@ concurrency:
 
 env:
   PROJECT_REF: cdyidatkegxwhtuoqxly
+  SUPABASE_CLI: "supabase@3.4.0"   # pinned (see the header); bump deliberately
 
 jobs:
   deploy:
@@ -61,6 +76,11 @@ jobs:
         run: |
           set -euo pipefail
           BEFORE="${{ github.event.before }}"
+          # Manual run with `since`: everything changed since that commit (finishing a failed deploy).
+          if [ -n "${{ github.event.inputs.since }}" ]; then
+            BEFORE="${{ github.event.inputs.since }}"
+            git cat-file -e "$BEFORE^{commit}" || { echo "::error::since=$BEFORE is not a commit"; exit 1; }
+          fi
           # First push / force-push / manual dispatch: fall back to the previous commit.
           if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE" 2>/dev/null; then
             BEFORE="$(git rev-parse HEAD~1)"
@@ -121,7 +141,7 @@ jobs:
           while read -r fn; do
             [ -z "$fn" ] && continue
             echo "::group::deploy $fn"
-            npx --yes supabase functions deploy "$fn" --project-ref "$PROJECT_REF" --use-api
+            npx --yes "$SUPABASE_CLI" functions deploy "$fn" --project-ref "$PROJECT_REF" --use-api --yes
             echo "::endgroup::"
           done < fns.txt
 
@@ -159,14 +179,18 @@ jobs:
             exit 0
           fi
 
-          # Gate: the merged PR for this commit must carry the migration-approved label.
-          LABELS=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" \
-                    --jq '[.[].labels[].name] | join(",")' || echo "")
-          echo "PR labels: $LABELS"
-          if ! echo "$LABELS" | grep -q 'migration-approved'; then
-            echo "::error::Unapplied migration file(s) present but the merged PR lacks the 'migration-approved' label. NOT applying. Apply manually or re-merge with the label."
-            exit 1
-          fi
+          # Gate: the merged PR that ADDED each file must carry the migration-approved label (on a push that is this
+          # commit's PR, exactly as before; on a manual `since` run it is each file's own PR, never the newest one's).
+          while read -r path; do
+            [ -z "$path" ] && continue
+            ADDED_IN=$(git log --diff-filter=A --format=%H -1 -- "$path")
+            LABELS=$(gh api "repos/${{ github.repository }}/commits/${ADDED_IN}/pulls" --jq '[.[].labels[].name] | join(",")' || echo "")
+            echo "$(basename "$path"): added in ${ADDED_IN:0:7}, PR labels: $LABELS"
+            if ! echo "$LABELS" | grep -q 'migration-approved'; then
+              echo "::error::$(basename "$path") is unapplied but the PR that added it lacks the 'migration-approved' label. NOT applying anything."
+              exit 1
+            fi
+          done < unapplied.txt
 
           while read -r path; do
             [ -z "$path" ] && continue
