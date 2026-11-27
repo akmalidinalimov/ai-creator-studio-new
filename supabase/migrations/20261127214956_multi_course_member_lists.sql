@@ -63,13 +63,12 @@ do $pin$
 declare _src text := (select prosrc from pg_proc where oid = 'public.course_membership_place(uuid,uuid,bigint)'::regprocedure);
 begin
   if position('/* multi-course PR4 */' in _src) > 0 then
-    return;  -- already this version (a replay)
+    return;  -- already this version (a replay): never overwrite it, nor anything newer
   end if;
   if md5(_src) <> '81ff18c3ad623fe27680d90fe0e1bb86' then
     raise exception 'course_membership_place changed since it was reviewed (2026-11-27) — refusing to overwrite';
   end if;
-end $pin$;
-
+  execute $create$
 create or replace function public.course_membership_place(_uid uuid, _course uuid, _chat_id bigint)
 returns uuid language plpgsql security definer set search_path to 'public', 'pg_temp' as $function$
 declare _hold uuid; _target uuid; _main boolean; _sec boolean; _r jsonb;
@@ -104,7 +103,12 @@ begin
     end if;
     return null;
   end if;
-  -- the secondary course: the one engine (upserts the row + the enrollment's tier, audits student_course_changed)
+  -- the secondary course: lock the holding row first (an admin may be moving it right now — then nothing happens),
+  -- then the one engine (upserts the row + the enrollment's tier, audits student_course_changed)
+  perform 1 from public.student_course_groups
+   where user_id = _uid and course_id = _course and group_id = _hold and not is_main
+   for update;
+  if not found then return null; end if;
   _r := public.add_student_course_group(_uid, _target, 'membership_place', null);
   if _r->>'status' = 'changed' then
     insert into public.admin_actions (actor_user_id, action, target_user_id, details)
@@ -114,7 +118,10 @@ begin
   end if;
   return null;
 end
-$function$;
+$function$
+$create$;
+end $pin$;
+
 revoke execute on function public.course_membership_place(uuid, uuid, bigint) from public, anon, authenticated;
 grant execute on function public.course_membership_place(uuid, uuid, bigint) to service_role;
 
@@ -136,7 +143,7 @@ begin
     array[1]));
 
   insert into public.admin_actions (actor_user_id, action, details)
-  values (null, 'multi_course_member_lists', jsonb_build_object('migration', '20261127214146', 'functions', _log));
+  values (null, 'multi_course_member_lists', jsonb_build_object('migration', '20261127214956', 'functions', _log));
 end $patch$;
 
 -- ── self-test ──
@@ -223,4 +230,8 @@ begin
     if sqlerrm <> 'mc4_selftest_rollback' then raise; end if;
   end;
   raise notice 'self-test: % secondary holding row(s) placed and rolled back', _tested;
+  if _tested = 0 and exists (select 1 from public.student_course_groups s join public.courses c
+                               on c.id = s.course_id and c.channel_group_id = s.group_id where not s.is_main) then
+    raise warning 'self-test: secondary holding rows exist but none could be exercised (no real group with a parseable homework_topic_url)';
+  end if;
 end $test$;
