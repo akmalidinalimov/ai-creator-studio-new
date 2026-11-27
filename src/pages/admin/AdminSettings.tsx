@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Eye, EyeOff, CheckCircle2, Circle, ExternalLink, Copy, Save } from "lucide-react";
+import { Eye, EyeOff, CheckCircle2, Circle, ExternalLink, Copy, Save, Plus, Trash2, ArrowUp, ArrowDown } from "lucide-react";
 import { TelegramDeeplinkButton } from "@/components/TelegramDeeplinkButton";
 import { KnowledgeManager } from "@/components/admin/KnowledgeManager";
 import { AppSettingsSection } from "@/components/admin/AppSettingsSection";
@@ -99,6 +99,8 @@ export default function AdminSettings() {
           <TestTelegramCard />
 
           <EnrollmentMessageCard userId={user?.id} />
+          <BonusCoursesCard userId={user?.id} />
+          <CourseChannelsCard />
           <AIAssistantCard userId={user?.id} />
           <ContentProtectionCard userId={user?.id} />
         </div>
@@ -584,6 +586,254 @@ function EnrollmentMessageCard({ userId }: { userId?: string }) {
             {value.button_label[previewLocale]}
           </a>
         </div>
+      </div>
+    </Card>
+  );
+}
+
+/* ───────── 🎁 Bonus darslar + 📣 Kurs Telegrami (bot buttons, telegram-bot-webhook/links-menu.ts) ─────────
+ * The bot shows a link only when it is https://t.me/... (one bad URL makes Telegram refuse the whole message), so the
+ * same rule is checked here before saving. */
+const TME_URL_RE = /^https:\/\/t\.me\/[^\s<>"'`\\]+$/;
+const isTmeUrl = (u: string) => u.length <= 512 && TME_URL_RE.test(u);
+const BONUS_MAX = 30; // = links-menu.ts BONUS_MAX_ITEMS
+
+type BonusRow = { title: string; url: string; raw?: unknown; rawText?: string };
+
+function bonusRowsFrom(value: unknown): BonusRow[] {
+  const items = (value as { items?: unknown } | null)?.items;
+  if (!Array.isArray(items)) return [];
+  return items.map((raw: unknown) => {
+    const it = (raw && typeof raw === "object" ? raw : {}) as { title?: unknown; url?: unknown };
+    const t = it.title;
+    if (t && typeof t === "object" && !Array.isArray(t)) {
+      // A per-locale title {uz,ru,en}: edit its Uzbek text; saved back untouched unless the admin changes it.
+      const loc = t as { uz?: unknown; ru?: unknown; en?: unknown };
+      const text = String(loc.uz || loc.ru || loc.en || "");
+      return { title: text, url: String(it.url ?? ""), raw: t, rawText: text };
+    }
+    return { title: String(t ?? ""), url: String(it.url ?? "") };
+  });
+}
+
+function BonusCoursesCard({ userId }: { userId?: string }) {
+  const [rows, setRows] = useState<BonusRow[]>([]);
+  const [savedJson, setSavedJson] = useState("[]");
+  // the saved list could not be read: never save over it (an empty editor would wipe the real list)
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  useEffect(() => {
+    supabase.from("platform_settings").select("value").eq("key", "bonus_courses").maybeSingle().then(({ data, error }) => {
+      if (error) {
+        setLoadFailed(true);
+        toast.error(`Bonus kurslar ro'yxatini o'qib bo'lmadi: ${error.message}. Sahifani yangilang.`);
+        return;
+      }
+      const loaded = bonusRowsFrom(data?.value);
+      setRows(loaded);
+      setSavedJson(JSON.stringify(loaded));
+    });
+  }, []);
+
+  const dirty = !loadFailed && JSON.stringify(rows) !== savedJson;
+
+  const save = async (): Promise<boolean> => {
+    if (loadFailed) { toast.error("Ro'yxat yuklanmagan — saqlanmadi. Sahifani yangilang."); return false; }
+    const clean = rows
+      .map((r) => ({ ...r, title: r.title.trim(), url: r.url.trim() }))
+      .filter((r) => r.title || r.url);
+    if (clean.length > BONUS_MAX) { toast.error(`Ko'pi bilan ${BONUS_MAX} ta bonus kurs`); return false; }
+    for (const [i, r] of clean.entries()) {
+      if (!r.title) { toast.error(`${i + 1}-qator: nomi kiritilmagan`); return false; }
+      if (!isTmeUrl(r.url)) { toast.error(`${i + 1}-qator: havola https://t.me/ bilan boshlanishi kerak`); return false; }
+    }
+    const items = clean.map((r) => ({
+      title: r.raw !== undefined && r.title === r.rawText ? r.raw : r.title,
+      url: r.url,
+    }));
+    const r = await mutate(() => supabase.from("platform_settings").upsert(
+      { key: "bonus_courses", value: { items }, updated_by: userId } as any,
+      { onConflict: "key" },
+    ), "key");
+    if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return r.ok; }
+    setRows(clean);
+    setSavedJson(JSON.stringify(clean));
+    return true;
+  };
+  useRegisterSaver("bonus_courses", "🎁 Bonus darslar", dirty, save);
+
+  const update = (i: number, patch: Partial<BonusRow>) =>
+    setRows((prev) => prev.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const remove = (i: number) => setRows((prev) => prev.filter((_, j) => j !== i));
+  const move = (i: number, d: -1 | 1) =>
+    setRows((prev) => {
+      const j = i + d;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+
+  return (
+    <Card className="p-6 shadow-soft space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold flex items-center gap-2">
+          🎁 Bonus darslar
+          {dirty && <span className="text-[10px] font-normal text-amber-600 dark:text-amber-400">● o'zgartirildi</span>}
+        </h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Botdagi «🎁 Bonus darslar» tugmasi. Har bir bonus kurs o'z Telegram kanaliga havola bo'ladi. Faqat to'liq
+          to'lov qilgan talabalarga ochiq (sinov hisobidagilarga yopiq). Botda ham shu tartibda chiqadi.
+        </p>
+      </div>
+
+      {rows.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          Hali bonus kurs yo'q. Ro'yxat bo'sh bo'lsa, bot «tez orada qo'shiladi» deb javob beradi.
+        </p>
+      )}
+
+      <div className="space-y-3">
+        {rows.map((r, i) => {
+          const urlBad = r.url.trim() !== "" && !isTmeUrl(r.url.trim());
+          return (
+            <div key={i} className="rounded-lg border bg-muted/20 p-3 space-y-2">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Input
+                  value={r.title}
+                  onChange={(e) => update(i, { title: e.target.value })}
+                  placeholder="Nomi, masalan: Video montaj"
+                  className="sm:w-56"
+                />
+                <Input
+                  type="url"
+                  value={r.url}
+                  onChange={(e) => update(i, { url: e.target.value })}
+                  placeholder="https://t.me/..."
+                  className={urlBad ? "border-destructive" : ""}
+                />
+                <div className="flex gap-1 shrink-0">
+                  <Button type="button" variant="outline" size="icon" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Yuqoriga">
+                    <ArrowUp className="h-4 w-4" />
+                  </Button>
+                  <Button type="button" variant="outline" size="icon" onClick={() => move(i, 1)} disabled={i === rows.length - 1} aria-label="Pastga">
+                    <ArrowDown className="h-4 w-4" />
+                  </Button>
+                  <Button type="button" variant="outline" size="icon" onClick={() => remove(i)} aria-label="O'chirish">
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+              {urlBad && <p className="text-xs text-destructive">Havola https://t.me/ bilan boshlanishi kerak</p>}
+            </div>
+          );
+        })}
+      </div>
+
+      <Button
+        type="button"
+        variant="outline"
+        onClick={() => setRows((prev) => [...prev, { title: "", url: "" }])}
+        disabled={rows.length >= BONUS_MAX}
+      >
+        <Plus className="h-4 w-4 mr-2" /> Bonus kurs qo'shish
+      </Button>
+    </Card>
+  );
+}
+
+type CourseChannelRow = { id: string; title: string; published: boolean; url: string };
+type CourseChannelDbRow = { id: string; title: string | null; published: boolean | null; telegram_channel_url: string | null };
+// courses.telegram_channel_url is not in the generated types yet (20261030145000): the few calls this card makes, typed.
+type CoursesUntyped = {
+  select: (cols: string) => {
+    order: (col: string, o: { ascending: boolean }) => PromiseLike<{ data: CourseChannelDbRow[] | null }>;
+  };
+  update: (patch: { telegram_channel_url: string | null }) => { eq: (col: string, v: string) => unknown };
+};
+const coursesUntyped = () => supabase.from("courses") as unknown as CoursesUntyped;
+
+function CourseChannelsCard() {
+  const [courses, setCourses] = useState<CourseChannelRow[]>([]);
+  const [saved, setSaved] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    coursesUntyped()
+      .select("id, title, published, telegram_channel_url")
+      .order("created_at", { ascending: true })
+      .then(({ data }: { data: CourseChannelDbRow[] | null }) => {
+        const list: CourseChannelRow[] = (data || []).map((c) => ({
+          id: String(c.id), title: String(c.title ?? ""), published: c.published === true,
+          url: String(c.telegram_channel_url ?? ""),
+        }));
+        setCourses(list);
+        setSaved(Object.fromEntries(list.map((c) => [c.id, c.url])));
+      });
+  }, []);
+
+  const changed = courses.filter((c) => c.url.trim() !== (saved[c.id] ?? "").trim());
+  const dirty = changed.length > 0;
+
+  // One mutate() per changed course (a single-row write by id). A course that failed stays dirty.
+  const save = async (): Promise<boolean> => {
+    for (const c of changed) {
+      const u = c.url.trim();
+      if (u && !isTmeUrl(u)) { toast.error(`${c.title}: havola https://t.me/ bilan boshlanishi kerak`); return false; }
+    }
+    let allOk = true;
+    const nextSaved = { ...saved };
+    const savedIds = new Set<string>();
+    for (const c of changed) {
+      const u = c.url.trim();
+      const r = await mutate(() => coursesUntyped().update({ telegram_channel_url: u || null }).eq("id", c.id));
+      if (!r.ok) {
+        allOk = false;
+        if (r.reason !== "impersonation_readonly") toast.error(`${c.title}: ${r.message ?? "Saqlanmadi"}`);
+        continue;
+      }
+      nextSaved[c.id] = u;
+      savedIds.add(c.id);
+    }
+    setSaved(nextSaved);
+    setCourses((prev) => prev.map((c) => (savedIds.has(c.id) ? { ...c, url: c.url.trim() } : c)));
+    return allOk;
+  };
+  useRegisterSaver("course_channels", "📣 Kurs Telegrami", dirty, save);
+
+  return (
+    <Card className="p-6 shadow-soft space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold flex items-center gap-2">
+          📣 Kurs Telegrami
+          {dirty && <span className="text-[10px] font-normal text-amber-600 dark:text-amber-400">● o'zgartirildi</span>}
+        </h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Botdagi «📣 Kurs Telegrami» tugmasi: talaba o'z kursining kanalini (darslar va yangiliklar) va o'z guruhini
+          ko'radi. Guruh havolalari Admin → Guruhlar bo'limida. Bo'sh havola botda ko'rsatilmaydi.
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        {courses.map((c) => {
+          const u = c.url.trim();
+          const bad = u !== "" && !isTmeUrl(u);
+          return (
+            <div key={c.id} className="space-y-1.5">
+              <Label className="flex items-center gap-2">
+                {c.title}
+                {!c.published && <span className="text-[10px] font-normal text-muted-foreground">(nofaol)</span>}
+              </Label>
+              <Input
+                type="url"
+                value={c.url}
+                onChange={(e) => setCourses((prev) => prev.map((x) => (x.id === c.id ? { ...x, url: e.target.value } : x)))}
+                placeholder="https://t.me/... (kurs kanali)"
+                className={bad ? "border-destructive" : ""}
+              />
+              {bad && <p className="text-xs text-destructive">Havola https://t.me/ bilan boshlanishi kerak</p>}
+            </div>
+          );
+        })}
       </div>
     </Card>
   );

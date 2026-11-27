@@ -50,6 +50,9 @@ import { handleQaCallback, parseQaCallback } from "./question-assist-bot.ts";
 import { langChooserKeyboard, parseProfAction, profileRows, profileWebCells, showProfileView } from "./profile-tabs.ts";
 import { sendStudentWelcome } from "./student-welcome.ts";
 import {
+  bonusLocked, bonusRows, type BonusItem, kanalEntries, kanalMissing, kanalRows, LINKS_COPY, parseBonusCourses,
+} from "./links-menu.ts";
+import {
   autoAddTopicCandidate, type CourseMeta, courseScopeIds, groupForTaskCourse, loadAutoAddCourseIds,
   loadSecondaryCourseGroups, loadStudentCourseGroups, pickCaptureGroup, type StudentCourseGroups, taskScopeIds,
 } from "./multi-course.ts";
@@ -249,6 +252,8 @@ const T = {
     kbHomework: "📝 Mening vazifalarim",
     kbLang: "🌐 Til",
     kbHelp: "❓ Yordam",
+    kbBonus: "🎁 Bonus darslar",
+    kbCourseTg: "📣 Kurs Telegrami",
     kbHint: "👇 Quyidagi tugmalardan foydalaning",
     kbStreakOld: "📊 Statistikam",
     kbCertOld: "🎓 Sertifikat",
@@ -579,6 +584,8 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
     kbCert: "📋 Модули курса",
     kbLang: "🌐 Язык",
     kbHelp: "❓ Помощь",
+    kbBonus: "🎁 Бонусные уроки",
+    kbCourseTg: "📣 Telegram курса",
     kbHint: "👇 Используйте кнопки ниже",
     kbStreakOld: "📊 Моя статистика",
     kbCertOld: "🎓 Сертификат",
@@ -896,6 +903,8 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
     kbCert: "📋 Course modules",
     kbLang: "🌐 Language",
     kbHelp: "❓ Help",
+    kbBonus: "🎁 Bonus lessons",
+    kbCourseTg: "📣 Course Telegram",
     kbHint: "👇 Use the buttons below",
     kbStreakOld: "📊 My stats",
     kbCertOld: "🎓 Certificate",
@@ -1702,6 +1711,8 @@ function getMainKeyboard(locale: Locale) {
     // 2026-10-04 still maps to /instagram in buttonTextToCommand, so a student's cached keyboard keeps working.
     [{ text: PROF_T[locale].kbProfil }, { text: t.kbHomework }],
     [{ text: t.kbCert }, { text: t.kbLang }],
+    // 🎁 bonus-course channels + 📣 the course's channel and the student's group (links-menu.ts, 2026-11-27).
+    [{ text: t.kbBonus }, { text: t.kbCourseTg }],
     [{ text: t.kbHelp }],
   );
   return {
@@ -1964,6 +1975,8 @@ function buttonTextToCommand(text: string): string | null {
     if (t.kbCertOld && trimmed === t.kbCertOld) return "/sertifikat";
     if (trimmed === t.kbLang) return "/til";
     if (trimmed === t.kbHelp) return "/yordam";
+    if (t.kbBonus && trimmed === t.kbBonus) return "/bonus";
+    if (t.kbCourseTg && trimmed === t.kbCourseTg) return "/kanal";
     // Admin keyboard buttons
     if (trimmed === t.adminKbAnalytics) return "/analitika";
     if (trimmed === t.adminKbClaude) return "/claude";
@@ -5308,6 +5321,95 @@ async function studentWelcome(admin: any, chatId: number, profile: any, locale: 
   });
 }
 
+// ── 🎁 Bonus darslar / 📣 Kurs Telegrami (links-menu.ts) ──────────────────────────────────────────────────────
+// platform_settings 'bonus_courses' (Admin → Sozlamalar), cached 60 s per isolate like the Mini App flags. A missing
+// row, a malformed value or a read error = no items (the student gets "tez orada"; the admins get the signal below).
+let __bonusCourses: { items: BonusItem[]; at: number; readError: boolean } | null = null;
+async function loadBonusCourses(admin: any): Promise<{ items: BonusItem[]; readError: boolean }> {
+  if (__bonusCourses && Date.now() - __bonusCourses.at < 60_000) return __bonusCourses;
+  let items: BonusItem[] = [];
+  let readError = false;
+  try {
+    const { data, error } = await admin.from("platform_settings").select("value").eq("key", "bonus_courses").maybeSingle();
+    if (error) readError = true;
+    else items = parseBonusCourses(data?.value);
+  } catch (_e) {
+    readError = true;
+  }
+  // a read error is NOT cached: the next tap retries (a DB blip must not look like "no bonus courses" for a minute)
+  if (readError) return { items, readError };
+  __bonusCourses = { items, at: Date.now(), readError };
+  return __bonusCourses;
+}
+
+// "Bonus list is empty" → at most one admin_actions row per Tashkent day platform-wide (logHealthOnce dedupes in the DB;
+// a student tapping it ten times is not ten signals — member taps must never inflate a health flag).
+
+// URL-button reply through sendTelegram, so a non-delivery is DB-visible (telegram_send_failed). One bad URL makes
+// Telegram refuse the whole message; links-menu.ts drops those first, and a content error that still slips through
+// gets a friendly line instead of silence.
+async function sendLinksMessage(admin: any, chatId: number, locale: Locale, text: string, rows: any[][], purpose: string) {
+  const out = await sendTelegram(BOT_TOKEN, "sendMessage", {
+    chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true,
+    reply_markup: { inline_keyboard: rows },
+  }, { admin, purpose, recipientId: chatId });
+  if (!out.ok && !out.recipient) await sendWithKeyboard(chatId, LINKS_COPY[locale].sendFailed, locale);
+}
+
+async function handleBonusCommand(admin: any, chatId: number, profile: any, locale: Locale) {
+  // Paid students only (owner, 2026-11-27): a trial account gets the trial lock.
+  if (bonusLocked(profile?.account_type)) { await sendWithKeyboard(chatId, TRIAL_LOCKED[locale] || TRIAL_LOCKED.uz, locale); return; }
+  const { items, readError } = await loadBonusCourses(admin);
+  const rows = bonusRows(items, locale);
+  if (!rows.length) {
+    await sendWithKeyboard(chatId, LINKS_COPY[locale].bonusEmpty, locale);
+    await logHealthOnce(admin, "bonus_links_missing", readError ? "read_error" : "empty",
+      { read_error: readError }, { source: "telegram-bot-webhook" });
+    return;
+  }
+  await sendLinksMessage(admin, chatId, locale, LINKS_COPY[locale].bonusIntro, rows, "bot_bonus_links");
+}
+
+async function handleKanalCommand(admin: any, chatId: number, profile: any, locale: Locale) {
+  // Every registered student, trial included. Main group (profiles.group_id) first, then secondary course groups.
+  let entries: ReturnType<typeof kanalEntries> = [];
+  try {
+    const sc = await loadStudentCourseGroups(admin, profile.id);
+    const courseIds = [sc.main?.course_id, ...sc.secondary.map((s) => s.course_id)].filter(Boolean) as string[];
+    const groupIds = [sc.main?.group_id, ...sc.secondary.map((s) => s.group_id)].filter(Boolean) as string[];
+    const [cRes, gRes] = await Promise.all([
+      courseIds.length
+        ? admin.from("courses").select("id, title, telegram_channel_url, channel_group_id").in("id", courseIds)
+        : Promise.resolve({ data: [], error: null }),
+      groupIds.length
+        ? admin.from("groups").select("id, name, telegram_group_url").in("id", groupIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (cRes?.error || gRes?.error) throw new Error(cRes?.error?.message || gRes?.error?.message || "read_failed");
+    entries = kanalEntries({
+      main: sc.main ? { group_id: sc.main.group_id, course_id: sc.main.course_id } : null,
+      secondary: sc.secondary,
+      courses: cRes?.data || [],
+      groups: gRes?.data || [],
+    });
+  } catch (e) {
+    await logHealth(admin, "course_links_read_failed", { profile_id: profile?.id ?? null, error: String(e).slice(0, 200) },
+      { source: "telegram-bot-webhook" });
+    await sendWithKeyboard(chatId, LINKS_COPY[locale].sendFailed, locale);
+    return;
+  }
+  const rows = kanalRows(entries, locale);
+  if (!rows.length) await sendWithKeyboard(chatId, LINKS_COPY[locale].kanalEmpty, locale);
+  else await sendLinksMessage(admin, chatId, locale, LINKS_COPY[locale].kanalIntro, rows, "bot_course_links");
+  // AFTER the reply: a link the admin has not filled in yet — one row per (course, group) per Tashkent day, never one
+  // per tap (logHealthOnce cannot throw).
+  for (const m of kanalMissing(entries)) {
+    await logHealthOnce(admin, "course_links_missing", `${m.course_id ?? "-"}:${m.group_id ?? "-"}`,
+      { course_id: m.course_id, group_id: m.group_id, channel_missing: m.channel_missing, group_missing: m.group_missing },
+      { source: "telegram-bot-webhook" });
+  }
+}
+
 async function handleCommand(admin: any, msg: any, cmdRaw: string) {
   const chatId = msg.chat.id;
   const tgId = msg.from.id as number;
@@ -5442,7 +5544,7 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
     const { data: tProfile } = await admin
       .from("profiles")
       .select(
-        "id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id, status",
+        "id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id, status, account_type",
       )
       .eq("id", effectiveProfileId)
       .maybeSingle();
@@ -5598,6 +5700,20 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
     // 🆘 support inside the bot (support.ts, 2026-10-06): describe the problem → the admins get it → the answer
     // comes back here. (The old reply only showed a link when TELEGRAM_SUPPORT_HANDLE was set — it never was.)
     await startSupport(admin, chatId, tgId, profile.id, locale, supportDeps(admin));
+    return;
+  }
+
+  // 🎁 Bonus darslar (paid students only) and 📣 Kurs Telegrami (every student) — links-menu.ts. Reply-keyboard only:
+  // not in the slash-command menu (bot-commands.ts), but typing /bonus or /kanal works too.
+  if (cmd === "/bonus" || cmd === "/kanal") {
+    // student buttons: a teacher / admin typing them (not impersonating a student) keeps their own keyboard
+    if ((effectivePersona ?? realPersona) !== "student") {
+      const staff = (effectivePersona ?? realPersona) as Persona;
+      await sendWithKeyboard(chatId, LINKS_COPY[locale].studentsOnly, locale, false, staff);
+      return;
+    }
+    if (cmd === "/bonus") await handleBonusCommand(admin, chatId, profile, locale);
+    else await handleKanalCommand(admin, chatId, profile, locale);
     return;
   }
 
