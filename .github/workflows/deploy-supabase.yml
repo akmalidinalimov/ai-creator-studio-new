@@ -47,6 +47,8 @@ env:
 
 jobs:
   deploy:
+    # only ever from main: a manual run on another branch would deploy unreviewed code
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 45   # a _shared change can redeploy ~40 functions
     permissions:
@@ -80,6 +82,7 @@ jobs:
           if [ -n "${{ github.event.inputs.since }}" ]; then
             BEFORE="${{ github.event.inputs.since }}"
             git cat-file -e "$BEFORE^{commit}" || { echo "::error::since=$BEFORE is not a commit"; exit 1; }
+            git merge-base --is-ancestor "$BEFORE" HEAD || { echo "::error::since=$BEFORE is not an earlier commit of this branch"; exit 1; }
           fi
           # First push / force-push / manual dispatch: fall back to the previous commit.
           if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE" 2>/dev/null; then
@@ -184,6 +187,11 @@ jobs:
           while read -r path; do
             [ -z "$path" ] && continue
             ADDED_IN=$(git log --diff-filter=A --format=%H -1 -- "$path")
+            # the content applied must be EXACTLY what the labeled PR added: a later (unlabeled) edit is refused
+            if [ "$(git rev-parse "${ADDED_IN}:${path}")" != "$(git rev-parse "HEAD:${path}")" ]; then
+              echo "::error::$(basename "$path") changed after the PR that added it (${ADDED_IN:0:7}). NOT applying anything."
+              exit 1
+            fi
             LABELS=$(gh api "repos/${{ github.repository }}/commits/${ADDED_IN}/pulls" --jq '[.[].labels[].name] | join(",")' || echo "")
             echo "$(basename "$path"): added in ${ADDED_IN:0:7}, PR labels: $LABELS"
             if ! echo "$LABELS" | grep -q 'migration-approved'; then
