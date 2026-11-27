@@ -59,10 +59,12 @@ $function$;
 revoke execute on function public.homework_group_for_submission(uuid) from public, anon, authenticated;
 grant execute on function public.homework_group_for_submission(uuid) to service_role;
 
--- RLS helper: evaluated per row as the querying user → authenticated needs EXECUTE (it returns a boolean only)
+-- RLS helper: evaluated per row as the querying user → authenticated needs EXECUTE. It answers ONLY about the caller
+-- (_teacher = auth.uid()) or for service_role, so it can never be used as an oracle on other people's memberships
+-- (security review); the policies always pass auth.uid().
 create or replace function public.is_teacher_of_homework(_student uuid, _assignment uuid, _teacher uuid)
 returns boolean language sql stable security definer set search_path to 'public', 'pg_temp' as $function$
-  select coalesce(public.is_group_teacher(
+  select (_teacher = auth.uid() or auth.role() = 'service_role') and coalesce(public.is_group_teacher(
            coalesce(public.student_group_for_course(_student,
                       (select m.course_id from public.homework_assignments a
                          join public.modules m on m.id = a.module_id where a.id = _assignment)),
@@ -176,7 +178,7 @@ begin
     array[1]));
 
   insert into public.admin_actions (actor_user_id, action, details)
-  values (null, 'multi_course_teacher_side', jsonb_build_object('migration', '20261127180300', 'functions', _log));
+  values (null, 'multi_course_teacher_side', jsonb_build_object('migration', '20261127180654', 'functions', _log));
 end $patch$;
 
 -- ── self-test (read-only) ──
@@ -202,18 +204,6 @@ begin
   end if;
 
   select count(*) into _bad
-    from public.homework_submissions hs
-    join public.profiles p on p.id = hs.user_id
-    join (select g.id, g.teacher_id from public.groups g where g.teacher_id is not null
-          union select gt.group_id, gt.teacher_id from public.group_teachers gt) t on t.id = p.group_id
-   where not exists (select 1 from public.student_course_groups s where s.user_id = hs.user_id and not s.is_main)
-     and public.is_teacher_of_homework(hs.user_id, hs.assignment_id, t.teacher_id)
-         is distinct from public.is_teacher_of(hs.user_id, t.teacher_id);
-  if _bad <> 0 then
-    raise exception 'self-test: the new homework access disagrees with is_teacher_of on % single-course row(s)', _bad;
-  end if;
-
-  select count(*) into _bad
     from public.student_course_groups s
    where not s.is_main and public.student_group_for_course(s.user_id, s.course_id) is distinct from s.group_id;
   if _bad <> 0 then
@@ -224,6 +214,31 @@ begin
   _j := public.teacherless_homework_health();
 
   begin
+    -- the new homework access equals is_teacher_of for every single-course submission × teacher of their group
+    -- (as service_role: the helper answers only about the caller otherwise)
+    perform set_config('request.jwt.claims', jsonb_build_object('role', 'service_role')::text, true);
+    select count(*) into _bad
+      from public.homework_submissions hs
+      join public.profiles p on p.id = hs.user_id
+      join (select g.id, g.teacher_id from public.groups g where g.teacher_id is not null
+            union select gt.group_id, gt.teacher_id from public.group_teachers gt) t on t.id = p.group_id
+     where not exists (select 1 from public.student_course_groups s where s.user_id = hs.user_id and not s.is_main)
+       and public.is_teacher_of_homework(hs.user_id, hs.assignment_id, t.teacher_id)
+           is distinct from public.is_teacher_of(hs.user_id, t.teacher_id);
+    if _bad <> 0 then
+      raise exception 'self-test: the new homework access disagrees with is_teacher_of on % single-course row(s)', _bad;
+    end if;
+    -- …and a plain signed-in caller gets "no" about someone else: a REAL pair the teacher does teach (answered "yes"
+    -- just above as service_role) must now be "no"
+    perform set_config('request.jwt.claims', jsonb_build_object('sub', gen_random_uuid(), 'role', 'authenticated')::text, true);
+    if exists (select 1 from public.homework_submissions hs
+                 join public.profiles p on p.id = hs.user_id
+                 join public.groups g on g.id = p.group_id and g.teacher_id is not null
+                where public.is_teacher_of(hs.user_id, g.teacher_id)
+                  and public.is_teacher_of_homework(hs.user_id, hs.assignment_id, g.teacher_id)) then
+      raise exception 'self-test: is_teacher_of_homework answered about another user';
+    end if;
+
     select user_id into _uid from public.student_course_groups where not is_main order by added_at limit 1;
     if _uid is not null then
       perform set_config('request.jwt.claims', jsonb_build_object('sub', _uid, 'role', 'authenticated')::text, true);
