@@ -14,8 +14,9 @@
 //   - pickCaptureGroup()    which of the student's secondary groups owns a (chat, thread) homework topic.
 //   - auto-add              ONLY for the courses in platform_settings 'multi_course'.auto_add_course_ids (missing /
 //                           malformed = none): a registered non-staff student posting in such a course's homework
-//                           topic, or found (throttled getChatMember) in its chats, is added through the SQL engine
-//                           add_student_course_group, which audits every add (admin_actions student_course_added).
+//                           topic is added through the SQL engine add_student_course_group (audited). Joining one of
+//                           its chats is handled in SQL (auto_add_course_on_join, from the chat_member update) — no
+//                           getChatMember probe ever runs for a registered user.
 //
 // A student with no secondary course gets exactly the single-course answers every function had before.
 
@@ -162,85 +163,4 @@ export function autoAddTopicCandidate(
     cands.set(g.id, { group_id: g.id, course_id: String(g.course_id) });
   }
   return cands.size === 1 ? [...cands.values()][0] : null;
-}
-
-export type ProbeTarget = { chatId: number; courseId: string; groupIds: string[]; channel: boolean };
-
-const chatOf = (url: string | null | undefined): number | null => {
-  const m = /\/c\/(\d{1,20})\//.exec(String(url ?? ""));
-  if (!m) return null;
-  const id = -Number(`100${m[1]}`);
-  return Number.isSafeInteger(id) ? id : null;
-};
-
-/**
- * DM auto-add: the chats to probe for the auto-add courses the student is NOT in (none at all when they are in
- * every one). A course's channel (telegram_channel_chat_id → its holding group) and each real group's chat (the
- * /c/<id>/ of homework_topic_url / telegram_group_url, as resolveMembershipGroup reads them). Published courses only.
- */
-export function autoAddProbeTargets(
-  autoAdd: readonly string[],
-  sc: StudentCourseGroups,
-  courses: readonly CourseMeta[],
-  groups: readonly { id: string; course_id: string | null; homework_topic_url?: string | null; telegram_group_url?: string | null }[],
-): ProbeTarget[] {
-  const mine = new Set(taskScopeIds(sc).map((c) => c.toLowerCase()));
-  const missing = new Set(autoAdd.map((c) => c.toLowerCase()).filter((c) => !mine.has(c)));
-  if (!missing.size) return [];
-  const out = new Map<string, ProbeTarget>();
-  const holding = new Set(courses.map((c) => c.channel_group_id).filter(Boolean) as string[]);
-  for (const c of courses) {
-    const cid = String(c.id).toLowerCase();
-    if (!missing.has(cid) || !c.published) continue;
-    for (const g of groups) {
-      if (String(g.course_id ?? "").toLowerCase() !== cid || holding.has(g.id)) continue;
-      for (const url of [g.homework_topic_url, g.telegram_group_url]) {
-        const chat = chatOf(url);
-        if (chat == null) continue;
-        const k = `${chat}:${cid}`;
-        const t = out.get(k) ?? { chatId: chat, courseId: String(c.id), groupIds: [], channel: false };
-        if (!t.groupIds.includes(g.id)) t.groupIds.push(g.id);
-        out.set(k, t);
-      }
-    }
-    const ch = String(c.telegram_channel_chat_id ?? "");
-    if (c.channel_group_id && /^-100\d+$/.test(ch)) {
-      const k = `${ch}:${cid}`;
-      if (!out.has(k)) out.set(k, { chatId: Number(ch), courseId: String(c.id), groupIds: [], channel: true });
-    }
-  }
-  return [...out.values()];
-}
-
-/**
- * After the probes: per course, the group to add. A real group chat the student is in wins (one group per chat
- * listed → that group; several groups behind one chat → the first one listed, the caller orders them); else the
- * course's channel → its holding group. Courses with no hit get nothing.
- */
-export function chooseAutoAddGroups(
-  hits: readonly ProbeTarget[],
-  courses: readonly CourseMeta[],
-): { course_id: string; group_id: string; via: "group" | "channel" }[] {
-  const out: { course_id: string; group_id: string; via: "group" | "channel" }[] = [];
-  const meta = new Map(courses.map((c) => [String(c.id).toLowerCase(), c]));
-  const byCourse = new Map<string, ProbeTarget[]>();
-  for (const h of hits) byCourse.set(h.courseId.toLowerCase(), [...(byCourse.get(h.courseId.toLowerCase()) ?? []), h]);
-  for (const [cid, hs] of byCourse) {
-    const groupHit = hs.find((h) => !h.channel && h.groupIds.length);
-    if (groupHit) {
-      out.push({ course_id: groupHit.courseId, group_id: groupHit.groupIds[0], via: "group" });
-      continue;
-    }
-    const holding = meta.get(cid)?.channel_group_id;
-    if (holding && hs.some((h) => h.channel)) out.push({ course_id: hs[0].courseId, group_id: holding, via: "channel" });
-  }
-  return out;
-}
-
-/** A getChatMember answer that counts as "a student member" (admins/creators are staff: never auto-added). */
-export function isStudentMember(cm: unknown): boolean {
-  // deno-lint-ignore no-explicit-any
-  const r = (cm as any)?.result;
-  const st = r?.status;
-  return st === "member" || (st === "restricted" && r?.is_member === true);
 }

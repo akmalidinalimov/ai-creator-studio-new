@@ -50,9 +50,8 @@ import { handleQaCallback, parseQaCallback } from "./question-assist-bot.ts";
 import { langChooserKeyboard, parseProfAction, profileRows, profileWebCells, showProfileView } from "./profile-tabs.ts";
 import { sendStudentWelcome } from "./student-welcome.ts";
 import {
-  autoAddProbeTargets, autoAddTopicCandidate, chooseAutoAddGroups, type CourseMeta, courseScopeIds, groupForTaskCourse,
-  isStudentMember, loadAutoAddCourseIds, loadStudentCourseGroups, pickCaptureGroup, type ProbeTarget,
-  type StudentCourseGroups, taskScopeIds,
+  autoAddTopicCandidate, type CourseMeta, courseScopeIds, groupForTaskCourse, loadAutoAddCourseIds,
+  loadStudentCourseGroups, pickCaptureGroup, type StudentCourseGroups, taskScopeIds,
 } from "./multi-course.ts";
 import {
   bellCallback, hourPickerKeyboard, parseBellTarget, parseReminderHour, parseTimezone, saveBotSetting, tzPickerKeyboard,
@@ -7187,74 +7186,6 @@ async function secondaryTopicGroup(
   }
 }
 
-// DM auto-add: a registered non-staff student who writes to the bot is checked — at most once per 6 h, and only when
-// an auto-add course is not theirs yet — for membership of that course's chats (its channel and its groups' chats).
-// A member is added: the real group when they are in its chat, else the course's channel holding group (source
-// 'bot_dm'). Fail closed (a probe error = not a member), silent to the student; every probe run leaves one
-// notifications_log 'multi_course_probe' row (the DB throttle, with what was found) and every add an
-// admin_actions student_course_added row (the engine). bot_conversation_state is NOT used: its one row per user is
-// the live conversation state (support / name / Instagram flows treat any unexpired row as "busy").
-const MC_PROBE_EVERY_MS = 6 * 3600_000;
-const __mcProbeAt = new Map<string, number>();
-
-async function autoAddCoursesFromChats(admin: any, profile: any, tgId: number): Promise<void> {
-  try {
-    const autoAdd = await loadAutoAddCourseIds(admin);
-    if (!autoAdd.length) return; // the switch is off: no reads, no probes
-    const last = __mcProbeAt.get(profile.id) ?? 0;
-    if (Date.now() - last < MC_PROBE_EVERY_MS) return;
-    __mcProbeAt.set(profile.id, Date.now());
-    if (__mcProbeAt.size > 5000) __mcProbeAt.clear();
-
-    const sc = await loadStudentCourseGroups(admin, profile.id);
-    const mine = new Set(taskScopeIds(sc).map((c) => c.toLowerCase()));
-    const missing = autoAdd.filter((c) => !mine.has(c));
-    if (!missing.length) return; // already in every auto-add course
-
-    const since = new Date(Date.now() - MC_PROBE_EVERY_MS).toISOString();
-    const { data: recent, error: recentErr } = await admin.from("notifications_log").select("id")
-      .eq("user_id", profile.id).eq("notification_type", "multi_course_probe").gte("sent_at", since).limit(1);
-    if (recentErr || (recent && recent.length)) return;
-    if (await isStaffUser(admin, profile.id)) return;
-
-    const [{ data: cs }, { data: gs }] = await Promise.all([
-      admin.from("courses").select("id, published, channel_group_id, telegram_channel_chat_id").in("id", missing),
-      admin.from("groups").select("id, course_id, homework_topic_url, telegram_group_url, homework_topic_id, created_at").in("course_id", missing),
-    ]);
-    const courses = (cs || []) as CourseMeta[];
-    // the group listed first wins a shared chat: one with a homework topic, then the newest (resolveMembershipGroup's order)
-    const groups = ((gs || []) as any[]).sort((a, b) =>
-      (b.homework_topic_id != null ? 1 : 0) - (a.homework_topic_id != null ? 1 : 0) ||
-      String(b.created_at).localeCompare(String(a.created_at)));
-    const targets = autoAddProbeTargets(autoAdd, sc, courses, groups).slice(0, 10);
-
-    const hits: ProbeTarget[] = [];
-    let errors = 0;
-    for (const tg of targets) {
-      try {
-        const resp = await tgApi("getChatMember", { chat_id: tg.chatId, user_id: tgId });
-        const cm: any = await resp.json().catch(() => null);
-        if (!cm || cm.ok !== true) { errors++; continue; }
-        if (isStudentMember(cm)) hits.push(tg);
-      } catch (_e) {
-        errors++;
-      }
-    }
-    const added: Record<string, unknown>[] = [];
-    for (const pick of chooseAutoAddGroups(hits, courses)) {
-      const status = await addCourseGroupViaEngine(admin, profile.id, pick.group_id, "bot_dm");
-      added.push({ ...pick, status });
-    }
-    if (added.some((a) => a.status === "added" || a.status === "changed")) cacheInvalidateUser(profile.id);
-    await admin.from("notifications_log").insert({
-      user_id: profile.id, notification_type: "multi_course_probe", sent_at: new Date().toISOString(),
-      payload: { courses: missing, probed: targets.length, errors, member_chats: hits.map((h) => h.chatId), added },
-    });
-  } catch (e) {
-    console.error("multi-course:dm-probe-err", String(e).slice(0, 200));
-  }
-}
-
 // PR-1 CHAT GUARD, the refusal side: a registered student's media post that is NOT in their own group's
 // homework topic (capture-guard.ts findOwnHomeworkTopic said no). Never captured. Member-forgiving:
 //   - inside ANOTHER group's homework topic (this chat or any other): an in-thread redirect to their own
@@ -9252,6 +9183,24 @@ Deno.serve(async (req) => {
           await logHealth(admin, "course_membership_event_failed", { kind: joined ? "join" : "leave", chat_id: chat, error: failure },
             { source: "telegram-bot-webhook" });
         }
+        // Multi-course (PR 3a): a registered student who JOINS a chat of an auto-add course (platform_settings
+        // multi_course.auto_add_course_ids) gets that course as a second course, decided in SQL
+        // (auto_add_course_on_join: not staff, not their main course, channel → its holding group, a real group's
+        // chat → that group). Event-driven: no getChatMember probe ever runs for a registered user (CLAUDE.md).
+        if (st === "member" || (st === "restricted" && cm?.new_chat_member?.is_member === true)) {
+          try {
+            const { data: aa, error: aaErr } = await admin.rpc("auto_add_course_on_join", { _telegram_id: tg, _chat_id: chat });
+            if (aaErr) {
+              await logHealth(admin, "multi_course_auto_add_failed", { source: "telegram_join", chat_id: chat, error: String(aaErr.message ?? aaErr).slice(0, 200) },
+                { source: "telegram-bot-webhook" });
+            } else if (aa && (aa.status === "added" || aa.status === "changed") && aa.user_id) {
+              cacheInvalidateUser(String(aa.user_id));
+            }
+          } catch (e) {
+            await logHealth(admin, "multi_course_auto_add_failed", { source: "telegram_join", chat_id: chat, error: String(e).slice(0, 200) },
+              { source: "telegram-bot-webhook" });
+          }
+        }
       }
       return new Response("ok", { status: 200, headers: corsHeaders });
     }
@@ -9384,19 +9333,6 @@ Deno.serve(async (req) => {
       // that flag is off. Throttled 1h/chat; can never block or break the actual interaction (menu-button.ts).
       if (isPrivateChat && profileForLocale) {
         try { await syncMenuLive(admin, msg.chat.id, menuSyncOpts(persona, locale)); } catch (_e) { /* best-effort */ }
-      }
-
-      // Multi-course auto-add (PR 3a): a registered student in the chats of an auto-add course they are not in yet is
-      // added to it (throttled 6 h/student, getChatMember only for those courses, nothing at all when the
-      // platform_settings multi_course list is empty). Awaited for /start so the welcome already lists the course;
-      // any other message runs it in the background and is answered at once.
-      if (isPrivateChat && profileForLocale && persona === "student" && Number(profileForLocale.telegram_id) === Number(msg.from.id)) {
-        const mcTask = autoAddCoursesFromChats(admin, profileForLocale, msg.from.id);
-        if (text === "/start") await mcTask;
-        else {
-          const erMc: any = (globalThis as any).EdgeRuntime;
-          if (erMc?.waitUntil) erMc.waitUntil(mcTask); else mcTask.catch(() => {});
-        }
       }
 
       // ❓ a teacher's / admin's answer after «✍️ Javob yozish» on a curator question (teacher-questions-bot.ts)

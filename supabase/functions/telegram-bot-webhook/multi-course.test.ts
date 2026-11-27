@@ -4,8 +4,8 @@
 // Run: deno test supabase/functions/telegram-bot-webhook/multi-course.test.ts
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
-  _resetAutoAddCache, autoAddProbeTargets, autoAddTopicCandidate, chooseAutoAddGroups, courseScopeIds, groupForTaskCourse,
-  isStudentMember, loadAutoAddCourseIds, loadStudentCourseGroups, parseAutoAddConfig, pickCaptureGroup,
+  _resetAutoAddCache, autoAddTopicCandidate, courseScopeIds, groupForTaskCourse,
+  loadAutoAddCourseIds, loadStudentCourseGroups, parseAutoAddConfig, pickCaptureGroup,
   type StudentCourseGroups, taskScopeIds,
 } from "./multi-course.ts";
 import { FakeDb } from "../_bot/testing/fake-db.ts";
@@ -139,38 +139,6 @@ Deno.test("autoAddTopicCandidate: an auto-add course they are not in → that gr
   assertEquals(autoAddTopicCandidate([{ id: GH, course_id: CS }], [CS], COURSES, single), null);
   // two candidate groups behind one topic → ambiguous
   assertEquals(autoAddTopicCandidate([{ id: GS, course_id: CS }, { id: GX, course_id: CS }], [CS], COURSES, single), null);
-});
-
-const GROUPS = [
-  { id: GS, course_id: CS, homework_topic_url: "https://t.me/c/3000000002/5", telegram_group_url: "https://t.me/+invite" },
-  { id: GH, course_id: CS, homework_topic_url: null, telegram_group_url: null },
-  { id: G7, course_id: C7, homework_topic_url: "https://t.me/c/2000000000/7", telegram_group_url: null },
-];
-
-Deno.test("autoAddProbeTargets: nothing when they are in every auto-add course; else the course's group chats + channel", () => {
-  assertEquals(autoAddProbeTargets([], single, COURSES, GROUPS), []);
-  assertEquals(autoAddProbeTargets([CS], multi, COURSES, GROUPS), []);
-  assertEquals(autoAddProbeTargets([CS], single, COURSES, GROUPS), [
-    { chatId: -1003000000002, courseId: CS, groupIds: [GS], channel: false },
-    { chatId: -1003000000001, courseId: CS, groupIds: [], channel: true },
-  ]);
-});
-
-Deno.test("chooseAutoAddGroups: a real group chat wins; channel only → the holding group; no hit → nothing", () => {
-  const groupT = { chatId: -1003000000002, courseId: CS, groupIds: [GS], channel: false };
-  const chanT = { chatId: -1003000000001, courseId: CS, groupIds: [], channel: true };
-  assertEquals(chooseAutoAddGroups([chanT, groupT], COURSES), [{ course_id: CS, group_id: GS, via: "group" }]);
-  assertEquals(chooseAutoAddGroups([chanT], COURSES), [{ course_id: CS, group_id: GH, via: "channel" }]);
-  assertEquals(chooseAutoAddGroups([], COURSES), []);
-});
-
-Deno.test("isStudentMember: member / present-restricted only (admins and creators are staff, never auto-added)", () => {
-  assertEquals(isStudentMember({ ok: true, result: { status: "member" } }), true);
-  assertEquals(isStudentMember({ ok: true, result: { status: "restricted", is_member: true } }), true);
-  assertEquals(isStudentMember({ ok: true, result: { status: "restricted", is_member: false } }), false);
-  assertEquals(isStudentMember({ ok: true, result: { status: "left" } }), false);
-  assertEquals(isStudentMember({ ok: true, result: { status: "administrator" } }), false);
-  assertEquals(isStudentMember(null), false);
 });
 
 Deno.test("capture group from (chat, thread): same topic number in the main and the secondary chat resolves per chat", async () => {
