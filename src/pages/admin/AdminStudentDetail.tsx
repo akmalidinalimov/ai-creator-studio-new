@@ -65,17 +65,22 @@ export default function AdminStudentDetail() {
   const [courseOptions, setCourseOptions] = useState<{ id: string; title: string }[]>([]);
   const [lessonIds, setLessonIds] = useState<string[] | null>(null);
   const [assignmentIds, setAssignmentIds] = useState<string[] | null>(null);
+  // multi-course: the student's SECONDARY courses (student_course_groups, non-main rows) — read-only here
+  const [secondary, setSecondary] = useState<{ courseId: string; courseTitle: string; groupId: string; groupName: string }[]>([]);
 
   useEffect(() => {
     if (!id) return;
     (async () => {
       setLoading(true);
-      const [{ data: p }, { data: r }, { data: enr }, { data: allCourses }] = await Promise.all([
+      const [{ data: p }, { data: r }, { data: enr }, { data: allCourses }, sec] = await Promise.all([
         supabase.from("profiles").select("*, groups:group_id(id,name,course_id)").eq("id", id).maybeSingle(),
         supabase.from("user_roles").select("role").eq("user_id", id),
         supabase.from("enrollments").select("course_id").eq("user_id", id),
         supabase.from("courses").select("id,title"),
+        (supabase.from("student_course_groups" as any) as any)
+          .select("course_id, group_id, groups:group_id(name)").eq("user_id", id).eq("is_main", false),
       ]);
+      if ((sec as any)?.error) toast.error((sec as any).error.message);
       setProfile(p as any);
       const rank: Record<string, number> = { superadmin: 1, admin: 2, teacher: 3, student: 4 };
       const top = (r || []).map((x: any) => x.role).sort((a, b) => (rank[a] || 99) - (rank[b] || 99))[0];
@@ -86,6 +91,12 @@ export default function AdminStudentDetail() {
       const enrolledIds = ((enr as any[]) || []).map((e: any) => e.course_id).filter(Boolean);
       const optIds = Array.from(new Set([groupCourse, ...enrolledIds].filter(Boolean))) as string[];
       setCourseOptions(optIds.map((cid) => ({ id: cid, title: titleById.get(cid) || "Course" })));
+      setSecondary((((sec as any)?.data as any[]) || []).map((s: any) => ({
+        courseId: s.course_id,
+        courseTitle: titleById.get(s.course_id) || "Kurs",
+        groupId: s.group_id,
+        groupName: s.groups?.name || "—",
+      })).sort((a, b) => a.courseTitle.localeCompare(b.courseTitle)));
       setCourseId(groupCourse || enrolledIds[0] || null);
       setLoading(false);
     })();
@@ -170,6 +181,13 @@ export default function AdminStudentDetail() {
                       <Badge variant="secondary" className="hover:bg-secondary/80">Guruh: {profile.groups.name}</Badge>
                     </Link>
                   )}
+                  {secondary.map((s) => (
+                    <Link key={s.courseId} to={`/admin/groups/${s.groupId}`}>
+                      <Badge variant="outline" className="hover:bg-secondary/80" title="Qo'shimcha kurs (reyting asosiy kursda qoladi)">
+                        + {s.courseTitle} · {s.groupName}
+                      </Badge>
+                    </Link>
+                  ))}
                   {profile.telegram_id ? (
                     <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 border-emerald-500/30">TG ulangan</Badge>
                   ) : (

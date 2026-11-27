@@ -10,6 +10,7 @@ type DbError = { code?: string; message: string } | null;
 const h = vi.hoisted(() => ({
   course: { data: "c6" as unknown, error: null as DbError },
   enrollments: { data: [] as unknown[], error: null as DbError },
+  secondary: { data: [] as unknown[], error: null as DbError },
   assignQueries: [] as Array<{ inCol: string; ids: unknown }>,
   tablesRead: [] as string[],
   beacon: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock("@/integrations/supabase/client", () => {
         then: (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) => {
           if (table === "homework_assignments") h.assignQueries.push(inArgs ?? { inCol: "(none)", ids: null });
           const out = table === "enrollments" ? h.enrollments
+            : table === "student_course_groups" ? h.secondary
             : table === "homework_assignments" ? { data: ASSIGN, error: null }
             : { data: [], error: null };
           return Promise.resolve(out).then(res, rej);
@@ -53,6 +55,7 @@ import { HomeworkProfileSection } from "@/components/HomeworkProfileSection";
 beforeEach(() => {
   h.course = { data: "c6", error: null };
   h.enrollments = { data: [], error: null };
+  h.secondary = { data: [], error: null };
   h.assignQueries = [];
   h.tablesRead = [];
   h.beacon.mockReset();
@@ -64,6 +67,18 @@ describe("resolveHomeworkCourseIds", () => {
     h.enrollments = { data: [{ course_id: "c5" }, { course_id: "c6" }], error: null };
     expect(await resolveHomeworkCourseIds(supabase, "u1")).toEqual({ courseIds: ["c6"], source: "group" });
     expect(h.tablesRead).not.toContain("groups");   // never the RLS-blocked client read again
+  });
+
+  it("multi-course: a student's SECOND course is added after the group's course", async () => {
+    h.secondary = { data: [{ course_id: "cs" }, { course_id: "c6" }], error: null };
+    expect(await resolveHomeworkCourseIds(supabase, "u1")).toEqual({ courseIds: ["c6", "cs"], source: "group" });
+    expect(h.beacon).not.toHaveBeenCalled();
+  });
+
+  it("a failed secondary-course read keeps the group's course alone, and is beaconed", async () => {
+    h.secondary = { data: null as unknown as unknown[], error: { code: "42501", message: "denied" } };
+    expect(await resolveHomeworkCourseIds(supabase, "u1")).toEqual({ courseIds: ["c6"], source: "group" });
+    expect(h.beacon).toHaveBeenCalledWith(expect.objectContaining({ message: "homework_scope_unresolved", extra: { step: "secondary_courses", code: "42501" } }));
   });
 
   it("no group course: the student's own enrollments", async () => {

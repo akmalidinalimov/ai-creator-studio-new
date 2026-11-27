@@ -11,6 +11,12 @@
  * RULE: the group's course, resolved server-side by group_rating_course_id(uid) (SECURITY DEFINER,
  * self-or-admin gate — the same lookup the Reyting screen uses). Only a student WITHOUT a group course
  * falls back to their own enrollments, and no course at all means an empty list, never "all courses".
+ *
+ * MULTI-COURSE (PR 4): a student can also be in a SECOND course (student_course_groups, non-main row; RLS lets a
+ * student read their own rows). Those courses are added after the group's course. A single-course student has no
+ * such row, so their scope is exactly the group's course, as before. (Without a group course the enrollment
+ * fallback already covers a secondary course: adding one always enrolls the student.) A failed read of the
+ * secondary rows degrades to the group's course alone, beaconed.
  */
 import { reportClientError } from "@/lib/beacon";
 
@@ -29,7 +35,23 @@ export async function resolveHomeworkCourseIds(client: any, userId: string): Pro
   } catch (e: any) {
     reportClientError({ type: "other", message: "homework_scope_unresolved", extra: { code: String(e?.message ?? e) } });
   }
-  if (groupCourse) return { courseIds: [groupCourse], source: "group" };
+  if (groupCourse) {
+    const ids = [groupCourse];
+    try {
+      const { data: sec, error: secErr } = await client.from("student_course_groups")
+        .select("course_id").eq("user_id", userId).eq("is_main", false);
+      if (secErr) {
+        reportClientError({ type: "other", message: "homework_scope_unresolved", extra: { step: "secondary_courses", code: secErr.code ?? secErr.message ?? null } });
+      }
+      for (const r of ((sec as any[]) || [])) {
+        const c = r?.course_id;
+        if (typeof c === "string" && c && !ids.includes(c)) ids.push(c);
+      }
+    } catch (e: any) {
+      reportClientError({ type: "other", message: "homework_scope_unresolved", extra: { step: "secondary_courses", code: String(e?.message ?? e) } });
+    }
+    return { courseIds: ids, source: "group" };
+  }
 
   const { data: enr, error: enrErr } = await client.from("enrollments").select("course_id").eq("user_id", userId);
   if (enrErr) {
