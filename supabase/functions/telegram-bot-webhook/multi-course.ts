@@ -40,12 +40,30 @@ function publishedOf(row: unknown): boolean {
   return (Array.isArray(c) ? c[0]?.published : c?.published) === true;
 }
 
+/**
+ * The student's SECONDARY course groups only — ONE query. The cheap first check on every hot path: with none (99% of
+ * students) the callers keep their old single-course code and pay nothing else. A failed read = none.
+ */
+export async function loadSecondaryCourseGroups(admin: Db, userId: string): Promise<CourseGroup[]> {
+  const secRes = await admin.from("student_course_groups").select("course_id, group_id, courses(published)")
+    .eq("user_id", userId).eq("is_main", false);
+  const secondary: CourseGroup[] = [];
+  if (secRes?.error) return secondary;
+  for (const r of (secRes?.data || []) as unknown[]) {
+    // deno-lint-ignore no-explicit-any
+    const row = r as any;
+    if (!row?.course_id || !row?.group_id) continue;
+    if (secondary.some((s) => s.course_id === row.course_id)) continue;
+    secondary.push({ group_id: String(row.group_id), course_id: String(row.course_id), published: publishedOf(row) });
+  }
+  return secondary;
+}
+
 /** The student's main group (+ its course) and secondary course groups. A failed secondary read = none. */
 export async function loadStudentCourseGroups(admin: Db, userId: string): Promise<StudentCourseGroups> {
-  const [profRes, secRes] = await Promise.all([
+  const [profRes, sec] = await Promise.all([
     admin.from("profiles").select("group_id").eq("id", userId).maybeSingle(),
-    admin.from("student_course_groups").select("course_id, group_id, courses(published)")
-      .eq("user_id", userId).eq("is_main", false),
+    loadSecondaryCourseGroups(admin, userId),
   ]);
   const gid: string | null = profRes?.data?.group_id ?? null;
   let main: StudentCourseGroups["main"] = null;
@@ -53,17 +71,8 @@ export async function loadStudentCourseGroups(admin: Db, userId: string): Promis
     const { data: g } = await admin.from("groups").select("course_id, courses(published)").eq("id", gid).maybeSingle();
     main = { group_id: gid, course_id: g?.course_id ?? null, published: publishedOf(g) };
   }
-  const secondary: CourseGroup[] = [];
-  if (!secRes?.error) {
-    for (const r of (secRes?.data || []) as unknown[]) {
-      // deno-lint-ignore no-explicit-any
-      const row = r as any;
-      if (!row?.course_id || !row?.group_id) continue;
-      if (main?.course_id && row.course_id === main.course_id) continue; // never the main course twice
-      if (secondary.some((s) => s.course_id === row.course_id)) continue;
-      secondary.push({ group_id: String(row.group_id), course_id: String(row.course_id), published: publishedOf(row) });
-    }
-  }
+  // never the main course twice
+  const secondary = sec.filter((s) => !(main?.course_id && s.course_id === main.course_id));
   return { main, secondary };
 }
 

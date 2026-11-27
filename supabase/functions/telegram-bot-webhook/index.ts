@@ -51,7 +51,7 @@ import { langChooserKeyboard, parseProfAction, profileRows, profileWebCells, sho
 import { sendStudentWelcome } from "./student-welcome.ts";
 import {
   autoAddTopicCandidate, type CourseMeta, courseScopeIds, groupForTaskCourse, loadAutoAddCourseIds,
-  loadStudentCourseGroups, pickCaptureGroup, type StudentCourseGroups, taskScopeIds,
+  loadSecondaryCourseGroups, loadStudentCourseGroups, pickCaptureGroup, type StudentCourseGroups, taskScopeIds,
 } from "./multi-course.ts";
 import {
   bellCallback, hourPickerKeyboard, parseBellTarget, parseReminderHour, parseTimezone, saveBotSetting, tzPickerKeyboard,
@@ -5722,8 +5722,15 @@ async function setMessageReaction(chatId: number, messageId: number, emoji = "âœ
 // for the same reason (multi-course.ts taskScopeIds). Any other course is still a previous course, refused as before.
 async function currentCourseScope(admin: any, userId: string): Promise<string[]> {
   try {
-    const ids = taskScopeIds(await loadStudentCourseGroups(admin, userId));
-    if (ids.length) return ids;
+    if ((await loadSecondaryCourseGroups(admin, userId)).length) {
+      const ids = taskScopeIds(await loadStudentCourseGroups(admin, userId));
+      if (ids.length) return ids;
+    } else {
+      // single-course student: exactly the pre-multi-course read
+      const { data: p } = await admin.from("profiles").select("group_id, groups:group_id(course_id)").eq("id", userId).maybeSingle();
+      const c = (p as any)?.groups?.course_id;
+      if (c) return [c];
+    }
   } catch (_e) { /* fall back */ }
   return await getCourseIdsForUser(admin, userId);
 }
@@ -5789,8 +5796,11 @@ async function startHomeworkIntent(
   // the TASK's course â€” a secondary course's group for its tasks, else profiles.group_id exactly as before.
   let intentGroupId: string | null = profile.group_id ?? null;
   try {
-    const sc = await loadStudentCourseGroups(admin, profile.id);
-    if (sc.secondary.length) intentGroupId = groupForTaskCourse((a as any).modules?.course_id ?? null, sc) ?? intentGroupId;
+    const secondary = await loadSecondaryCourseGroups(admin, profile.id);   // one read; none = as before
+    if (secondary.length) {
+      const sc: StudentCourseGroups = { main: profile.group_id ? { group_id: profile.group_id, course_id: null, published: true } : null, secondary };
+      intentGroupId = groupForTaskCourse((a as any).modules?.course_id ?? null, sc) ?? intentGroupId;
+    }
   } catch (_e) { /* the main group, as before */ }
   if (!intentGroupId) { await sendMessage(chatId, t.hwIntentNoGroup); return; }
   const { url: topicUrl } = await resolveModuleTopicUrl(admin, intentGroupId, a.module_id);
@@ -7128,7 +7138,7 @@ async function isStaffUser(admin: any, userId: string): Promise<boolean> {
 
 /** add_student_course_group (the SQL engine audits every add). An RPC error is DB-visible and = not added. */
 async function addCourseGroupViaEngine(
-  admin: any, userId: string, groupId: string, source: "bot_topic" | "bot_dm",
+  admin: any, userId: string, groupId: string, source: "bot_topic",
 ): Promise<string | null> {
   try {
     const { data, error } = await admin.rpc("add_student_course_group", { _uid: userId, _group: groupId, _source: source, _actor: null });
@@ -7157,11 +7167,12 @@ async function secondaryTopicGroup(
   const others = topicGroupIds.filter((id) => id !== mainGroupId);
   if (!others.length) return null; // not another group's homework topic (general chat): nothing to look up
   try {
-    const sc = await loadStudentCourseGroups(admin, profile.id);
-    let groupId: string | null = pickCaptureGroup(others, sc.secondary)?.group_id ?? null;
+    const secondary = await loadSecondaryCourseGroups(admin, profile.id);   // one read
+    let groupId: string | null = pickCaptureGroup(others, secondary)?.group_id ?? null;
     if (!groupId) {
-      const autoAdd = await loadAutoAddCourseIds(admin);
+      const autoAdd = await loadAutoAddCourseIds(admin);                     // cached 5 min
       if (!autoAdd.length) return null;
+      const sc = await loadStudentCourseGroups(admin, profile.id);
       const { data: tgs } = await admin.from("groups").select("id, course_id").in("id", others);
       const topicGroups = ((tgs || []) as any[]).filter((g) => g?.course_id && autoAdd.includes(String(g.course_id).toLowerCase()));
       if (!topicGroups.length) return null;
@@ -7405,8 +7416,12 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
         // SECONDARY groups (or of an auto-add course's group, which adds them). Then THAT group (and its course)
         // drives everything below: picker, pending post, intent, teachers. Reached only by posts outside the main
         // group's homework topic, so a normal post costs nothing extra.
-        topicGroupIds = await homeworkTopicGroupIds(admin, chatId, threadId);
-        const sec = await secondaryTopicGroup(admin, profile, grp?.id ?? null, chatId, threadId, topicGroupIds);
+        // A student with NO main group (rare) and no secondary course, with auto-add off, keeps the old zero-query
+        // silence (review: no new cost on their general-chat posts).
+        const mayMatter = !!grp || (await loadAutoAddCourseIds(admin)).length > 0 ||
+          (await loadSecondaryCourseGroups(admin, profile.id)).length > 0;
+        topicGroupIds = mayMatter ? await homeworkTopicGroupIds(admin, chatId, threadId) : [];
+        const sec = mayMatter ? await secondaryTopicGroup(admin, profile, grp?.id ?? null, chatId, threadId, topicGroupIds) : null;
         if (sec) {
           grp = sec.grp;
           groupId = sec.grp.id;
