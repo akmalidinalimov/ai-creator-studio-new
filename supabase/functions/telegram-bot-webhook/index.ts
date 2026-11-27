@@ -57,6 +57,10 @@ import {
   loadSecondaryCourseGroups, loadStudentCourseGroups, pickCaptureGroup, type StudentCourseGroups, taskScopeIds,
 } from "./multi-course.ts";
 import {
+  assignmentsNeedingCourse, buildTeacherScope, inTeacherScope, type ScopeSecondaryRow, scopeSubmissions, submissionGroupOf,
+  type TeacherScope,
+} from "./teacher-course-scope.ts";
+import {
   bellCallback, hourPickerKeyboard, parseBellTarget, parseReminderHour, parseTimezone, saveBotSetting, tzPickerKeyboard,
 } from "./bot-settings.ts";
 import {
@@ -3591,15 +3595,95 @@ async function teacherGroups(admin: any, teacherId: string): Promise<{ id: strin
   return (data || []) as any[];
 }
 
+// The students of a teacher's groups (or of the one group): main members, then — multi-course PR 3b — the students
+// whose SECONDARY course group (student_course_groups) is one of them. Rosters, /tstudents and the broadcast.
 async function teacherStudentIds(admin: any, teacherId: string, groupId?: string | null): Promise<string[]> {
-  if (groupId) {
-    const { data } = await admin.from("profiles").select("id").eq("group_id", groupId);
-    return ((data || []) as any[]).map((r) => r.id);
+  const gids = groupId ? [groupId] : (await teacherGroups(admin, teacherId)).map((g) => g.id);
+  if (!gids.length) return [];
+  const [{ data }, sec] = await Promise.all([
+    admin.from("profiles").select("id, group_id").in("group_id", gids),
+    secondaryCourseRows(admin, "group_id", gids),
+  ]);
+  return buildTeacherScope(gids, (data || []) as any[], sec).studentIds;
+}
+
+// ── multi-course PR 3b: the teacher side (teacher-course-scope.ts) ──
+// A homework belongs to the student's group in the TASK's course, else their main group (SQL
+// homework_group_for_submission). A student with no secondary course (99%) is placed in their main group with no
+// extra read, so every list below is unchanged for them.
+
+/** Non-main student_course_groups rows by group or by student. A failed read = none (the pre-multi-course scope), recorded. */
+async function secondaryCourseRows(admin: any, col: "group_id" | "user_id", ids: string[]): Promise<ScopeSecondaryRow[]> {
+  if (!ids.length) return [];
+  const { data, error } = await admin.from("student_course_groups").select("user_id, course_id, group_id")
+    .eq("is_main", false).in(col, ids);
+  if (error) {
+    await logHealthOnce(admin, "teacher_scope_course_groups_unreadable", `by_${col}`, { error: String(error.message || error).slice(0, 300) },
+      { source: "telegram-bot-webhook" });
+    return [];
   }
-  const groups = await teacherGroups(admin, teacherId);
-  if (!groups.length) return [];
-  const { data } = await admin.from("profiles").select("id").in("group_id", groups.map((g) => g.id));
-  return ((data || []) as any[]).map((r) => r.id);
+  return (data || []) as ScopeSecondaryRow[];
+}
+
+/**
+ * A grader's scope, placed per SUBMISSION. null = admin (no filter). groupId = only that group. The main members'
+ * own secondary rows are read too, so their second-course work leaves this teacher's lists.
+ */
+async function loadGradingScope(admin: any, graderId: string, isAdmin: boolean, groupId?: string | null): Promise<TeacherScope | null> {
+  if (isAdmin) return null;
+  const gids = groupId ? [groupId] : (await teacherGroups(admin, graderId)).map((g) => g.id);
+  if (!gids.length) return buildTeacherScope([], [], []);
+  const [{ data: mains }, secIn] = await Promise.all([
+    admin.from("profiles").select("id, group_id").in("group_id", gids),
+    secondaryCourseRows(admin, "group_id", gids),
+  ]);
+  const mainRows = (mains || []) as any[];
+  const secOfMain = await secondaryCourseRows(admin, "user_id", mainRows.map((r) => r.id));
+  return buildTeacherScope(gids, mainRows, [...secIn, ...secOfMain]);
+}
+
+/** assignment id → its course (modules.course_id). A failed read = empty (each submission falls back to the main group). */
+async function assignmentCourseMap(admin: any, aIds: string[]): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  if (!aIds.length) return out;
+  const { data } = await admin.from("homework_assignments").select("id, modules(course_id)").in("id", aIds);
+  for (const a of (data || []) as any[]) {
+    const m = Array.isArray(a?.modules) ? a.modules[0] : a?.modules;
+    out.set(a.id, m?.course_id ?? null);
+  }
+  return out;
+}
+
+/** The submissions of this scope, each with its group (admin: all, groupId null). Reads task courses only when needed. */
+async function scopeSubs<T extends { user_id: string; assignment_id: string }>(
+  admin: any, scope: TeacherScope | null, subs: T[],
+): Promise<{ sub: T; groupId: string | null }[]> {
+  if (!scope) return subs.map((sub) => ({ sub, groupId: null }));
+  const need = assignmentsNeedingCourse(scope, subs);
+  return scopeSubmissions(scope, subs, await assignmentCourseMap(admin, need));
+}
+
+/**
+ * The group a submission belongs to (SQL homework_group_for_submission). A failed / empty RPC = the student's main
+ * group, the pre-multi-course answer. For a single-course student it IS the main group (PR 2 self-test).
+ */
+async function submissionGroupId(admin: any, submissionId: string, studentId: string, knownMainGroupId?: string | null): Promise<string | null> {
+  try {
+    const { data, error } = await admin.rpc("homework_group_for_submission", { _sid: submissionId });
+    if (!error && typeof data === "string" && data) return data;
+    if (error) console.error("homework_group_for_submission failed", String(error.message || error).slice(0, 200));
+  } catch (e) {
+    console.error("homework_group_for_submission threw", String(e).slice(0, 200));
+  }
+  if (knownMainGroupId !== undefined) return knownMainGroupId;
+  const { data: p } = await admin.from("profiles").select("group_id").eq("id", studentId).maybeSingle();
+  return p?.group_id ?? null;
+}
+
+/** C2 for one submission: does this grader teach the SUBMISSION's group (groups.teacher_id or group_teachers)? */
+async function graderTeachesSubmission(admin: any, graderId: string, submissionId: string, studentId: string): Promise<boolean> {
+  const [gid, groups] = await Promise.all([submissionGroupId(admin, submissionId, studentId), teacherGroups(admin, graderId)]);
+  return !!gid && groups.some((g) => g.id === gid);
 }
 
 // Resolve which group the teacher is currently acting on.
@@ -3929,21 +4013,12 @@ async function handleTeacherCommand(admin: any, chatId: number, teacherId: strin
 
 // =================== GRADING (teacher + admin) ===================
 
-// Returns submissions in scope for grader. teacher=group students, admin=all.
-async function gradingScopeIds(admin: any, graderId: string, isAdmin: boolean, groupId?: string | null): Promise<string[] | null> {
-  if (isAdmin) return null; // null = no scope filter
-  if (groupId) {
-    const { data } = await admin.from("profiles").select("id").eq("group_id", groupId);
-    return ((data || []) as any[]).map((r) => r.id);
-  }
-  const groups = await teacherGroups(admin, graderId);
-  if (!groups.length) return [];
-  const { data } = await admin.from("profiles").select("id").in("group_id", groups.map((g) => g.id));
-  return ((data || []) as any[]).map((r) => r.id);
-}
+// Grading scope (teacher = their groups' submissions, admin = all): loadGradingScope + scopeSubs above. The old
+// gradingScopeIds ("students whose profiles.group_id is mine") is gone — multi-course PR 3b places each SUBMISSION.
 
 async function loadGradingSubmissions(admin: any, graderId: string, isAdmin: boolean, opts: { scored: boolean; limit?: number; groupId?: string | null }) {
-  const ids = await gradingScopeIds(admin, graderId, isAdmin, opts.groupId);
+  const scope = await loadGradingScope(admin, graderId, isAdmin, opts.groupId);
+  const ids = scope ? scope.studentIds : null;
   if (ids && ids.length === 0) return [];
   let q = admin.from("homework_submissions").select("id, assignment_id, user_id, submitted_at, score, score_feedback, scored_at, is_late");
   if (ids) q = q.in("user_id", ids);
@@ -3954,7 +4029,7 @@ async function loadGradingSubmissions(admin: any, graderId: string, isAdmin: boo
     : q.or("score.is.null,score_is_stale.is.true").order("submitted_at", { ascending: true });
   if (opts.limit) q = q.limit(opts.limit);
   const { data: subs } = await q;
-  const list = (subs || []) as any[];
+  const list = (await scopeSubs(admin, scope, (subs || []) as any[])).map((x) => x.sub);
   if (!list.length) return [];
   const aIds = Array.from(new Set(list.map((s) => s.assignment_id)));
   const uIds = Array.from(new Set(list.map((s) => s.user_id)));
@@ -3981,19 +4056,19 @@ async function handleGradingCommand(
     if (!isAdmin) {
       const tGroups = await teacherGroups(admin, graderId);
       if (tGroups.length > 1) {
-        const gIds = tGroups.map((g: any) => g.id);
-        const { data: studs } = await admin.from("profiles").select("id, group_id").in("group_id", gIds);
-        const uidToGroup = new Map(((studs || []) as any[]).map((s: any) => [s.id, s.group_id]));
-        const uids = Array.from(uidToGroup.keys());
-        let pend: any[] = [];
+        // Per-group pending = each submission counted in ITS group (multi-course PR 3b: the task course's group,
+        // else the main group) — the same placement the list behind each button uses.
+        const scope = (await loadGradingScope(admin, graderId, false))!;
+        const uids = scope.studentIds;
+        let pend: { sub: any; groupId: string | null }[] = [];
         if (uids.length) {
           const { data: subs } = await admin.from("homework_submissions")
-            .select("user_id").or("score.is.null,score_is_stale.is.true").in("user_id", uids);
-          pend = (subs || []) as any[];
+            .select("user_id, assignment_id").or("score.is.null,score_is_stale.is.true").in("user_id", uids);
+          pend = await scopeSubs(admin, scope, (subs || []) as any[]);
         }
         const byGroup = new Map<string, number>();
         for (const s of pend) {
-          const gid = uidToGroup.get(s.user_id);
+          const gid = s.groupId;
           if (gid) byGroup.set(gid, (byGroup.get(gid) || 0) + 1);
         }
         const btns: any[][] = tGroups.map((g: any) => [{
@@ -4028,10 +4103,11 @@ const PICKER_PAGE_SIZE = 10;
 
 async function renderStudentPicker(admin: any, chatId: number, graderId: string, locale: Locale, isAdmin: boolean, page: number, groupId?: string | null) {
   const t = T[locale] as any;
-  const ids = await gradingScopeIds(admin, graderId, isAdmin, groupId);
+  const scope = await loadGradingScope(admin, graderId, isAdmin, groupId);
+  const ids = scope ? scope.studentIds : null;
   // Pending = ungraded OR re-opened (stale) — same rule as loadGradingSubmissions, so
   // resubmissions awaiting regrade are counted here too.
-  let q = admin.from("homework_submissions").select("user_id").or("score.is.null,score_is_stale.is.true");
+  let q = admin.from("homework_submissions").select("user_id, assignment_id").or("score.is.null,score_is_stale.is.true");
   if (ids) {
     if (ids.length === 0) {
       await sendWithKeyboard(chatId, `${t.gradePending}\n\n${t.gradeNoneP}`, locale, isAdmin, isAdmin ? "admin" : "teacher");
@@ -4040,17 +4116,32 @@ async function renderStudentPicker(admin: any, chatId: number, graderId: string,
     q = q.in("user_id", ids);
   }
   const { data: subs } = await q;
+  // multi-course PR 3b: each submission in ITS group (the task course's group, else the main group)
+  const placed = await scopeSubs(admin, scope, (subs || []) as any[]);
   const counts = new Map<string, number>();
-  for (const s of (subs || []) as any[]) counts.set(s.user_id, (counts.get(s.user_id) || 0) + 1);
+  const userGroups = new Map<string, Set<string>>();
+  for (const { sub: s, groupId: gid } of placed) {
+    counts.set(s.user_id, (counts.get(s.user_id) || 0) + 1);
+    if (gid) {
+      if (!userGroups.has(s.user_id)) userGroups.set(s.user_id, new Set());
+      userGroups.get(s.user_id)!.add(gid);
+    }
+  }
   // Pending-window visibility: a just-posted homework lives in hw_pending_posts for up to ~10 min
   // (picker open) before becoming a submission. Show that state so "just submitted" work is never
   // mistaken for missing (owner-reported confusion).
   let pendingPickers = 0;
   try {
-    let pq2 = admin.from("hw_pending_posts").select("id", { count: "exact", head: true }).eq("state", "pending");
-    if (ids) pq2 = pq2.in("user_id", ids);
-    const { count: pc } = await pq2;
-    pendingPickers = pc || 0;
+    if (scope && scope.secondary.size > 0) {
+      // a student with a secondary course: their pending post counts for the group of ITS course (multi-course PR 3b)
+      const { data: pp } = await admin.from("hw_pending_posts").select("user_id, course_id").eq("state", "pending").in("user_id", ids!);
+      pendingPickers = ((pp || []) as any[]).filter((r) => inTeacherScope(scope, r.user_id, r.course_id)).length;
+    } else {
+      let pq2 = admin.from("hw_pending_posts").select("id", { count: "exact", head: true }).eq("state", "pending");
+      if (ids) pq2 = pq2.in("user_id", ids);
+      const { count: pc } = await pq2;
+      pendingPickers = pc || 0;
+    }
   } catch (_e) { /* cosmetic */ }
   const pendingLine = pendingPickers > 0 ? `\n\n${t.gradePendingPickers(pendingPickers)}` : "";
   if (counts.size === 0) {
@@ -4060,15 +4151,16 @@ async function renderStudentPicker(admin: any, chatId: number, graderId: string,
   const userIds = Array.from(counts.keys());
   const { data: profs } = await admin.from("profiles").select("id, name, last_name, group_id").in("id", userIds);
   // Multi-group teachers see every group's pending work in one list — tag each student with
-  // their group so e.g. "PRE 5.0" vs "6-GURUH" is obvious at a glance.
-  const grpIds = Array.from(new Set(((profs || []) as any[]).map((p: any) => p.group_id).filter(Boolean)));
+  // their group so e.g. "PRE 5.0" vs "6-GURUH" is obvious at a glance. The group of their PENDING WORK (multi-course
+  // PR 3b; for a single-course student that is profiles.group_id).
+  const grpIds = Array.from(new Set(Array.from(userGroups.values()).flatMap((s) => Array.from(s))));
   const grpNames = new Map<string, string>();
   if (!isAdmin && grpIds.length > 1) {
     const { data: grps } = await admin.from("groups").select("id, name").in("id", grpIds);
     for (const g of (grps || []) as any[]) grpNames.set(g.id, g.name);
   }
   const rows = ((profs || []) as any[]).map((p: any) => {
-    const tag = grpNames.get(p.group_id);
+    const tag = Array.from(userGroups.get(p.id) ?? []).map((gid) => grpNames.get(gid)).filter(Boolean).join(" / ");
     return {
       id: p.id,
       name: ([p.name, p.last_name].filter(Boolean).join(" ") || "—") + (tag ? ` · ${tag}` : ""),
@@ -4096,10 +4188,25 @@ async function renderStudentPicker(admin: any, chatId: number, graderId: string,
   await sendKeyboardHint(chatId, locale, isAdmin, isAdmin ? "admin" : "teacher");
 }
 
+/**
+ * One student's submissions, each with its group (the task course's group, else the main group) — admin views, which
+ * have no teacher scope and must drop nothing. A student with no secondary course: all in mainGroupId, no extra read
+ * beyond the one secondary-row check.
+ */
+async function placeStudentSubs<T extends { assignment_id: string }>(
+  admin: any, studentId: string, mainGroupId: string | null, subs: T[],
+): Promise<{ sub: T; groupId: string | null }[]> {
+  const sec = await secondaryCourseRows(admin, "user_id", [studentId]);
+  if (!sec.length) return subs.map((sub) => ({ sub, groupId: mainGroupId }));
+  const own = buildTeacherScope([mainGroupId ?? "", ...sec.map((r) => r.group_id)], [{ id: studentId, group_id: mainGroupId }], sec);
+  const courses = await assignmentCourseMap(admin, Array.from(new Set(subs.map((s) => s.assignment_id))));
+  return subs.map((sub) => ({ sub, groupId: submissionGroupOf(own, studentId, courses.get(sub.assignment_id) ?? null) }));
+}
+
 async function renderStudentBreakdown(admin: any, chatId: number, graderId: string, studentId: string, locale: Locale, isAdmin: boolean) {
   const t = T[locale] as any;
-  const ids = await gradingScopeIds(admin, graderId, isAdmin);
-  if (ids && !ids.includes(studentId)) {
+  const scope = await loadGradingScope(admin, graderId, isAdmin);
+  if (scope && !scope.studentIds.includes(studentId)) {
     await sendMessage(chatId, t.gradeNotFound);
     return;
   }
@@ -4111,7 +4218,12 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
     admin.from("homework_submissions").select("id, assignment_id, submitted_at, telegram_message_url, score, score_is_stale")
       .eq("user_id", studentId).or("score.is.null,score_is_stale.is.true").order("submitted_at", { ascending: true }),
   ]);
-  const list = (subs || []) as any[];
+  // multi-course PR 3b: a teacher sees only the work of THEIR groups (a secondary course's work belongs to that
+  // course's teacher); each item carries its group, which picks the topic links and the header below.
+  const placed = scope
+    ? await scopeSubs(admin, scope, ((subs || []) as any[]).map((s) => ({ ...s, user_id: studentId })))
+    : await placeStudentSubs(admin, studentId, prof?.group_id ?? null, (subs || []) as any[]);
+  const list = placed.map((x) => x.sub);
   const name = [prof?.name, prof?.last_name].filter(Boolean).join(" ") || "—";
   if (!list.length) {
     await sendMessage(chatId, `${t.gradeStudentBreakdown(name)}\n\n${t.gradeNoneP}`, {
@@ -4123,13 +4235,30 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
   const { data: assigns } = await admin.from("homework_assignments").select("id, title, max_score, task_number, sap_number, parent_id, module_id, modules(position, title)").in("id", aIds);
   const aMap = new Map(((assigns || []) as any[]).map((a: any) => [a.id, a]));
   const moduleIds = Array.from(new Set(((assigns || []) as any[]).map((a: any) => a.module_id)));
-  const topicsRes = prof?.group_id && moduleIds.length
-    ? await admin.from("group_module_topics").select("module_id, telegram_topic_url").eq("group_id", prof.group_id).in("module_id", moduleIds)
+  // The header group: the one group all listed work belongs to, else (work in 2 groups) the main group. Each module's
+  // topic link comes from ITS work's group. Single-course student: both are profiles.group_id, as before.
+  const subGroups = Array.from(new Set(placed.map((x) => x.groupId).filter((g): g is string => !!g)));
+  const viewGroupId: string | null = subGroups.length === 1 ? subGroups[0] : (prof?.group_id ?? null);
+  const moduleGroup = new Map<string, string>();
+  for (const x of placed) {
+    const mid = (aMap.get(x.sub.assignment_id) as any)?.module_id;
+    if (mid && x.groupId && !moduleGroup.has(mid)) moduleGroup.set(mid, x.groupId);
+  }
+  const topicGroupIds = Array.from(new Set([...(viewGroupId ? [viewGroupId] : []), ...moduleGroup.values()]));
+  const topicsRes = topicGroupIds.length && moduleIds.length
+    ? await admin.from("group_module_topics").select("group_id, module_id, telegram_topic_url").in("group_id", topicGroupIds).in("module_id", moduleIds)
     : { data: [] as any[] };
-  const groupTopicRes = prof?.group_id
-    ? await admin.from("groups").select("homework_topic_url, name, course_id").eq("id", prof.group_id).maybeSingle()
+  const groupTopicRes = viewGroupId
+    ? await admin.from("groups").select("homework_topic_url, name, course_id").eq("id", viewGroupId).maybeSingle()
     : { data: null as any };
+  const otherGroupIds = topicGroupIds.filter((g) => g !== viewGroupId);
+  const otherTopicRes = otherGroupIds.length
+    ? await admin.from("groups").select("id, homework_topic_url").in("id", otherGroupIds)
+    : { data: [] as any[] };
+  const groupSharedUrl = new Map<string, string>();
+  for (const g of ((otherTopicRes.data || []) as any[])) if (g.homework_topic_url) groupSharedUrl.set(g.id, g.homework_topic_url);
   const sharedTopicUrl: string | null = (groupTopicRes.data as any)?.homework_topic_url || null;
+  if (viewGroupId && sharedTopicUrl) groupSharedUrl.set(viewGroupId, sharedTopicUrl);
   // Header scope "👥 <course> · <group>", and a course marker on any module of ANOTHER course (old-course work
   // after a move): the Challenge tasks are copies of the 5.0 tasks and the same "Modul N" differs per course.
   // Separate reads, so a failure can only drop the labels, never the list (recorded as hw_label_lookup_failed).
@@ -4140,12 +4269,15 @@ async function renderStudentBreakdown(admin: any, chatId: number, graderId: stri
   ]);
   const groupCourseTitle: string | null = (grpCourse as any)?.data?.title ?? null;
   const scopeLine = breakdownScopeLine(groupCourseTitle, (groupTopicRes.data as any)?.name ?? null);
+  // module → topic link, from the module's own group (its per-module topic, else that group's shared homework topic)
   const topicMap = new Map<string, string>();
   for (const tp of ((topicsRes.data || []) as any[])) {
-    if (tp.telegram_topic_url) topicMap.set(tp.module_id, tp.telegram_topic_url);
+    const g = moduleGroup.get(tp.module_id) ?? viewGroupId;
+    if (tp.telegram_topic_url && tp.group_id === g) topicMap.set(tp.module_id, tp.telegram_topic_url);
   }
-  if (sharedTopicUrl) {
-    for (const mid of moduleIds) if (!topicMap.has(mid)) topicMap.set(mid, sharedTopicUrl);
+  for (const mid of moduleIds) {
+    const shared = groupSharedUrl.get(moduleGroup.get(mid) ?? viewGroupId ?? "");
+    if (shared && !topicMap.has(mid)) topicMap.set(mid, shared);
   }
 
 
@@ -4194,7 +4326,8 @@ async function renderTeacherRoster(
   admin: any, chatId: number, graderId: string, locale: Locale, isAdmin: boolean, page: number, groupId?: string | null,
 ) {
   const t = T[locale] as any;
-  const ids = await gradingScopeIds(admin, graderId, isAdmin, groupId);
+  const scope = await loadGradingScope(admin, graderId, isAdmin, groupId);
+  const ids = scope ? scope.studentIds : null; // + secondary-course members of the teacher's groups (multi-course PR 3b)
   if (ids && ids.length === 0) {
     await sendWithKeyboard(chatId, t.rosterEmpty, locale, isAdmin, isAdmin ? "admin" : "teacher");
     return;
@@ -4211,9 +4344,10 @@ async function renderTeacherRoster(
 
   // Submission counts per student (any score state).
   const userIds = profList.map((p) => p.id);
-  const { data: subs } = await admin.from("homework_submissions").select("user_id").in("user_id", userIds);
+  // multi-course PR 3b: a teacher counts only the work of their groups (each submission in its task course's group)
+  const { data: subs } = await admin.from("homework_submissions").select("user_id, assignment_id").in("user_id", userIds);
   const counts = new Map<string, number>();
-  for (const s of (subs || []) as any[]) counts.set(s.user_id, (counts.get(s.user_id) || 0) + 1);
+  for (const { sub: s } of await scopeSubs(admin, scope, (subs || []) as any[])) counts.set(s.user_id, (counts.get(s.user_id) || 0) + 1);
 
   const rows = profList.map((p) => {
     const handle = (p.telegram_username || "").toString().trim();
@@ -4243,8 +4377,8 @@ async function renderStudentModules(
   admin: any, chatId: number, graderId: string, studentId: string, locale: Locale, isAdmin: boolean,
 ) {
   const t = T[locale] as any;
-  const ids = await gradingScopeIds(admin, graderId, isAdmin);
-  if (ids && !ids.includes(studentId)) {
+  const scope = await loadGradingScope(admin, graderId, isAdmin);
+  if (scope && !scope.studentIds.includes(studentId)) {
     await sendMessage(chatId, t.gradeNotFound);
     return;
   }
@@ -4256,7 +4390,8 @@ async function renderStudentModules(
   const handle = (prof?.telegram_username || "").toString().trim();
   const headerName = handle ? `@${handle} (${fullName})` : fullName;
 
-  const list = (subs || []) as any[];
+  // multi-course PR 3b: a teacher sees only the modules of their groups' work (admin: all)
+  const list = (await scopeSubs(admin, scope, ((subs || []) as any[]).map((s) => ({ ...s, user_id: studentId })))).map((x) => x.sub);
   if (!list.length) {
     await sendMessage(chatId, `${t.studentModulesTitle(headerName)}\n\n${t.studentModulesEmpty}`, {
       inline_keyboard: [[{ text: t.backToRoster, callback_data: "tr:list:0" }]],
@@ -4308,15 +4443,21 @@ async function renderStudentModuleDetail(
   admin: any, chatId: number, graderId: string, studentId: string, moduleId: string, locale: Locale, isAdmin: boolean,
 ) {
   const t = T[locale] as any;
-  const ids = await gradingScopeIds(admin, graderId, isAdmin);
-  if (ids && !ids.includes(studentId)) {
+  const scope = await loadGradingScope(admin, graderId, isAdmin);
+  if (scope && !scope.studentIds.includes(studentId)) {
     await sendMessage(chatId, t.gradeNotFound);
     return;
   }
   const [{ data: prof }, { data: mod }] = await Promise.all([
     admin.from("profiles").select("name, last_name, telegram_username, group_id").eq("id", studentId).maybeSingle(),
-    admin.from("modules").select("position, title").eq("id", moduleId).maybeSingle(),
+    admin.from("modules").select("position, title, course_id").eq("id", moduleId).maybeSingle(),
   ]);
+  // multi-course PR 3b: this module's work belongs to the student's group in the module's course, else their main
+  // group — a teacher of neither is refused, like a student outside their groups
+  if (scope && !inTeacherScope(scope, studentId, mod?.course_id ?? null)) {
+    await sendMessage(chatId, t.gradeNotFound);
+    return;
+  }
   const fullName = [prof?.name, prof?.last_name].filter(Boolean).join(" ") || "—";
   const handle = (prof?.telegram_username || "").toString().trim();
   const headerName = handle ? `@${handle} (${fullName})` : fullName;
@@ -4370,9 +4511,9 @@ const THM_STUDENT_CHUNK = 40;
 // (or the active group). Admins see every module.
 async function thmListModules(
   admin: any, graderId: string, isAdmin: boolean, groupId?: string | null,
-): Promise<{ id: string; position: number; title: string }[]> {
+): Promise<{ id: string; position: number; title: string; course_id: string | null }[]> {
   if (isAdmin) {
-    const { data } = await admin.from("modules").select("id, position, title").order("position", { ascending: true });
+    const { data } = await admin.from("modules").select("id, position, title, course_id").order("position", { ascending: true });
     return ((data || []) as any[]);
   }
   let courseIds: string[] = [];
@@ -4386,7 +4527,7 @@ async function thmListModules(
     courseIds = Array.from(new Set(((gs || []) as any[]).map((r) => r.course_id).filter(Boolean)));
   }
   if (!courseIds.length) return [];
-  const { data } = await admin.from("modules").select("id, position, title").in("course_id", courseIds).order("position", { ascending: true });
+  const { data } = await admin.from("modules").select("id, position, title, course_id").in("course_id", courseIds).order("position", { ascending: true });
   return ((data || []) as any[]);
 }
 
@@ -4394,7 +4535,8 @@ async function renderTeacherModulePicker(
   admin: any, chatId: number, graderId: string, locale: Locale, isAdmin: boolean, page: number, groupId?: string | null,
 ) {
   const t = T[locale] as any;
-  const studentIds = await gradingScopeIds(admin, graderId, isAdmin, groupId);
+  const scope = await loadGradingScope(admin, graderId, isAdmin, groupId);
+  const studentIds = scope ? scope.studentIds : null; // + secondary-course members (multi-course PR 3b)
   const modules = await thmListModules(admin, graderId, isAdmin, groupId);
   if (!modules.length) {
     await sendWithKeyboard(chatId, t.thmEmpty, locale, isAdmin, isAdmin ? "admin" : "teacher");
@@ -4435,9 +4577,12 @@ async function renderTeacherModulePicker(
     let sq = admin.from("homework_submissions").select("user_id, assignment_id").in("assignment_id", allLeafIds);
     if (studentIds) sq = sq.in("user_id", studentIds);
     const { data: subs } = await sq;
+    const modCourse = new Map(modules.map((m) => [m.id, m.course_id ?? null]));
     for (const s of ((subs || []) as any[])) {
       const mid = leafToModule.get(s.assignment_id);
       if (!mid) continue;
+      // multi-course PR 3b: a submission counts for the group of its module's course (else the main group)
+      if (scope && !inTeacherScope(scope, s.user_id, modCourse.get(mid) ?? null)) continue;
       if (!submittersByModule.has(mid)) submittersByModule.set(mid, new Set());
       submittersByModule.get(mid)!.add(s.user_id);
     }
@@ -4467,7 +4612,8 @@ async function renderTeacherModuleDetail(
   admin: any, chatId: number, graderId: string, moduleId: string, locale: Locale, isAdmin: boolean, groupId?: string | null,
 ) {
   const t = T[locale] as any;
-  const studentIds = await gradingScopeIds(admin, graderId, isAdmin, groupId);
+  const scope = await loadGradingScope(admin, graderId, isAdmin, groupId);
+  const studentIds = scope ? scope.studentIds : null;
 
   const { data: mod } = await admin.from("modules").select("id, position, title, course_id").eq("id", moduleId).maybeSingle();
   if (!mod) { await sendMessage(chatId, t.gradeNotFound || "Not found"); return; }
@@ -4495,18 +4641,35 @@ async function renderTeacherModuleDetail(
     return;
   }
 
-  // Load profiles in scope
-  let pq = admin.from("profiles").select("id, name, last_name, telegram_username, telegram_id").is("archived_at", null)
-    .in("group_id", courseGroupIds);
-  if (studentIds) {
-    if (!studentIds.length) {
+  // Load profiles in scope: the students whose group IN THIS MODULE'S COURSE is one of the course's groups (and, for a
+  // teacher, one of theirs) — main members, plus (multi-course PR 3b) the members of a secondary group of that course.
+  let profs: any[] = [];
+  const pq = admin.from("profiles").select("id, name, last_name, telegram_username, telegram_id").is("archived_at", null);
+  if (scope) {
+    if (!scope.studentIds.length) {
       await sendMessage(chatId, t.thmEmpty);
       return;
     }
-    pq = pq.in("id", studentIds);
+    const courseGroupSet = new Set(courseGroupIds);
+    const listed = scope.studentIds.filter((uid) => {
+      const g = submissionGroupOf(scope, uid, mod.course_id ?? null);
+      return !!g && courseGroupSet.has(g) && scope.groupIds.includes(g);
+    });
+    if (listed.length) profs = ((await pq.in("id", listed)).data || []) as any[];
+  } else {
+    profs = ((await pq.in("group_id", courseGroupIds)).data || []) as any[];
   }
-  const { data: profs } = await pq;
   const profMap = new Map(((profs || []) as any[]).map((p) => [p.id, p]));
+  if (!scope && mod.course_id) {
+    // admin: also the course's SECONDARY members (multi-course PR 3b); none = the old list exactly
+    const sec = await secondaryCourseRows(admin, "group_id", courseGroupIds);
+    const extra = Array.from(new Set(sec.map((r) => r.user_id))).filter((uid) => !profMap.has(uid));
+    if (extra.length) {
+      const { data: more } = await admin.from("profiles").select("id, name, last_name, telegram_username, telegram_id")
+        .is("archived_at", null).in("id", extra);
+      for (const p of (more || []) as any[]) profMap.set(p.id, p);
+    }
+  }
 
   // Load this module's leaf assignments
   const { data: assigns } = await admin
@@ -4676,14 +4839,17 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
     await sendMessage(chatId, t.gradeNotFound);
     return;
   }
-  // C2: a teacher may only grade students in their own groups. The grading LIST
-  // functions scope by gradingScopeIds, but this open-by-id path (reached from
+  // C2: a teacher may only grade work of their own groups. The grading LIST
+  // functions scope by loadGradingScope, but this open-by-id path (reached from
   // forgeable / stale callback buttons) did not — so a teacher could grade
   // another group's students. The bot runs service-role, bypassing RLS, so this
-  // check must be explicit.
+  // check must be explicit. multi-course PR 3b: the SUBMISSION's group (its task course's group, else the
+  // student's main group — SQL homework_group_for_submission), so a second course's teacher can open it and the
+  // main-group teacher can't. Single-course student: their main group, exactly as before.
+  const subGroupId = await submissionGroupId(admin, sub.id, sub.user_id);
   if (!isAdmin) {
-    const scope = await gradingScopeIds(admin, graderId, false);
-    if (!scope || !scope.includes(sub.user_id)) {
+    const tg = await teacherGroups(admin, graderId);
+    if (!subGroupId || !tg.some((g) => g.id === subGroupId)) {
       await sendMessage(chatId, t.gradeNotFound);
       return;
     }
@@ -4692,10 +4858,10 @@ async function startGradingFlow(admin: any, chatId: number, graderTgId: number, 
   const { data: p } = await admin.from("profiles").select("id, name, last_name, group_id").eq("id", sub.user_id).maybeSingle();
   const name = [p?.name, p?.last_name].filter(Boolean).join(" ") || "—";
   const tn = a ? ` #${displayStepNumber(a)}` : ""; // SAP sub-step → its sap_number (not the parent's task_number)
-  // "<course> · <group> · M<n> V<step> — <title>" (course from the task, group = the student's group): the
-  // Challenge tasks are copies of the 5.0 tasks, so name + title alone could be either course. A failed read
-  // falls back to the old one-liner (recorded once a day as hw_label_lookup_failed).
-  const lbl = await loadHwLabel(admin, sub.assignment_id, p?.group_id ?? null, "telegram-bot-webhook");
+  // "<course> · <group> · M<n> V<step> — <title>" (course from the task, group = the SUBMISSION's group, multi-course
+  // PR 3b): the Challenge tasks are copies of the 5.0 tasks, so name + title alone could be either course. A failed
+  // read falls back to the old one-liner (recorded once a day as hw_label_lookup_failed).
+  const lbl = await loadHwLabel(admin, sub.assignment_id, subGroupId, "telegram-bot-webhook");
   const header = gradingHeader(name, lbl.label, `${a?.title || ""}${tn}`);
   const body = sub.submitted_text ? csvEscapeHtml(sub.submitted_text) : "<i>(no text)</i>";
   // Regrade context: a resubmission carries the grade it's trying to improve — either the
@@ -4918,11 +5084,10 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
       await refuseGradingInput(admin, msg.chat.id, profileId, locale, ctx, "grade_comment", "reply_to_older_message");
       return true;
     }
-    // C2: re-check scope at commit time (teachers only) — the submission owner
-    // must still be in the grader's groups.
+    // C2: re-check scope at commit time (teachers only) — the submission's group (multi-course PR 3b: its task
+    // course's group, else the student's main group) must still be one of the grader's groups.
     if (sub && !isAdmin) {
-      const scope = await gradingScopeIds(admin, profileId, false);
-      if (!scope || !scope.includes(sub.user_id)) {
+      if (!(await graderTeachesSubmission(admin, profileId, submissionId, sub.user_id))) {
         await admin.from("bot_conversation_state").delete().eq("telegram_id", tgId);
         await sendMessage(msg.chat.id, t.gradeNotFound);
         return true;
@@ -4982,8 +5147,9 @@ async function handleGradingSession(admin: any, msg: any, profileId: string, loc
         // Card heading = the shared label "<course> · <group> · M<n> V<step> — <title>" (the same heading
         // notify-grade-voice and grade-card-reconcile send), so a late 5.0 grade and a Challenge grade on the
         // copied task read differently. Read fresh here (a retag may have moved the task since the flow
-        // opened); a failed read keeps the old "title #step".
-        const cardLbl = await loadHwLabel(admin, sub.assignment_id, stu.group_id ?? null, "telegram-bot-webhook");
+        // opened); a failed read keeps the old "title #step". Group = the SUBMISSION's group (multi-course PR 3b).
+        const cardLbl = await loadHwLabel(admin, sub.assignment_id,
+          await submissionGroupId(admin, submissionId, sub.user_id, stu.group_id ?? null), "telegram-bot-webhook");
         const title = cardLbl.label || `${a?.title || ""}${tn}`;
         try {
           const url = await createMagicLink(admin, sub.user_id, "login", "/profile");
@@ -5145,8 +5311,8 @@ async function commitBridgeVoice(
   // Re-check scope at COMMIT time (teachers only) — same guard the grade_comment path applies, so a
   // stale parked request can never attach a note to a student outside the grader's groups.
   if (!isAdmin) {
-    const scope = await gradingScopeIds(admin, profileId, false);
-    if (!scope || !scope.includes(sub.user_id)) {
+    // multi-course PR 3b: by the SUBMISSION's group (task course's group, else the main group)
+    if (!(await graderTeachesSubmission(admin, profileId, submissionId, sub.user_id))) {
       await sendMessage(chatId, t.gradeNotFound);
       return;
     }
@@ -8615,10 +8781,10 @@ async function handleCallback(admin: any, cq: any) {
     const { data: sub } = await admin.from("homework_submissions")
       .select("id, user_id, assignment_id, score, score_is_stale").eq("id", subId).maybeSingle();
     if (!sub) { await answerCallback(cq.id, t.gradeNotFound); return; }
-    // C2 scope: a teacher may only re-tag their own groups' students (admins pass).
+    // C2 scope: a teacher may only re-tag work of their own groups (admins pass). multi-course PR 3b: the
+    // SUBMISSION's group (a retag stays inside the task's course, so the group does not change with it).
     if (persona !== "admin") {
-      const scope = await gradingScopeIds(admin, _clicker.id, false);
-      if (!scope || !scope.includes(sub.user_id)) { await answerCallback(cq.id, "⛔"); return; }
+      if (!(await graderTeachesSubmission(admin, _clicker.id, sub.id, sub.user_id))) { await answerCallback(cq.id, "⛔"); return; }
     }
     // Movable while gradeable: ungraded OR reopened (stale). Firm grades stay immutable.
     if (sub.score != null && !(sub as any).score_is_stale) { await answerCallback(cq.id, t.retagGraded); return; }
