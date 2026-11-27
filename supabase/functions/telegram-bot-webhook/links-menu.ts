@@ -190,7 +190,7 @@ export function kanalRows(entries: readonly KanalEntry[], locale: Locale): UrlBu
 // ── copy (Uzbek first; casual) ──
 
 export const LINKS_COPY: Record<Locale, {
-  bonusIntro: string; bonusEmpty: string; kanalIntro: string; kanalEmpty: string; sendFailed: string;
+  bonusIntro: string; bonusEmpty: string; kanalIntro: string; kanalEmpty: string; sendFailed: string; studentsOnly: string;
 }> = {
   uz: {
     bonusIntro: "🎁 <b>Bonus darslar</b>\nHar bir bonus kursning o'z Telegram kanali bor. Kerakligini tanlang 👇",
@@ -198,6 +198,7 @@ export const LINKS_COPY: Record<Locale, {
     kanalIntro: "📣 <b>Kurs Telegrami</b>\nKurs kanali (darslar va yangiliklar) va guruhingiz 👇",
     kanalEmpty: "📣 Kurs kanali va guruh havolasi hali qo'shilmagan. Ustozingizdan so'rang 🙂",
     sendFailed: "Havolalarni hozir ochib bo'lmadi. Birozdan keyin qayta urinib ko'ring 🙏",
+    studentsOnly: "Bu tugma talabalar uchun 🙂",
   },
   ru: {
     bonusIntro: "🎁 <b>Бонусные уроки</b>\nУ каждого бонусного курса свой Telegram-канал. Выберите нужный 👇",
@@ -205,6 +206,7 @@ export const LINKS_COPY: Record<Locale, {
     kanalIntro: "📣 <b>Telegram курса</b>\nКанал курса (уроки и новости) и ваша группа 👇",
     kanalEmpty: "📣 Ссылки на канал и группу ещё не добавлены. Спросите у преподавателя 🙂",
     sendFailed: "Не удалось открыть ссылки. Попробуйте чуть позже 🙏",
+    studentsOnly: "Эта кнопка для студентов 🙂",
   },
   en: {
     bonusIntro: "🎁 <b>Bonus lessons</b>\nEach bonus course has its own Telegram channel. Pick one 👇",
@@ -212,5 +214,6 @@ export const LINKS_COPY: Record<Locale, {
     kanalIntro: "📣 <b>Course Telegram</b>\nThe course channel (lessons and news) and your group 👇",
     kanalEmpty: "📣 The channel and group links aren't added yet. Ask your teacher 🙂",
     sendFailed: "Couldn't open the links right now. Please try again a bit later 🙏",
+    studentsOnly: "This button is for students 🙂",
   },
 };

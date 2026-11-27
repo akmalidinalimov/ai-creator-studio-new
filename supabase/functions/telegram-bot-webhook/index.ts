@@ -5336,13 +5336,14 @@ async function loadBonusCourses(admin: any): Promise<{ items: BonusItem[]; readE
   } catch (_e) {
     readError = true;
   }
+  // a read error is NOT cached: the next tap retries (a DB blip must not look like "no bonus courses" for a minute)
+  if (readError) return { items, readError };
   __bonusCourses = { items, at: Date.now(), readError };
   return __bonusCourses;
 }
 
-// "Bonus list is empty" → at most one admin_actions row per 6 h per isolate (a student tapping it ten times is not ten
-// signals; member taps must never inflate a health flag).
-let __bonusMissingLoggedAt = 0;
+// "Bonus list is empty" → at most one admin_actions row per Tashkent day platform-wide (logHealthOnce dedupes in the DB;
+// a student tapping it ten times is not ten signals — member taps must never inflate a health flag).
 
 // URL-button reply through sendTelegram, so a non-delivery is DB-visible (telegram_send_failed). One bad URL makes
 // Telegram refuse the whole message; links-menu.ts drops those first, and a content error that still slips through
@@ -5362,11 +5363,8 @@ async function handleBonusCommand(admin: any, chatId: number, profile: any, loca
   const rows = bonusRows(items, locale);
   if (!rows.length) {
     await sendWithKeyboard(chatId, LINKS_COPY[locale].bonusEmpty, locale);
-    if (Date.now() - __bonusMissingLoggedAt > 6 * 3_600_000) {
-      __bonusMissingLoggedAt = Date.now();
-      await logHealth(admin, "bonus_links_missing", { read_error: readError, profile_id: profile?.id ?? null },
-        { source: "telegram-bot-webhook" });
-    }
+    await logHealthOnce(admin, "bonus_links_missing", readError ? "read_error" : "empty",
+      { read_error: readError }, { source: "telegram-bot-webhook" });
     return;
   }
   await sendLinksMessage(admin, chatId, locale, LINKS_COPY[locale].bonusIntro, rows, "bot_bonus_links");
@@ -5400,15 +5398,16 @@ async function handleKanalCommand(admin: any, chatId: number, profile: any, loca
     await sendWithKeyboard(chatId, LINKS_COPY[locale].sendFailed, locale);
     return;
   }
-  // A link the admin has not filled in yet: one row per (course, group) per Tashkent day, never one per tap.
+  const rows = kanalRows(entries, locale);
+  if (!rows.length) await sendWithKeyboard(chatId, LINKS_COPY[locale].kanalEmpty, locale);
+  else await sendLinksMessage(admin, chatId, locale, LINKS_COPY[locale].kanalIntro, rows, "bot_course_links");
+  // AFTER the reply: a link the admin has not filled in yet — one row per (course, group) per Tashkent day, never one
+  // per tap (logHealthOnce cannot throw).
   for (const m of kanalMissing(entries)) {
     await logHealthOnce(admin, "course_links_missing", `${m.course_id ?? "-"}:${m.group_id ?? "-"}`,
       { course_id: m.course_id, group_id: m.group_id, channel_missing: m.channel_missing, group_missing: m.group_missing },
       { source: "telegram-bot-webhook" });
   }
-  const rows = kanalRows(entries, locale);
-  if (!rows.length) { await sendWithKeyboard(chatId, LINKS_COPY[locale].kanalEmpty, locale); return; }
-  await sendLinksMessage(admin, chatId, locale, LINKS_COPY[locale].kanalIntro, rows, "bot_course_links");
 }
 
 async function handleCommand(admin: any, msg: any, cmdRaw: string) {
@@ -5545,7 +5544,7 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
     const { data: tProfile } = await admin
       .from("profiles")
       .select(
-        "id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id, status",
+        "id, name, last_name, telegram_username, telegram_id, telegram_onboarded_at, preferred_locale, group_id, status, account_type",
       )
       .eq("id", effectiveProfileId)
       .maybeSingle();
@@ -5706,12 +5705,15 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
 
   // 🎁 Bonus darslar (paid students only) and 📣 Kurs Telegrami (every student) — links-menu.ts. Reply-keyboard only:
   // not in the slash-command menu (bot-commands.ts), but typing /bonus or /kanal works too.
-  if (cmd === "/bonus") {
-    await handleBonusCommand(admin, chatId, profile, locale);
-    return;
-  }
-  if (cmd === "/kanal") {
-    await handleKanalCommand(admin, chatId, profile, locale);
+  if (cmd === "/bonus" || cmd === "/kanal") {
+    // student buttons: a teacher / admin typing them (not impersonating a student) keeps their own keyboard
+    if ((effectivePersona ?? realPersona) !== "student") {
+      const staff = (effectivePersona ?? realPersona) as Persona;
+      await sendWithKeyboard(chatId, LINKS_COPY[locale].studentsOnly, locale, false, staff);
+      return;
+    }
+    if (cmd === "/bonus") await handleBonusCommand(admin, chatId, profile, locale);
+    else await handleKanalCommand(admin, chatId, profile, locale);
     return;
   }
 

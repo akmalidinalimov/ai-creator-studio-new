@@ -619,18 +619,26 @@ function bonusRowsFrom(value: unknown): BonusRow[] {
 function BonusCoursesCard({ userId }: { userId?: string }) {
   const [rows, setRows] = useState<BonusRow[]>([]);
   const [savedJson, setSavedJson] = useState("[]");
+  // the saved list could not be read: never save over it (an empty editor would wipe the real list)
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
-    supabase.from("platform_settings").select("value").eq("key", "bonus_courses").maybeSingle().then(({ data }) => {
+    supabase.from("platform_settings").select("value").eq("key", "bonus_courses").maybeSingle().then(({ data, error }) => {
+      if (error) {
+        setLoadFailed(true);
+        toast.error(`Bonus kurslar ro'yxatini o'qib bo'lmadi: ${error.message}. Sahifani yangilang.`);
+        return;
+      }
       const loaded = bonusRowsFrom(data?.value);
       setRows(loaded);
       setSavedJson(JSON.stringify(loaded));
     });
   }, []);
 
-  const dirty = JSON.stringify(rows) !== savedJson;
+  const dirty = !loadFailed && JSON.stringify(rows) !== savedJson;
 
   const save = async (): Promise<boolean> => {
+    if (loadFailed) { toast.error("Ro'yxat yuklanmagan — saqlanmadi. Sahifani yangilang."); return false; }
     const clean = rows
       .map((r) => ({ ...r, title: r.title.trim(), url: r.url.trim() }))
       .filter((r) => r.title || r.url);
