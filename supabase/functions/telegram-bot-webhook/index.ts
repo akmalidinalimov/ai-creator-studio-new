@@ -3646,7 +3646,12 @@ async function loadGradingScope(admin: any, graderId: string, isAdmin: boolean, 
 async function assignmentCourseMap(admin: any, aIds: string[]): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>();
   if (!aIds.length) return out;
-  const { data } = await admin.from("homework_assignments").select("id, modules(course_id)").in("id", aIds);
+  const { data, error } = await admin.from("homework_assignments").select("id, modules(course_id)").in("id", aIds);
+  if (error) {
+    // graceful (each submission falls back to the main group), never silent
+    await logHealthOnce(admin, "teacher_scope_task_course_unreadable", "assignments", { error: String(error.message || error).slice(0, 300) },
+      { source: "telegram-bot-webhook" });
+  }
   for (const a of (data || []) as any[]) {
     const m = Array.isArray(a?.modules) ? a.modules[0] : a?.modules;
     out.set(a.id, m?.course_id ?? null);
@@ -3664,16 +3669,25 @@ async function scopeSubs<T extends { user_id: string; assignment_id: string }>(
 }
 
 /**
- * The group a submission belongs to (SQL homework_group_for_submission). A failed / empty RPC = the student's main
- * group, the pre-multi-course answer. For a single-course student it IS the main group (PR 2 self-test).
+ * The group a submission belongs to (SQL homework_group_for_submission). If the RPC fails: a student with NO secondary
+ * course gets their main group (the pre-multi-course answer, identical for 99%); a student WITH one — or when that
+ * cannot be read — gets null, so every authorisation check that uses this FAILS CLOSED (review). Recorded either way.
  */
 async function submissionGroupId(admin: any, submissionId: string, studentId: string, knownMainGroupId?: string | null): Promise<string | null> {
+  let rpcError: string | null = null;
   try {
     const { data, error } = await admin.rpc("homework_group_for_submission", { _sid: submissionId });
     if (!error && typeof data === "string" && data) return data;
-    if (error) console.error("homework_group_for_submission failed", String(error.message || error).slice(0, 200));
+    if (error) rpcError = String(error.message || error).slice(0, 200);
   } catch (e) {
-    console.error("homework_group_for_submission threw", String(e).slice(0, 200));
+    rpcError = String(e).slice(0, 200);
+  }
+  if (rpcError) {
+    await logHealthOnce(admin, "homework_group_rpc_failed", "teacher-bot", { error: rpcError, submission_id: submissionId },
+      { source: "telegram-bot-webhook" });
+    const { data: sec, error: secErr } = await admin.from("student_course_groups").select("course_id")
+      .eq("user_id", studentId).eq("is_main", false).limit(1);
+    if (secErr || (sec && sec.length)) return null; // a two-course student (or unknown): deny rather than guess
   }
   if (knownMainGroupId !== undefined) return knownMainGroupId;
   const { data: p } = await admin.from("profiles").select("group_id").eq("id", studentId).maybeSingle();
@@ -4027,9 +4041,13 @@ async function loadGradingSubmissions(admin: any, graderId: string, isAdmin: boo
   q = opts.scored
     ? q.not("score", "is", null).not("score_is_stale", "is", true).order("scored_at", { ascending: false })
     : q.or("score.is.null,score_is_stale.is.true").order("submitted_at", { ascending: true });
-  if (opts.limit) q = q.limit(opts.limit);
+  // the limit is applied AFTER the per-submission scope when it can drop rows (a scope with secondary members),
+  // so a teacher never gets a short list because older rows belonged to another course's teacher
+  const filterable = !!scope && scope.secondary.size > 0;
+  if (opts.limit && !filterable) q = q.limit(opts.limit);
   const { data: subs } = await q;
-  const list = (await scopeSubs(admin, scope, (subs || []) as any[])).map((x) => x.sub);
+  let list = (await scopeSubs(admin, scope, (subs || []) as any[])).map((x) => x.sub);
+  if (opts.limit && filterable) list = list.slice(0, opts.limit);
   if (!list.length) return [];
   const aIds = Array.from(new Set(list.map((s) => s.assignment_id)));
   const uIds = Array.from(new Set(list.map((s) => s.user_id)));
