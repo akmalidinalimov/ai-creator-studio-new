@@ -91,8 +91,9 @@ export default function AdminUsers() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [groups, setGroups] = useState<{ id: string; name: string; teacher_id?: string | null; course_id?: string | null }[]>([]);
   const [bulkGroupId, setBulkGroupId] = useState<string>("");
+  const [bulkAddGroupId, setBulkAddGroupId] = useState<string>("");
   const [bulkRole, setBulkRole] = useState<{ user: UserRow; newRole: RoleName } | null>(null);
-  const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
+  const [courses, setCourses] = useState<{ id: string; title: string; channel_group_id?: string | null }[]>([]);
   const [allTiers, setAllTiers] = useState<{ id: string; course_id: string; name: string; module_limit: number | null }[]>([]);
   const [enrollMap, setEnrollMap] = useState<Record<string, Set<string>>>({});
   const [enrollTier, setEnrollTier] = useState<Record<string, Record<string, string>>>({});
@@ -268,7 +269,7 @@ export default function AdminUsers() {
     }
     setUsers(rows as UserRow[]);
     const [{ data: cs }, { data: gs }, { data: ts }] = await Promise.all([
-      supabase.from("courses").select("id, title").order("title"),
+      (supabase.from("courses") as any).select("id, title, channel_group_id").order("title"),
       // Groups RLS is admin-only → a direct groups read returns ZERO rows for a teacher, leaving the
       // group filter/assignment dropdown empty (the user list itself works via staff_list_students).
       // Teachers go through the junction-aware teacher_groups RPC (primary ∪ co-teacher) and map
@@ -937,6 +938,31 @@ export default function AdminUsers() {
     reload();
   };
 
+  // Multi-course (20261127143100): ADD a course for the selected students — their main group and everything that
+  // follows it (rating, boards, reminders) stay as they are; they get this group and its course's plan as well.
+  // Their main course is refused here (changing that group is a move: "Guruhga ko'chirish").
+  const bulkAddCourse = async (groupId: string) => {
+    if (selected.size === 0) return;
+    const ids = Array.from(selected);
+    const g = groups.find((x) => x.id === groupId);
+    const courseTitle = courses.find((c) => c.id === g?.course_id)?.title || "";
+    if (!window.confirm(`${ids.length} ta talabaga «${courseTitle}» kursi (${g?.name || ""}) qo'shilsinmi?\n\nAsosiy guruhi o'zgarmaydi.`)) {
+      setBulkAddGroupId("");
+      return;
+    }
+    const { data, error } = await (supabase.rpc as any)("admin_add_student_course", { _user_ids: ids, _group_id: groupId });
+    setBulkAddGroupId("");
+    if (error) return toast.error(error.message);
+    const r = (data || {}) as { added?: number; already?: number; main_course?: number; failed?: number; first_error?: string | null };
+    const parts = [`${r.added ?? 0} ta qo'shildi`];
+    if (r.already) parts.push(`${r.already} ta allaqachon bor edi`);
+    if (r.main_course) parts.push(`${r.main_course} ta uchun bu asosiy kursi (ko'chirish kerak)`);
+    if (r.failed) parts.push(`${r.failed} ta xato${r.first_error ? `: ${r.first_error}` : ""}`);
+    (r.failed ? toast.error : toast.success)(parts.join(", "), { duration: 8000 });
+    setSelected(new Set());
+    reload();
+  };
+
   const setStatus = async (user: UserRow, status: "active" | "inactive") => {
     const r = await mutate(() => supabase.from("profiles").update({ status }).eq("id", user.id));
     if (!r.ok) { if (r.reason !== "impersonation_readonly") toast.error(r.message ?? "Saqlanmadi"); return; }
@@ -1108,6 +1134,22 @@ export default function AdminUsers() {
                         </SelectItem>
                       ));
                     })()}
+                  </SelectContent>
+                </Select>
+              )}
+              {isAdmin && statusFilter !== "archived" && (
+                <Select value={bulkAddGroupId} onValueChange={(v) => { setBulkAddGroupId(v); bulkAddCourse(v); }}>
+                  <SelectTrigger className="w-[180px] h-8 text-xs">
+                    <SelectValue placeholder="Kursga qo'shish…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {/* a course's channel holding group («… | KANAL») is for channel-only sign-ups, never picked by hand */}
+                    {groups.filter((g) => g.course_id && !courses.some((c) => c.channel_group_id === g.id)).map((g) => (
+                      <SelectItem key={g.id} value={g.id}>
+                        {g.name}
+                        <span className="text-xs text-muted-foreground ml-1">· {courses.find((c) => c.id === g.course_id)?.title || "—"}</span>
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               )}
