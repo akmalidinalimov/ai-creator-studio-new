@@ -9210,6 +9210,11 @@ Deno.serve(async (req) => {
                 { source: "telegram-bot-webhook" });
             } else if (aa && (aa.status === "added" || aa.status === "changed") && aa.user_id) {
               cacheInvalidateUser(String(aa.user_id));
+            } else if (aa?.status === "ambiguous") {
+              // two real groups behind one chat of an auto-add course: nobody is added (the group decides the tier) —
+              // graceful, but never silent
+              await logHealth(admin, "multi_course_auto_add_ambiguous", { chat_id: chat, groups: aa.groups ?? null },
+                { source: "telegram-bot-webhook" });
             }
           } catch (e) {
             await logHealth(admin, "multi_course_auto_add_failed", { source: "telegram_join", chat_id: chat, error: String(e).slice(0, 200) },
