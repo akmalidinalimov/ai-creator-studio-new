@@ -34,6 +34,8 @@ const esc = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;"
 export const WELCOME_T: Record<Locale, {
   hi: (name: string) => string;
   member: (where: string) => string;
+  /** Multi-course (PR 3a): one line per SECONDARY course. */
+  also: (where: string) => string;
   davom: string;
   homework: string;
   profil: string;
@@ -50,6 +52,7 @@ export const WELCOME_T: Record<Locale, {
   uz: {
     hi: (n) => `Salom, <b>${n}</b>! 👋`,
     member: (w) => `Siz <b>${w}</b> talabasisiz.`,
+    also: (w) => `Shuningdek, <b>${w}</b> kursida ham o'qiysiz.`,
     davom: "keyingi darsingiz",
     homework: "nima topshirildi, nima qoldi",
     profil: "ballaringiz va guruhdagi o'rningiz",
@@ -66,6 +69,7 @@ export const WELCOME_T: Record<Locale, {
   ru: {
     hi: (n) => `Салом, <b>${n}</b>! 👋`,
     member: (w) => `Вы студент <b>${w}</b>.`,
+    also: (w) => `Также вы учитесь на курсе <b>${w}</b>.`,
     davom: "ваш следующий урок",
     homework: "что сдано и что осталось",
     profil: "ваши баллы и место в группе",
@@ -82,6 +86,7 @@ export const WELCOME_T: Record<Locale, {
   en: {
     hi: (n) => `Hi, <b>${n}</b>! 👋`,
     member: (w) => `You are a student of <b>${w}</b>.`,
+    also: (w) => `You also study <b>${w}</b>.`,
     davom: "your next lesson",
     homework: "what you've handed in and what's left",
     profil: "your points and your place in the group",
@@ -103,6 +108,8 @@ export type WelcomeFacts = {
   group: string | null | undefined;
   appOn: boolean;
   trial: boolean;
+  /** Multi-course (PR 3a): the student's SECONDARY courses (course · group). Absent / empty = single course, unchanged. */
+  also?: { course: string | null | undefined; group: string | null | undefined }[];
   /** The keyboard's own labels (T.kbDavom, T.kbHomework, PROF_T.kbProfil). */
   labels: { davom: string; homework: string; profil: string; instagram?: string };
 };
@@ -114,6 +121,10 @@ export function welcomeText(locale: Locale, f: WelcomeFacts): string {
   const where = [f.course, f.group].map((s) => esc(String(s ?? "").trim())).filter(Boolean).join(" · ");
   const lines = [t.hi(name)];
   if (where) lines.push(t.member(where));
+  for (const a of f.also ?? []) {
+    const w = [a.course, a.group].map((s) => esc(String(s ?? "").trim())).filter(Boolean).join(" · ");
+    if (w) lines.push(t.also(w));
+  }
   lines.push("");
   if (!f.trial) lines.push(`${f.labels.davom} — ${t.davom}`);
   lines.push(`${f.labels.homework} — ${t.homework}`);
@@ -136,6 +147,8 @@ export type WelcomeDeps = {
   /** Send message 1 with the persona's reply keyboard (index.ts sendWithKeyboard). */
   sendWithKeyboard: (text: string) => Promise<unknown>;
   primaryCourseId: () => Promise<string | null>;
+  /** Multi-course (PR 3a): the student's SECONDARY courses (course · group). Omitted / failing = none. */
+  secondaryCourses?: () => Promise<{ course: string | null; group: string | null }[]>;
   nextLessonId: (courseId: string) => Promise<string | null>;
   /** index.ts studentWatchButton bound to this chat, src "bot_start", the student's own magic links. */
   watch: (o: { text: string; miniPath: string; legacyPath: string }) => Promise<BotWatch>;
@@ -160,9 +173,16 @@ export async function sendStudentWelcome(admin: Db, d: WelcomeDeps): Promise<voi
   } catch (e) {
     console.error("student-welcome: group read failed", String((e as Error)?.message ?? e));
   }
+  let also: { course: string | null; group: string | null }[] = [];
+  try {
+    if (d.secondaryCourses) also = await d.secondaryCourses();
+  } catch (e) {
+    console.error("student-welcome: secondary courses read failed", String((e as Error)?.message ?? e));
+  }
   const trial = d.profile.account_type === "provisional";
   await d.sendWithKeyboard(welcomeText(d.locale, {
     name: d.profile.name, course, group: group?.name ?? null, appOn: d.appOn, trial, labels: d.labels,
+    ...(also.length ? { also } : {}),
   }));
 
   const rows: (BotWatch | Record<string, unknown>)[][] = [];

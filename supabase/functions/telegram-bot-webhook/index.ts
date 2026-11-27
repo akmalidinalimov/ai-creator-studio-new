@@ -50,6 +50,10 @@ import { handleQaCallback, parseQaCallback } from "./question-assist-bot.ts";
 import { langChooserKeyboard, parseProfAction, profileRows, profileWebCells, showProfileView } from "./profile-tabs.ts";
 import { sendStudentWelcome } from "./student-welcome.ts";
 import {
+  autoAddTopicCandidate, type CourseMeta, courseScopeIds, groupForTaskCourse, loadAutoAddCourseIds,
+  loadSecondaryCourseGroups, loadStudentCourseGroups, pickCaptureGroup, type StudentCourseGroups, taskScopeIds,
+} from "./multi-course.ts";
+import {
   bellCallback, hourPickerKeyboard, parseBellTarget, parseReminderHour, parseTimezone, saveBotSetting, tzPickerKeyboard,
 } from "./bot-settings.ts";
 import {
@@ -483,6 +487,9 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
     hwIntentNoTopic: "Bu modul uchun topik sozlanmagan. Iltimos, ustozingizga murojaat qiling.",
     hwIntentNoGroup: "Sizga guruh biriktirilmagan. Ustozingiz bilan bog'laning.",
     hwOtherCourseTask: "ℹ️ Bu vazifa oldingi kursingizga tegishli. Hozirgi kursingiz vazifalari uchun /vazifalar ni bosing.",
+    // multi-course (PR 3a): only students in 2+ courses ever see these
+    hwCourseHeader: (title: string) => `🎓 <b>${csvEscapeHtml(title)}</b>`,
+    davomPickCourse: "Qaysi kursdan davom etamiz? 👇",
     hwIntentBtnGoTopic: "📌 Topikga o'tish",
     hwIntentAlreadyScored: "Bu vazifa allaqachon baholangan ✅",
     hwRequireIntentHint: "📤 Vazifani topshirish uchun avval botda /vazifalar bo'limiga kiring va kerakli vazifa uchun \"📤 Topshirish\" tugmasini bosing — so'ngra rasm/video/hujjatingizni shu topikka yuboring. Aks holda ish avtomatik qabul qilinmaydi.",
@@ -798,6 +805,8 @@ Bu uning yangi varianti bo'lsa — «🔄 Ha, qayta topshirish» ni bosing (eski
     hwIntentNoTopic: "Топик для этого модуля не настроен. Свяжитесь с преподавателем.",
     hwIntentNoGroup: "Вам не назначена группа. Свяжитесь с преподавателем.",
     hwOtherCourseTask: "ℹ️ Это задание из вашего предыдущего курса. Задания текущего курса — в /vazifalar.",
+    hwCourseHeader: (title: string) => `🎓 <b>${csvEscapeHtml(title)}</b>`,
+    davomPickCourse: "С какого курса продолжим? 👇",
     hwIntentBtnGoTopic: "📌 Перейти в топик",
     hwIntentAlreadyScored: "Это задание уже оценено ✅",
     hwRequireIntentHint: "📤 Чтобы сдать работу, сначала откройте в боте /vazifalar и нажмите \"📤 Сдать\" для нужного задания — затем отправьте фото/видео/документ в этот топик. Иначе работа не будет принята автоматически.",
@@ -1113,6 +1122,8 @@ If this is a new version, tap «🔄 Yes, resubmit» (the old score is reset). I
     hwIntentNoTopic: "Topic not configured for this module. Please contact your teacher.",
     hwIntentNoGroup: "You are not assigned to a group. Please contact your teacher.",
     hwOtherCourseTask: "ℹ️ This task belongs to your previous course. Tap /vazifalar for your current course's tasks.",
+    hwCourseHeader: (title: string) => `🎓 <b>${csvEscapeHtml(title)}</b>`,
+    davomPickCourse: "Which course shall we continue? 👇",
     hwIntentBtnGoTopic: "📌 Open topic",
     hwIntentAlreadyScored: "This task has already been graded ✅",
     hwRequireIntentHint: "📤 To submit, first open /vazifalar in the bot and tap \"📤 Submit\" for the task — then post your photo/video/document in this topic. Otherwise it won't be captured automatically.",
@@ -2436,29 +2447,34 @@ async function getDefaultCourseId(admin: any): Promise<string | null> {
 }
 
 // Resolve which course(s) "belong" to a student for stats purposes:
-//   1. profile.group_id -> groups.course_id (preferred)
+//   1. profile.group_id -> groups.course_id (preferred), then each SECONDARY course (student_course_groups,
+//      multi-course PR 3a; multi-course.ts courseScopeIds) — main course first
 //   2. enrollments table
 //   3. fallback to platform default course
-async function getCourseIdsForUser(admin: any, userId: string): Promise<string[]> {
+// `sc` is the student's course groups when the scope came from them (1), else null; `multi` = more than one
+// group course (only then do /davom and /vazifalar switch to their per-course layout).
+async function getStudentCourseScope(
+  admin: any, userId: string,
+): Promise<{ ids: string[]; sc: StudentCourseGroups | null; multi: boolean }> {
   try {
     // The bot runs service-role (bypasses RLS), so deactivation must be enforced
     // here: only PUBLISHED courses are ever in scope. A student in a deactivated
     // course's group keeps their enrollment (not kicked) but sees no lessons.
-    const { data: prof } = await admin
-      .from("profiles").select("group_id").eq("id", userId).maybeSingle();
-    if (prof?.group_id) {
-      const { data: g } = await admin
-        .from("groups").select("course_id, courses(published)").eq("id", prof.group_id).maybeSingle();
-      if (g?.course_id && (g as any).courses?.published) return [g.course_id];
-      // group's course is deactivated → fall through to any other published enrollment
-    }
+    const sc = await loadStudentCourseGroups(admin, userId);
+    const groupIds = courseScopeIds(sc);
+    if (groupIds.length) return { ids: groupIds, sc, multi: groupIds.length > 1 };
+    // no published group course (main deactivated, no secondary) → fall through to any other published enrollment
     const { data: enr } = await admin
       .from("enrollments").select("course_id, courses!inner(published)").eq("user_id", userId).eq("courses.published", true);
     const ids = (enr || []).map((r: any) => r.course_id).filter(Boolean);
-    if (ids.length) return Array.from(new Set(ids));
+    if (ids.length) return { ids: Array.from(new Set(ids)) as string[], sc: null, multi: false };
   } catch (_e) { /* fall through */ }
   const def = await getDefaultCourseId(admin);
-  return def ? [def] : [];
+  return { ids: def ? [def] : [], sc: null, multi: false };
+}
+
+async function getCourseIdsForUser(admin: any, userId: string): Promise<string[]> {
+  return (await getStudentCourseScope(admin, userId)).ids;
 }
 
 // The single "current" course a student is studying (Architecture A: one course at a time).
@@ -2894,11 +2910,19 @@ async function buildHomeworkMessage(
     // Resolve the student's course scope FIRST (group's course, else enrollments).
     // Without this, the query returned every course's homework, so students in a
     // 2-course catalog saw each module's homework twice (one per course).
-    const [profRes, courseIds] = await Promise.all([
+    // Multi-course (PR 3a): a student in 2+ group courses sees every course's homework, grouped per course, and each
+    // module's topic / button comes from the group OF THAT COURSE (multi-course.ts groupForTaskCourse). With one
+    // course every module maps to profiles.group_id, exactly as before.
+    const [profRes, scope] = await Promise.all([
       admin.from("profiles").select("group_id").eq("id", userId).maybeSingle(),
-      getCourseIdsForUser(admin, userId),
+      getStudentCourseScope(admin, userId),
     ]);
-    const groupId = (profRes as any).data?.group_id || null;
+    const courseIds = scope.ids;
+    const mainGroupId: string | null = (profRes as any).data?.group_id || null;
+    const multi = scope.multi && !!scope.sc;
+    // (also when the only published course is a secondary one: its modules still use ITS group's topics)
+    const groupForCourse = (cid: string | null | undefined): string | null =>
+      scope.sc && scope.sc.secondary.length ? groupForTaskCourse(cid, scope.sc) : mainGroupId;
     let assignsQuery = admin.from("homework_assignments")
       .select("id, title, max_score, task_number, sap_number, parent_id, module_id, is_active, modules!inner(id, title, position, course_id)")
       .eq("is_active", true)
@@ -2922,23 +2946,33 @@ async function buildHomeworkMessage(
 
     const aIds = list.map((a) => a.id);
     const moduleIds = Array.from(new Set(list.map((a) => a.module_id)));
-    const [{ data: subs }, { data: topics }, { data: groupRow }] = await Promise.all([
+    // module → the group whose topic it is submitted in (one course: every module → profiles.group_id)
+    const groupOfModule = new Map<string, string | null>();
+    for (const a of list) if (!groupOfModule.has(a.module_id)) groupOfModule.set(a.module_id, groupForCourse(a.modules?.course_id));
+    const topicGroupIds = Array.from(new Set(Array.from(groupOfModule.values()).filter((g): g is string => !!g)));
+    const [{ data: subs }, { data: topics }, { data: groupRows }, { data: courseRows }] = await Promise.all([
       admin.from("homework_submissions").select("assignment_id, score, score_feedback, score_is_stale, previous_attempts").eq("user_id", userId).in("assignment_id", aIds),
-      groupId
-        ? admin.from("group_module_topics").select("module_id, telegram_topic_url").eq("group_id", groupId).in("module_id", moduleIds)
+      topicGroupIds.length
+        ? admin.from("group_module_topics").select("group_id, module_id, telegram_topic_url").in("group_id", topicGroupIds).in("module_id", moduleIds)
         : Promise.resolve({ data: [] }),
-      groupId
-        ? admin.from("groups").select("homework_topic_url").eq("id", groupId).maybeSingle()
-        : Promise.resolve({ data: null }),
+      topicGroupIds.length
+        ? admin.from("groups").select("id, homework_topic_url").in("id", topicGroupIds)
+        : Promise.resolve({ data: [] }),
+      multi
+        ? admin.from("courses").select("id, title").in("id", courseIds)
+        : Promise.resolve({ data: [] }),
     ]);
     const subMap = new Map((subs || []).map((s: any) => [s.assignment_id, s]));
-    const sharedTopicUrl: string | null = (groupRow as any)?.homework_topic_url || null;
+    const sharedTopicByGroup = new Map<string, string>();
+    for (const g of (groupRows || []) as any[]) if (g?.homework_topic_url) sharedTopicByGroup.set(g.id, g.homework_topic_url);
     const topicMap = new Map<string, string>();
     for (const tp of (topics || []) as any[]) {
-      if (tp.telegram_topic_url) topicMap.set(tp.module_id, tp.telegram_topic_url);
+      if (tp.telegram_topic_url && groupOfModule.get(tp.module_id) === tp.group_id) topicMap.set(tp.module_id, tp.telegram_topic_url);
     }
-    if (sharedTopicUrl) {
-      for (const mid of moduleIds) if (!topicMap.has(mid)) topicMap.set(mid, sharedTopicUrl);
+    for (const mid of moduleIds) {
+      const g = groupOfModule.get(mid);
+      const shared = g ? sharedTopicByGroup.get(g) : undefined;
+      if (shared && !topicMap.has(mid)) topicMap.set(mid, shared);
     }
 
 
@@ -2950,11 +2984,26 @@ async function buildHomeworkMessage(
       byModule.set(a.module_id, arr);
     }
 
+    // 2+ courses: course by course (main first, the scope's order), modules by position inside each.
+    const courseRank = (cid: string | null | undefined) => {
+      const i = courseIds.indexOf(String(cid ?? ""));
+      return i < 0 ? courseIds.length : i;
+    };
     const modulesOrdered = Array.from(byModule.entries())
-      .map(([mid, arr]) => ({ mid, arr, position: arr[0]?.modules?.position ?? 0, title: arr[0]?.modules?.title || "—" }))
-      .sort((a, b) => a.position - b.position);
+      .map(([mid, arr]) => ({
+        mid, arr, position: arr[0]?.modules?.position ?? 0, title: arr[0]?.modules?.title || "—",
+        courseId: (arr[0]?.modules?.course_id ?? null) as string | null,
+      }))
+      .sort((a, b) => (multi ? courseRank(a.courseId) - courseRank(b.courseId) : 0) || a.position - b.position);
+    const courseTitle = new Map<string, string>(((courseRows || []) as any[]).map((c) => [c.id, String(c.title || "")]));
+    let headerCourse: string | null | undefined;
 
     for (const m of modulesOrdered) {
+      const groupId = groupOfModule.get(m.mid) ?? null;
+      if (multi && m.courseId !== headerCourse) {
+        headerCourse = m.courseId;
+        lines.push(t.hwCourseHeader(courseTitle.get(String(m.courseId)) || "—"), "");
+      }
       lines.push(t.hwModuleHeader(m.position + 1, m.title, m.arr.length));
       for (const a of m.arr) {
         const s: any = subMap.get(a.id);
@@ -2994,9 +3043,11 @@ async function buildHomeworkMessage(
       // Always shown when group+topic exist, so students can resubmit graded work.
       if (groupId && topic) {
         const allGraded = ungraded.length === 0;
+        // 2+ courses: the same module number exists in each course, so the button names its course.
+        const coursePrefix = multi ? `${clip(courseTitle.get(String(m.courseId)) || "—", 24)} · ` : "";
         const label = allGraded
-          ? `📝 ${m.position + 1}-MODUL VAZIFASI · qayta topshirish`
-          : `📝 ${m.position + 1}-MODUL VAZIFASI`;
+          ? `📝 ${coursePrefix}${m.position + 1}-MODUL VAZIFASI · qayta topshirish`
+          : `📝 ${coursePrefix}${m.position + 1}-MODUL VAZIFASI`;
         buttons.push([{ text: label, callback_data: `hw:mod:${m.mid}` }]);
       }
     }
@@ -5235,6 +5286,19 @@ async function studentWelcome(admin: any, chatId: number, profile: any, locale: 
     appOn: __studentMiniAppEnabled?.on === true,
     sendWithKeyboard: (text) => sendWithKeyboard(chatId, text, locale, false, "student"),
     primaryCourseId: () => getPrimaryCourseIdForUser(admin, profile.id),
+    // Multi-course (PR 3a): each secondary course as "course · group" (none for a single-course student).
+    secondaryCourses: async () => {
+      const sc = await loadStudentCourseGroups(admin, profile.id);
+      if (!sc.secondary.length) return [];
+      const [{ data: cs }, { data: gs }] = await Promise.all([
+        admin.from("courses").select("id, title").in("id", sc.secondary.map((s) => s.course_id)),
+        admin.from("groups").select("id, name").in("id", sc.secondary.map((s) => s.group_id)),
+      ]);
+      const ct = new Map(((cs || []) as any[]).map((c) => [c.id, c.title ?? null]));
+      const gn = new Map(((gs || []) as any[]).map((g) => [g.id, g.name ?? null]));
+      return sc.secondary.filter((s) => s.published)
+        .map((s) => ({ course: ct.get(s.course_id) ?? null, group: gn.get(s.group_id) ?? null }));
+    },
     nextLessonId: async (courseId) => (await getNextIncompleteLesson(admin, profile.id, courseId))?.id ?? null,
     watch: (o) => studentWatchButton(admin, {
       chatId, text: o.text, miniPath: o.miniPath, legacyPath: o.legacyPath, src: "bot_start",
@@ -5397,7 +5461,22 @@ async function handleCommand(admin: any, msg: any, cmdRaw: string) {
 
   if (cmd === "/davom") {
     if ((profile as any).account_type === "provisional") { await sendWithKeyboard(chatId, TRIAL_LOCKED[locale] || TRIAL_LOCKED.uz, locale); return; }
-    const courseId = await getPrimaryCourseIdForUser(admin, profile.id);
+    const davomScope = await getStudentCourseScope(admin, profile.id);
+    if (davomScope.multi) {
+      // Multi-course (PR 3a): one ▶️ button per course (its own next lesson), main course first.
+      const { data: crows } = await admin.from("courses").select("id, title").in("id", davomScope.ids);
+      const titleById = new Map((crows || []).map((c: any) => [c.id, c.title]));
+      const rows: any[][] = [];
+      for (const cid of davomScope.ids) {
+        const nx = await getNextIncompleteLesson(admin, profile.id, cid);
+        if (!nx) continue;
+        rows.push([await studentWatchButton(admin, { chatId, text: `▶️ ${String(titleById.get(cid) || t.btnFirstLesson)}`, miniPath: continuePath(cid), legacyPath: `/lesson/${cid}/${nx.id}`, src: "bot_davom", webhookOn: __studentMiniAppEnabled?.on === true, magicLink: (p) => createMagicLink(admin, profile.id, "deeplink_lesson", p) })]);
+      }
+      if (!rows.length) { await sendWithKeyboard(chatId, t.noNextLesson, locale); return; }
+      await sendStudentWatchMessage(admin, chatId, (t as any).davomPickCourse, rows);
+      return;
+    }
+    const courseId = davomScope.ids[0] ?? null; // = getPrimaryCourseIdForUser
     if (!courseId) {
       await sendWithKeyboard(chatId, t.noCourse, locale);
       return;
@@ -5639,11 +5718,19 @@ async function setMessageReaction(chatId: number, messageId: number, emoji = "�
 // the group decides which topic the work goes to and which teachers get it. (getCourseIdsForUser drops an
 // unpublished group course, which would refuse every task of a finished course whose students still post
 // late work.) Only a student with no group, or a course-less group, falls back to the /vazifalar scope.
+// Multi-course (PR 3a): the main group's course ∪ every SECONDARY course (student_course_groups), published or not
+// for the same reason (multi-course.ts taskScopeIds). Any other course is still a previous course, refused as before.
 async function currentCourseScope(admin: any, userId: string): Promise<string[]> {
   try {
-    const { data: p } = await admin.from("profiles").select("group_id, groups:group_id(course_id)").eq("id", userId).maybeSingle();
-    const c = (p as any)?.groups?.course_id;
-    if (c) return [c];
+    if ((await loadSecondaryCourseGroups(admin, userId)).length) {
+      const ids = taskScopeIds(await loadStudentCourseGroups(admin, userId));
+      if (ids.length) return ids;
+    } else {
+      // single-course student: exactly the pre-multi-course read
+      const { data: p } = await admin.from("profiles").select("group_id, groups:group_id(course_id)").eq("id", userId).maybeSingle();
+      const c = (p as any)?.groups?.course_id;
+      if (c) return [c];
+    }
   } catch (_e) { /* fall back */ }
   return await getCourseIdsForUser(admin, userId);
 }
@@ -5681,7 +5768,7 @@ async function startHomeworkIntent(
   // 1. Load assignment + module
   const { data: a } = await admin
     .from("homework_assignments")
-    .select("id, title, max_score, task_number, sap_number, parent_id, module_id, modules(id, title, position)")
+    .select("id, title, max_score, task_number, sap_number, parent_id, module_id, modules(id, title, position, course_id)")
     .eq("id", assignmentId)
     .maybeSingle();
   if (!a) { await sendMessage(chatId, t.gradeNotFound); return; }
@@ -5705,9 +5792,18 @@ async function startHomeworkIntent(
     return;
   }
 
-  // 3. Resolve student group + topic (per-module override → group shared topic)
-  if (!profile.group_id) { await sendMessage(chatId, t.hwIntentNoGroup); return; }
-  const { url: topicUrl } = await resolveModuleTopicUrl(admin, profile.group_id, a.module_id);
+  // 3. Resolve student group + topic (per-module override → group shared topic). Multi-course (PR 3a): the group of
+  // the TASK's course — a secondary course's group for its tasks, else profiles.group_id exactly as before.
+  let intentGroupId: string | null = profile.group_id ?? null;
+  try {
+    const secondary = await loadSecondaryCourseGroups(admin, profile.id);   // one read; none = as before
+    if (secondary.length) {
+      const sc: StudentCourseGroups = { main: profile.group_id ? { group_id: profile.group_id, course_id: null, published: true } : null, secondary };
+      intentGroupId = groupForTaskCourse((a as any).modules?.course_id ?? null, sc) ?? intentGroupId;
+    }
+  } catch (_e) { /* the main group, as before */ }
+  if (!intentGroupId) { await sendMessage(chatId, t.hwIntentNoGroup); return; }
+  const { url: topicUrl } = await resolveModuleTopicUrl(admin, intentGroupId, a.module_id);
   if (!topicUrl) { await sendMessage(chatId, t.hwIntentNoTopic); return; }
 
   const parsed = parseTopicUrl(topicUrl);
@@ -5723,7 +5819,7 @@ async function startHomeworkIntent(
     user_id: profile.id,
     assignment_id: assignmentId,
     module_id: a.module_id,
-    group_id: profile.group_id,
+    group_id: intentGroupId,
     telegram_chat_id: parsed.chatId,
     telegram_thread_id: parsed.threadId,
     submission_id: null,
@@ -7024,6 +7120,83 @@ async function handlePickerPost(
   if (erR?.waitUntil) erR.waitUntil(remindTask); else remindTask.catch(() => {});
 }
 
+// ── Multi-course students (PR 3a; multi-course.ts) ──
+
+const GROUP_TOPIC_COLS = "id, course_id, homework_topic_id, homework_topic_url, telegram_group_url";
+
+/** Staff (teacher / admin / superadmin) are never auto-added to a course as students. A read error = staff (fail closed). */
+async function isStaffUser(admin: any, userId: string): Promise<boolean> {
+  try {
+    const { data, error } = await admin.from("user_roles").select("role").eq("user_id", userId)
+      .in("role", ["teacher", "admin", "superadmin"]).limit(1);
+    if (error) return true;
+    return Array.isArray(data) && data.length > 0;
+  } catch (_e) {
+    return true;
+  }
+}
+
+/** add_student_course_group (the SQL engine audits every add). An RPC error is DB-visible and = not added. */
+async function addCourseGroupViaEngine(
+  admin: any, userId: string, groupId: string, source: "bot_topic",
+): Promise<string | null> {
+  try {
+    const { data, error } = await admin.rpc("add_student_course_group", { _uid: userId, _group: groupId, _source: source, _actor: null });
+    if (error) {
+      await logHealth(admin, "multi_course_auto_add_failed", { group_id: groupId, source, error: String(error.message ?? error).slice(0, 200) },
+        { source: "telegram-bot-webhook", targetUserId: userId });
+      return null;
+    }
+    return typeof (data as any)?.status === "string" ? (data as any).status : null;
+  } catch (e) {
+    await logHealth(admin, "multi_course_auto_add_failed", { group_id: groupId, source, error: redactSecrets(e).slice(0, 200) },
+      { source: "telegram-bot-webhook", targetUserId: userId });
+    return null;
+  }
+}
+
+/**
+ * A registered student's homework-topic post outside their MAIN group's topic: the student's SECONDARY group whose
+ * homework topic (chatId, threadId) is, else — for a course listed in platform_settings multi_course
+ * .auto_add_course_ids — the group they are added to right now (add_student_course_group, source 'bot_topic').
+ * null = today's behaviour (the foreign-topic redirect / silence). `topicGroupIds` = homeworkTopicGroupIds(chat, thread).
+ */
+async function secondaryTopicGroup(
+  admin: any, profile: any, mainGroupId: string | null, chatId: number, threadId: number, topicGroupIds: string[],
+): Promise<{ grp: any; own: OwnHomeworkTopic } | null> {
+  const others = topicGroupIds.filter((id) => id !== mainGroupId);
+  if (!others.length) return null; // not another group's homework topic (general chat): nothing to look up
+  try {
+    const secondary = await loadSecondaryCourseGroups(admin, profile.id);   // one read
+    let groupId: string | null = pickCaptureGroup(others, secondary)?.group_id ?? null;
+    if (!groupId) {
+      const autoAdd = await loadAutoAddCourseIds(admin);                     // cached 5 min
+      if (!autoAdd.length) return null;
+      const sc = await loadStudentCourseGroups(admin, profile.id);
+      const { data: tgs } = await admin.from("groups").select("id, course_id").in("id", others);
+      const topicGroups = ((tgs || []) as any[]).filter((g) => g?.course_id && autoAdd.includes(String(g.course_id).toLowerCase()));
+      if (!topicGroups.length) return null;
+      const { data: cs } = await admin.from("courses").select("id, published, channel_group_id")
+        .in("id", Array.from(new Set(topicGroups.map((g) => g.course_id))));
+      const cand = autoAddTopicCandidate(topicGroups, autoAdd, (cs || []) as CourseMeta[], sc);
+      if (!cand) return null;
+      if (await isStaffUser(admin, profile.id)) return null;
+      const status = await addCourseGroupViaEngine(admin, profile.id, cand.group_id, "bot_topic");
+      if (status !== "added" && status !== "changed" && status !== "already") return null; // main_course / error: as today
+      console.log("hw:group:multi-course-auto-added", JSON.stringify({ profile_id: profile.id, group_id: cand.group_id, status, chatId, threadId }));
+      cacheInvalidateUser(profile.id);
+      groupId = cand.group_id;
+    }
+    const { data: g } = await admin.from("groups").select(GROUP_TOPIC_COLS).eq("id", groupId).maybeSingle();
+    if (!g) return null;
+    const own = await findOwnHomeworkTopic(admin, g, chatId, threadId);
+    return own ? { grp: g, own } : null;
+  } catch (e) {
+    console.error("hw:group:multi-course-lookup-err", String(e).slice(0, 200));
+    return null;
+  }
+}
+
 // PR-1 CHAT GUARD, the refusal side: a registered student's media post that is NOT in their own group's
 // homework topic (capture-guard.ts findOwnHomeworkTopic said no). Never captured. Member-forgiving:
 //   - inside ANOTHER group's homework topic (this chat or any other): an in-thread redirect to their own
@@ -7036,9 +7209,10 @@ async function handlePickerPost(
 async function handleForeignTopicPost(
   admin: any, profile: any, grp: any,
   at: { chatId: number; threadId: number; messageId: number; fromId: number | null },
+  knownTopicGroupIds?: string[], // homeworkTopicGroupIds already read by the caller (multi-course lookup)
 ) {
   const { chatId, threadId, messageId, fromId } = at;
-  const owners = (await homeworkTopicGroupIds(admin, chatId, threadId)).filter((id) => id !== grp.id);
+  const owners = (knownTopicGroupIds ?? await homeworkTopicGroupIds(admin, chatId, threadId)).filter((id) => id !== grp.id);
   if (!owners.length) {
     console.log("hw:group:not-own-hw-topic-ignored", JSON.stringify({ profile_id: profile.id, group_id: grp.id, chatId, threadId, messageId }));
     return;
@@ -7224,8 +7398,8 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
     // above), so a post can never be attributed to anyone else.
     if (!intent) {
       const { data: prof2 } = await admin.from("profiles").select("group_id").eq("id", profile.id).maybeSingle();
-      const groupId = prof2?.group_id ?? null;
-      const grp = groupId
+      let groupId = prof2?.group_id ?? null;
+      let grp = groupId
         ? (await admin.from("groups").select("id, course_id, homework_topic_id, homework_topic_url, telegram_group_url").eq("id", groupId).maybeSingle()).data
         : null;
 
@@ -7235,9 +7409,27 @@ async function handleGroupTopicMessage(admin: any, msg: any) {
       // student's homework (4 real misfiles in August; across 5.0 ↔ Challenge it would cross courses). A post
       // outside the student's own homework topic is never captured: inside another group's homework topic it
       // gets the redirect hint + a DB-visible skip; anywhere else (general chat) it stays silent.
-      const ownTopic = grp ? await findOwnHomeworkTopic(admin, grp, chatId, threadId) : null;
+      let ownTopic = grp ? await findOwnHomeworkTopic(admin, grp, chatId, threadId) : null;
+      let topicGroupIds: string[] | undefined;
+      if (!ownTopic) {
+        // Multi-course (PR 3a): not their MAIN group's homework topic — it may be the homework topic of one of their
+        // SECONDARY groups (or of an auto-add course's group, which adds them). Then THAT group (and its course)
+        // drives everything below: picker, pending post, intent, teachers. Reached only by posts outside the main
+        // group's homework topic, so a normal post costs nothing extra.
+        // A student with NO main group (rare) and no secondary course, with auto-add off, keeps the old zero-query
+        // silence (review: no new cost on their general-chat posts).
+        const mayMatter = !!grp || (await loadAutoAddCourseIds(admin)).length > 0 ||
+          (await loadSecondaryCourseGroups(admin, profile.id)).length > 0;
+        topicGroupIds = mayMatter ? await homeworkTopicGroupIds(admin, chatId, threadId) : [];
+        const sec = mayMatter ? await secondaryTopicGroup(admin, profile, grp?.id ?? null, chatId, threadId, topicGroupIds) : null;
+        if (sec) {
+          grp = sec.grp;
+          groupId = sec.grp.id;
+          ownTopic = sec.own;
+        }
+      }
       if (grp && !ownTopic) {
-        await handleForeignTopicPost(admin, profile, grp, { chatId, threadId, messageId, fromId });
+        await handleForeignTopicPost(admin, profile, grp, { chatId, threadId, messageId, fromId }, topicGroupIds);
         return;
       }
 
@@ -9005,6 +9197,29 @@ Deno.serve(async (req) => {
           console.error("course-membership:err", failure);
           await logHealth(admin, "course_membership_event_failed", { kind: joined ? "join" : "leave", chat_id: chat, error: failure },
             { source: "telegram-bot-webhook" });
+        }
+        // Multi-course (PR 3a): a registered student who JOINS a chat of an auto-add course (platform_settings
+        // multi_course.auto_add_course_ids) gets that course as a second course, decided in SQL
+        // (auto_add_course_on_join: not staff, not their main course, channel → its holding group, a real group's
+        // chat → that group). Event-driven: no getChatMember probe ever runs for a registered user (CLAUDE.md).
+        if (st === "member" || (st === "restricted" && cm?.new_chat_member?.is_member === true)) {
+          try {
+            const { data: aa, error: aaErr } = await admin.rpc("auto_add_course_on_join", { _telegram_id: tg, _chat_id: chat });
+            if (aaErr) {
+              await logHealth(admin, "multi_course_auto_add_failed", { source: "telegram_join", chat_id: chat, error: String(aaErr.message ?? aaErr).slice(0, 200) },
+                { source: "telegram-bot-webhook" });
+            } else if (aa && (aa.status === "added" || aa.status === "changed") && aa.user_id) {
+              cacheInvalidateUser(String(aa.user_id));
+            } else if (aa?.status === "ambiguous") {
+              // two real groups behind one chat of an auto-add course: nobody is added (the group decides the tier) —
+              // graceful, but never silent
+              await logHealth(admin, "multi_course_auto_add_ambiguous", { chat_id: chat, groups: aa.groups ?? null },
+                { source: "telegram-bot-webhook" });
+            }
+          } catch (e) {
+            await logHealth(admin, "multi_course_auto_add_failed", { source: "telegram_join", chat_id: chat, error: String(e).slice(0, 200) },
+              { source: "telegram-bot-webhook" });
+          }
         }
       }
       return new Response("ok", { status: 200, headers: corsHeaders });
