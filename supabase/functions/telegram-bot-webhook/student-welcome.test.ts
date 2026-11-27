@@ -108,3 +108,15 @@ Deno.test("welcomeText: with the 📸 Instagram qo‘shish button the third line
   const old = welcomeText("uz", { name: "Aziza", course: "C", group: "G", appOn: false, trial: false, labels: LABELS });
   assert(old.includes(`${LABELS.profil} — ${WELCOME_T.uz.profil}`));
 });
+
+Deno.test("welcomeText (multi-course): one extra line per secondary course; none → byte-identical single-course text", () => {
+  const base = { name: "Aziza", course: "AI CREATORS 7.0", group: "1-guruh", appOn: false, trial: false, labels: LABELS };
+  const one = welcomeText("uz", base);
+  assertEquals(welcomeText("uz", { ...base, also: [] }), one);
+  const two = welcomeText("uz", { ...base, also: [{ course: "CLAUDE STUDIO", group: "CLAUDE STUDIO | 1 - GURUH" }] });
+  const lines = two.split("\n");
+  assertEquals(lines[1], "Siz <b>AI CREATORS 7.0 · 1-guruh</b> talabasisiz.");
+  assertEquals(lines[2], "Shuningdek, <b>CLAUDE STUDIO · CLAUDE STUDIO | 1 - GURUH</b> kursida ham o'qiysiz.");
+  assertEquals(lines.slice(3).join("\n"), one.split("\n").slice(2).join("\n"));
+  assert(welcomeText("ru", { ...base, also: [{ course: "<X>", group: null }] }).includes("Также вы учитесь на курсе <b>&lt;X&gt;</b>."));
+});
