@@ -77,6 +77,9 @@ export default function GroupDetail() {
   const { session } = useAuth();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
+  // multi-course: members whose SECONDARY course group this is (main group elsewhere). staff_group_members lists
+  // them too; they are marked, and "remove from group" is not offered — it would clear their MAIN group.
+  const [secondaryIds, setSecondaryIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
 
   // engagement + per-module submission progress for THIS group
@@ -139,13 +142,17 @@ export default function GroupDetail() {
   const reload = async () => {
     if (!id) return;
     setLoading(true);
-    const [ov, mem, eng, subs, grp] = await Promise.all([
+    const [ov, mem, eng, subs, grp, sec] = await Promise.all([
       supabase.rpc("staff_group_overview" as any, { _group_id: id }),
       supabase.rpc("staff_group_members" as any, { _group_id: id }),
       supabase.rpc("admin_group_engagement_stats" as any, { p_window_days: ENGAGEMENT_WINDOW_DAYS, p_group_id: id }),
       supabase.rpc("admin_group_module_submissions" as any, { p_group_id: id }),
       supabase.from("groups").select("tier_id").eq("id", id).maybeSingle(),
+      // admins read every student_course_groups row under RLS (this page is adminOnly)
+      (supabase.from("student_course_groups" as any) as any).select("user_id").eq("group_id", id).eq("is_main", false),
     ]);
+    if ((sec as any)?.error) toast.error((sec as any).error.message);
+    setSecondaryIds(new Set((((sec as any)?.data as any[]) || []).map((r: any) => r.user_id as string)));
     const ovRow = Array.isArray(ov.data) ? ov.data[0] : ov.data;
     setOverview((ovRow as Overview) || null);
     setGroupTierId(((grp.data as any)?.tier_id) ?? null);
@@ -657,8 +664,10 @@ export default function GroupDetail() {
   };
 
   const handleRemove = async () => {
-    if (!removeMember) return;
-    const r = await saveWithToast(() => supabase.from("profiles").update({ group_id: null }).eq("id", removeMember.id), { success: "Talaba guruhdan chiqarildi" });
+    if (!removeMember || !id) return;
+    // .eq("group_id", id): only ever clears THIS group as the main group — a secondary member (main group elsewhere)
+    // matches 0 rows → "not saved", never a silently cleared main group.
+    const r = await saveWithToast(() => supabase.from("profiles").update({ group_id: null }).eq("id", removeMember.id).eq("group_id", id), { success: "Talaba guruhdan chiqarildi" });
     if (!r.ok) return;
     setRemoveMember(null);
     reload();
@@ -885,10 +894,13 @@ export default function GroupDetail() {
                       <div className="font-medium truncate">{[m.name, m.last_name].filter(Boolean).join(" ") || "—"}</div>
                       <div className="text-xs text-muted-foreground truncate">{m.email}</div>
                       {m.telegram_username && <div className="text-xs text-muted-foreground">@{m.telegram_username}</div>}
+                      {secondaryIds.has(m.id) && <Badge variant="outline" className="mt-1 text-[10px]" title="Asosiy guruhi boshqa kursda">Qo'shimcha kurs</Badge>}
                     </div>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => setRemoveMember(m)}>
-                      <X className="h-4 w-4" />
-                    </Button>
+                    {!secondaryIds.has(m.id) && (
+                      <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => setRemoveMember(m)}>
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                   <div className="flex items-center gap-3 text-xs mt-2">
                     <span><span className="text-muted-foreground">Done:</span> <span className="font-medium">{m.completed_lessons}</span></span>
@@ -920,16 +932,21 @@ export default function GroupDetail() {
                     <tr><td colSpan={7} className="text-center text-muted-foreground py-6">No members.</td></tr>
                   ) : members.map((m) => (
                     <tr key={m.id} className="border-t">
-                      <td className="p-3">{[m.name, m.last_name].filter(Boolean).join(" ") || "—"}</td>
+                      <td className="p-3">
+                        {[m.name, m.last_name].filter(Boolean).join(" ") || "—"}
+                        {secondaryIds.has(m.id) && <Badge variant="outline" className="ml-2 text-[10px]" title="Asosiy guruhi boshqa kursda">Qo'shimcha kurs</Badge>}
+                      </td>
                       <td className="p-3 text-xs">{m.email}</td>
                       <td className="p-3 text-xs">{m.telegram_username ? `@${m.telegram_username}` : "—"}</td>
                       <td className="p-3 text-xs">{m.last_activity_at ? new Date(m.last_activity_at).toLocaleDateString() : <Badge variant="secondary">never</Badge>}</td>
                       <td className="p-3">{m.completed_lessons}</td>
                       <td className="p-3">{m.avg_score ?? "—"}{m.avg_score != null ? "%" : ""}</td>
                       <td className="p-3 text-right">
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setRemoveMember(m)} title="Remove from group">
-                          <UserMinus className="h-4 w-4" />
-                        </Button>
+                        {!secondaryIds.has(m.id) && (
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setRemoveMember(m)} title="Remove from group">
+                            <UserMinus className="h-4 w-4" />
+                          </Button>
+                        )}
                       </td>
                     </tr>
                   ))}

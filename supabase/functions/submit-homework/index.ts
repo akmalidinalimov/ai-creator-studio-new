@@ -37,6 +37,7 @@ import {
   defaultFilename, homeworkFileKind, maxBytesFor, MAX_ITEMS, MAX_TOTAL_BYTES, sendSpec, sentFileId,
   type HomeworkFileKind,
 } from "./media.ts";
+import { resolveTaskGroupId } from "./task-group.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -79,10 +80,23 @@ async function logOutcome(
   } catch (e) { console.error("submit-homework logOutcome threw", String(e)); }
 }
 
-async function resolveGroupId(admin: any, userId: string): Promise<string | null> {
-  const { data, error } = await admin.from("profiles").select("group_id").eq("id", userId).maybeSingle();
-  if (error) throw error; // a masked failure here would misclassify as "student has no group"
-  return data?.group_id ?? null;
+// Multi-course (PR 4): the group of the TASK's course (secondary group of that course, else the main group) — see
+// task-group.ts. Same answer as profiles.group_id for every single-course student. Throws only when the profile read
+// itself fails; a failed course/rule read falls back to the main group and leaves a DB-visible row.
+async function resolveGroupId(admin: any, userId: string, moduleId: string | null): Promise<string | null> {
+  const r = await resolveTaskGroupId(admin, userId, moduleId);
+  if (r.fallbackReason) {
+    try {
+      const { error } = await admin.from("admin_actions").insert({
+        actor_user_id: userId,
+        action: "miniapp_homework_group_fallback",
+        target_user_id: userId,
+        details: { module_id: moduleId, reason: r.fallbackReason, group_id: r.groupId },
+      });
+      if (error) console.error("submit-homework group fallback signal failed", error.message);
+    } catch (e) { console.error("submit-homework group fallback signal threw", String(e)); }
+  }
+  return r.groupId;
 }
 
 // Mirrors notifyTeachersOfSubmission (telegram-bot-webhook/index.ts:6015-6160), minus the
@@ -357,14 +371,23 @@ async function resolveHomeworkTopic(
   assignmentId: string,
   submittedText: string,
   target: any,
+  getGroupId: () => Promise<string | null>,
 ): Promise<HomeworkTopic | { errorResponse: Response }> {
   const { data: prof, error: profErr } = await admin.from("profiles")
-    .select("group_id, name, last_name, telegram_username, telegram_id").eq("id", userId).maybeSingle();
+    .select("name, last_name, telegram_username, telegram_id").eq("id", userId).maybeSingle();
   if (profErr) {
     await logOutcome(admin, false, userId, { reason: "profile_lookup_failed", assignment_id: assignmentId, error: profErr.message });
     return { errorResponse: json({ error: "internal_error" }, 500) };
   }
-  const groupId: string | null = prof?.group_id ?? null;
+  // Multi-course (PR 4): the topic of the group of the TASK's course (a second course's homework goes to that
+  // course's group topic), else the main group — profiles.group_id for every single-course student.
+  let groupId: string | null;
+  try {
+    groupId = await getGroupId();
+  } catch (e) {
+    await logOutcome(admin, false, userId, { reason: "profile_lookup_failed", assignment_id: assignmentId, error: String((e as any)?.message ?? e) });
+    return { errorResponse: json({ error: "internal_error" }, 500) };
+  }
   if (!groupId) {
     await logOutcome(admin, false, userId, { reason: "no_group", assignment_id: assignmentId });
     return { errorResponse: json({ error: "no_group" }, 400) };
@@ -697,6 +720,10 @@ Deno.serve(async (req) => {
 
   const nowIso = new Date().toISOString();
 
+  // The group of the TASK's course, resolved once per request (topic + teacher DM agree by construction).
+  let taskGroupP: Promise<string | null> | null = null;
+  const getTaskGroupId = () => (taskGroupP ??= resolveGroupId(admin, userId, (target as any).module_id ?? null));
+
   // --- 6/7. Record the submission (insert or resubmission) + enqueue the teacher DM + the success signal. ONE path,
   // used by the legacy JSON flow and by the Telegram-topic flow (which runs it after its post).
   const recordSubmission = async (
@@ -758,7 +785,7 @@ Deno.serve(async (req) => {
 
     // Teacher notification: enqueue only, never send from here (see enqueueTeacherDm doc). Never fails the submission.
     try {
-      const groupId = await resolveGroupId(admin, userId);
+      const groupId = await getTaskGroupId();
       await enqueueTeacherDm(admin, {
         studentId: userId,
         groupId,
@@ -795,7 +822,7 @@ Deno.serve(async (req) => {
   }
   // The group + topic are resolved BEFORE answering: a problem the student must act on (no group, no topic) still
   // comes back to the app now, with its topic-fallback card.
-  const topic = await resolveHomeworkTopic(admin, userId, assignmentId, submittedText, target);
+  const topic = await resolveHomeworkTopic(admin, userId, assignmentId, submittedText, target, getTaskGroupId);
   if ("errorResponse" in topic) return topic.errorResponse;
   // ATOMIC claim before the irreversible group post — a concurrent request (double-tap / retry while the post is still
   // running) gets a clean 409 instead of posting the same media a second time. Released when the post returns.

@@ -40,6 +40,8 @@ interface UserRow {
   is_admin: boolean;
   role_name?: RoleName;
   group_id?: string | null;
+  /** multi-course: the student's SECONDARY groups (student_course_groups, non-main rows) — main stays group_id */
+  secondary_group_ids?: string[];
   archived_at?: string | null;
   account_type?: "provisional" | "paid";
   created_by?: string | null;
@@ -239,6 +241,15 @@ export default function AdminUsers() {
       }
       const profResults = await Promise.all(profPromises);
       const roleResults = await Promise.all(rolePromises);
+      // Multi-course: secondary groups (admins read every row under RLS; a teacher would only see their own rows,
+      // so the read is skipped for them). A student is listed in their secondary group too.
+      const secMap: Record<string, string[]> = {};
+      if (!isTeacher) {
+        const { data: sec, error: secErr } = await (supabase.from("student_course_groups" as any) as any)
+          .select("user_id, group_id").eq("is_main", false);
+        if (secErr) toast.error(secErr.message);
+        ((sec as any[]) || []).forEach((r: any) => { (secMap[r.user_id] ||= []).push(r.group_id); });
+      }
       profResults.forEach(({ data }) => {
         (data || []).forEach((p: any) => {
           lnMap[p.id] = p.last_name;
@@ -257,6 +268,7 @@ export default function AdminUsers() {
       rows.forEach((u) => {
         u.last_name = lnMap[u.id] || null;
         u.group_id = grpMap[u.id] || null;
+        u.secondary_group_ids = secMap[u.id] || [];
         (u as any).group_name = grpNameMap[u.id] || null;
         u.account_type = (atMap[u.id] as any) || "paid";
         const list = rolesMap[u.id] || [];
@@ -409,7 +421,7 @@ export default function AdminUsers() {
       if (groupFilter !== "all") {
         if (groupFilter === "none") {
           if (u.group_id) return false;
-        } else if (u.group_id !== groupFilter) {
+        } else if (u.group_id !== groupFilter && !(u.secondary_group_ids || []).includes(groupFilter)) {
           return false;
         }
       }
@@ -1294,6 +1306,13 @@ export default function AdminUsers() {
                   {u.group_id && (
                     <div className="text-xs mt-1"><Badge variant="secondary">{(u as any).group_name || groupNameById.get(u.group_id) || "—"}</Badge></div>
                   )}
+                  {(u.secondary_group_ids || []).length > 0 && (
+                    <div className="text-xs mt-1 flex flex-wrap gap-1">
+                      {(u.secondary_group_ids || []).map((gid) => (
+                        <Badge key={gid} variant="outline" title="Qo'shimcha kurs">+ {groupNameById.get(gid) || "—"}</Badge>
+                      ))}
+                    </div>
+                  )}
                   {u.created_by && (
                     <div className="text-[11px] text-muted-foreground mt-1">
                       {t("admin.users.headers.createdBy", { defaultValue: "Created by" })}: {nameById.get(u.created_by) || "—"}
@@ -1391,7 +1410,12 @@ export default function AdminUsers() {
                       const tg = groupsByTeacher.get(u.id) || [];
                       if (tg.length === 0) return <span className="text-muted-foreground">—</span>;
                       return <Badge variant="secondary" title={tg.map((x) => x.name).join(", ")}>{tg.length} ta guruh</Badge>;
-                    })() : (u.group_id ? <Badge variant="secondary">{(u as any).group_name || groupNameById.get(u.group_id) || "—"}</Badge> : <span className="text-muted-foreground">—</span>)}</td>
+                    })() : (<>
+                      {u.group_id ? <Badge variant="secondary">{(u as any).group_name || groupNameById.get(u.group_id) || "—"}</Badge> : <span className="text-muted-foreground">—</span>}
+                      {(u.secondary_group_ids || []).map((gid) => (
+                        <Badge key={gid} variant="outline" className="ml-1" title="Qo'shimcha kurs">+ {groupNameById.get(gid) || "—"}</Badge>
+                      ))}
+                    </>)}</td>
                     <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded-full ${u.status === "active" ? "bg-muted" : u.status === "archived" ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-destructive/10 text-destructive"}`}>{u.status === "active" ? t("admin.users.active") : u.status === "archived" ? "Arxiv" : t("admin.users.inactive")}</span></td>
                     <td className="p-3 text-xs text-muted-foreground">{(enrollMap[u.id]?.size) || 0}</td>
                     <td className="p-3 text-xs text-muted-foreground">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}</td>
